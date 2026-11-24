@@ -54,12 +54,11 @@ const getToneNodes = (tree: RenderedNode | string | null, tone: string) =>
   findNodes(tree, (n) => String(n.props?.className ?? "").split(" ").includes(`text-${tone}`));
 
 // A label in a tone colour fails contrast on the --sunken badge shell, so the tone rides on a glyph.
-test("a toned status badge or pill never paints its label in the tone, and a pill shows the tone glyph", () => {
+test("a toned status badge never paints its label in the tone, and shows the tone glyph unless told not to", () => {
   for (const tone of TONES) {
     const forms = [
       ["status badge without glyph", (ui.Badge as Component)({ role: "status", tone, glyph: false, children: "Label" }), false],
       ["status badge", (ui.Badge as Component)({ role: "status", tone, children: "Label" }), true],
-      ["pill", (ui.Pill as Component)({ tone, children: "Label" }), true],
     ] as const;
     for (const [form, element, hasGlyph] of forms) {
       const toned = getToneNodes(renderScreen(element), tone);

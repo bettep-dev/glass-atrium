@@ -176,11 +176,11 @@
 
 | 역할 | atom | styling class |
 |------|------|---------------|
-| 카드 | `Card` · `CardHead` · `CardInfo` · `SubCard` | `.card*` · `.sub-card` |
+| 카드 | `Card` · `CardHead` · `CardInfo` | `.card*` · `.sub-card` |
 | 레이아웃 | `SplitRow` · `SplitColumn` | `.split-row*` · `.split-col*` |
 | overlay | `DetailSurface` · `Modal`(= confirm 위임) · `Popover` | `.detail-*` · `.popover-*` |
 | 공개 | `Disclosure` · `DisclosureButton` | `.disclosure` (also on a `summary`) · `.card.is-collapsed` |
-| 배지·상태 | `Badge` · `Pill`(→ Badge) · `StatusDot` | `.pill*` |
+| 배지·상태 | `Badge` · `StatusDot` | `.pill*` |
 | agent 이름 | `AgentName` | caller `className` (텍스트만) |
 | 수치 | `StatRow` · `StatNotes` · `ToneGlyph` · `HeadStatus` · `Sparkline` · `MiniBars` · `TrendChart` · `Bar` · `BulletBar` | `.stat-row` · `.stat*` · `.tone-glyph` · `.one-line-box` |
 | 표 | `Table` · `TableHead` | `.tbl` |
@@ -317,7 +317,7 @@
   - **Amber badge** (`.pill--warn`, §7.3): `--tint-warn` shell + `⚠` + word, both in ink — the tint alone is 1.43 on `--elev`, so the glyph shape and the word carry it; ink on it ≥ 9.33.
 - **범위 밖 — destructive action** (severity 아닌 action role, 단어 = 버튼 라벨): `.btn.danger` · red-outline 버튼 (`DELETE_OUTLINE_STYLE` · `DiscardConfirmMC`) — §7.4.
 - **Badge 3 role** (`ui.jsx` → `Badge`):
-  - `status` — 반응이 필요한 lifecycle/health. 선행 glyph 가 tone, 라벨 `--dim`. `glyph` false 면 tone 없음 (라벨도 neutral). tone 있는 `Pill` → glyph 가 있는 status `Badge`.
+  - `status` — 반응이 필요한 lifecycle/health. 선행 glyph 가 tone, 라벨 `--dim`. `glyph` false 면 tone 없음 (라벨도 neutral).
   - `metadata` — 서술 속성 (agent-only · md · model id): neutral · glyph 없음 · 소문자.
   - `count` — 순수 수량: neutral · glyph 없음 · sans tabular (§12.2, look → §12.3 Count); a count in prose or a row retires to a plain sans tnum number (§12.3).
   - 변형: `absent`(무테 · 무배경 · `--faint`) · `interactive`(`<button>`).
@@ -461,7 +461,7 @@
 
 ### 6.5 기타 표면 · z stack
 
-- **`.sub-card`** (`SubCard`): 중첩 섹션 · 메트릭 타일. `--radius-tile` 8 · padding `--card-pad` 16 · ring = `box-shadow 0 0 0 1px` `--line` (box model 무영향) — one hairline, no shadow or inset. 면 = `bg-elev` 또는 `sunken`.
+- **`.sub-card`** (`AlertCard` `surface="inset"` 껍데기): `--radius-tile` 8 · padding `--card-pad` 16 · ring = `box-shadow 0 0 0 1px` `--line` (box model 무영향) — one hairline, no shadow or inset. 면 = `bg-elev` 또는 `sunken`.
 - **`.popover-panel`** (`Popover`, non-modal): 트리거 아래 우측 정렬 (`top: calc(100% + 4px)`) · min 240 · max min(360px, 100vw − 32px) · max-h 60vh · inset `--card-pad` · rows stacked on `--gap-list` · `--overlay-surface` + 1px `--line` + `--radius-card` + `--shadow-overlay`.
   - z = overlay − 1 → 열린 `DetailSurface` 가 덮는다. 열려 있는 동안만 카드가 overflow 를 푼다 (`.card:has(.popover-panel)`).
 - **`.save-banner`**: sticky bottom dirty-state 바 — 불투명 `--elev` + 상단 1px `--line` + `--shadow-overlay` · z 10 · padding 12px 20px.
@@ -497,7 +497,7 @@
 - **anatomy** = flex column, head(고정) · body(남은 높이) · foot(하단 고정):
   - `.card`: `--elev` fill · 1px `--line` · `--radius-card` 12 · `overflow: hidden` · shadow · inset 없음.
   - `.card-head`: 한 줄 · min-height `--card-head-h` 48 · padding `4px` × `--card-pad` · gap 8×12 · 하단 1px `--line`. 컨트롤이 안 들어갈 때만 wrap.
-  - `.card-body`: padding `--card-pad` 16 · `flex: 1 1 auto` · `.flush` = padding 0 (`.sub-card.flush` the same rule). `max-height: 70vh` 내부 스크롤은 **혼자 놓인 무크기 또는 L 카드에만** — stretched row · S · M 카드는 스크롤 없이 자란다.
+  - `.card-body`: padding `--card-pad` 16 · `flex: 1 1 auto` · `.flush` = padding 0. `max-height: 70vh` 내부 스크롤은 **혼자 놓인 무크기 또는 L 카드에만** — stretched row · S · M 카드는 스크롤 없이 자란다.
     - `.card--fill > .card-body`: the body hands its whole box to one child that sizes or pans itself (a diagram canvas) → `flex: 1` column · no `max-height` cap · no scroller of its own.
   - `.card-bar` (`Card` `bar`): between head and body · padding 8 × `--card-pad`. `.card--bar-flush > .card-bar` = padding 0 + 1px `--line` below → a bar whose content carries its own inset (a full-width strip).
   - `.card-foot`: `margin-top: auto` · min-height `--row-h` 40 · `--fs-meta` `--dim` · 상단 1px `--line`. 내용 = `Show all N` · `Other` · footnote 1줄 중 하나.
@@ -518,12 +518,12 @@
   - 한 행의 peer 는 같은 slot → 끝선 일치 (두 M 목록 = 8 × 40 + 40 foot).
   - `getSlotRows` 가 row budget 으로 자르고 숨긴 개수를 돌려준다 → foot 의 `Show all N` / `Show top N` 이 제자리에서 토글.
 
-### 7.3 Badge — `Badge` · `Pill` (`.pill*`)
+### 7.3 Badge — `Badge` (`.pill*`)
 
 - **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · no border · min-height 24 · padding 0 8px · `--radius-inline` 4 · `--fs-meta` · 500 · Pretendard · nowrap.
-- tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status) · `title` · `className` 은 그대로 전달.
+- tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`.
   - glyph 명암 (`--sunken` shell 위): warn 10.97 · info 10.13 · ok 9.52 · crit 6.62.
-- 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (sans tabular, §12.2, look → §12.3 Count; `Pill` leaves at S3 close) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes).
+- 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (sans tabular, §12.2, look → §12.3 Count) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes).
 - **fill** (`Badge fill`): `quiet` (default — the neutral shell above) · `solid` = `.pill--solid`, `--ink` shell + `--surface` text — waits for the owner · `tag` = `.pill--tag`, `--tint-fill` + ink — a fact worth a glance · `warn` = `.pill--warn`, `--tint-warn` + ink, led by an ink `⚠` the atom draws — did not arrive. Every fill is 13 / 600, line 1, 20 high, no border.
   - **Count shape** (`role="count"` with a fill; every nav count takes the tag fill (§7.7)): `.pill--num` — min-width 20, padding 0 6, radius 999, tnum, centred; above 99 it reads `99+` (`window.UI.getBadgeCount`).
   - Never two solid badges on one row; a badge always holds a word or a number. The accent never fills a badge — it is the owner's run-time choice, so text on it has no guaranteed contrast.

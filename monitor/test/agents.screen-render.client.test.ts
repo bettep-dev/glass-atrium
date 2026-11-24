@@ -1149,7 +1149,7 @@ test("a compatibility requirement reads as faint meta text after the name, its f
   const [tag] = findNodes(nameCell, (n) => n.props?.title === `Requires: ${requirement}`);
   assert.match(String(tag?.props.className), /\bfs-meta\b.*\btext-faint\b|\btext-faint\b.*\bfs-meta\b/);
   assert.equal(getVisibleText(tag).trim(), "Requires setup");
-  assert.equal(findAtoms(nameCell, "Badge").length + findAtoms(nameCell, "Pill").length, 0, "no badge or pill");
+  assert.equal(findAtoms(nameCell, "Badge").length, 0, "no badge");
 });
 
 const FS_MICRO = /\bfs-micro\b/;
@@ -1204,7 +1204,7 @@ describe("a truncated matrix reports the row limit as a warn glyph and a word wi
   for (const row of ROW_LIMIT_STATES) {
     test(row.name, async () => {
       const tree = await renderComponent("SuccessRateMatrixRegion", { state: { status: "ready", data: { rows: row.rows, truncated: true }, error: null }, days: 30, onRetry: () => undefined });
-      assert.deepEqual([...findAtoms(tree, "Pill"), ...findAtoms(tree, "Badge")].map((n) => n.props.atom), [], "no pill or badge container");
+      assert.deepEqual(findAtoms(tree, "Badge").map((n) => n.props.atom), [], "no badge container");
       const [note] = findNodes(tree, (n) => /matrix incomplete/.test(String(n.props?.title ?? "")));
       assert.ok(note, "the notice keeps its hover title");
       assert.match(collectText(note), /Row limit hit/);
@@ -1576,13 +1576,12 @@ test("the No completion record head states the unfinished count as a warn head s
   assert.doesNotMatch(collectText(sub), /last \d+ days/i, "the page header states the window");
 });
 
-test("a drawer section is a plain section under an h2 label, with no sub-card box", async () => {
+test("a drawer section is a plain section under an h2 label", async () => {
   const tree = await renderComponent("AgentDrawerSection", { id: "drawer-reliability", title: "Reliability" });
   const [section] = findNodes(tree, (n) => n.type === "section");
   assert.equal(section?.props.id, "drawer-reliability");
   const [label] = findAtoms(section, "SectionLabel");
   assert.deepEqual([label?.props.level, collectText(label)], [2, "Reliability"]);
-  assert.equal(findAtoms(tree, "SubCard").length, 0, "no box inside the drawer");
 });
 
 test("the drawer's name reads its parts apart and never repeats the surface's own title id", async () => {
@@ -2513,7 +2512,6 @@ test("the drawer overview states the setup requirement as a Requires field and i
   });
   const fields = findAtoms(tree, "DetailField").filter((n) => n.props.label === "Requires");
   assert.deepEqual(fields.map((n) => n.props.value), ["monitor daemon running"]);
-  assert.equal(findAtoms(tree, "SubCard").length + findAtoms(tree, "Pill").length, 0, "no sub-card or pill");
   const badges = findAtoms(tree, "Badge").filter((n) => /^origin:\s*system$/.test(collectText(n)));
   assert.deepEqual(badges.map((n) => n.props.role), ["metadata"]);
   assert.deepEqual(getTintedNodes(tree), [], "no tone tint on an explanation");

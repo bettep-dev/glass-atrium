@@ -240,8 +240,7 @@ label.ctl-checkbox-hit {
 	max-height: none;
 	overflow-y: visible;
 }
-.card-body.flush,
-.sub-card.flush {
+.card-body.flush {
 	padding: 0;
 }
 /* the body hands its whole box to one child that sizes or pans itself (a diagram canvas) → no height cap, no scroller of its own */
@@ -1854,13 +1853,11 @@ button.ra-step:hover {
 	box-shadow: 0 0 0 1px rgb(var(--line));
 }
 /* 섹션 라벨 — 문장형 대소문자 --dim, multi-section 뷰의 구획 헤더. */
-.sub-card-label,
 .section-label {
 	font-size: var(--fs-meta);
 	font-weight: 600;
 	color: rgb(var(--dim));
 }
-.sub-card-label { margin-bottom: var(--space-2); }
 
 /* ── Spacing standard (W1-T3) — 카드·섹션 채널 모두 --gap-section ────────
    카드 그리드/스택·독립 섹션 사이 모두 --gap-section. Tailwind gap/space-y 와 병용 가능. */

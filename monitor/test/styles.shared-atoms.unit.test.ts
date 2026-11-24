@@ -147,8 +147,8 @@ test("a selected segment is a raised thumb on the control edge, on a track with 
   assert.doesNotMatch(getRuleBodies(BASE_CSS, ".seg").join(";"), /box-shadow|border:/, ".seg outer edge");
 });
 
-test("section and sub-card labels keep sentence case: no uppercase transform or eyebrow tracking", () => {
-  for (const selector of [".section-label", ".sub-card-label"]) {
+test("section labels keep sentence case: no uppercase transform or eyebrow tracking", () => {
+  for (const selector of [".section-label"]) {
     const body = getRuleBodies(BASE_CSS, selector).join(";");
     assert.doesNotMatch(body, /text-transform:\s*uppercase|letter-spacing/, selector);
   }
@@ -321,7 +321,6 @@ test("a block machine string wears the fenced block's face from that one rule an
 // a screen rule reaching into an atom's inner part becomes the atom's own variant (spec 44084 §14.2 row 3)
 describe("each atom variant a screen names sets only its own declarations, in one rule", () => {
   const rows = [
-    { name: "a flush sub-card drops its padding", selector: ".sub-card.flush", decls: { padding: "0" } },
     { name: "a fill card hands its whole body to one self-sizing child, with no cap and no scroller of its own", selector: ".card--fill > .card-body",
       decls: { flex: "1", "max-height": "none", overflow: "hidden", display: "flex", "flex-direction": "column" } },
     { name: "a compact card head sets its title at the control size", selector: ".card-head--compact .card-title", decls: { "font-size": "var(--fs-control)" } },
@@ -347,11 +346,6 @@ describe("each atom variant a screen names sets only its own declarations, in on
       assert.deepEqual(decls, [row.decls]);
     });
   }
-});
-
-test("a flush sub-card and a flush card body share the one flush rule", () => {
-  const cardBody = getRuleBodies(BASE_CSS, ".card-body.flush");
-  assert.ok(getRuleBodies(BASE_CSS, ".sub-card.flush").some((body) => cardBody.includes(body)));
 });
 
 // a label-only body row (a ledger group-label th spanning the row) would otherwise stop at its 36px line box

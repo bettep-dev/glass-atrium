@@ -161,12 +161,6 @@ describe("structure atoms carry headings, captions and column scope", async () =
     assert.equal(collectText(tree), "Pinned models");
   });
 
-  test("a sub-card label is a heading one level below the card or dialog title", () => {
-    const tree = render("SubCard", { label: "Recent runs" }, "body");
-    const h3 = findNodes(tree, (n) => n.type === "h3");
-    assert.equal(h3.length, 1);
-    assert.equal(collectText(h3[0]), "Recent runs");
-  });
 
   test("the table atom names itself with a caption and scopes every column header", () => {
     const columns = [

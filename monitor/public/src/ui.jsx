@@ -125,14 +125,6 @@ function getBadgeCount(value) {
   return Number.isInteger(value) && value > BADGE_COUNT_CAP ? `${BADGE_COUNT_CAP}+` : value;
 }
 
-// 기존 Pill 호출부 호환 — Badge styling layer 로 routing (두 번째 status idiom 방지).
-// neutral 톤은 metadata role, 그 외(ok/warn/crit/info)는 status role 로 자동 매핑 (color=status 규칙 정합).
-function Pill({ children, tone='neutral', title, className }) {
-  return tone === 'neutral'
-    ? <Badge role="metadata" glyph={false} title={title} className={className}>{children}</Badge>
-    : <Badge role="status" tone={tone} title={title} className={className}>{children}</Badge>;
-}
-
 // 공용 빈-상태 atom (canonical) — 화면별 EmptyState* 복제 + 보드 dashed-col idiom 의 단일 SoT.
 //   .placeholder(base.css) 무테두리·무배경 폼 재사용 → repo 전역 단일 빈-상태 표기.
 //   message = 핵심 원인 한 줄 · hint = 다음 단계/부연(선택) · action = 슬롯(재시도 버튼 등, 선택).
@@ -149,21 +141,6 @@ function EmptyState({ kind = 'first-use', message, hint, action, onReset, classN
       <div><DayTokens>{text}</DayTokens></div>
       {hint && <div className="placeholder-hint"><DayTokens>{hint}</DayTokens></div>}
       {slot && <div className="mt-2 flex">{slot}</div>}
-    </div>
-  );
-}
-
-/**
- * Nested surface inside a card or dialog — sunken → bg-sunken, else bg-elev; label → h3 under the card's h2 by default.
- * @deprecated since 1.0.0 — a card inside a card breaks the one-surface rule; removed once no screen renders it.
- *   Replacement: content straight in the `Card` body, or a disclosure that is itself the card. {@link Card}
- */
-function SubCard({ children, sunken=false, label, labelLevel=3, className='' }) {
-  const surface = sunken ? 'bg-sunken' : 'bg-elev';
-  return (
-    <div className={`sub-card ${surface} ${className}`.trim()}>
-      {label && <SectionLabel level={labelLevel} className="sub-card-label">{label}</SectionLabel>}
-      {children}
     </div>
   );
 }
@@ -3391,7 +3368,7 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, getBadgeCount, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, StatRow, StatNotes, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
+  Icon, Badge, getBadgeCount, EmptyState, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, StatRow, StatNotes, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
   SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone, SEVERITY_RANK,
   Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn,
   getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps,
