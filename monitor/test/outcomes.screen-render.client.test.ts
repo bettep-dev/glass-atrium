@@ -99,7 +99,7 @@ test("a cold error shows one banner, and every region it covers is a quiet place
   assert.equal(findNodes(tree, (n) => n.type === "PageErrorBanner").length, 1);
   assert.equal(findNodes(tree, (n) => n.type === "RegionUnavailable").length, 0, "no covered region repeats the error");
   assert.equal(getRetryButtons(tree).length, 1, "the banner holds the only Retry");
-  for (const source of ["the status band", "the record ledger", "by-agent failures", "reporting health", "recording channels", "check results", "cross table"]) {
+  for (const source of ["the status band", "the record ledger", "by-agent failures", "record attribution", "recording channels", "check results", "cross table"]) {
     assert.ok(covered.includes(source), `${source} is covered by the banner`);
   }
 });
@@ -148,30 +148,34 @@ test("status folds render open while their detail breakdowns start collapsed", a
   }
 });
 
-// the shared SplitRow with another default layout → a row that names its own layout renders the same under either
-function withSplitRowDefault(layout: string): Record<string, unknown> {
-  const SplitRow = (ui.UI as Record<string, Component>).SplitRow;
-  return { SplitRow: (props: Record<string, unknown>) => SplitRow({ layout, ...props }) };
+// a fold whose body holds a block of the page's own → its body is boxless, every block and nested fold on the host's inset
+function getFold(tree: RenderedNode, title: string): RenderedNode {
+  const [fold] = findNodes(tree, (n) => n.type === "Disclosure" && n.props.title === title);
+  assert.ok(fold, `${title} renders as a fold`);
+  return fold;
 }
 
-for (const sharedDefault of ["content", "equal"]) {
-  test(`paired cards sit side by side in one split row, each row naming its own layout (shared default ${sharedDefault})`, async () => {
-    const { tree } = await renderOutcomesScreen(0, withSplitRowDefault(sharedDefault));
-    const rows = [
-      // equal: peer reporting cards end level · content: each card keeps its own height
-      { name: "record attribution beside recording channels, ending level", ratio: "split-row--1-1", layout: "split-row--equal", titles: ["Record attribution", "Recording channels"] },
-      { name: "check results beside the crosstab", ratio: "split-row--1-1", layout: "split-row--content", titles: ["Automatic check results", "Confident but failed"] },
-    ];
-
-    for (const row of rows) {
-      const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes(row.ratio));
-      const pair = splitRows.find((n) => row.titles.every((title) => collectText(n).includes(title)));
-      assert.ok(pair, row.name);
-      assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
-      assert.ok(String(pair.props.className).includes(row.layout), `${row.name}: ${row.layout}`);
-    }
-  });
+function hasClass(node: RenderedNode, name: string): boolean {
+  return String(node.props.className ?? "").split(/\s+/).includes(name);
 }
+
+describe("a status fold's body holds its two blocks and its detail fold with no card inside", () => {
+  const rows = [
+    { name: "Reporting health", blocks: ["Record attribution", "Recording channels"], nested: "Daily breakdown" },
+    { name: "Self-report quality", blocks: ["Automatic check results", "Confident but failed"], nested: "By task type" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const fold = getFold((await renderOutcomesScreen(0)).tree, row.name);
+      const [split] = findNodes(fold, (n) => hasClass(n, "split-row"));
+
+      assert.equal(findNodes(fold, (n) => hasClass(n, "card")).length, 1, "the fold's own box is its one card");
+      assert.ok(hasClass(split, "split-row--divided"), "the two blocks part on one hairline");
+      assert.deepEqual(findNodes(split, (n) => n.type === "SectionLabel").map((n) => collectText(n)), row.blocks);
+      assert.equal(getFold(fold, row.nested).props.isInline, true, `${row.nested} folds inline`);
+    });
+  }
+});
 
 test("the per-agent table spans the full width", async () => {
   const { tree } = await renderOutcomesScreen(0);
@@ -184,9 +188,16 @@ test("the per-agent table spans the full width", async () => {
 // design.md copy caps → a longer header wraps the 48px card head; the long form belongs in the card's ⓘ drawer
 const COPY_CAP = { title: 24, meta: 32 };
 
+// the caps bound painted copy → a screen-reader-only word is no part of it
+function collectPaintedText(node: RenderedNode | string | null): string {
+  if (node === null || typeof node === "string") return collectText(node);
+  if (String(node.props.className ?? "").split(/\s+/).includes("sr-only")) return "";
+  return node.children.map(collectPaintedText).join(" ");
+}
+
 function getHeaderCopy(tree: RenderedNode): { kind: string; title: string; sub: unknown }[] {
-  return findNodes(tree, (n) => n.type === "CardHead" || n.type === "Disclosure")
-    .map((n) => ({ kind: String(n.type), title: String(n.props.title), sub: n.props.sub }));
+  return findNodes(tree, (n) => n.type === "CardHead" || n.type === "Disclosure" || n.type === "FoldBlockO")
+    .map((n) => ({ kind: String(n.type), title: String(n.props.title), sub: n.props.sub ?? n.props.status }));
 }
 
 test("every card and fold header on the screen fits the title and header-meta caps, loaded or not", async () => {
@@ -196,43 +207,161 @@ test("every card and fold header on the screen fits the title and header-meta ca
   const readyCrosstab = { status: "ready", busy: false, data: { crosstab }, error: null };
   const headers = [
     ...getHeaderCopy((await renderOutcomesScreen(0)).tree),
-    ...getHeaderCopy(renderScreen(create(mod.CrosstabCard as Component, { state: readyCrosstab, onRetry: () => undefined })) as RenderedNode),
+    ...getHeaderCopy(renderScreen(create(mod.CrosstabBlock as Component, { state: readyCrosstab, onRetry: () => undefined })) as RenderedNode),
   ];
 
   assert.ok(headers.length >= 8, `the screen's headers are all collected (${headers.length})`);
   for (const header of headers) {
     assert.ok(header.title.length <= COPY_CAP.title, `${header.kind} title "${header.title}" is ${header.title.length} chars`);
-    const meta = typeof header.sub === "string" ? header.sub : collectText(renderScreen(header.sub) as RenderedNode | null);
+    const meta = typeof header.sub === "string" ? header.sub : collectPaintedText(renderScreen(header.sub) as RenderedNode | null);
     assert.ok(meta.length <= COPY_CAP.meta, `${header.kind} "${header.title}" meta "${meta}" is ${meta.length} chars`);
   }
 });
 
-describe("the cross-table header shows its share meta, count in the hover title, only when there are records, and always shows the mismatch status", () => {
+// a block's head line: its level-3 title, then its own status on the same line
+function getBlockHead(tree: RenderedNode): RenderedNode {
+  const [block] = findNodes(tree, (n) => n.type === "FoldBlockO");
+  assert.ok(block, "the region renders as a fold block");
+  const [head] = findNodes(block, (n) => n.children.some((child) => typeof child !== "string" && child.type === "SectionLabel"));
+  return head;
+}
+
+describe("the cross-table head shows its share meta, count in the hover title, only when there are records, and a warn status only over a counted mismatch", () => {
   const rows = [
     {
-      name: "a ready cross table with records",
+      name: "a ready cross table with mismatches",
       crosstab: { total: 12_000, polarTotal: 1_500, byCell: { "high|false": { count: 1_234 } } },
       metas: [{ text: "10.3%", title: "1,234 of 12,000 records · 10.3%" }],
+      status: "1,500 mismatches",
     },
-    { name: "a ready cross table with no records", crosstab: { total: 0, polarTotal: 0, byCell: {} }, metas: [] },
+    {
+      name: "a ready cross table with records and no mismatch",
+      crosstab: { total: 40, polarTotal: 0, byCell: { "high|true": { count: 40 } } },
+      metas: [{ text: "0%", title: "0 of 40 records · 0%" }],
+      status: null,
+    },
+    { name: "a ready cross table with no records", crosstab: { total: 0, polarTotal: 0, byCell: {} }, metas: [], status: null },
   ];
   for (const row of rows) {
     test(row.name, async () => {
       const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
       const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
       const state = { status: "ready", busy: false, data: { crosstab: row.crosstab }, error: null };
-      const [head] = findNodes(renderScreen(create(mod.CrosstabCard as Component, { state, onRetry: () => undefined })) as RenderedNode,
-        (n) => n.type === "CardHead");
+      const head = getBlockHead(renderScreen(create(mod.CrosstabBlock as Component, { state, onRetry: () => undefined })) as RenderedNode);
 
-      const metas = findNodes(head, (n) => n.props.className === "card-sub").map((meta) => ({
-        text: collectText(meta),
-        title: findNodes(meta, (n) => typeof n.props.title === "string")[0]?.props.title,
-      }));
+      const metas = findNodes(head, (n) => typeof n.props.title === "string" && n.type === "span")
+        .map((meta) => ({ text: collectText(meta), title: meta.props.title }));
       assert.deepEqual(metas, row.metas);
-      const statuses = findNodes(head, (n) => n.type === "HeadStatusO");
-      assert.equal(statuses.length, 1);
-      assert.equal(findNodes(head, (n) => n.type === "Badge").length, 0, "no badge in the head");
-      assert.match(collectText(statuses[0]), new RegExp(`${row.crosstab.polarTotal.toLocaleString("en-US")}\\s+mismatches`));
+      const statuses = findNodes(head, (n) => n.type === "HeadStatus");
+      assert.deepEqual(statuses.map((status) => [status.props.tone, collectPaintedText(status).replace(/\s+/g, " ").trim()]),
+        row.status ? [["warn", row.status]] : [], "the warn status names the mismatches, and only when one was counted");
+      assert.equal(collectText(head).includes("polar"), false, "no internal term on the head line");
+    });
+  }
+});
+
+test("a recording channel's name stays on one line in regular weight, and Status and Quiet shrink to their content", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const channel = { attribution_source: "structuredoutput-completion", alerting: false, eligible: true, peak_daily_count: 120, recent_peak_daily_count: 90, silent_hours: 2 };
+  const state = { status: "ready", busy: false, data: { channels: [channel], alerting: [], days: 7 }, error: null };
+  const tree = renderScreen(create(mod.ChannelLivenessBlock as Component, { state, onRetry: () => undefined, shared: {} })) as RenderedNode;
+  const [table] = findNodes(tree, (n) => n.type === "Table");
+  const [name] = findNodes(table, (n) => n.type === "th" && n.props.scope === "row");
+  const cellClass = String(name.props.className).split(/\s+/);
+
+  assert.ok(cellClass.includes("whitespace-nowrap") && cellClass.includes("font-normal"), String(name.props.className));
+  assert.deepEqual(Array.from(table.props.widths as unknown[]), [undefined, "1%", undefined, undefined, "1%"]);
+});
+
+describe("a fold block's empty line starts on the block's text column, and every block head holds one height", () => {
+  const ready = (data: unknown) => ({ status: "ready", busy: false, data, error: null });
+  const rows = [
+    { name: "Record attribution", component: "AttributionHealthBlock", state: ready({ days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } }) },
+    { name: "Recording channels", component: "ChannelLivenessBlock", state: ready({ channels: [], alerting: [] }) },
+    { name: "Automatic check results", component: "GraderBreakdownBlock", state: ready({ overall: {} }) },
+    { name: "Confident but failed", component: "CrosstabBlock", state: ready({ crosstab: { total: 0, polarTotal: 0, byCell: {} } }) },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+      const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+      const tree = renderScreen(create(mod[row.component] as Component, { state: row.state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
+      const [empty] = findNodes(tree, (n) => n.type === "EmptyState");
+
+      assert.match(String(empty.props.className), /\bplaceholder--flush-inline\b/);
+      assert.equal((getBlockHead(tree).props.style as { minHeight?: string } | undefined)?.minHeight, "var(--ctl-min-h)", "the head is the ⓘ box tall");
+    });
+  }
+});
+
+describe("the Recording channels head that read no channel shows faint None or Not loaded, with no status mark", () => {
+  const failed = { status: "error", busy: false, data: null, error: SERVER_ERROR };
+  const rows = [
+    { name: "Recording channels, no channel in the window", component: "ChannelLivenessBlock", word: "None",
+      state: { status: "ready", busy: false, data: { channels: [], alerting: [], days: 7 }, error: null } },
+    { name: "Recording channels, a failed read", component: "ChannelLivenessBlock", word: "Not loaded", state: failed },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+      const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+      const tree = renderScreen(create(mod[row.component] as Component, { state: row.state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
+      const head = getBlockHead(tree);
+
+      assert.equal(findNodes(head, (n) => n.type === "HeadStatus").length, 0, "no status mark");
+      const words = findNodes(head, (n) => n.type === "AbsentValue").map((n) => collectText(n).trim());
+      assert.deepEqual(words, [row.word]);
+      assert.doesNotMatch(collectText(head), /All recording/);
+    });
+  }
+});
+
+describe("a block's own status is the shared head Status on its title's line", () => {
+  const rows = [
+    { name: "Record attribution", component: "AttributionHealthBlock", data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } } },
+    { name: "Recording channels", component: "ChannelLivenessBlock", data: { channels: [{ attribution_source: "stop", alerting: true, eligible: true }], alerting: ["stop"], days: 7 } },
+    { name: "Confident but failed", component: "CrosstabBlock", data: { crosstab: { total: 10, polarTotal: 4, byCell: {} } } },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+      const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+      const state = { status: "ready", busy: false, data: row.data, error: null };
+      const tree = renderScreen(create(mod[row.component] as Component, { state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
+      const head = getBlockHead(tree);
+
+      assert.equal(collectText(findNodes(head, (n) => n.type === "SectionLabel")[0]), row.name);
+      assert.equal(findNodes(tree, (n) => n.props["data-role"] === "head-status").length, 1, "one head status");
+      assert.equal(findNodes(head, (n) => n.type === "HeadStatus").length, 1, "the shared Status, on the title line");
+    });
+  }
+});
+
+describe("an empty ledger names the window when no filter is applied, and leaves the reset to the filter bar when one is", () => {
+  const onResetFilter = () => undefined;
+  const rows = [
+    { name: "no filter, the 30-day window", filter: { days: 30 }, includeAll: false, text: "No task results in the last 30 days.", canReset: false },
+    { name: "no filter, the 7-day window", filter: { days: 7 }, includeAll: false, text: "No task results in the last 7 days.", canReset: false },
+    { name: "an agent filter", filter: { days: 30, agent: "glass-atrium-dev-front" }, includeAll: false, text: "No records match these filters.", canReset: false },
+    { name: "the include-all toggle", filter: { days: 30 }, includeAll: true, text: "No records match these filters.", canReset: false },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+      const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+      const tree = renderScreen(create(mod.ResultTableCard as Component, {
+        state: { status: "ready", busy: false, data: { rows: [] }, error: null }, rows: [], totalMatched: 0, page: 0, limit: 50,
+        sort: "record_ts:desc", filter: row.filter, filterControls: { includeAll: row.includeAll }, onResetFilter,
+        closure: { pendingIds: new Set(), closedOverrides: new Map() }, needsYou: { rows: [], hiddenCount: 0 }, needsYouCap: 5,
+      })) as RenderedNode;
+      const [empty] = findNodes(tree, (n) => n.type === "EmptyState");
+      const resets = findNodes(empty, (n) => n.type === "button" && collectText(n).trim() === "Reset filters");
+
+      // collectText joins child nodes with a space → compare with whitespace dropped
+      const squash = (text: string) => text.replace(/\s+/g, "");
+      assert.ok(squash(collectText(empty)).startsWith(squash(row.text)), collectText(empty));
+      assert.equal(resets.length, 0, "the filter bar holds the one reset");
     });
   }
 });
@@ -254,10 +383,10 @@ test("a region's error card hands a focused, successful Retry to that region's o
     { name: "status band", component: "StatusBandO", props: { analyticsState: retrying, attentionState: ready, windowDays: 30, freshness: null, onRetry } },
     { name: "needs-you count", component: "StatusBandO", props: { analyticsState: ready, attentionState: retrying, windowDays: 30, freshness: null, onRetry } },
     { name: "by-agent failures", component: "AgentFailureTableO", props: { state: retrying, onRetry } },
-    { name: "record attribution", component: "AttributionHealthCard", props: { state: retrying, period: 30, onRetry } },
-    { name: "recording channels", component: "ChannelLivenessCard", props: { state: retrying, onRetry } },
-    { name: "check results", component: "GraderBreakdownCard", props: { state: retrying, onRetry } },
-    { name: "cross table", component: "CrosstabCard", props: { state: retrying, onRetry } },
+    { name: "record attribution", component: "AttributionHealthBlock", props: { state: retrying, period: 30, onRetry } },
+    { name: "recording channels", component: "ChannelLivenessBlock", props: { state: retrying, onRetry } },
+    { name: "check results", component: "GraderBreakdownBlock", props: { state: retrying, onRetry } },
+    { name: "cross table", component: "CrosstabBlock", props: { state: retrying, onRetry } },
     { name: "run events", component: "LoopEventsCard", props: { state: retrying, onRetry } },
     {
       name: "record ledger",
@@ -324,7 +453,7 @@ test("a closed caveat row shows its result and its closure as two separate group
 describe("the task ledger takes the .tbl cell geometry under its own header and body face", async () => {
   const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
   const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
-  // 12 needs-you rows shown uncapped → the Show-first control row; the open caveat among them → the Mark-closed icon button; a routine row
+  // 12 needs-you rows shown uncapped → the Show-first control row; the open caveat among them → its Close caveat button; a routine row
   const rows = [
     ...Array.from({ length: 11 }, (_, i) => ({ id: i + 1, agent: "glass-atrium-dev-react", task_type: "feature", result: "fail", record_ts: "2026-09-01T10:00:00.000Z", summary: "Broke" })),
     { id: 20, agent: "glass-atrium-dev-react", task_type: "feature", result: "done_with_concerns", closed_at: null, record_ts: "2026-09-01T10:00:00.000Z", summary: "Caveat" },
@@ -347,8 +476,10 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
   });
 
   test("every column header is the shared TableHead in the ledger's own sentence-case face, one line each", () => {
-    assert.deepEqual(findNodes(tree, (n) => n.type === "TableHead").length, 5);
-    assert.deepEqual(columnHeads.map((th) => collectText(th).trim()), ["Time", "Agent", "Task type", "Result", "Summary"]);
+    assert.deepEqual(findNodes(tree, (n) => n.type === "TableHead").length, 7);
+    assert.deepEqual(columnHeads.map((th) => collectText(th).trim()), ["Time", "Agent", "Task type", "Result", "Why", "Summary", "Actions"]);
+    const actionsHead = findNodes(columnHeads.at(-1)!, (n) => tokensOf(n).includes("sr-only"));
+    assert.equal(collectText(actionsHead[0]).trim(), "Actions", "the action column's head is for assistive tech only");
     // the head face rides the table's thead variants → every column head takes it, none spells it out
     const [table] = findNodes(tree, (n) => n.type === "table");
     const faces = ["text-dim", "font-medium", "whitespace-nowrap"].map((t) => `[&_thead_th]:${t}`);
@@ -398,7 +529,7 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
   test("no cell, and no control in a cell, carries its own padding, margin or rule", () => {
     const cells = findNodes(tree, (n) => n.type === "th" || n.type === "td");
     const controls = findNodes(tree, (n) => n.type === "button");
-    assert.ok(cells.some((n) => n.type === "td") && controls.length >= 2, "rows, the Mark-closed button and the Show-all control render");
+    assert.ok(cells.some((n) => n.type === "td") && controls.length >= 2, "rows, the Close caveat button and the Show-all control render");
     for (const node of [...cells, ...controls]) {
       const adHoc = tokensOf(node).filter((t) => /^-?(p|m)[xytblrse]?-/.test(t) || /^border-b$/.test(t));
       assert.deepEqual(adHoc, [], `${node.type} '${collectText(node).trim().slice(0, 24)}'`);
@@ -418,27 +549,50 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
   });
 });
 
-test("a channel row keeps to two single lines, the detail line carrying its full text as a tooltip", async () => {
-  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
-  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
-  const channel = {
-    attribution_source: "structuredoutput-completion", alerting: false, eligible: true,
-    silent_hours: 3.4, recent_peak_daily_count: 171, peak_daily_count: 1204,
+describe("Recording channels is one table, silent channels first, each by its full name with its units attached", () => {
+  const channels = [
+    { attribution_source: "structuredoutput-completion", alerting: false, eligible: true, silent_hours: 3.4, recent_peak_daily_count: 171, peak_daily_count: 1204 },
+    { attribution_source: "transcript-synthesis", alerting: false, eligible: false, silent_hours: 50, recent_peak_daily_count: 4, peak_daily_count: 12 },
+    { attribution_source: "subagent-stop", alerting: true, eligible: true, silent_hours: 30.8, recent_peak_daily_count: 0, peak_daily_count: 640 },
+  ];
+  const data = { channels, alerting: ["subagent-stop"], days: 7, thresholds: { eligibility_daily_floor: 100, eligibility_recency_days: 2, silence_hours: 24 } };
+  const renderBody = async () => {
+    const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+    const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+    return renderScreen(create(mod.ChannelLivenessBody as Component, { state: { status: "ready", busy: false, data, error: null }, onRetry: () => undefined, shared: {} })) as RenderedNode;
   };
-  const tree = renderScreen(create(mod.ChannelLivenessRow as Component, { channel, days: 30, recencyDays: 7 })) as RenderedNode;
+  // what a screen reader reads: aria-hidden marks dropped, sr-only words kept → a state word read twice shows here
+  const getSpokenText = (node: RenderedNode | string | null): string => {
+    if (node === null || typeof node === "string") return collectText(node);
+    return node.props["aria-hidden"] === "true" ? "" : node.children.map(getSpokenText).join("");
+  };
+  const getRows = (tree: RenderedNode) => findNodes(tree, (n) => n.type === "tr" && findNodes(n, (c) => c.type === "td").length > 0)
+    .map((tr) => findNodes(tr, (c) => c.type === "td" || c.type === "th").map((cell) => getSpokenText(cell).replace(/\s+/g, " ").trim()));
 
-  // the glyph owns the first grid column → the two text lines share the second, so the detail aligns under the label
-  const lines = getRootHost(tree).children
-    .filter((child): child is RenderedNode => typeof child !== "string" && child.props["aria-hidden"] !== "true");
-  assert.equal(lines.length, 2, "status line + detail line");
-  for (const line of lines) {
-    assert.match(String(line.props.className ?? ""), /whitespace-nowrap|truncate/, `"${collectText(line)}" cannot wrap`);
-  }
-  const detail = lines[1];
-  assert.match(String(detail.props.className), /truncate/);
-  assert.match(String(detail.props.className), /\bcol-start-2\b/, "the detail sits in the text column, under the label");
-  assert.doesNotMatch(String(detail.props.className), /\bp[lxs]?-\d/, "no indent padding stands in for the column");
-  assert.equal(detail.props.title, collectText(detail).trim());
+  test("the columns read Channel, Status, the window peak, the busiest recent day and the quiet time, with no bar", async () => {
+    const tree = await renderBody();
+    const [table] = findNodes(tree, (n) => n.type === "Table");
+
+    assert.deepEqual(Array.from(table.props.columns as { label: string }[], (col) => col.label), ["Channel", "Status", "Peak, 7d", "Busiest, 2d", "Quiet"]);
+    assert.equal(findNodes(tree, (n) => n.type === "BulletBar").length, 0);
+  });
+
+  test("silent rows lead, and each row reads its name, state word and figures with units", async () => {
+    assert.deepEqual(getRows(await renderBody()), [
+      ["subagent-stop", "Silent", "640/day", "0/day", "30h"],
+      ["structuredoutput-completion", "Recording", "1,204/day", "171/day", "3h"],
+      ["transcript-synthesis", "Below floor", "12/day", "4/day", "50h"],
+    ]);
+  });
+
+  test("each channel name appears once, never cut short", async () => {
+    const tree = await renderBody();
+    for (const channel of channels) {
+      const names = findNodes(tree, (n) => n.type === "MachineString" && collectText(n) === channel.attribution_source);
+      assert.equal(names.length, 1, channel.attribution_source);
+      assert.equal(findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("truncate")).length, 0);
+    }
+  });
 });
 
 test("the task ledger scrolls with the page, never inside a box of its own", async () => {
@@ -452,39 +606,6 @@ test("the task ledger scrolls with the page, never inside a box of its own", asy
   const classes = String(card.props.className).split(" ");
   assert.ok(classes.includes("[&>.card-body]:max-h-none"), "no height cap on its body");
   assert.ok(classes.includes("[&>.card-body]:overflow-y-visible"), "no inner vertical scroll");
-});
-
-test("each recording channel's busiest recent day is drawn against the watch floor", async () => {
-  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
-  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
-  const floor = 100;
-  const rows = [
-    { name: "a channel above the floor", source: "structuredoutput-completion", peak: 678 },
-    { name: "a channel just under the floor", source: "hook-input", peak: 99 },
-    { name: "a channel exactly at the floor", source: "completion-synthesized", peak: 100 },
-    { name: "a channel that wrote nothing recently", source: "budget-truncation", peak: 0 },
-  ];
-  const channels = rows.map((row) => ({
-    attribution_source: row.source, recent_peak_daily_count: row.peak, peak_daily_count: row.peak + 40,
-    silent_hours: 2, eligible: row.peak >= floor, alerting: false,
-  }));
-  const data = { days: 30, channels, alerting: [], thresholds: { eligibility_daily_floor: floor, eligibility_recency_days: 2, silence_hours: 24 } };
-  const state = { status: "ready", busy: false, data, error: null };
-  const tree = renderScreen(create(mod.ChannelLivenessBody as Component, { state, onRetry: () => undefined })) as RenderedNode;
-
-  const text = collectText(tree);
-  assert.match(text, /last 2d/, "the block names its window");
-  assert.match(text, /100\/day/, "the block names the floor");
-  const bars = findNodes(tree, (n) => n.type === "BulletBar");
-  assert.equal(bars.length, rows.length, "one bar per channel");
-  for (const row of rows) {
-    const bar = bars.find((b) => String(b.props.ariaLabel ?? "").includes(row.source));
-    assert.ok(bar, `${row.name}: has a bar`);
-    const { value, target } = bar.props as { value: number; target: number };
-    assert.ok(value >= 0 && value <= 1 && target > 0 && target <= 1, `${row.name}: bar stays on its track`);
-    assert.equal(value >= target, row.peak >= floor, `${row.name}: fill reaches the floor marker only at or above the floor`);
-    assert.equal(bar.props.tone, "data", `${row.name}: the busiest day is a quantity → the data colour; liveness rides the row's glyph and word`);
-  }
 });
 
 function getDecl(body: string, prop: string): string | undefined {
@@ -501,8 +622,8 @@ describe("the screen's own stylesheet keeps to the motion standard", async () =>
       .map((prop) => ({ selector, prop, value: getDecl(body, prop) ?? "" })),
   );
 
-  test("the scan finds the sheet's moving rules", () => {
-    assert.ok(moving.some((m) => m.prop === "animation") && moving.some((m) => m.prop === "transition"));
+  test("the scan finds the sheet's one moving rule, a row transition, and no loop of its own", () => {
+    assert.deepEqual(moving.map((m) => `${m.selector} ${m.prop}`), [".outcome-row transition"]);
   });
 
   for (const { selector, prop, value } of moving) {
@@ -518,6 +639,21 @@ describe("the screen's own stylesheet keeps to the motion standard", async () =>
   }
 });
 
+test("the daily chart's idle hint fits the word cap, and the arrow-key note is the chart's description, not its name", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const grid = [{ day: "2026-11-23", total: 4, counts: {} }, { day: "2026-11-24", total: 6, counts: {} }];
+  const tree = renderScreen(create(mod.AttributionDailyChart as Component, { grid })) as RenderedNode;
+  const [hint] = findNodes(tree, (n) => n.props["aria-live"] === "polite");
+  const [plot] = findNodes(tree, (n) => n.props.role === "img");
+  const [note] = findNodes(tree, (n) => n.props.id !== undefined && n.props.id === plot.props["aria-describedby"]);
+
+  assert.ok(collectText(hint).trim().split(/\s+/).length <= 12, collectText(hint));
+  assert.match(collectText(note), /arrow keys/);
+  assert.match(String(note.props.className), /\bsr-only\b/);
+  assert.doesNotMatch(String(plot.props["aria-label"]), /arrow keys/);
+});
+
 test("a link in an outcome body draws in ink with a currentColor underline, never the user-picked accent", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const css = findNodes(tree, (n) => n.type === "style").map(collectText).join("\n");
@@ -529,26 +665,38 @@ test("a link in an outcome body draws in ink with a currentColor underline, neve
   assert.doesNotMatch(link, /--accent/);
 });
 
-test("a loading skeleton pulses through its gated class, never through an inline animation", async () => {
+test("while the first read is in flight, the ledger and Failures by agent draw still skeleton rows under their real heads, and no region pulses", async () => {
   const { tree } = await renderOutcomesScreen(0);
-  const inline = findNodes(tree, (n) => (n.props.style as Record<string, unknown> | undefined)?.animation !== undefined);
-  const pulsing = findNodes(tree, (n) => String(n.props.className ?? "").split(/\s+/).includes("skel-pulse-o"));
+  const skeletonHeads = findNodes(tree, (n) => n.type === "Table")
+    .filter((table) => findNodes(table, (n) => n.type === "SkeletonRows").length > 0)
+    .map((table) => findNodes(table, (n) => n.type === "th").map((th) => collectText(th).trim()).filter(Boolean).join(", "));
+  const animated = findNodes(tree, (n) => (n.props.style as Record<string, unknown> | undefined)?.animation !== undefined
+    || /\bskel-pulse/.test(String(n.props.className ?? "")));
 
-  assert.ok(pulsing.length > 0, "the loading screen draws pulsing skeletons");
-  assert.equal(inline.length, 0, "no element animates through its own style");
+  assert.deepEqual(skeletonHeads.sort(), [
+    "Agent, Failure rate, Failed, Blocked, Open caveats, Total records",
+    "Time, Agent, Task type, Result, Why, Summary, Actions",
+  ]);
+  const ledgerWidths = findNodes(tree, (n) => n.type === "Table" && n.props.caption === "Loading outcome records")
+    .map((table) => Array.from(table.props.widths as unknown[], (width) => width === undefined));
+  assert.deepEqual(ledgerWidths, [[false, false, false, false, false, true, false]], "the skeleton sizes every ledger column but Summary");
+  assert.equal(animated.length, 0, "a skeleton is still; only the shared loading status turns");
 });
 
-describe("the Record attribution head reads None only over a read window with no records, Not loaded with its cause after a failed read or a payload without its window summary, and nothing while the first read is in flight", () => {
+describe("the Record attribution head names the missing-report level with no rate or window: faint None with no mark only over a read window with no records, faint Not loaded with its cause and no mark after a failed read or a payload without its window summary, and nothing while the first read is in flight", () => {
   const rows = [
-    { name: "failed", state: { status: "error", busy: false, data: null, error: { message: SERVER_ERROR } }, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false, title: SERVER_ERROR },
-    { name: "read, no attributed records", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } }, error: null }, kinds: [], text: /None$/, hasGlyph: true, isBodyEmpty: true },
-    { name: "read, a payload without its window summary", state: { status: "ready", busy: false, data: { days_series: [] }, error: null }, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false, title: "no window summary", isBodyEmpty: false },
-    { name: "read, a measured share", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } }, error: null }, kinds: [], text: /1\.2% /, hasGlyph: true, isBodyEmpty: false },
+    { name: "failed", state: { status: "error", busy: false, data: null, error: { message: SERVER_ERROR } }, kinds: ["not-loaded"], text: /Not loaded/, isRead: false, title: SERVER_ERROR },
+    { name: "read, no attributed records", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } }, error: null }, kinds: [], text: /None$/, isRead: true, isBodyEmpty: true },
+    { name: "read, a payload without its window summary", state: { status: "ready", busy: false, data: { days_series: [] }, error: null }, kinds: ["not-loaded"], text: /Not loaded/, isRead: false, title: "no window summary", isBodyEmpty: false },
+    { name: "read, a share under the watch band", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } }, error: null }, kinds: [], text: /Missing reports\s+normal$/, isRead: true, isBodyEmpty: false },
+    { name: "read, a share in the watch band", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.05, total_attributed: 81 } }, error: null }, kinds: [], text: /Missing reports\s+high$/, isRead: true, isBodyEmpty: false },
+    { name: "read, a share past the watch band", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.2, total_attributed: 81 } }, error: null }, kinds: [], text: /Missing reports\s+critical$/, isRead: true, isBodyEmpty: false },
   ];
+  const severityWord = (ui.UI as { ALERT_SEVERITY_WORD: Record<string, string> }).ALERT_SEVERITY_WORD;
   const renderCard = async (state: unknown) => {
     const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
     const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
-    return renderScreen(create(mod.AttributionHealthCard as Component, { state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
+    return renderScreen(create(mod.AttributionHealthBlock as Component, { state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
   };
   const getHeads = (tree: RenderedNode) => findNodes(tree, (n) => n.props["data-role"] === "head-status");
 
@@ -560,7 +708,7 @@ describe("the Record attribution head reads None only over a read window with no
 
   test("a payload without its window summary: the body reads Not loaded with the same cause, as the head does", async () => {
     const tree = await renderCard({ status: "ready", busy: false, data: { days_series: [] }, error: null });
-    const [head] = getHeads(tree);
+    const head = getBlockHead(tree);
     const bodyAbsent = findNodes(tree, (n) => n.type === "AbsentValue").filter((n) => !findNodes(head, (h) => h === n).length);
     assert.deepEqual(bodyAbsent.map((n) => n.props.kind), ["not-loaded"]);
     assert.ok(String(bodyAbsent[0]?.props.title).includes("no window summary"), "the body states the cause in its title");
@@ -569,15 +717,22 @@ describe("the Record attribution head reads None only over a read window with no
   for (const row of rows) {
     test(row.name, async () => {
       const tree = await renderCard(row.state);
+      const isMarked = row.isRead && row.isBodyEmpty !== true;
       const heads = getHeads(tree);
-      assert.equal(heads.length, 1);
-      const [status] = heads;
+      assert.equal(heads.length, isMarked ? 1 : 0, "a status mark only over a read window with records");
+      const status = isMarked ? heads[0] : getBlockHead(tree);
       const absent = findNodes(status, (n) => n.type === "AbsentValue");
-      const elementChildren = status.children.filter((child) => typeof child !== "string");
-      assert.deepEqual(absent.map((n) => n.props.kind), row.kinds);
+      assert.deepEqual(absent.map((n) => n.props.kind), isMarked ? [] : [...row.kinds, ...(row.isRead ? ["none"] : [])]);
       assert.match(collectText(status).trim(), row.text);
-      assert.doesNotMatch(collectText(status), row.hasGlyph ? /Not loaded/ : /None/);
-      assert.equal(elementChildren.length, row.hasGlyph ? 2 : 1, "the glyph, then the sentence as one inline element");
+      assert.doesNotMatch(collectText(status), /%|days/, "no rate and no window in the head");
+      assert.doesNotMatch(collectText(tree), /remaining/, "no Untraceable sentence beside its stat");
+      assert.doesNotMatch(collectText(status), row.isRead ? /Not loaded/ : /None/);
+      if (isMarked) {
+        const tone = String(status.props["data-tone"]);
+        assert.notEqual(tone, "neutral", "a read window carries its band's tone");
+        assert.ok(collectText(status).trimStart().startsWith(`${severityWord[tone]}: `), "the severity word is read first");
+        assert.equal(status.children.filter((child) => typeof child !== "string").length, 2, "the glyph, then the sentence as one inline element");
+      }
       if (row.title) assert.ok(String(absent[0]?.props.title).includes(row.title), "the failed read's own cause is in the title");
       if (row.isBodyEmpty !== undefined) {
         const isBodyEmpty = /No attributed runs in this period/.test(collectText(tree));

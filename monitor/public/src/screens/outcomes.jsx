@@ -97,12 +97,12 @@ const GRADER_BREAKDOWN_META = {
 
 // downgrade_origin 분포 순서 + 메타 — cross-analysis downgrade_breakdown 소비. writer_true_downgraded
 // (작성자 pass 주장 ↔ grader 불일치)가 가장 actionable. not_recorded(레거시 NULL)는 disagreement 아님 → muted.
-const DOWNGRADE_BREAKDOWN_ORDER = ['writer_true_downgraded', 'writer_false', 'synthesized', 'not_recorded'];
-const DOWNGRADE_BREAKDOWN_META = {
-  writer_true_downgraded: { label: 'Agent claimed pass, check disagreed', icon: 'warn',   colorVar: '--warn'  },
-  writer_false:           { label: 'Agent reported its own failure',      icon: 'minus',  colorVar: '--dim'   },
-  synthesized:            { label: 'Rebuilt by the harness, no report',   icon: 'circle', colorVar: '--faint' },
-  not_recorded:           { label: 'Older record, source not tracked',    icon: 'minus',  colorVar: '--faint' },
+// writer_true_downgraded is left out: the Check failed stat already counts it
+const DOWNGRADE_BREAKDOWN_ORDER = ['writer_false', 'synthesized', 'not_recorded'];
+const DOWNGRADE_BREAKDOWN_LABELS = {
+  writer_false: 'Agent reported its own failure',
+  synthesized:  'Rebuilt by the harness, no report',
+  not_recorded: 'Older record, source not tracked',
 };
 
 // grader_verdict 문자열 → 표시 메타 조회. NULL/미인식 drift → 레거시 muted 폴백 (crit 회귀 차단).
@@ -121,7 +121,7 @@ function GlyphO({ name, size = 12, className = '' }) {
 
 // Pagination — 테이블 응답성 보존.
 const PAGE_LIMIT_DEFAULT = 50;
-// Needs-you rows shown before 'Show all' — a full page of them buries Routine below the fold.
+// Needs-you rows shown before 'Show N more' — a full page of them buries Routine below the fold.
 const NEEDS_YOU_PAGE_CAP = 10;
 
 // Sort options — the backend allowlist's wire format (no trigger → hash → URL conversion)
@@ -173,7 +173,7 @@ function buildClosureState(state, action) {
   return state;
 }
 
-// colorVar(--ok/--warn/--crit/--info) → HeadStatusO glyph · BulletBar fill tone name · non-tone (--dim/--faint/--accent) → 'neutral'
+// colorVar(--ok/--warn/--crit/--info) → head Status tone · non-tone (--dim/--faint/--accent) → 'neutral'
 function toneFromColorVarO(colorVar) {
   const t = String(colorVar || '').replace(/^--/, '');
   return (t === 'ok' || t === 'warn' || t === 'crit' || t === 'info') ? t : 'neutral';
@@ -186,45 +186,31 @@ const ANALYTICS_KPI_ORDER = ['done', 'done_with_concerns', 'blocked', 'fail'];
 // 의미: literal_omission = actionable 위생 신호 · attribution_loss = 잔존 버그 신호(감소 모니터) · synthesized = 복구 산물(실패 아님).
 const ATTRIBUTION_CATEGORY_ORDER = ['healthy', 'attribution_loss', 'literal_omission', 'synthesized'];
 const ATTRIBUTION_CATEGORY_META = {
-  healthy:          { label: 'Recorded properly', symbol: '✓', icon: 'check', colorVar: '--ok'   },
-  attribution_loss: { label: 'Untraceable',       symbol: 'ℹ', icon: 'info',  colorVar: '--info' },
-  literal_omission: { label: 'Missing report',    symbol: '✕', icon: 'x',     colorVar: '--crit' },
-  synthesized:      { label: 'Reconstructed',     symbol: '⚠', icon: 'warn',  colorVar: '--warn' },
+  healthy:          { label: 'Recorded',      symbol: '✓', icon: 'check', colorVar: '--ok'   },
+  attribution_loss: { label: 'Untraceable',   symbol: 'ℹ', icon: 'info',  colorVar: '--info' },
+  literal_omission: { label: 'Missing',       symbol: '✕', icon: 'x',     colorVar: '--crit' },
+  synthesized:      { label: 'Reconstructed', symbol: '⚠', icon: 'warn',  colorVar: '--warn' },
 };
 
 // literal_omission 선택 기간 비율 → 심각도 밴드 (분모 = 선택 기간 전체 창).
 const ATTRIBUTION_OMISSION_BANDS = [
-  { max: 0.03,     colorVar: '--ok',   label: 'OK'          },
-  { max: 0.08,     colorVar: '--warn', label: 'Watch'       },
-  { max: Infinity, colorVar: '--crit', label: 'Investigate' },
+  { max: 0.03,     colorVar: '--ok',   label: 'normal'   },
+  { max: 0.08,     colorVar: '--warn', label: 'high'     },
+  { max: Infinity, colorVar: '--crit', label: 'critical' },
 ];
-
-// attribution_loss 노트 컨텍스트 (정적 문구 — 건수·비율은 window_summary 에서 라이브 산출).
-const ATTRIBUTION_LOSS_CONTEXT = 'remaining';
 
 // Channel liveness 표시 메타 — 3-상태 듀얼인코딩(기호+텍스트, 색 단독 의존 금지).
 // 판정(alerting/eligible)은 서버가 내리고 카드는 그 값만 읽는다 → 임계값이 프런트에 재등장하지 않음.
 const CHANNEL_LIVENESS_META = {
-  alerting: { label: 'Silent',      symbol: '✕', icon: 'x',     colorVar: '--crit' },
-  live:     { label: 'Recording',   symbol: '✓', icon: 'check', colorVar: '--ok'   },
-  low:      { label: 'Below floor', symbol: 'ℹ', icon: 'info',  colorVar: '--info' },
+  alerting: { label: 'Silent',      colorVar: '--crit' },
+  live:     { label: 'Recording',   colorVar: '--ok'   },
+  low:      { label: 'Below floor', colorVar: '--info' },
 };
 
 // 채널 1건 → 표시 메타. eligible 하지 않은 채널의 침묵은 뉴스가 아니므로 'low' 로 내린다.
 function channelLivenessMetaO(channel) {
   if (channel.alerting) return CHANNEL_LIVENESS_META.alerting;
   return channel.eligible ? CHANNEL_LIVENESS_META.live : CHANNEL_LIVENESS_META.low;
-}
-
-// window_summary.attribution_loss_rate × total_attributed → '{count} (~{rate}%) {context}' 라이브 노트.
-// rate null(분모 0) → 컨텍스트만 표기 (수치 fabrication 회피).
-function buildAttributionLossNoteO(lossRate, totalAttributed) {
-  if (lossRate === null || lossRate === undefined || Number.isNaN(Number(lossRate))) {
-    return ATTRIBUTION_LOSS_CONTEXT;
-  }
-  const rate  = Number(lossRate);
-  const count = Math.round(rate * (Number(totalAttributed) || 0));
-  return `${formatIntO(count)} (~${formatPctO(rate * 100)}) ${ATTRIBUTION_LOSS_CONTEXT}`;
 }
 
 // literal_omission_breakdown → 'Missing report' 세부 3-분해 (budget-kill / truncated / missing).
@@ -381,8 +367,6 @@ function crosstabConfidenceKeyO(confidence) {
 
 // 화면 전용 inline CSS — render 마다 string 재할당 회피 위해 모듈 상수.
 const SCREEN_OUTCOMES_CSS = `
-@keyframes skelPulseO { 0%,100%{opacity:.7} 50%{opacity:.35} }
-.skel-pulse-o { animation: skelPulseO 1.4s ease-in-out infinite; }
 .outcome-md { font-size: var(--fs-body); line-height: 1.6; color: rgb(var(--ink)); font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif; }
 /* md 헤딩 3레벨 → title 토큰 공통 (동일 content-level) · 시각 위계는 font-weight 600 + margin 으로 보존 */
 .outcome-md h1, .outcome-md h2, .outcome-md h3, .outcome-md h4 { font-weight: 600; margin: var(--space-3) 0 var(--space-1_5); line-height: 1.3; }
@@ -401,7 +385,6 @@ const SCREEN_OUTCOMES_CSS = `
 .outcome-row { transition: background 120ms; }
 .outcome-row:hover { background: rgb(var(--accent) / 0.06); }
 @media (prefers-reduced-motion: reduce) {
-  .skel-pulse-o { animation: none; }
   .outcome-row { transition: none; }
 }
 `;
@@ -624,13 +607,9 @@ function ScreenOutcomes({ onNav }) {
   useEffectO(() => {
     if (isSearchReady) setPage((held) => getClampedPageO(held, totalMatched, PAGE_LIMIT_DEFAULT));
   }, [isSearchReady, totalMatched]);
-  // 미적재·실패 → null: 섹션은 페이지 분할로 되돌아가고 헤더가 'on this page' 로 범위를 밝힌다.
+  // not read or failed → null: Needs you falls back to the page's own split
   const ledgerNeedsYou = needsYouState.status === 'ready'
-    ? {
-      rows: needsYouState.data?.rows ?? [],
-      total: Number(needsYouState.data?.total) || 0,
-      windowLabel: /^\d+$/.test(String(filter.days)) ? `${filter.days}d` : 'all time',
-    }
+    ? { rows: needsYouState.data?.rows ?? [], total: Number(needsYouState.data?.total) || 0 }
     : null;
   const needsYouCap = isNeedsYouExpanded ? null : NEEDS_YOU_PAGE_CAP;
   // drawer Prev/Next + counter walk the grouped order the ledger draws, not the search order
@@ -659,7 +638,7 @@ function ScreenOutcomes({ onNav }) {
   // keyed by region card, not payload → one payload feeding four cards is one outage, and each covered card goes quiet
   const sharedFailure = getSharedFailure(buildRegionFailuresO({
     'the status band': analyticsState, 'the needs-you count': attentionState, 'the record ledger': searchState,
-    'needs-you records': needsYouState, 'by-agent failures': analyticsState, 'reporting health': attributionState,
+    'needs-you records': needsYouState, 'by-agent failures': analyticsState, 'record attribution': attributionState,
     'recording channels': channelLivenessState, 'check results': analyticsState, 'cross table': analyticsState,
     'run events': loopEventsState,
   }));
@@ -743,25 +722,29 @@ function ScreenOutcomes({ onNav }) {
       <div className="mt-section">
         <AgentFailureTableO state={analyticsState} {...regionRetry}/>
       </div>
-      <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)} className="mt-section">
-        <window.UI.SplitRow ratio="1:1" layout="equal">
-          <AttributionHealthCard state={attributionState} period={analyticsPeriod} {...regionRetry}/>
-          <ChannelLivenessCard state={channelLivenessState} {...regionRetry}/>
-        </window.UI.SplitRow>
-        <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown" sub="Budget-killed subagents">
-          <AttributionBreakdownO state={attributionState}/>
-        </window.UI.Disclosure>
+      <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState, attributionState)} className="mt-section">
+        <window.UI.Stack>
+          <window.UI.SplitRow ratio="1:1" layout="divided">
+            <AttributionHealthBlock state={attributionState} period={analyticsPeriod} {...regionRetry}/>
+            <ChannelLivenessBlock state={channelLivenessState} {...regionRetry}/>
+          </window.UI.SplitRow>
+          <window.UI.Disclosure kind="detail" level={3} isInline title="Daily breakdown" sub="Budget-killed subagents">
+            <AttributionBreakdownO state={attributionState}/>
+          </window.UI.Disclosure>
+        </window.UI.Stack>
       </window.UI.Disclosure>
 
       <window.UI.Disclosure kind="status" title="Self-report quality" sub={selfReportSummaryO(analyticsState)} className="mt-section">
-        <window.UI.SplitRow ratio="1:1" layout="content">
-          <GraderBreakdownCard state={analyticsState} {...regionRetry}/>
-          <CrosstabCard state={analyticsState} {...regionRetry}/>
-        </window.UI.SplitRow>
-        <window.UI.Disclosure kind="detail" level={3} title="By task type"
-          tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
-          <TaskTypeGraderCrosstabO rows={analyticsState.data?.overall?.task_type_grader_breakdown}/>
-        </window.UI.Disclosure>
+        <window.UI.Stack>
+          <window.UI.SplitRow ratio="1:1" layout="divided">
+            <GraderBreakdownBlock state={analyticsState} {...regionRetry}/>
+            <CrosstabBlock state={analyticsState} {...regionRetry}/>
+          </window.UI.SplitRow>
+          <window.UI.Disclosure kind="detail" level={3} isInline title="By task type"
+            tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
+            <TaskTypeGraderCrosstabO rows={analyticsState.data?.overall?.task_type_grader_breakdown}/>
+          </window.UI.Disclosure>
+        </window.UI.Stack>
       </window.UI.Disclosure>
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
@@ -842,10 +825,15 @@ function getUnloadedSummaryO(status) {
   return status === 'loading' ? 'Loading…' : 'Unavailable';
 }
 
-function reportingHealthSummaryO(channelLivenessState) {
-  if (channelLivenessState.status !== 'ready') return getUnloadedSummaryO(channelLivenessState.status);
-  const alerting = channelLivenessState.data?.alerting || [];
-  return alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All channels recording';
+// the fold's worst state across both blocks, never a repeat of a block's own all-clear → null when nothing is wrong
+function reportingHealthSummaryO(channelLivenessState, attributionState) {
+  const alerting = channelLivenessState.status === 'ready' ? channelLivenessState.data?.alerting || [] : [];
+  if (alerting.length > 0) return `${formatIntO(alerting.length)} ${alerting.length === 1 ? 'channel' : 'channels'} silent`;
+  const summary = attributionState.status === 'ready' ? attributionState.data?.window_summary : null;
+  const band = summary ? getAttributionOmissionBandO(summary.literal_omission_rate) : null;
+  if (band && band.colorVar !== '--ok') return `Missing reports ${band.label}`;
+  const unloaded = [channelLivenessState, attributionState].find((state) => state.status !== 'ready');
+  return unloaded ? getUnloadedSummaryO(unloaded.status) : null;
 }
 
 function selfReportSummaryO(analyticsState) {
@@ -1209,51 +1197,51 @@ const AGENT_FAILURE_COLUMNS_O = Object.freeze([
   { key: 'caveats', label: 'Open caveats', isNumeric: true },
   { key: 'total', label: 'Total records', isNumeric: true },
 ]);
+// loading and loaded tables share these → no column moves when rows land; Agent takes the slack, the numbers shrink to their content
+const AGENT_FAILURE_WIDTHS_O = Object.freeze([undefined, '40%', '1%', '1%', '1%', '1%']);
 // six numeric columns stop fitting under this width → each agent stacks onto a two-line item, no column lost to the wrapper clip
 const AGENT_FAILURE_STACK_BELOW_PX = 560;
 // .tbl--own-face: the .tbl cell geometry under this page's meta-step body and dim one-line head, with no clickable-row hover.
 // separate borders: a collapsed border would not travel with the sticky header row
 const OWN_FACE_TABLE_CLASS_O = 'tbl--own-face fs-meta border-separate border-spacing-0 [&_thead_th]:text-dim [&_thead_th]:font-medium [&_thead_th]:whitespace-nowrap';
 
-// 적재 중에도 표의 모양을 유지 — 빈 본문은 '실패한 agent 없음' 으로 읽힌다.
-function AgentFailureSkeletonO() {
-  const { Table, TableRow, TableCell } = window.UI;
-  const rows = (view) => [0, 1, 2].map((i) => (
-    <TableRow key={i} view={view}>
-      <TableCell view={view} kind="span">
-        <div className="skel-pulse-o" style={{ height: 12, borderRadius: 4, background: 'rgb(var(--sunken))' }}/>
-      </TableCell>
-    </TableRow>
-  ));
-  return <Table caption="Loading by-agent failures" columns={AGENT_FAILURE_COLUMNS_O} isHeadSticky className={OWN_FACE_TABLE_CLASS_O}
-    bodies={[{ key: 'skeleton', rows, isBusy: true, className: 'tbl-compact' }]}/>;
-}
-
 function AgentFailureBodyO({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
-  if (view === 'loading') return <AgentFailureSkeletonO/>;
+  // the table keeps its shape while loading — an empty body would read as 'no agent failed'
+  if (view === 'loading') {
+    return <window.UI.Table caption="Loading by-agent failures" columns={AGENT_FAILURE_COLUMNS_O} widths={AGENT_FAILURE_WIDTHS_O}
+      isHeadSticky className={OWN_FACE_TABLE_CLASS_O}
+      bodies={[{ key: 'skeleton', rows: <window.UI.SkeletonRows rows={3} columns={AGENT_FAILURE_COLUMNS_O.length}/>, isBusy: true, className: 'tbl-compact' }]}/>;
+  }
   if (view === 'error') {
     return <RegionErrorO source="by-agent failures" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.agentFailures} isInset/>;
   }
 
   const rows = buildAgentFailureRowsO(state.data?.agentStack, state.data?.overall?.by_agent_top_10);
   if (rows.length === 0) {
-    return <EmptyStateO message="No registry agent failed or blocked in this window."/>;
+    return <window.UI.EmptyState message="No registry agent failed or blocked in this window."/>;
   }
 
   // the table's .tbl-wrap clips sideways and never scrolls → the sticky head reaches the 70vh card body, the scroller that does
-  const getRows = (tableView) => rows.map((row) => <AgentFailureRowO key={row.agent} row={row} view={tableView}/>);
-  return <window.UI.Table caption="Failure rate by registry agent, worst first" columns={AGENT_FAILURE_COLUMNS_O} isHeadSticky
+  const maxRate = getFailureRateMaxO(rows);
+  const getRows = (tableView) => rows.map((row) => <AgentFailureRowO key={row.agent} row={row} maxRate={maxRate} view={tableView}/>);
+  return <window.UI.Table caption="Failure rate by registry agent, worst first" columns={AGENT_FAILURE_COLUMNS_O} widths={AGENT_FAILURE_WIDTHS_O} isHeadSticky
     stackBelowPx={AGENT_FAILURE_STACK_BELOW_PX} className={OWN_FACE_TABLE_CLASS_O}
     bodies={[{ key: 'agents', rows: getRows, className: 'tbl-compact' }]}/>;
 }
 
-function AgentFailureRowO({ row, view }) {
+// the worst sampled rate scales the bars → a low-sample row never shrinks the others; it fills at most its whole track
+function getFailureRateMaxO(rows) {
+  const sampled = rows.filter((row) => !row.isLowSample);
+  return Math.max(...(sampled.length > 0 ? sampled : rows).map((row) => row.rate));
+}
+
+function AgentFailureRowO({ row, maxRate, view }) {
   const { TableRow, TableCell } = window.UI;
   return (
     <TableRow view={view} className="outcome-row">
       <TableCell view={view} className="text-ink truncate" title={row.agent}><window.UI.AgentName name={row.agent}/></TableCell>
-      <AgentFailureRateCellO row={row} view={view}/>
+      <AgentFailureRateCellO row={row} maxRate={maxRate} view={view}/>
       <TableCell view={view} textRole="meta" label="Failed" isNumeric className="text-ink">{formatIntO(row.failed)}</TableCell>
       <TableCell view={view} textRole="meta" label="Blocked" isNumeric className="text-ink">{formatIntO(row.blocked)}</TableCell>
       <OpenCaveatCellO count={row.openCaveats} view={view}/>
@@ -1262,27 +1250,25 @@ function AgentFailureRowO({ row, view }) {
   );
 }
 
-// Bar fill = the shared breakage rule over this row's own count → crit only over the stated share, else a quantity in --data · low-sample rows claim no tone.
-function getFailureRateFillO(row) {
-  if (row.isLowSample) return '--faint';
-  const { outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
-  return outcomeShareTone(row.failed + row.blocked, row.total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit') ? '--crit' : '--data';
-}
+// the widest slot: a low-sample mark under the low-n floor beside a full share, "(n=29) 100.0%"
+const FAILURE_RATE_SLOT_WIDTH_O = '14ch';
 
-function AgentFailureRateCellO({ row, view }) {
-  const { LowSampleMark, TableCell } = window.UI;
-  const pct = row.rate * 100;
+// bar = a neutral quantity against the column's worst rate · severity = a crit word over the breakage share · low-sample rows claim none
+function AgentFailureRateCellO({ row, maxRate, view }) {
+  const { Bar, StatusDot, LowSampleMark, TableCell, outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
+  const isHigh = !row.isLowSample && Boolean(outcomeShareTone(row.failed + row.blocked, row.total, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit'));
+  const runsNote = `${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`;
   return (
-    <TableCell view={view} textRole="meta" label="Failure rate" isNumeric
-      title={`${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`}>
-      {/* the share ends the cell → every rate shares one right edge under its right-aligned header; the bar and the low-sample mark lead it */}
-      <span className="flex items-center gap-control">
-        <span aria-hidden="true" className="flex-1" style={{ minWidth: 40, height: 6, borderRadius: 3, background: 'rgb(var(--sunken))' }}>
-          <span style={{ display: 'block', height: '100%', width: `${Math.min(100, pct)}%`, borderRadius: 3, background: `rgb(var(${getFailureRateFillO(row)}))` }}/>
+    <TableCell view={view} textRole="meta" label="Failure rate" isNumeric title={runsNote}>
+      {/* the share ends the cell → every rate shares one right edge; the marks and the share sit in one fixed slot → one track length per row */}
+      <div className="flex items-center gap-control">
+        <div className="flex-1" style={{ minWidth: 40 }}><Bar value={row.rate} max={maxRate} ariaLabel={runsNote}/></div>
+        <span className="inline-flex items-center justify-end gap-label-inline tabular-nums whitespace-nowrap" style={{ width: FAILURE_RATE_SLOT_WIDTH_O, flexShrink: 0 }}>
+          {isHigh && <StatusDot status="crit" word="High failure rate"/>}
+          {row.isLowSample && <LowSampleMark n={row.total}/>}
+          <span className={row.isLowSample ? 'text-faint' : 'text-ink'}>{formatRateO(row.rate, 1)}</span>
         </span>
-        <LowSampleMark n={row.total}/>
-        <span className={`tabular-nums whitespace-nowrap ${row.isLowSample ? 'text-faint' : 'text-ink'}`}>{formatRateO(row.rate, 1)}</span>
-      </span>
+      </div>
     </TableCell>
   );
 }
@@ -1302,43 +1288,59 @@ function OpenCaveatCellO({ count, view }) {
 // daily stacked bar (inline SVG, no Recharts) + window summary stat row + literal-omission severity head status (glyph + word)
 // NULL attribution_source rows excluded by the backend (rows older than attribution tracking) → every ratio denominator = total_attributed.
 
-// A card head's own status: glyph + word, tone on the glyph only, no container (design-spec §3 Status)
-const HEAD_STATUS_GLYPHS_O = Object.freeze({ ok: 'circle-check', warn: 'warn', crit: 'x', info: 'info' });
-
-function HeadStatusO({ tone, title, children }) {
-  const glyph = HEAD_STATUS_GLYPHS_O[tone];
-  return <span data-role="head-status" className="inline-flex items-center gap-label-inline fs-meta text-dim" title={title}>
-    {glyph && <span className={`text-${tone}`} aria-hidden="true"><GlyphO name={glyph}/></span>}
-    {/* one inline span → the flex gap sits after the glyph only, never between the sentence's own runs */}
-    <span>{children}</span>
-  </span>;
+// a toned state → the shared head Status · no tone (nothing read, or nothing to count) → its faint word alone, no mark
+function BlockStatusO({ tone, children }) {
+  if (tone) return <window.UI.HeadStatus tone={tone}>{children}</window.UI.HeadStatus>;
+  return <span className="fs-meta text-dim">{children}</span>;
 }
 
-function AttributionHealthCard({ state, period, onRetry, shared }) {
-  const { Card } = window.UI;
-  const badge = getAttributionHeadBadgeO(state, period);
+/**
+ * One block of a status fold's body, with no card box of its own: a level-3 title, its status and ⓘ on the title's line.
+ * @param isFlush - a table body whose edge cells carry the card padding → the head and foot take the same inset
+ */
+function FoldBlockO({ id, title, status, info, isFlush = false, foot, children }) {
+  const { Stack, SectionLabel, CardInfo } = window.UI;
+  const titleId = `${id}-title`;
+  const inset = isFlush ? 'px-card-pad' : '';
 
   return (
-    <div id={REGION_CARD_IDS.attribution} className="mb-section">
-      <Card
-        title="Record attribution"
-        right={badge && (
-          <HeadStatusO
-            tone={toneFromColorVarO(badge.colorVar)}
-            title={`Missing-report (literal_omission) rate, last ${period} days — hygiene signal over the full selected window`}>
-            Missing reports, <window.UI.NoWrap>{period} days</window.UI.NoWrap>: {badge.text}
-          </HeadStatusO>
-        )}>
-        <AttributionHealthBody state={state} onRetry={onRetry} shared={shared}/>
-      </Card>
-    </div>
+    <section id={id} aria-labelledby={titleId} className="min-w-0">
+      <Stack>
+        {/* one head height, the ⓘ box's → split blocks with and without an ⓘ start their title and body on one line */}
+        <div className={`flex flex-wrap items-center gap-label ${inset}`.trim()} style={{ minHeight: 'var(--ctl-min-h)' }}>
+          <SectionLabel level={3} id={titleId}>{title}</SectionLabel>
+          {info && <CardInfo label="How this is counted" describedBy={titleId}>{info}</CardInfo>}
+          {status}
+        </div>
+        {children}
+        {foot && <div className={inset || undefined}>{foot}</div>}
+      </Stack>
+    </section>
+  );
+}
+
+function AttributionHealthBlock({ state, period, onRetry, shared }) {
+  const badge = getAttributionHeadBadgeO(state, period);
+
+  // one inline span → the flex gap sits after the glyph only, never between the sentence's own runs
+  return (
+    <FoldBlockO
+      id={REGION_CARD_IDS.attribution}
+      title="Record attribution"
+      status={badge && (
+        <BlockStatusO tone={badge.colorVar && toneFromColorVarO(badge.colorVar)}>
+          <span>Missing reports {badge.text}</span>
+        </BlockStatusO>
+      )}>
+      <AttributionHealthBody state={state} onRetry={onRetry} shared={shared}/>
+    </FoldBlockO>
   );
 }
 
 // a ready payload without window_summary → nothing read for the window: Not loaded in head and body, never the empty window
 const ATTRIBUTION_NO_SUMMARY_TITLE_O = 'The attribution read landed with no window summary, so the window was not read';
 
-// first read in flight → no head (the body's skeleton is the loading look) · failed or summary-less → Not loaded + its cause ·
+// first read in flight → no head (the body's loading status is the loading look) · failed or summary-less → Not loaded + its cause ·
 // read → the window's rate
 function getAttributionHeadBadgeO(state, period) {
   const { getRegionView, getErrorCopy, AbsentValue } = window.UI;
@@ -1356,10 +1358,10 @@ function getAttributionHeadBadgeO(state, period) {
 function AttributionHealthBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <ChartSkeletonO height={200} label="reporting health"/>;
+    return <window.UI.LoadingPlaceholder label="record attribution" minHeight={200}/>;
   }
   if (view === 'error') {
-    return <RegionErrorO source="reporting health" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.attribution}/>;
+    return <RegionErrorO source="record attribution" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.attribution}/>;
   }
 
   const summary = state.data?.window_summary;
@@ -1370,20 +1372,12 @@ function AttributionHealthBody({ state, onRetry, shared }) {
 
   // 귀속 기록된 실행 0건 (빈 window) → 안내 indicator.
   if (totalAttributed === 0) {
-    return <EmptyStateO message="No attributed runs in this period."/>;
+    return <window.UI.EmptyState message="No attributed runs in this period." className="placeholder--flush-inline"/>;
   }
 
   return (
     <window.UI.Stack>
       <AttributionSummaryRow summary={summary} totalAttributed={totalAttributed}/>
-      <div className="fs-meta text-faint leading-relaxed">
-        <span className="inline-flex items-center gap-label-inline">
-          <span style={{ color: `rgb(var(${ATTRIBUTION_CATEGORY_META.attribution_loss.colorVar}))` }} aria-hidden="true">
-            <GlyphO name={ATTRIBUTION_CATEGORY_META.attribution_loss.icon}/>
-          </span>
-          Untraceable: {buildAttributionLossNoteO(summary?.attribution_loss_rate, totalAttributed)}
-        </span>
-      </div>
       <AttributionDevScopeO devScope={summary?.dev_scope}/>
     </window.UI.Stack>
   );
@@ -1395,7 +1389,7 @@ function AttributionBreakdownO({ state }) {
   if (state.status !== 'ready' || !summary) return null;
 
   if (!(Number(summary.total_attributed) > 0)) {
-    return <EmptyStateO message="No daily breakdown in this period."/>;
+    return <window.UI.EmptyState message="No daily breakdown in this period."/>;
   }
 
   // backend sends active days only → 0-fill into the last ATTRIBUTION_GRID_BARS days.
@@ -1451,6 +1445,9 @@ function StatGlyphLabelO({ meta }) {
 
 // 일별 stacked-bar — 각 일자 1막대, 4-category 비례 stack (inline SVG, 외부 라이브러리 없음).
 // bar 폭/간격은 grid 길이 기준 자동 분배. 0건 일자는 빈 트랙 표시.
+// one daily chart per screen → a fixed id for its keyboard note
+const DAILY_CHART_KEYS_ID = 'outcomes-daily-chart-keys';
+
 function AttributionDailyChart({ grid }) {
   const { activeIndex, handlers } = useStackedChartReadoutO(grid.length);
   const chartHeight = 132;
@@ -1463,7 +1460,8 @@ function AttributionDailyChart({ grid }) {
   return (
     <figure className="min-w-0 grid gap-x-label-inline" style={{ gridTemplateColumns: `${STACKED_Y_AXIS_WIDTH}px minmax(0, 1fr)` }}>
       <StackedYAxisO barAreaH={barAreaH} chartHeight={chartHeight}/>
-      <div role="img" aria-label={getStackedChartLabelO(grid)} tabIndex={0} style={{ cursor: 'crosshair', minWidth: 0 }} {...handlers}>
+      <div role="img" aria-label={getStackedChartLabelO(grid)} aria-describedby={DAILY_CHART_KEYS_ID} tabIndex={0}
+        style={{ cursor: 'crosshair', minWidth: 0 }} {...handlers}>
       <svg
         width="100%"
         height={chartHeight}
@@ -1523,8 +1521,9 @@ function AttributionDailyChart({ grid }) {
       <div className="col-start-2">
         <StackedChartTicksO grid={grid}/>
         <div aria-live="polite" className="fs-meta text-dim" style={{ minHeight: 18, fontVariantNumeric: 'tabular-nums' }}>
-          {activeIndex === null ? 'Point at a day, or focus the chart and use the arrow keys, to read its counts.' : getStackedDayReadoutO(grid[activeIndex])}
+          {activeIndex === null ? 'Point at a day to read its counts.' : getStackedDayReadoutO(grid[activeIndex])}
         </div>
+        <span id={DAILY_CHART_KEYS_ID} className="sr-only">Focus the chart and use the arrow keys to read each day.</span>
       </div>
     </figure>
   );
@@ -1605,7 +1604,7 @@ function getStackedDayReadoutO(point) {
 
 function getStackedChartLabelO(grid) {
   const total = grid.reduce((sum, point) => sum + (Number(point.total) || 0), 0);
-  return `Daily reporting health, ${grid.length} days, ${total} records. Use the arrow keys to read each day.`;
+  return `Daily reporting health, ${grid.length} days, ${total} records.`;
 }
 
 const EMPTY_DAY_LABEL_NO_RECORDS = 'No records';
@@ -1648,126 +1647,103 @@ function AttributionLegend() {
 // 대시보드에서는 품질 저하처럼 읽혔다. 판정(eligible/alerting)과 임계값은 전부 서버 응답에서
 // 오며 카드는 어떤 수치도 재계산하지 않는다 — doctor §16 과 같은 정의 하나를 공유하기 위함.
 
-function ChannelLivenessCard({ state, onRetry, shared }) {
-  const { Card } = window.UI;
-
+function ChannelLivenessBlock({ state, onRetry, shared }) {
   const badge = getChannelLivenessBadgeO(state);
+  const watchNote = getChannelWatchNoteO(state.data?.thresholds);
+  const hasTable = state.status === 'ready' && Array.isArray(state.data?.channels) && state.data.channels.length > 0;
 
   return (
-    <div id={REGION_CARD_IDS.channels} className="mb-section">
-      <Card
-        title="Recording channels"
-        right={
-          <HeadStatusO
-            tone={badge.tone}
-            title="A high-volume recording channel that stops writing looks like a quality change on every other card here">
-            {badge.text}
-          </HeadStatusO>
-        }>
-        <ChannelLivenessBody state={state} onRetry={onRetry} shared={shared}/>
-      </Card>
-    </div>
+    <FoldBlockO
+      id={REGION_CARD_IDS.channels}
+      title="Recording channels"
+      status={badge && <BlockStatusO tone={badge.tone}>{badge.text}</BlockStatusO>}
+      info={watchNote && <p className="fs-body">{watchNote}</p>}
+      isFlush={hasTable}>
+      <ChannelLivenessBody state={state} onRetry={onRetry} shared={shared}/>
+    </FoldBlockO>
   );
 }
 
-// 'All recording' from an unloaded or failed payload = an unverified all-clear → neutral HeadStatusO with no claim
+function getChannelWatchNoteO(threshold) {
+  if (!threshold) return null;
+  return `Alerts once a channel that exceeded ${formatIntO(threshold.eligibility_daily_floor)} rows/day `
+    + `within the last ${threshold.eligibility_recency_days}d has recorded nothing for ${threshold.silence_hours}h.`;
+}
+
+// first read in flight → no head · failed → Not loaded · no channel read → None · 'All recording' only over a read channel list
 function getChannelLivenessBadgeO(state) {
-  if (state.status !== 'ready') return { tone: 'neutral', text: getUnloadedSummaryO(state.status) };
+  const { getRegionView, AbsentValue } = window.UI;
+  const view = getRegionView(state);
+  if (view === 'loading') return null;
+  if (view === 'error') return { tone: null, text: <AbsentValue kind="not-loaded"/> };
+  const channels = Array.isArray(state.data?.channels) ? state.data.channels : [];
+  if (channels.length === 0) return { tone: null, text: <AbsentValue kind="none"/> };
 
   const alerting = state.data?.alerting || [];
-  const days = state.data?.days;
   const meta = alerting.length > 0 ? CHANNEL_LIVENESS_META.alerting : CHANNEL_LIVENESS_META.live;
-  const text = alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All recording';
-  return { tone: toneFromColorVarO(meta.colorVar), text: days ? `${text} · ${days}d` : text };
+  return { tone: toneFromColorVarO(meta.colorVar), text: alerting.length > 0 ? `Silent: ${alerting.join(', ')}` : 'All recording' };
 }
 
 function ChannelLivenessBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <ChartSkeletonO height={120} label="recording channels"/>;
+    return <window.UI.LoadingPlaceholder label="recording channels" minHeight={120}/>;
   }
   if (view === 'error') {
     return <RegionErrorO source="recording channels" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.channels}/>;
   }
 
-  const channels  = Array.isArray(state.data?.channels) ? state.data.channels : [];
-  const threshold = state.data?.thresholds || null;
-  const days      = state.data?.days;
-
+  const channels = Array.isArray(state.data?.channels) ? state.data.channels : [];
   if (channels.length === 0) {
-    return <EmptyStateO message="No recording channel wrote in this window."/>;
+    return <window.UI.EmptyState message="No recording channel wrote in this window." className="placeholder--flush-inline"/>;
   }
 
   // 침묵한 채널을 먼저 — 조치가 필요한 행이 스크롤 아래로 밀리지 않게.
   const ordered = [...channels].sort((a, b) => Number(b.alerting) - Number(a.alerting));
+  const columns = getChannelColumnsO(state.data?.days, state.data?.thresholds?.eligibility_recency_days);
 
   return (
-    <div>
-      <div className="flex flex-col gap-list">
-        {ordered.map((channel) => (
-          <ChannelLivenessRow key={channel.attribution_source} channel={channel} days={days}/>
-        ))}
-      </div>
-      <ChannelPeakBarsO channels={ordered} threshold={threshold}/>
-      {threshold ? (
-        <div className="fs-meta text-faint mt-block leading-relaxed">
-          Alerts once a channel that exceeded {formatIntO(threshold.eligibility_daily_floor)} rows/day
-          within the last {threshold.eligibility_recency_days}d has recorded nothing
-          for {threshold.silence_hours}h.
-        </div>
-      ) : null}
-    </div>
+    <window.UI.Table caption="Recording channels by state" columns={columns} widths={CHANNEL_WIDTHS_O} className={OWN_FACE_TABLE_CLASS_O}
+      stackBelowPx={CHANNEL_STACK_BELOW_PX}
+      bodies={[{ key: 'body', rows: (view) => ordered.map((channel) => (
+        <ChannelRowO key={channel.attribution_source} channel={channel} view={view}/>
+      )) }]}/>
   );
 }
 
-// busiest recent day per channel against the watch floor → which channels the silence alert covers, at a glance
-function ChannelPeakBarsO({ channels, threshold }) {
-  const { BulletBar } = window.UI;
-  const floor = Number(threshold?.eligibility_daily_floor) || null;
-  const recencyDays = threshold?.eligibility_recency_days;
-  const peaks = channels.map((channel) => Number(channel.recent_peak_daily_count) || 0);
-  const scale = Math.max(floor || 0, 1, ...peaks);
+const CHANNEL_STACK_BELOW_PX = 480;
+// Status and Quiet shrink to their content → the channel name keeps one line
+const CHANNEL_WIDTHS_O = Object.freeze([undefined, '1%', undefined, undefined, '1%']);
 
-  return (
-    <div className="mt-block" role="group" aria-label="Busiest recent day per channel">
-      <div className="fs-meta text-dim mb-label">
-        Busiest day{recencyDays ? `, last ${recencyDays}d` : ''}{floor ? ` · watched from ${formatIntO(floor)}/day` : ''}
-      </div>
-      <div className="flex flex-col gap-list">
-        {channels.map((channel, index) => {
-          const peak = peaks[index];
-          const label = `${channel.attribution_source}: ${formatIntO(peak)}/day${floor ? `, floor ${formatIntO(floor)}/day` : ''}`;
-          return (
-            <div key={channel.attribution_source} className="grid items-center gap-label fs-meta"
-              style={{ gridTemplateColumns: 'minmax(0, 11rem) minmax(0, 1fr) 4.5rem' }}>
-              <span className="text-dim truncate" title={channel.attribution_source}><window.UI.MachineString>{channel.attribution_source}</window.UI.MachineString></span>
-              <BulletBar value={peak / scale} target={floor ? floor / scale : null} ariaLabel={label} tone="data"/>
-              <span className="text-ink tabular-nums text-right">{formatIntO(peak)}/day</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+// window peak over the read window · busiest day over the eligibility recency window — both come with the payload
+function getChannelColumnsO(days, recencyDays) {
+  return [
+    { key: 'channel', label: 'Channel' },
+    { key: 'status', label: 'Status' },
+    { key: 'peak', label: days ? `Peak, ${days}d` : 'Peak', isNumeric: true },
+    { key: 'busiest', label: recencyDays ? `Busiest, ${recencyDays}d` : 'Busiest', isNumeric: true },
+    { key: 'quiet', label: 'Quiet', isNumeric: true },
+  ];
 }
 
-// the recent peak that decides eligibility is drawn in ChannelPeakBarsO, so the row keeps only the window peak + quiet time
-function ChannelLivenessRow({ channel, days }) {
+function ChannelRowO({ channel, view }) {
+  const { TableRow, TableCell, StatusDot, MachineString } = window.UI;
   const meta = channelLivenessMetaO(channel);
-  const silentHours = Math.floor(Number(channel.silent_hours) || 0);
-  const windowPeak = formatIntO(channel.peak_daily_count);
-  const detail = `${windowPeak}/day peak${days ? ` over ${days}d` : ''} · quiet ${formatIntO(silentHours)}h`;
 
-  // two fixed single lines (status + source, then detail) → a narrow column truncates instead of wrapping to 4–6 lines
+  // the dot's sr-only word names the state → the painted word is for sight only
   return (
-    <div className="fs-meta min-w-0 grid items-center gap-x-label" style={{ gridTemplateColumns: 'auto minmax(0, 1fr)' }}>
-      <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-      <div className="flex items-center gap-label whitespace-nowrap min-w-0">
-        <span className="text-ink w-[6.5rem] flex-shrink-0">{meta.label}</span>
-        <span className="text-ink truncate min-w-0" title={channel.attribution_source}><window.UI.MachineString>{channel.attribution_source}</window.UI.MachineString></span>
-      </div>
-      <div className="col-start-2 text-dim tabular-nums truncate" title={detail}>{detail}</div>
-    </div>
+    <TableRow view={view}>
+      <TableCell view={view} kind="row-header" className="whitespace-nowrap font-normal"><MachineString>{channel.attribution_source}</MachineString></TableCell>
+      <TableCell view={view} label="Status">
+        <span className="inline-flex items-center gap-label-inline whitespace-nowrap">
+          <StatusDot status={toneFromColorVarO(meta.colorVar)} word={meta.label} isInText/>
+          <span aria-hidden="true">{meta.label}</span>
+        </span>
+      </TableCell>
+      <TableCell view={view} label="Peak" isNumeric>{formatIntO(channel.peak_daily_count)}/day</TableCell>
+      <TableCell view={view} label="Busiest" isNumeric>{formatIntO(channel.recent_peak_daily_count)}/day</TableCell>
+      <TableCell view={view} label="Quiet" isNumeric>{formatIntO(Math.floor(Number(channel.silent_hours) || 0))}h</TableCell>
+    </TableRow>
   );
 }
 
@@ -1776,18 +1752,16 @@ function ChannelLivenessRow({ channel, days }) {
 //   verified_pass/unverified/verified_fail = graded_total 분모 · not_measured(레거시 NULL) 은 비율 분모 제외.
 //   목적: 측정 산물(unverified/legacy)을 품질 실패로 오독하지 않게 측정 신호를 명시 노출.
 
-function GraderBreakdownCard({ state, onRetry, shared }) {
-  const { Card, getRegionView } = window.UI;
+function GraderBreakdownBlock({ state, onRetry, shared }) {
   // the foot footnotes the drawn breakdown → absent while the body shows loading, error or empty
-  const isReady = getRegionView(state) === 'ready' && Boolean(state.data?.overall?.grader_breakdown);
+  const isReady = window.UI.getRegionView(state) === 'ready' && Boolean(state.data?.overall?.grader_breakdown);
   const segments = isReady ? getDowngradeSegmentsO(state.data.overall.downgrade_breakdown) : [];
 
   return (
-    <div id={REGION_CARD_IDS.checks} className="mb-section">
-      <Card title="Automatic check results" foot={segments.length > 0 && <DowngradeBreakdownRowO segments={segments}/>}>
-        <GraderBreakdownBody state={state} onRetry={onRetry} shared={shared}/>
-      </Card>
-    </div>
+    <FoldBlockO id={REGION_CARD_IDS.checks} title="Automatic check results"
+      info={segments.length > 0 && <DowngradeSourcesO segments={segments}/>}>
+      <GraderBreakdownBody state={state} onRetry={onRetry} shared={shared}/>
+    </FoldBlockO>
   );
 }
 
@@ -1799,7 +1773,7 @@ function getGraderTileKeysO(breakdown) {
 function GraderBreakdownBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <ChartSkeletonO height={120} label="check results"/>;
+    return <window.UI.LoadingPlaceholder label="check results" minHeight={120}/>;
   }
   if (view === 'error') {
     return <RegionErrorO source="check results" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.checks}/>;
@@ -1807,34 +1781,23 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
 
   const breakdown = state.data?.overall?.grader_breakdown;
   if (!breakdown) {
-    return <EmptyStateO message="No check data in this period."/>;
+    return <window.UI.EmptyState message="No check data in this period." className="placeholder--flush-inline"/>;
   }
 
   const gradedTotal = Number(breakdown.graded_total) || 0;
   const stats = getGraderTileKeysO(breakdown).map((key) => {
     const meta  = GRADER_BREAKDOWN_META[key];
     const count = Number(breakdown[key]) || 0;
-    // not_measured (legacy NULL) sits outside the graded_total denominator → no share
-    const pct   = key !== 'not_measured' && gradedTotal > 0 ? (count / gradedTotal * 100) : null;
-    return { key, label: <StatGlyphLabelO meta={meta}/>, value: formatIntO(count), context: pct != null ? formatPctO(pct) : 'not in share denominator' };
+    return { key, label: <StatGlyphLabelO meta={meta}/>, value: formatIntO(count), context: getGraderStatContextO(key, count, gradedTotal) };
   });
 
-  return (
-    <window.UI.Stack gap="label">
-      {/* open, not folded → the column matches the cross table beside it instead of leaving one sentence over a blank card */}
-      <p className="fs-body text-ink">{getGraderSentenceO(breakdown)}</p>
-      <window.UI.StatRow stats={stats}/>
-    </window.UI.Stack>
-  );
+  return <window.UI.StatRow stats={stats}/>;
 }
 
-// checked = a definite verdict (pass or fail) — Auto-check N/A records were graded but not checkable
-function getGraderSentenceO(breakdown) {
-  if (!breakdown) return null;
-  const passed = Number(breakdown.verified_pass) || 0;
-  const failed = Number(breakdown.verified_fail) || 0;
-  const graded = Number(breakdown.graded_total) || 0;
-  return `Checked ${formatIntO(passed + failed)} of ${formatIntO(graded)} records: ${formatIntO(passed)} passed, ${formatIntO(failed)} failed`;
+// a share of graded_total · not_measured (legacy NULL) sits outside it · an empty window → no line under its zero
+function getGraderStatContextO(key, count, gradedTotal) {
+  if (key === 'not_measured') return 'not in share denominator';
+  return gradedTotal > 0 ? formatPctO(count / gradedTotal * 100) : undefined;
 }
 
 // downgrade_origin 분포 서브라인 — grader_verdict 카드에 종속. writer_true_downgraded(작성자 pass
@@ -1846,23 +1809,23 @@ function getDowngradeSegmentsO(breakdown) {
     .filter((s) => s.count > 0);
 }
 
-function DowngradeBreakdownRowO({ segments }) {
-  const { Cluster } = window.UI;
+function DowngradeSourcesO({ segments }) {
+  const { Table, TableRow, TableCell } = window.UI;
   return (
-    <Cluster className="fs-meta tabular-nums">
-      <span className="text-faint">Where each verdict came from</span>
-      {segments.map(({ key, count }) => {
-        const meta = DOWNGRADE_BREAKDOWN_META[key];
-        return (
-          <span key={key} className="inline-flex items-center gap-label-inline text-dim" title={key}>
-            <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-            {meta.label}: {formatIntO(count)}
-          </span>
-        );
-      })}
-    </Cluster>
+    <Table caption="Where each verdict came from" isCaptionShown columns={DOWNGRADE_SOURCE_COLUMNS_O}
+      bodies={[{ key: 'sources', rows: (view) => segments.map(({ key, count }) => (
+        <TableRow key={key} view={view}>
+          <TableCell view={view} kind="row-header" className="font-normal">{DOWNGRADE_BREAKDOWN_LABELS[key]}</TableCell>
+          <TableCell view={view} label="Records" isNumeric className="tabular-nums">{formatIntO(count)}</TableCell>
+        </TableRow>
+      )) }]}/>
   );
 }
+
+const DOWNGRADE_SOURCE_COLUMNS_O = Object.freeze([
+  { key: 'source', label: 'Source' },
+  { key: 'count', label: 'Records', isNumeric: true },
+]);
 
 // a checkable type whose failed checks reach the breakage share (low samples excluded) → crit; else untoned
 function getTaskTypeFoldToneO(rows) {
@@ -1949,9 +1912,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
 // 행 4 (confidence) × 열 3 (metric_pass) = 12 셀 + 합계 행/열 → 5열 이내(라벨+pass+fail+null+합계).
 // polar mismatch(overconfidence high+fail · underconfidence low+pass) → ⚠ 기호 + warn 색조 (dual-encoding).
 
-function CrosstabCard({ state, onRetry, shared }) {
-  const { Card } = window.UI;
-
+function CrosstabBlock({ state, onRetry, shared }) {
   const crosstab   = state.status === 'ready' ? state.data?.crosstab : null;
   const polarTotal = crosstab ? crosstab.polarTotal : 0;
   const confidentFailed = getConfidentFailedO(crosstab);
@@ -1959,33 +1920,33 @@ function CrosstabCard({ state, onRetry, shared }) {
 
   // the meta keeps the share (width capped at "100.0%"; a count widens with the install) → the count rides the hover title
   return (
-    <div id={REGION_CARD_IDS.crosstab} className="mb-section">
-      <Card
-        title="Confident but failed"
-        sub={confidentFailed && (
-          <span title={`${formatIntO(confidentFailed.count)} of ${formatIntO(crosstab.total)} records · ${formatRateO(confidentFailed.share)}`}>
-            {formatRateO(confidentFailed.share)}
-          </span>
-        )}
-        info={<p className="fs-body">Records whose writer reported high confidence while the record's own check failed.</p>}
-        right={
-          state.status === 'ready' && (
-            <HeadStatusO tone="warn">{formatIntO(polarTotal)} mismatches</HeadStatusO>
-          )
-        }
-        // flush only under the table → its edge cells take the card padding; loading, error and empty keep the padded body
-        isFlush={hasTable}
-        foot={hasTable && <CrosstabLegendO/>}>
-        <CrosstabBody state={state} onRetry={onRetry} shared={shared}/>
-      </Card>
-    </div>
+    <FoldBlockO
+      id={REGION_CARD_IDS.crosstab}
+      title="Confident but failed"
+      status={(confidentFailed || state.status === 'ready') && (
+        <span className="inline-flex items-center gap-label-inline fs-meta text-dim">
+          {confidentFailed && (
+            <span title={`${formatIntO(confidentFailed.count)} of ${formatIntO(crosstab.total)} records · ${formatRateO(confidentFailed.share)}`}>
+              {formatRateO(confidentFailed.share)}
+            </span>
+          )}
+          {state.status === 'ready' && (polarTotal > 0
+            ? <window.UI.HeadStatus tone="warn">{formatIntO(polarTotal)} mismatches</window.UI.HeadStatus>
+            : <window.UI.AbsentValue kind="none"/>)}
+        </span>
+      )}
+      info={<p className="fs-body">Records whose writer reported high confidence while the record's own check failed. Empty rows are hidden.</p>}
+      // the table's edge cells carry the card padding → the head takes the same inset; loading, error and empty keep none
+      isFlush={hasTable}>
+      <CrosstabBody state={state} onRetry={onRetry} shared={shared}/>
+    </FoldBlockO>
   );
 }
 
 function CrosstabBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <ChartSkeletonO height={160} label="cross table"/>;
+    return <window.UI.LoadingPlaceholder label="cross table" minHeight={160}/>;
   }
   if (view === 'error') {
     return <RegionErrorO source="cross table" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.crosstab}/>;
@@ -1993,17 +1954,15 @@ function CrosstabBody({ state, onRetry, shared }) {
 
   const crosstab = state.data?.crosstab;
   if (!crosstab || crosstab.total === 0) {
-    return <EmptyStateO message="No confidence-vs-self-check records in this period."/>;
+    return <window.UI.EmptyState message="No confidence-vs-self-check records in this period." className="placeholder--flush-inline"/>;
   }
-
-  const max = crosstabMaxCountO(crosstab.byCell);
 
   // the page's own-face table class: the .tbl cell geometry and the ledger's column-header face, no clickable-row hover (these rows open nothing)
   return (
     <window.UI.Table caption="Records by writer confidence and self-check result" columns={CROSSTAB_COLUMNS_O}
       className={OWN_FACE_TABLE_CLASS_O}
       bodies={[{ key: 'body', rows: (view) => getCrosstabVisibleRowsO(crosstab.byCell).map((rowKey) => (
-        <CrosstabRow key={rowKey} view={view} rowKey={rowKey} byCell={crosstab.byCell} max={max}/>
+        <CrosstabRow key={rowKey} view={view} rowKey={rowKey} byCell={crosstab.byCell}/>
       )) }]}
       foot={(view) => <CrosstabTotalRow view={view} byCell={crosstab.byCell} total={crosstab.total}/>}/>
   );
@@ -2015,19 +1974,7 @@ const CROSSTAB_COLUMNS_O = [
   { key: 'total', label: 'Total', isNumeric: true },
 ];
 
-function CrosstabLegendO() {
-  return (
-    <span className="flex flex-wrap items-center gap-list fs-meta text-faint">
-      <span className="inline-flex items-center gap-label-inline">
-        <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>
-        polar mismatch (overconfidence high+fail · underconfidence low+pass)
-      </span>
-      <span>Empty rows hidden</span>
-    </span>
-  );
-}
-
-function CrosstabRow({ view, rowKey, byCell, max }) {
+function CrosstabRow({ view, rowKey, byCell }) {
   const { TableRow, TableCell } = window.UI;
   let rowTotal = 0;
   for (const col of CROSSTAB_METRIC_COLS) {
@@ -2039,43 +1986,32 @@ function CrosstabRow({ view, rowKey, byCell, max }) {
       <TableCell view={view} kind="row-header" className="font-medium">{rowKey === 'null' ? 'None' : rowKey}</TableCell>
       {CROSSTAB_METRIC_COLS.map((col) => {
         const cell = byCell[`${rowKey}|${col.key}`] || { count: 0, isPolar: false };
-        return <CrosstabCell key={col.key} view={view} cell={cell} max={max} rowLabel={rowKey} colLabel={col.label}/>;
+        return <CrosstabCell key={col.key} view={view} cell={cell} rowLabel={rowKey} colLabel={col.label}/>;
       })}
       <TableCell view={view} textRole="meta" label="Total" isNumeric className="text-dim">{formatIntO(rowTotal)}</TableCell>
     </TableRow>
   );
 }
 
-function CrosstabCell({ view, cell, max, rowLabel, colLabel }) {
+// high confidence with a failed check, or low confidence with a passed one
+const POLAR_CELL_NOTE_O = 'confidence and check disagree';
+
+function CrosstabCell({ view, cell, rowLabel, colLabel }) {
   const { TableCell } = window.UI;
   const count = cell.count || 0;
-  const bar = getCrosstabBarO(cell, max);
 
   return (
     <TableCell
       view={view}
       isNumeric
-      className="tbl-bar-cell"
-      title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ' · polar mismatch' : ''}`}
-      aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
+      title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ` · ${POLAR_CELL_NOTE_O}` : ''}`}
+      aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? `, ${POLAR_CELL_NOTE_O}` : ''}`}>
       <span className="inline-flex items-center gap-label-inline justify-end">
         {cell.isPolar && count > 0 && <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>}
         <span className={count > 0 ? 'text-ink' : 'text-faint'}>{formatIntO(count)}</span>
       </span>
-      <span className="block mt-stack" aria-hidden="true" style={{ height: 3 }}>
-        {/* anchored to the right edge → the bar ends under its right-aligned count */}
-        {bar && <span className="block ml-auto" style={{ height: '100%', width: `${bar.widthPct}%`, background: `rgb(var(${bar.colorVar}))`, borderRadius: 1 }}/>}
-      </span>
     </TableCell>
   );
-}
-
-// solid bar, never a translucent tint → the fill holds 3:1 on the card while the count stays on the plain card
-function getCrosstabBarO(cell, max) {
-  const count = cell.count || 0;
-  if (!(count > 0) || !(max > 0)) return null;
-  // floor 4% → a lone record stays visible beside a busy cell
-  return { colorVar: cell.isPolar ? '--warn' : '--accent', widthPct: Math.max(4, (count / max) * 100) };
 }
 
 function CrosstabTotalRow({ view, byCell, total }) {
@@ -2108,16 +2044,6 @@ function getCrosstabVisibleRowsO(byCell) {
     CROSSTAB_METRIC_COLS.some((col) => (byCell[`${rowKey}|${col.key}`]?.count || 0) > 0));
 }
 
-// byCell 맵의 최대 셀 카운트 — 음영 정규화 분모.
-function crosstabMaxCountO(byCell) {
-  let max = 0;
-  for (const key in byCell) {
-    const c = byCell[key]?.count || 0;
-    if (c > max) max = c;
-  }
-  return max;
-}
-
 // ----- Loop-events log (raw daemon cycle stream, relocated from Learning) -----
 // /api/improvement/loop-events — core.autoagent_loop_events per-cycle stage stream.
 // operational data, not an aggregate signal → owned by Task results
@@ -2139,7 +2065,7 @@ function LoopEventsCard({ state, onRetry, shared }) {
 function LoopEventsBody({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <ChartSkeletonO height={200} label="run events"/>;
+    return <window.UI.LoadingPlaceholder label="run events" minHeight={200}/>;
   }
   if (view === 'error') {
     return <RegionErrorO source="run events" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.loopEvents} isInset/>;
@@ -2152,7 +2078,7 @@ function LoopEventsBody({ state, onRetry, shared }) {
   if (total === 0 || events.length === 0) {
     // 카드 card-body 는 padding:0(populated 테이블 소유) → empty 브랜치만 별도 패딩으로
     // the card-body default (--card-pad) 와 간격 일치. populated 테이블은 padding:0 유지.
-    return <div className="p-card-pad"><EmptyStateO message="No run events recorded yet."/></div>;
+    return <div className="p-card-pad"><window.UI.EmptyState message="No run events recorded yet."/></div>;
   }
 
   const distMap = {};
@@ -2286,9 +2212,6 @@ function ResultTableCard({
   const { Card, Pagination } = window.UI;
   const { keywordInput = '', distinctAgents = [], includeAll = false, ...barHandlers } = filterControls;
 
-  // the drawn set (capped Needs-you + Routine), not the page's rows → same count as the section headings and the drawer's 'k of X shown'
-  const shownCount = getLedgerDisplayRowsO(buildLedgerSectionsO(rows, closure, needsYou, needsYouCap)).length;
-
   return (
     <div id={REGION_CARD_IDS.ledger}>
       {/* lifts the shared 70vh card-body cap → the Routine rows scroll with the page, not in a nested box */}
@@ -2297,7 +2220,7 @@ function ResultTableCard({
         isFlush
         title="Results"
         sub={state.status === 'ready'
-          ? `${formatIntO(totalMatched)} matched · ${formatIntO(shownCount)} shown`
+          ? `${formatIntO(totalMatched)} matched`
           : state.status === 'loading' ? 'Loading…' : 'Records unavailable'}
         bar={<ResultFilterBarO filter={filter} sort={sort} keywordInput={keywordInput} distinctAgents={distinctAgents}
           includeAll={includeAll} {...barHandlers} onSortChange={onSortChange} onReset={onResetFilter} />}
@@ -2307,11 +2230,10 @@ function ResultTableCard({
         <ResultTableBody
           state={state}
           rows={rows}
-          totalMatched={totalMatched}
           filter={filter}
+          isFilterApplied={isFilterAppliedO(filter, includeAll)}
           sort={sort}
           onSortChange={onSortChange}
-          onResetFilter={onResetFilter}
           onRowClick={onRowClick}
           onRetry={onRetry} shared={shared}
           closure={closure}
@@ -2324,18 +2246,6 @@ function ResultTableCard({
   );
 }
 
-// Active filters → 'Axis: value' chip labels for the empty-state echo; default axes omitted, names follow the bar's axes.
-function buildActiveFilterChipsO(filter) {
-  const chips = [];
-  if (filter.days && filter.days !== 30) chips.push(`Period: ${filter.days}d`);
-  if (filter.agent) chips.push(`Agent: ${window.UI.getAgentDisplayName(filter.agent)}`);
-  for (const { axis, label, options } of FILTER_AXES_O) {
-    if (filter[axis]) chips.push(`${label}: ${getOptionLabelO(options, filter[axis])}`);
-  }
-  if (filter.q) chips.push(`Keyword: "${truncateO(filter.q, 18)}"`);
-  return chips;
-}
-
 function getOptionLabelO(options, value) {
   return options.find((option) => option.value === value)?.label ?? value;
 }
@@ -2346,18 +2256,14 @@ function getDetailValueLabelO(axis, value) {
   return getOptionLabelO(options, String(value ?? 'null'));
 }
 
-// Active-filter chip badges for the empty-state echo (ResultTableZeroStateO); the caller's Cluster lays them out.
-function FilterChipsO({ chips }) {
-  const { Badge } = window.UI;
-  return <>{chips.map((c) => <Badge key={c} role="metadata">{c}</Badge>)}</>;
-}
-
 function ResultTableBody({
-  state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, shared, closure, needsYou, needsYouCap, onToggleNeedsYou,
+  state, rows, filter, isFilterApplied, sort, onSortChange, onRowClick, onRetry, shared, closure, needsYou, needsYouCap, onToggleNeedsYou,
 }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <ChartSkeletonO height={400} label="results"/>;
+    const columns = getLedgerColumnsO(sort, onSortChange);
+    return <window.UI.Table caption="Loading outcome records" columns={columns} widths={LEDGER_WIDTHS_O} isHeadSticky className={OWN_FACE_TABLE_CLASS_O}
+      bodies={[{ key: 'skeleton', rows: <window.UI.SkeletonRows rows={NEEDS_YOU_PAGE_CAP} columns={columns.length}/>, isBusy: true }]}/>;
   }
   if (state.status === 'blocked') {
     return <PayloadUnavailableO label="Records" isInset/>;
@@ -2366,38 +2272,15 @@ function ResultTableBody({
     return <RegionErrorO source="the record ledger" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.ledger} isInset/>;
   }
   if (rows.length === 0) {
-    return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
+    return isFilterApplied
+      ? <window.UI.EmptyState kind="no-results"/>
+      : <window.UI.EmptyState message={`No task results in the last ${filter.days} days.`}/>;
   }
 
   return (
     <ResultTable
       rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick} closure={closure}
       needsYou={needsYou} needsYouCap={needsYouCap} onToggleNeedsYou={onToggleNeedsYou}/>
-  );
-}
-
-// 정직한 빈-상태 (S6 / T-OUT-3) — 활성 필터를 echo 해 '왜 비었는지' 맥락 제공 (never blank).
-//   활성 필터 0개면 '아직 기록 없음', 1개+면 칩으로 좁힌 축을 재노출 → 사용자가 무엇을 풀지 판단 가능.
-function ResultTableZeroStateO({ filter, onResetFilter }) {
-  const chips = filter ? buildActiveFilterChipsO(filter) : [];
-
-  return (
-    <div className="placeholder">
-      {chips.length === 0
-        ? 'No results recorded yet for this period'
-        : 'No results match the active filters'}
-      {chips.length > 0 && (
-        <window.UI.Cluster className="justify-center mt-label">
-          <span className="fs-meta text-faint">Active:</span>
-          <FilterChipsO chips={chips}/>
-        </window.UI.Cluster>
-      )}
-      <div className="mt-block">
-        <button className="btn sm" onClick={onResetFilter} aria-label="Reset filters">
-          Reset filters
-        </button>
-      </div>
-    </div>
   );
 }
 
@@ -2423,11 +2306,10 @@ function buildLedgerSectionsO(rows, closure, windowNeedsYou, needsYouCap = null)
   const needsYouRows = needsYouCap == null ? allNeedsYouRows : allNeedsYouRows.slice(0, needsYouCap);
   const hiddenCount = allNeedsYouRows.length - needsYouRows.length;
   const needsYouTotal = windowNeedsYou ? windowNeedsYou.total : allNeedsYouRows.length;
-  // one row-count word across the page → each heading ends in the rows it shows, as the Results head and the drawer do
-  const needsYouScope = `Needs you · ${formatIntO(needsYouTotal)}${windowNeedsYou ? ` in ${windowNeedsYou.windowLabel}` : ''}`;
+  // shown of total → Needs you counts its window, Routine only this page
   return [
-    { key: 'needs-you', label: 'Needs you', heading: `${needsYouScope} · ${formatIntO(needsYouRows.length)} shown`, rows: needsYouRows, hiddenCount, anchorId: LEDGER_NEEDS_YOU_ID },
-    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} shown`, rows: routine, hiddenCount: 0 },
+    { key: 'needs-you', label: 'Needs you', heading: `Needs you · ${formatIntO(needsYouRows.length)} of ${formatIntO(needsYouTotal)}`, rows: needsYouRows, hiddenCount, anchorId: LEDGER_NEEDS_YOU_ID },
+    { key: 'routine',   label: 'Routine',   heading: `Routine · ${formatIntO(routine.length)} of ${formatIntO(rows.length)} on this page`, rows: routine, hiddenCount: 0 },
   ];
 }
 
@@ -2483,11 +2365,13 @@ const LEDGER_PLAIN_COLUMNS_O = Object.freeze([
   { key: 'agent', label: 'Agent' },
   { key: 'task_type', label: 'Task type' },
   { key: 'result', label: 'Result' },
+  { key: 'why', label: 'Why' },
   { key: 'summary', label: 'Summary' },
+  { key: 'actions', label: <span className="sr-only">Actions</span> },
 ]);
-// Time and Agent keep their one-line minimum; the summary takes the width left
-const LEDGER_WIDTHS_O = Object.freeze(['120px', '110px', undefined, undefined, undefined]);
-// five columns stop fitting under this width → each record stacks onto a two-line item, its summary first
+// the skeleton and the rows share these → no column moves when rows land; Summary takes the width left, Actions shrinks to its button
+const LEDGER_WIDTHS_O = Object.freeze(['120px', '110px', '130px', '150px', '165px', undefined, '1%']);
+// the columns stop fitting under this width → each record stacks onto a two-line item, its summary first
 const LEDGER_STACK_BELOW_PX = 640;
 
 // aria-sort sits on the Time column's th; the sort button inside it is the Tab stop and takes Enter and Space
@@ -2505,7 +2389,7 @@ function LedgerGroupRowO({ section, view }) {
   return <TableRow view={view}><TableCell view={view} kind="group-header" id={section.anchorId}>{section.heading}</TableCell></TableRow>;
 }
 
-// Capped → 'Show all N'; expanded past the cap → 'Show first N'; nothing to toggle → no row.
+// Capped → 'Show N more' (N hidden); expanded past the cap → 'Show first N'; nothing to toggle → no row.
 function NeedsYouToggleRowO({ section, isCapped, onToggle, view }) {
   const needsYouTotal = section.rows.length + section.hiddenCount;
   const hasToggle = typeof onToggle === 'function'
@@ -2516,7 +2400,7 @@ function NeedsYouToggleRowO({ section, isCapped, onToggle, view }) {
     <TableRow view={view}>
       <TableCell view={view} kind="span">
         <button type="button" className="btn ghost sm" aria-expanded={!isCapped} onClick={onToggle}>
-          {isCapped ? `Show all ${formatIntO(needsYouTotal)} needs-you rows` : `Show first ${NEEDS_YOU_PAGE_CAP} only`}
+          {isCapped ? `Show ${formatIntO(section.hiddenCount)} more` : `Show first ${NEEDS_YOU_PAGE_CAP}`}
         </button>
       </TableCell>
     </TableRow>
@@ -2566,9 +2450,6 @@ function SortButtonO({ label, sortKey, currentSort, onSortChange, descOnly }) {
     </button>
   );
 }
-
-// 요약 셀의 고정 flag 슬롯 폭 — 폭이 행마다 달라지면 요약 텍스트가 세로로 정렬되지 않는다.
-const SUMMARY_FLAG_SLOT = 18;
 
 // values only, never key-name digits — the d8 tail sits outside the 4 core keys → excluded from sum + avg
 function parseQaScoreO(qaScore) {
@@ -2620,7 +2501,7 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
   const resultColor = `rgb(var(${resultColorVarO(row.result, closedAt)}))`;
   const isClosing   = closure?.pendingIds.has(row.id) === true;
   const canClose    = row.result === 'done_with_concerns' && !closedAt && typeof closure?.onMarkClosed === 'function';
-  const needsYouReason = getNeedsYouReasonO(row, closedAt);
+  const why = getNeedsYouReasonO(row, closedAt);
 
   return (
     <TableRow
@@ -2628,7 +2509,7 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
       className="outcome-row cursor-pointer"
       onClick={() => onRowClick(row)}
       {...focusProps}
-      aria-label={[row.agent, row.task_type, resultMeta.label, needsYouReason, row.summary].filter(Boolean).join(' ')}>
+      aria-label={[row.agent, row.task_type, resultMeta.label, why?.label, row.summary].filter(Boolean).join(' ')}>
       <TableCell view={view} textRole="meta" label="Time" className="text-ink tabular-nums whitespace-nowrap">
         {ts ?? <window.UI.AbsentValue kind="none" title="No record time"/>}
       </TableCell>
@@ -2637,7 +2518,7 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
       </TableCell>
       <TableCell view={view} textRole="meta" label="Task type" className="text-dim whitespace-nowrap">{row.task_type}</TableCell>
       <TableCell view={view} textRole="meta" label="Result" title={resultMeta.label}>
-        {/* result glyph + word and the closing affordance in one nowrap container — a wrap inside the cell doubles the row height against its siblings */}
+        {/* result glyph + word and the closure word in one nowrap container — a wrap inside the cell doubles the row height against its siblings */}
         <span className="inline-flex items-center gap-label-inline whitespace-nowrap">
           <span data-group="result" className="inline-flex items-center gap-label-inline text-ink" style={{ fontWeight: 500 }}>
             <span style={{ color: resultColor }} aria-hidden="true"><GlyphO name={resultMeta.icon}/></span>
@@ -2650,90 +2531,57 @@ function ResultTableRow({ row, view, onRowClick, closure, focusProps }) {
               {resultMeta.label}
             </span>
           )}
-          {canClose && (
-            // a 32px control → the .tbl control-cell rule steps this cell's padding down, so the row stays 40 beside its text rows.
-            // pending 은 색 회전 없이 투명도만 (DocStatusBadgeCD 선례 — 새 의미 카테고리 시사 차단 + reduced-motion 무관).
-            <button
-              {...window.UI.ROW_CONTROL_PROPS}
-              className="btn ghost sm icon shrink-0"
-              aria-busy={isClosing}
-              aria-label={`Mark outcome ${row.id} closed`}
-              title={isClosing ? 'Closing…' : 'Mark closed'}
-              style={isClosing ? { opacity: 0.65 } : undefined}
-              onClick={(e) => {
-                // row onClick 이 detail modal 을 여는 것과 의도 충돌 → bubble 차단.
-                e.stopPropagation();
-                if (!isClosing) closure.onMarkClosed(row.id);
-              }}>
-              <GlyphO name="circle-check" size={14}/>
-            </button>
-          )}
         </span>
       </TableCell>
-      {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card. */}
-      {/* fixed flag slot | summary | reason → every summary starts at one x; the flag glyph leads, the variable-width reason sits at the cell's end, never truncated. */}
+      <TableCell view={view} textRole="meta" label="Why" className="text-ink whitespace-nowrap" title={why?.note}>
+        {why ? why.label : <window.UI.AbsentValue kind="none"/>}
+      </TableCell>
+      {/* width 100% + max-width 0 → the column takes only the width left in the scroller, so the ellipsis stays inside the card */}
       {/* stacked → the summary leads its two-line item at full width, so the wide-mode squeeze drops */}
       <TableCell view={view} className="text-ink" style={view?.isStacked ? undefined : SUMMARY_WIDE_STYLE_O} title={summary}>
-        <div className="flex items-center">
-          <SummaryFlagSlotO row={row}/>
-          <span className="flex-1 truncate" style={{ minWidth: 0 }}>{summary}</span>
-          {needsYouReason && (
-            <span className="shrink-0 whitespace-nowrap ml-control text-dim">{needsYouReason}</span>
-          )}
-        </div>
+        <div className="truncate">{summary}</div>
+      </TableCell>
+      <TableCell view={view} className="whitespace-nowrap">
+        {canClose && <CloseCaveatActionO rowId={row.id} isClosing={isClosing} onClose={closure.onMarkClosed}/>}
       </TableCell>
     </TableRow>
   );
 }
 
+// row onClick opens the drawer → the press stops here; pending dims only, no colour turn (a new meaning would read in)
+function CloseCaveatActionO({ rowId, isClosing, onClose }) {
+  const { RowActions, QuietButton, ROW_CONTROL_PROPS } = window.UI;
+  return <RowActions label={`Actions for record ${rowId}`} action={
+    <QuietButton {...ROW_CONTROL_PROPS} className="sm" aria-busy={isClosing} style={isClosing ? { opacity: 0.65 } : undefined}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!isClosing) onClose(rowId);
+      }}>
+      {isClosing ? 'Closing…' : 'Close caveat'}
+    </QuietButton>
+  }/>;
+}
+
 const SUMMARY_WIDE_STYLE_O = Object.freeze({ width: '100%', maxWidth: 0 });
 
-// Why a needs-you row needs you, in words — null for a broken row (its Result cell says it) and for routine rows.
+const WHY_CAVEAT_OPEN_O = Object.freeze({ label: 'Caveat open', note: 'Caveat open: done, with a caveat not yet closed' });
+const WHY_QUARANTINED_O = Object.freeze({ label: 'Quarantined', note: 'Quarantined: left out of analysis stats' });
+const WHY_BUDGET_KILLED_O = Object.freeze({ label: 'Budget-killed', note: 'Budget-killed: hit its budget before reporting' });
+
+// Why a row needs a look → the first reason that applies + every reason's note; null when none applies (a broken row's Result cell says it)
 function getNeedsYouReasonO(row, closedAt) {
-  if (row.review_flag === true) {
-    const [first, ...rest] = window.UI.reviewFlagReasons(row);
-    return `flagged: ${first.label.toLowerCase()}${rest.length > 0 ? ` +${rest.length}` : ''}`;
-  }
-  if (row.result === 'done_with_concerns' && !closedAt) return 'caveat open';
-  return null;
-}
-
-// 요약 셀 선두 플래그 집계 — review 사유/격리/budget-kill 을 tone 하나로 접는다.
-//   1행 1줄·고정폭 슬롯 규율 유지 → 테이블에선 글리프 하나만, 사유 전문은 title 이 운반 (사유별 배지는 detail 패널).
-//   분류는 window.UI.reviewFlagReasons SoT (기록된 사유 토큰 → 라벨, improvement KPI 세그먼트와 공용, F12) — 여기서 재파생 금지.
-//   경고급(review 사유·격리)이 정보급(budget-kill)을 이긴다 — 조치 필요 신호가 참고 신호에 가려지면 안 된다.
-function buildSummaryFlagO(row) {
-  const reasons = row?.review_flag === true ? window.UI.reviewFlagReasons(row) : [];
-  const isQuarantined = row?.poisoned_window === true;
-  const isBudgetKill = row?.attribution_source === ATTRIBUTION_SOURCE_BUDGET_TRUNCATION;
-
-  const notes = [];
-  if (reasons.length > 0) notes.push(`Flagged for review: ${reasons.map((r) => `${r.label} (${r.title})`).join(' / ')}`);
-  if (isQuarantined) notes.push('Quarantined row — excluded from analysis stats.');
-  if (isBudgetKill) notes.push('attribution_source: budget-truncation — subagent hit its budget ceiling before emitting a completion block.');
-
-  if (notes.length === 0) return null;
-  return { tone: reasons.length > 0 || isQuarantined ? 'warn' : 'info', title: notes.join(' · ') };
-}
-
-// 플래그 유무와 무관하게 같은 폭을 점유 — 그래야 요약 텍스트가 모든 행에서 같은 x 에서 시작한다.
-function SummaryFlagSlotO({ row }) {
-  const flag = buildSummaryFlagO(row);
-  const slotStyle = { width: SUMMARY_FLAG_SLOT };
-
-  if (flag == null) {
-    return <span className="inline-block shrink-0 align-middle mr-label-inline" style={slotStyle} aria-hidden="true"/>;
-  }
-  return (
-    <span
-      className={`inline-flex items-center justify-center shrink-0 align-middle mr-label-inline text-${flag.tone}`}
-      style={slotStyle}
-      role="img"
-      aria-label={flag.title}
-      title={flag.title}>
-      <GlyphO name={flag.tone} size={13}/>
-    </span>
-  );
+  const flags = window.UI.reviewFlagReasons(row);
+  const whys = [
+    flags.length > 0 && {
+      label: `${flags[0].label}${flags.length > 1 ? ` +${flags.length - 1}` : ''}`,
+      note: flags.map((flag) => `${flag.label}: ${flag.title}`).join(' · '),
+    },
+    row.result === 'done_with_concerns' && !closedAt && WHY_CAVEAT_OPEN_O,
+    row.poisoned_window === true && WHY_QUARANTINED_O,
+    row.attribution_source === ATTRIBUTION_SOURCE_BUDGET_TRUNCATION && WHY_BUDGET_KILLED_O,
+  ].filter(Boolean);
+  if (whys.length === 0) return null;
+  return { label: whys[0].label, note: whys.map((why) => why.note).join(' · ') };
 }
 
 // ----- Detail Modal (body_md preview + nav) ----------------------------------
@@ -2879,8 +2727,8 @@ function DetailNarrative({ row, detailState, markdown }) {
     <window.UI.Stack gap="block">
       {lessonText && (
         <window.UI.Stack gap="label">
-          <h3 className="fs-title font-semibold m-0">Lesson</h3>
-          <p className="outcome-md m-0">{lessonText}</p>
+          <h3 className="fs-title font-semibold">Lesson</h3>
+          <p className="fs-body text-ink">{lessonText}</p>
         </window.UI.Stack>
       )}
       <DetailBody detailState={detailState} markdown={body}/>
@@ -2933,7 +2781,7 @@ function getRecordFactO(label, value) {
 function FileListO({ files }) {
   const paths = files.split(',').map((path) => path.trim()).filter(Boolean);
   return (
-    <ul className="list-none m-0 p-0">
+    <ul>
       {paths.map((path, i) => <li key={`${path}#${i}`}><window.UI.MachineString>{path}</window.UI.MachineString></li>)}
     </ul>
   );
@@ -2963,10 +2811,10 @@ function formatEvaluativeSignalO(signal) {
 
 function DetailBody({ detailState, markdown }) {
   // defensive guard + optional chaining 보존.
-  if (!detailState) return <ChartSkeletonO height={200} label="body"/>;
+  if (!detailState) return <window.UI.LoadingPlaceholder label="body" minHeight={200}/>;
 
   if (detailState?.status === 'idle' || detailState?.status === 'loading') {
-    return <ChartSkeletonO height={200} label="body"/>;
+    return <window.UI.LoadingPlaceholder label="body" minHeight={200}/>;
   }
   if (detailState?.status === 'error') {
     const { RegionUnavailable } = window.UI;
@@ -2975,7 +2823,7 @@ function DetailBody({ detailState, markdown }) {
 
   if (!markdown) {
     return (
-      <p className="fs-body text-faint m-0">No body text — showing the facts only.</p>
+      <p className="fs-body text-faint">No body text — showing the facts only.</p>
     );
   }
 
@@ -3034,11 +2882,6 @@ function MarkdownView({ markdown }) {
 
 // ----- Shared chrome --------------------------------------------------------
 
-function EmptyStateO({ message }) {
-  const { EmptyState } = window.UI;
-  return <EmptyState message={message} />;
-}
-
 /**
  * Plain sentence + next step; the raw answer stays behind Details, Retry only when no page banner owns it.
  * @param state - the failed region: its error is the answer, busy while a Retry re-reads it
@@ -3070,11 +2913,6 @@ function BlockedBannerO({ detail }) {
       body="Not responding. Check the service or try again shortly."
       details={detail}/>
   );
-}
-
-function ChartSkeletonO({ label, height = 220 }) {
-  const { LoadingPlaceholder } = window.UI;
-  return <LoadingPlaceholder label={label} minHeight={height}/>;
 }
 
 // ----- Pure helpers ---------------------------------------------------------
@@ -3266,12 +3104,6 @@ function handleErrorO(err, setter) {
 }
 
 
-function truncateO(str, len) {
-  if (typeof str !== 'string') return '';
-  if (str.length <= len) return str;
-  return str.slice(0, len - 1) + '…';
-}
-
 // 공용 formatInt 위임 (ui.jsx SoT) — 로컬 재구현 폐기. 음수/NaN → '—' 가드 승격 상속.
 const formatIntO = window.UI.formatInt;
 const formatPctO = window.UI.formatPct;
@@ -3300,13 +3132,16 @@ function formatRateO(rate, fixedDigits) {
 }
 
 // literal-omission rate over the selected window → attribution head-status severity tone (colorVar) + copy · null → info tone None (no attributed records)
+// no rate (no attributed run) → None with no tone, never a band
 function attributionOmissionBadgeO(rate) {
-  if (rate === null || rate === undefined || Number.isNaN(Number(rate))) {
-    return { colorVar: '--info', text: window.UI.EMPTY_VALUE_TEXT };
-  }
+  const band = getAttributionOmissionBandO(rate);
+  return band ? { colorVar: band.colorVar, text: band.label } : { colorVar: null, text: <window.UI.AbsentValue kind="none"/> };
+}
+
+function getAttributionOmissionBandO(rate) {
+  if (rate === null || rate === undefined || Number.isNaN(Number(rate))) return null;
   const value = Number(rate);
-  const band = ATTRIBUTION_OMISSION_BANDS.find((b) => value < b.max) || ATTRIBUTION_OMISSION_BANDS[ATTRIBUTION_OMISSION_BANDS.length - 1];
-  return { colorVar: band.colorVar, text: `${formatPctO(value * 100)} ${band.label}` };
+  return ATTRIBUTION_OMISSION_BANDS.find((b) => value < b.max) || ATTRIBUTION_OMISSION_BANDS[ATTRIBUTION_OMISSION_BANDS.length - 1];
 }
 
 // 활동일만 담긴 days_series ('YYYY-MM-DD' ASC) → 최근 N 일 0-fill 그리드.

@@ -1,5 +1,5 @@
 // E2E chromium harness for the outcomes screen (screens/outcomes.jsx): painted header facts a node
-// render cannot hold — whether a one-line card header's meta reads whole beside its badge.
+// render cannot hold — whether a block's title, share and status hold one line.
 //
 // Runner: npx tsx --test test/outcomes.render-structure.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
@@ -15,11 +15,10 @@ import fastifyStatic from "@fastify/static";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
-import { TEXT_SCALE, getWidenedMetaFits } from "./lib/painted-text.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
-const CROSSTAB_HEAD = "#outcomes-crosstab .card-head";
+const CROSSTAB_STATUS = '#outcomes-crosstab [data-role="head-status"]';
 // Five-digit totals, as a long-lived install holds → the widest counts the header carries.
 const CROSS_ANALYSIS = {
   by_result: [],
@@ -54,21 +53,19 @@ describe("outcomes crosstab header", () => {
   });
 
   for (const width of [1280, 1440, 1920]) {
-    test(`the meta reads whole beside the mismatch status with the header text ${TEXT_SCALE}× as wide at ${width}px`, async () => {
+    test(`the title, share and mismatch status share one line at ${width}px`, async () => {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       try {
         await page.goto(`${serverUrl}/#outcomes`, { waitUntil: "load" });
-        await page.waitForSelector(`${CROSSTAB_HEAD} [data-role="head-status"]`, { timeout: 30_000 });
+        await page.waitForSelector(CROSSTAB_STATUS, { timeout: 30_000 });
         await page.evaluate(() => document.fonts.ready);
-        const badge = await page.textContent(`${CROSSTAB_HEAD} [data-role="head-status"]`);
-        const [fit] = await page.$$eval(`${CROSSTAB_HEAD} .card-sub`, getWidenedMetaFits, TEXT_SCALE);
+        const status = await page.textContent(CROSSTAB_STATUS);
+        const centres = await page.$$eval(`#outcomes-crosstab :is(h3, [data-role="head-status"], span[title$="%"])`, (els) =>
+          els.map((el) => (el.getBoundingClientRect().top + el.getBoundingClientRect().bottom) / 2));
 
-        assert.ok(badge?.includes(POLAR_TOTAL_TEXT), `the status keeps the mismatch count: "${badge}"`);
-        assert.ok(fit, "the header carries a meta");
-        assert.ok(
-          fit.needPx <= fit.shownPx,
-          `text ×${TEXT_SCALE}: "${fit.text}" needs ${fit.needPx.toFixed(1)}px, shows ${fit.shownPx.toFixed(1)}px`,
-        );
+        assert.ok(status?.includes(POLAR_TOTAL_TEXT), `the status keeps the mismatch count: "${status}"`);
+        assert.equal(centres.length, 3, "title, share and status");
+        assert.ok(Math.max(...centres) - Math.min(...centres) < 4, `centres ${centres.join(", ")} on one line`);
       } finally {
         await page.close();
       }
@@ -92,7 +89,7 @@ describe("outcomes crosstab header", () => {
         assert.ok(Math.abs(row.height - 40) < 0.5, `row ${row.height}px`);
         for (const count of row.counts) assert.ok(Math.abs(count - row.label) < 1, `count centre ${count} vs label ${row.label}`);
       }
-      assert.ok(rows.some((row) => row.counts.length > 0), "the body rows carry count + bar cells");
+      assert.ok(rows.some((row) => row.counts.length > 0), "the body rows carry count cells");
     } finally {
       await page.close();
     }
@@ -100,7 +97,7 @@ describe("outcomes crosstab header", () => {
 });
 
 // The status band and the ledger as painted: the band is one stat row card with no tile inside it,
-// no stat states the prior range, and every summary starts at one x beside its row's pill.
+// no stat states the prior range, and every summary starts at one x.
 const BAND_AGENT = "glass-atrium-dev-react";
 const BAND_OVERALL = {
   total: 400, reconstructed_total: 0, excluded_poisoned_count: 0,
@@ -165,9 +162,12 @@ describe("outcomes status band and ledger as painted", () => {
           const band = [...document.querySelectorAll<HTMLElement>(".stat-row")].find((row) => /Needs you/.test(row.textContent ?? ""));
           const ranges = [...(band?.querySelectorAll<HTMLElement>(".whitespace-nowrap") ?? [])]
             .filter((span) => /^\d\d-\d\d – \d\d-\d\d$/.test(span.textContent ?? ""));
+          const heads = [...document.querySelectorAll<HTMLElement>("tr.outcome-row")[0].closest("table")!.querySelectorAll("thead th")].map((th) => th.textContent?.trim());
+          const [whyAt, summaryAt] = [heads.indexOf("Why"), heads.indexOf("Summary")];
           const summaries = [...document.querySelectorAll<HTMLTableRowElement>("tr.outcome-row")].map((tr) => ({
             rowH: tr.getBoundingClientRect().height,
-            x: tr.cells[tr.cells.length - 1].querySelector(".truncate")!.getBoundingClientRect().x,
+            x: tr.cells[summaryAt].querySelector(".truncate")!.getBoundingClientRect().x,
+            whyAlign: getComputedStyle(tr.cells[whyAt]).textAlign,
           }));
           return {
             stats: band?.querySelectorAll(":scope > .stat").length ?? 0,
@@ -183,6 +183,7 @@ describe("outcomes status band and ledger as painted", () => {
         const xs = painted.summaries.map((row) => row.x);
         assert.ok(Math.max(...xs) - Math.min(...xs) <= 0.5, `summaries start at one x: ${xs.join(", ")}`);
         for (const row of painted.summaries) assert.ok(Math.abs(row.rowH - 40) <= 0.5, `ledger row ${row.rowH}px`);
+        for (const row of painted.summaries) assert.ok(["start", "left"].includes(row.whyAlign), `Why aligns to the start: ${row.whyAlign}`);
       } finally {
         await page.close();
       }

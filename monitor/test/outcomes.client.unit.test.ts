@@ -58,8 +58,6 @@ interface OutcomesHelpers {
     breakdown: unknown,
   ) => { budget: number; truncated: number; missing: number } | null;
   parseQaScoreO: (qaScore: unknown) => { sum: number; avg: number } | null;
-  buildSummaryFlagO: (row: unknown) => { tone: string; title: string } | null;
-  buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
   getDetailValueLabelO: (axis: string, value: unknown) => string;
   splitLessonO: (markdown: string) => { lesson: string; body: string };
   formatToolUseO: (value: string) => string;
@@ -319,69 +317,26 @@ test("parseQaScoreO: unreported / malformed input stays null (no fabricated scor
   }
 });
 
-// --- buildSummaryFlagO: the summary cell folds three badges into one tone ---
+// --- Drawer values: one value, one name across the filter bar, ledger cell and drawer ---
 
-test("buildSummaryFlagO: a clean row reserves the slot without a flag", () => {
-  assert.strictEqual(outcomes.buildSummaryFlagO({ review_flag: false }), null);
-  assert.strictEqual(outcomes.buildSummaryFlagO(null), null);
-});
-
-test("buildSummaryFlagO: budget-truncation alone is informational, not a warning", () => {
-  const flag = outcomes.buildSummaryFlagO({ attribution_source: "budget-truncation" });
-  assert.strictEqual(flag?.tone, "info");
-  assert.match(flag?.title ?? "", /budget ceiling/);
-});
-
-test("buildSummaryFlagO: a warn-class flag outranks the informational one, and both sentences survive", () => {
-  const flag = outcomes.buildSummaryFlagO({ poisoned_window: true, attribution_source: "budget-truncation" });
-  assert.strictEqual(flag?.tone, "warn");
-  assert.match(flag?.title ?? "", /Quarantined row/);
-  assert.match(flag?.title ?? "", /budget ceiling/);
-});
-
-test("buildSummaryFlagO: review reasons come from the shared SoT and land in the tooltip", () => {
-  outcomes.window.UI.reviewFlagReasons = () => [{ key: "other", label: "Other", title: "Flagged for another reason" }];
-  const flag = outcomes.buildSummaryFlagO({ review_flag: true });
-  assert.strictEqual(flag?.tone, "warn");
-  assert.strictEqual(flag?.title, "Flagged for review: Other (Flagged for another reason)");
-});
-
-// --- buildActiveFilterChipsO: a chip reads like the filter control that set it ---
-
-describe("buildActiveFilterChipsO: each chip names its axis and value as the filter controls do", () => {
+describe("getDetailValueLabelO: a drawer value reads as the filter bar's option for the same value", () => {
+  const axes = vm.runInContext("FILTER_AXES_O", outcomes as unknown as vm.Context) as Array<{
+    axis: string;
+    options: Array<{ value: string; label: string }>;
+  }>;
   const rows = [
-    { name: "the default period adds no chip", filter: { days: 30 }, chips: [] },
-    { name: "another period names its window", filter: { days: 7 }, chips: ["Period: 7d"] },
-    { name: "a result names its label, not its enum", filter: { days: 30, result: "done_with_concerns" }, chips: ["Result: Done with caveats"] },
-    { name: "a flagged filter names its option", filter: { days: 30, review_flag: "false" }, chips: ["Flagged: Clear"] },
-    { name: "a task type keeps its canonical token", filter: { days: 30, task_type: "bug-fix" }, chips: ["Task type: bug-fix"] },
-    { name: "a missing confidence reads None", filter: { days: 30, confidence: "null" }, chips: ["Confidence: None"] },
-    { name: "a self-check names Pass", filter: { days: 30, metric_pass: "true" }, chips: ["Self-check: Pass"] },
-    { name: "an attribution names its short label", filter: { days: 30, attribution_source: "budget-truncation" }, chips: ["Attribution: budget-kill"] },
-    { name: "a keyword is quoted and shortened", filter: { days: 30, q: "a keyword longer than eighteen" }, chips: ['Keyword: "a keyword longer …"'] },
+    { name: "a high confidence", axis: "confidence", value: "high", optionValue: "high" },
+    { name: "a low confidence", axis: "confidence", value: "low", optionValue: "low" },
+    { name: "a missing confidence", axis: "confidence", value: null, optionValue: "null" },
+    { name: "a passed self-check", axis: "metric_pass", value: true, optionValue: "true" },
+    { name: "a failed self-check", axis: "metric_pass", value: false, optionValue: "false" },
+    { name: "a missing self-check", axis: "metric_pass", value: null, optionValue: "null" },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      assert.deepEqual(sameRealm(outcomes.buildActiveFilterChipsO(row.filter)), row.chips);
-    });
-  }
-});
-
-// --- Drawer values: one value, one name across chip, ledger cell and drawer ---
-
-describe("getDetailValueLabelO: a drawer value reads as the filter chip for the same value", () => {
-  const rows = [
-    { name: "a high confidence", axis: "confidence", value: "high", chipValue: "high" },
-    { name: "a low confidence", axis: "confidence", value: "low", chipValue: "low" },
-    { name: "a missing confidence", axis: "confidence", value: null, chipValue: "null" },
-    { name: "a passed self-check", axis: "metric_pass", value: true, chipValue: "true" },
-    { name: "a failed self-check", axis: "metric_pass", value: false, chipValue: "false" },
-    { name: "a missing self-check", axis: "metric_pass", value: null, chipValue: "null" },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      const chip = sameRealm(outcomes.buildActiveFilterChipsO({ days: 30, [row.axis]: row.chipValue }))[0];
-      assert.strictEqual(`${chip.split(": ")[0]}: ${outcomes.getDetailValueLabelO(row.axis, row.value)}`, chip);
+      const option = axes.find((group) => group.axis === row.axis)?.options.find((o) => o.value === row.optionValue);
+      assert.ok(option, `the ${row.axis} bar offers ${row.optionValue}`);
+      assert.strictEqual(outcomes.getDetailValueLabelO(row.axis, row.value), option.label);
     });
   }
 });
@@ -596,8 +551,8 @@ describe("getStackedDayReadoutO: the chart readout names the day's total and eve
   test("each non-zero category appears with its count, and zero categories are left out", () => {
     const readout = outcomes.getStackedDayReadoutO({ day: "2026-09-20", total: 12, healthy: 9, attribution_loss: 0, literal_omission: 1, synthesized: 2 });
     assert.match(readout, /12 records/);
-    assert.match(readout, /Recorded properly 9/);
-    assert.match(readout, /Missing report 1/);
+    assert.match(readout, /Recorded 9/);
+    assert.match(readout, /Missing 1/);
     assert.match(readout, /Reconstructed 2/);
     assert.doesNotMatch(readout, /Untraceable/);
   });
@@ -623,9 +578,10 @@ interface RecordedElementO {
 
 interface RenderSandboxO {
   React: { createElement: unknown };
-  AgentFailureRateCellO: (props: { row: Record<string, unknown> }) => RecordedElementO;
+  AgentFailureRateCellO: (props: { row: Record<string, unknown>; maxRate: number }) => RecordedElementO;
+  getFailureRateMaxO: (rows: Array<{ rate: number; isLowSample: boolean }>) => number;
   AttributionBreakdownO: (props: { state: Record<string, unknown> }) => RecordedElementO | null;
-  EmptyStateO: unknown;
+  window: { UI: { EmptyState: unknown } };
 }
 
 const rendered = await buildScreenSandbox<RenderSandboxO>(OUTCOMES_SRC);
@@ -646,18 +602,58 @@ function flattenO(node: unknown, out: RecordedElementO[] = []): RecordedElementO
   return out;
 }
 
-describe("AgentFailureRateCellO: the bar fill follows the shared breakage rule, not a fixed crit", () => {
+describe("AgentFailureRateCellO: a neutral bar against the column's worst rate, a crit word only over the breakage share", () => {
+  const { Bar, StatusDot, LowSampleMark } = (rendered as unknown as { window: { UI: Record<string, unknown> } }).window.UI;
+  const maxRate = 0.4;
   const rows = [
-    { name: "a sampled row under the crit share fills the data colour, no severity", failed: 1, blocked: 0, total: 50, isLowSample: false, fill: "--data" },
-    { name: "a sampled row at the crit share fills crit", failed: 2, blocked: 3, total: 100, isLowSample: false, fill: "--crit" },
-    { name: "a sampled row well over the crit share fills crit", failed: 10, blocked: 10, total: 50, isLowSample: false, fill: "--crit" },
-    { name: "a low-sample row claims no tone whatever its rate", failed: 5, blocked: 0, total: 10, isLowSample: true, fill: "--faint" },
+    { name: "the worst rate fills its whole track and reads High failure rate", failed: 10, blocked: 10, total: 50, isLowSample: false, word: "High failure rate" },
+    { name: "a sampled row at the crit share reads High failure rate", failed: 2, blocked: 3, total: 100, isLowSample: false, word: "High failure rate" },
+    { name: "a sampled row under the crit share draws no severity", failed: 1, blocked: 0, total: 50, isLowSample: false, word: null },
+    { name: "a low-sample row reads faint, with its mark and no word, whatever its rate", failed: 5, blocked: 0, total: 10, isLowSample: true, word: null },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const cell = rendered.AgentFailureRateCellO({ row: { ...row, rate: (row.failed + row.blocked) / row.total } });
-      const bar = flattenO(cell).find((el) => (el.props.style as { display?: string } | undefined)?.display === "block");
-      assert.equal((bar?.props.style as { background: string }).background, `rgb(var(${row.fill}))`);
+      const rate = (row.failed + row.blocked) / row.total;
+      const nodes = flattenO(rendered.AgentFailureRateCellO({ row: { ...row, rate }, maxRate }));
+      const bar = nodes.find((el) => el.type === Bar);
+      assert.ok(bar, "the shared Bar draws the rate");
+      assert.equal(Number(bar.props.value) / Number(bar.props.max), rate / maxRate, "the fill is the rate over the worst rate");
+      assert.ok(bar.props.tone === undefined || bar.props.tone === "neutral", `bar tone ${String(bar.props.tone)}`);
+      const dots = nodes.filter((el) => el.type === StatusDot);
+      assert.deepEqual(dots.map((dot) => [dot.props.status, dot.props.word]), row.word ? [["crit", row.word]] : []);
+      assert.equal(nodes.some((el) => el.type === LowSampleMark), row.isLowSample);
+      const figure = nodes.find((el) => el.props.children === `${(rate * 100).toFixed(1)}%`);
+      assert.match(String(figure?.props.className), row.isLowSample ? /\btext-faint\b/ : /\btext-ink\b/);
+    });
+  }
+
+  // the bar's track ends where a fixed-width slot starts → every row's track has one length, whatever marks the row carries
+  test("the figure and its marks share one fixed-width slot beside the track on every row", () => {
+    const slots = rows.map((row) => {
+      const rate = (row.failed + row.blocked) / row.total;
+      const nodes = flattenO(rendered.AgentFailureRateCellO({ row: { ...row, rate }, maxRate }));
+      const slot = nodes.find((el) => flattenO(el.props.children).some((child) => child.props.children === `${(rate * 100).toFixed(1)}%`)
+        && (el.props.style as { width?: unknown } | undefined)?.width !== undefined);
+      assert.ok(slot, `${row.name}: the figure sits in a sized slot`);
+      const inSlot = flattenO(slot.props.children);
+      assert.equal(inSlot.some((el) => el.type === Bar), false, `${row.name}: the bar sits outside the slot`);
+      assert.equal(inSlot.some((el) => el.type === LowSampleMark), row.isLowSample, `${row.name}: the low-sample mark sits in the slot`);
+      assert.equal(inSlot.filter((el) => el.type === StatusDot).length, row.word ? 1 : 0, `${row.name}: the crit word sits in the slot`);
+      return (slot.props.style as { width: unknown }).width;
+    });
+    assert.equal(new Set(slots).size, 1, `one slot width across rows: ${slots.join(", ")}`);
+  });
+});
+
+describe("getFailureRateMaxO: the bar scale is the worst sampled rate, so a low-sample row never sets it", () => {
+  const rows = [
+    { name: "a low-sample row past every sampled rate is left out", rows: [{ rate: 0.188, isLowSample: true }, { rate: 0.074, isLowSample: false }, { rate: 0.02, isLowSample: false }], expected: 0.074 },
+    { name: "every row sampled takes the worst rate", rows: [{ rate: 0.1, isLowSample: false }, { rate: 0.3, isLowSample: false }], expected: 0.3 },
+    { name: "no sampled row falls back to the worst low-sample rate", rows: [{ rate: 0.5, isLowSample: true }, { rate: 0.2, isLowSample: true }], expected: 0.5 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(rendered.getFailureRateMaxO(row.rows), row.expected);
     });
   }
 });
@@ -682,7 +678,7 @@ describe("AttributionBreakdownO: only a landed window may say it has no breakdow
 
   test("a landed but empty window says so", () => {
     const empty = rendered.AttributionBreakdownO({ state: { status: "ready", data: { window_summary: { total_attributed: 0 } } } });
-    assert.equal(empty?.type, rendered.EmptyStateO);
+    assert.equal(empty?.type, rendered.window.UI.EmptyState);
     assert.match(String(empty?.props.message), /No daily breakdown/);
   });
 });
@@ -691,72 +687,53 @@ interface WordingSandboxO {
   buildLedgerSectionsO: (
     rows: Array<Record<string, unknown>>,
     closure: { pendingIds: Set<unknown>; closedOverrides: Map<unknown, unknown> },
-    windowNeedsYou: { rows: Array<Record<string, unknown>>; total: number; windowLabel: string } | null,
+    windowNeedsYou: { rows: Array<Record<string, unknown>>; total: number } | null,
     needsYouCap: number | null,
   ) => Array<{ key: string; heading: string; rows: unknown[] }>;
   buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string; label: string }>;
 }
 const wording = rendered as unknown as WordingSandboxO;
 
-describe("buildLedgerSectionsO: every ledger heading counts its rows with the page's one word, 'shown'", () => {
+describe("buildLedgerSectionsO: each heading counts the rows it shows out of the rows it stands for", () => {
   const rows = [{ id: 1, result: "fail" }, { id: 2, result: "blocked" }, { id: 3, result: "done" }];
   const closure = { pendingIds: new Set(), closedOverrides: new Map() };
   const cases = [
-    { name: "a page split with no cap", windowNeedsYou: null, cap: null },
-    { name: "a page split capped below its needs-you rows", windowNeedsYou: null, cap: 1 },
+    { name: "a page split with no cap", windowNeedsYou: null, cap: null, needsYouTotal: 2 },
+    { name: "a page split capped below its needs-you rows", windowNeedsYou: null, cap: 1, needsYouTotal: 2 },
     {
       name: "a window query larger than the rows it shows",
-      windowNeedsYou: { rows: [{ id: 1, result: "fail" }, { id: 9, result: "fail" }], total: 12, windowLabel: "7d" },
+      windowNeedsYou: { rows: [{ id: 1, result: "fail" }, { id: 9, result: "fail" }], total: 2569 },
       cap: 1,
+      needsYouTotal: 2569,
     },
   ];
   for (const row of cases) {
     test(row.name, () => {
-      const sections = wording.buildLedgerSectionsO(rows, closure, row.windowNeedsYou, row.cap);
-      for (const section of sections) {
-        assert.match(section.heading, new RegExp(` · ${section.rows.length} shown$`), section.key);
-        assert.doesNotMatch(section.heading, /on this page|first \d/, section.key);
-      }
+      const [needsYou, routine] = wording.buildLedgerSectionsO(rows, closure, row.windowNeedsYou, row.cap);
+      assert.equal(needsYou.heading, `Needs you · ${needsYou.rows.length} of ${row.needsYouTotal.toLocaleString("en-US")}`);
+      assert.equal(routine.heading, `Routine · ${routine.rows.length} of ${rows.length} on this page`);
     });
   }
 });
 
-interface ShownCountSandboxO {
+interface HeadCountSandboxO {
   ResultTableCard: (props: Record<string, unknown>) => RecordedElementO;
-  getLedgerDisplayRowsO: (sections: Array<{ rows: Array<Record<string, unknown>> }>) => Array<Record<string, unknown>>;
-  getDetailPositionLabelO: (displayRows: Array<Record<string, unknown>>, row: Record<string, unknown>) => string;
 }
-const shownCount = rendered as unknown as ShownCountSandboxO;
+const headCount = rendered as unknown as HeadCountSandboxO;
 
-describe("ResultTableCard: the head's 'shown' count is the drawn set the drawer counter walks", () => {
+test("ResultTableCard: the head counts the records the filter matched, and nothing it draws", () => {
   const page = Array.from({ length: 50 }, (_, i) => ({ id: i + 1, result: i < 15 ? "fail" : "done" }));
-  const closure = { pendingIds: new Set(), closedOverrides: new Map() };
-  const cases = [
-    { name: "a page split capped below its needs-you rows", needsYou: null, cap: 10 },
-    { name: "an uncapped page split", needsYou: null, cap: null },
-    {
-      name: "a capped window query larger than the page's needs-you rows",
-      needsYou: { rows: Array.from({ length: 30 }, (_, i) => ({ id: 100 + i, result: "fail" })), total: 30, windowLabel: "7d" },
-      cap: 10,
-    },
-  ];
-  for (const row of cases) {
-    test(row.name, () => {
-      const card = shownCount.ResultTableCard({
-        state: { status: "ready" }, rows: page, totalMatched: 120, page: 0, limit: 50, sort: "recent", filter: {},
-        closure, needsYou: row.needsYou, needsYouCap: row.cap,
-      });
-      const drawn = shownCount.getLedgerDisplayRowsO(wording.buildLedgerSectionsO(page, closure, row.needsYou, row.cap) as never);
-      const drawerTotal = shownCount.getDetailPositionLabelO(drawn, drawn[0]).match(/of (\d+) shown/)?.[1];
-      const head = flattenO(card).find((el) => typeof el.props.sub === "string");
-      assert.equal(head?.props.sub, `120 matched · ${drawerTotal} shown`);
-    });
-  }
+  const card = headCount.ResultTableCard({
+    state: { status: "ready" }, rows: page, totalMatched: 12827, page: 0, limit: 50, sort: "recent", filter: {},
+    closure: { pendingIds: new Set(), closedOverrides: new Map() }, needsYou: null, needsYouCap: 10,
+  });
+  const head = flattenO(card).find((el) => typeof el.props.sub === "string");
+  assert.equal(head?.props.sub, "12,827 matched");
 });
 
 interface DensitySandboxO {
   GraderBreakdownBody: (props: { state: Record<string, unknown> }) => RecordedElementO;
-  GraderBreakdownCard: (props: { state: Record<string, unknown> }) => RecordedElementO;
+  GraderBreakdownBlock: (props: { state: Record<string, unknown> }) => RecordedElementO;
   buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string }>;
 }
 const density = rendered as unknown as DensitySandboxO;
@@ -770,21 +747,36 @@ describe("Task results density: the columns beside a taller card carry their own
     // vm-realm array → copy into this realm before a deep compare
     assert.deepEqual(Array.from(stats ?? [], (stat) => stat.key).sort(), ["unverified", "verified_fail", "verified_pass"]);
   });
+
+  test("an empty window's verdict stats carry no context line under their zero", () => {
+    const breakdown = { verified_pass: 0, unverified: 0, verified_fail: 0, graded_total: 0 };
+    const elements = flattenO(density.GraderBreakdownBody({ state: { status: "ready", data: { overall: { grader_breakdown: breakdown } } } }));
+    const stats = elements.find((el) => Array.isArray(el.props.stats))?.props.stats as Array<{ context?: unknown }> | undefined;
+    assert.ok(stats && stats.length > 0, "the stats render");
+    assert.deepEqual(Array.from(stats, (stat) => stat.context ?? null), Array.from(stats, () => null));
+  });
 });
 
-describe("Automatic check results: where each verdict came from is the card's foot, drawn only under a drawn breakdown", () => {
-  const overall = { grader_breakdown: { verified_pass: 5, unverified: 3, verified_fail: 2, graded_total: 10 }, downgrade_breakdown: { writer_true_downgraded: 2 } };
+describe("Automatic check results: where each verdict came from sits behind the block's ⓘ, only under a drawn breakdown, never as a foot", () => {
+  const overall = { grader_breakdown: { verified_pass: 5, unverified: 3, verified_fail: 2, graded_total: 10 }, downgrade_breakdown: { writer_true_downgraded: 2, writer_false: 7 } };
   const rows = [
-    { name: "a landed breakdown ends the card with the foot", state: { status: "ready", data: { overall } }, hasFoot: true },
-    { name: "a loading card draws no foot", state: { status: "loading" }, hasFoot: false },
-    { name: "a landed payload with no breakdown draws no foot", state: { status: "ready", data: { overall: { downgrade_breakdown: overall.downgrade_breakdown } } }, hasFoot: false },
+    { name: "a landed breakdown carries the sources in its ⓘ", state: { status: "ready", data: { overall } }, hasInfo: true },
+    { name: "a loading block carries no sources", state: { status: "loading" }, hasInfo: false },
+    { name: "a landed payload with no breakdown carries no sources", state: { status: "ready", data: { overall: { downgrade_breakdown: overall.downgrade_breakdown } } }, hasInfo: false },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const card = (density.GraderBreakdownCard({ state: row.state }).props.children) as RecordedElementO;
-      assert.equal(Boolean(card.props.foot), row.hasFoot);
+      const block = density.GraderBreakdownBlock({ state: row.state });
+      assert.equal(Boolean(block.props.info), row.hasInfo);
+      assert.equal(Boolean(block.props.foot), false, "no foot line");
     });
   }
+
+  test("the sources leave out the agent-claimed-pass count the Check failed stat already shows", () => {
+    const block = density.GraderBreakdownBlock({ state: rows[0].state });
+    const segments = (block.props.info as RecordedElementO).props.segments as Array<{ key: string; count: number }>;
+    assert.deepEqual(Array.from(segments, (segment) => [segment.key, segment.count]), [["writer_false", 7]]);
+  });
 });
 
 describe("getClampedPageO: a held page never runs past the last page of the current total", () => {
@@ -804,30 +796,32 @@ describe("getClampedPageO: a held page never runs past the last page of the curr
 });
 
 interface ChartSandboxO {
-  getCrosstabBarO: (cell: { count: number; isPolar: boolean }, max: number) => { colorVar: string; widthPct: number } | null;
-  CrosstabCell: (props: { cell: { count: number; isPolar: boolean }; max: number; rowLabel: string; colLabel: string }) => RecordedElementO;
+  CrosstabCell: (props: { cell: { count: number; isPolar: boolean }; rowLabel: string; colLabel: string }) => RecordedElementO;
   getStackedYTicksO: (barAreaH: number) => Array<{ label: string; y: number }>;
 }
 const chart = rendered as unknown as ChartSandboxO;
 
-describe("getCrosstabBarO: a cell's fill is a solid bar sized by its share of the busiest cell", () => {
+describe("a crosstab cell is its count alone, never a bar under it", () => {
   const rows = [
-    { name: "the busiest cell fills the whole width", cell: { count: 40, isPolar: false }, max: 40, bar: { colorVar: "--accent", widthPct: 100 } },
-    { name: "a polar cell at half the busiest keeps the warn hue at half width", cell: { count: 20, isPolar: true }, max: 40, bar: { colorVar: "--warn", widthPct: 50 } },
-    { name: "an empty cell draws no bar", cell: { count: 0, isPolar: true }, max: 40, bar: null },
+    { name: "a busy cell", cell: { count: 40, isPolar: false }, tone: "text-ink" },
+    { name: "a polar cell", cell: { count: 20, isPolar: true }, tone: "text-ink" },
+    { name: "an empty cell reads 0 in faint ink", cell: { count: 0, isPolar: true }, tone: "text-faint" },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      // vm-realm object → compare by value, not prototype
-      assert.deepEqual(JSON.parse(JSON.stringify(chart.getCrosstabBarO(row.cell, row.max))), row.bar);
+      const elements = flattenO(chart.CrosstabCell({ cell: row.cell, rowLabel: "high", colLabel: "fail" }));
+      const backgrounds = elements.map((el) => (el.props.style as { background?: string } | undefined)?.background).filter(Boolean);
+      const count = elements.find((el) => String(el.props.className ?? "").split(" ").includes(row.tone));
+
+      assert.deepEqual(backgrounds, [], "no fill in the cell");
+      assert.equal(count?.props.children, String(row.cell.count));
     });
   }
 
-  test("the cell paints no translucent tint under its count", () => {
-    const cell = chart.CrosstabCell({ cell: { count: 10, isPolar: true }, max: 40, rowLabel: "high", colLabel: "fail" });
-    const backgrounds = flattenO(cell).map((el) => (el.props.style as { background?: string } | undefined)?.background).filter(Boolean);
-    assert.ok(backgrounds.length > 0, "the bar is painted");
-    for (const background of backgrounds) assert.doesNotMatch(String(background), /\//, "an alpha fill drops below 3:1");
+  test("a polar cell names the disagreement in plain words on hover, with no internal term", () => {
+    const [cell] = flattenO(chart.CrosstabCell({ cell: { count: 20, isPolar: true }, rowLabel: "high", colLabel: "fail" }));
+    assert.match(String(cell.props.title), /confidence and check disagree/);
+    assert.doesNotMatch(`${String(cell.props.title)} ${String(cell.props["aria-label"])}`, /polar/);
   });
 });
 
