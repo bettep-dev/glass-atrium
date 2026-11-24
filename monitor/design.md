@@ -332,7 +332,7 @@
   - finder 1b (full-opacity tone border · stroke · box-shadow): `grep -rnE "(border(-[a-z]+)?|stroke|outline|box-shadow) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info)\)\)|(border[A-Za-z]*|stroke|boxShadow) *: *[\"'][^\"']*rgb\(var\(--(crit|warn|ok|info)\)\)|stroke=\"rgb\(var\(--(crit|warn|ok|info)\)\)\"" public/src public/styles`.
     - 허용 hit: 위 허용 예외 (폼 오류 · System map 링 · 범례) · destructive action (`.btn.danger` · `DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`). No chart stroke.
   - finder 2 (tone 을 칠한 라벨 · 수치): `grep -rnE "text-(crit|warn|ok|info)\b" public/src` + 보간 class `grep -rnE 'text-\$\{' public/src`.
-    - 준수 hit: class 가 glyph · `Icon` · `SymI` 에 붙거나, 그 class 를 담는 tone 표 · 헬퍼 반환값 (`clauded-docs.jsx` → `TONE_TEXT_CLASS_CD` · `architecture.jsx` → `TONE_GLYPH_CLASS`) · 정렬 class (`` `text-${align}` ``) · 차트 막대 `currentColor`.
+    - 준수 hit: class 가 glyph · `Icon` · `SymI` 에 붙거나, 그 class 를 담는 tone 표 · 헬퍼 반환값 (`clauded-docs.jsx` → `TONE_TEXT_CLASS_CD`) · 정렬 class (`` `text-${align}` ``) · 차트 막대 `currentColor`.
     - 단어를 감싸는 허용 hit 은 폼 오류 메시지뿐 (`model-config.jsx` field 메시지 · save-banner 요약 · `agents.jsx` 이름 불일치 메시지).
   - finder 3 (full-opacity tone **fill** — `background` · SVG `fill` · `bg-<tone>`): `grep -rnE "(background(-color)?|fill) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info|alert-tone)\)\)|(background|backgroundColor|fill) *[:=] *[\"'{][^\"'}]*rgb\(var\(--(crit|warn|ok|info)\)\)|bg-(crit|warn|ok|info)\b[^/]" public/src public/styles`.
     - 허용 hit — full-opacity tone fill 의 전체 목록:
@@ -729,15 +729,18 @@
 - **상태 링**: warn · crit 노드/zone = tone 링 + 모서리 `!` / `!!` badge + accessible name health word, caption 범례가 key — §4.2 허용 예외.
   - 범례 줄 = 뜻만, mark 는 swatch 가 보여 줌 (`getMapLegendItemsAR`): `Needs attention` · `Critical` · `N parts in this box need attention` · `Not verified` · `Orchestrator` · `Safety checks`.
   - badge 는 위 테두리에 반쯤 걸침: 노드는 오른쪽 모서리, zone 은 왼쪽 모서리 — 들어오는 edge 라벨이 spine 오른쪽에서 zone 위 테두리에 끝남 (`getCornerBadgeGeometryAR`, `architecture.render-structure.e2e`).
-- **h1 아래**: 범례 한 줄뿐 — verdict 줄 · chip 없음. 상태는 System parts card head 의 `card-sub` 한 번: 가장 나쁜 tone glyph + 개수 + 범례의 tone 낱말 (`1 critical · 1 needs attention` — 셈한 모든 행에 참인 낱말, Down · Overdue 둘 다 critical), glyph 간격과 가운데 정렬은 행 status atom 과 같음, 잡아 둔 읽기면 뒤에 `Last known`, 걸린 부품이 없으면 없음 (`getPartHealthStatusAR`).
+- **h1 아래**: 범례 한 줄, 그 아래 `Click a box for details` (`fs-meta` `--faint`, swatch 없음) — verdict 줄 · chip 없음, 캔버스 위 안내 chip 없음. 상태는 System parts card head 의 `card-sub` 한 번: 가장 나쁜 tone glyph + 개수 + 범례의 tone 낱말 (`1 critical · 1 needs attention` — 셈한 모든 행에 참인 낱말, Down · Overdue 둘 다 critical), glyph 간격과 가운데 정렬은 행 status atom 과 같음, 잡아 둔 읽기면 뒤에 `Last known`, 걸린 부품이 없으면 없음 (`getPartHealthStatusAR`).
 - **지도 칸** (`MapRegionAR`): 그리지 못한 지도 (읽는 중 · 실패 · 그릴 것 없음) = 칸이 내용 높이에서 끝남 (`arch-main-undrawn`). 범례는 지도 읽기와 무관하게 h1 아래 (§12.5).
   - 지도만 실패 = 화면의 실패 모양 하나: alarm card (`PageErrorBanner`), Retry 는 행 끝. page alert 가 지도를 이미 말하면 지도 크기 pointer 한 줄.
   - 빈 상태 문장: `No diagrams to show.` · `This diagram has no source.`.
   - stamp 는 지도 읽기가 답한 뒤 (실패 포함) 읽은 시각을 댐 (`getFreshnessInputAR`).
-- **드로어 Health 행**: 데몬 이름 = `MachineString`. 모든 행의 상태 = bare glyph + 낱말, chip 없음 (`DrawerStatusAR`).
+- **드로어 Health 행**: 데몬 이름 = `MachineString`. 모든 행의 상태 = bare glyph + 낱말, chip 없음 (`DrawerStatusAR`). 항목 사이 = `Stack gap="block"`, hairline 없음.
+  - 펼친 상세 (`Recent runs`, 훅 구성) = `disclosure-body`: trigger 의 label 에서 시작. drill chevron 은 부품 이름의 x.
+  - 훅 구성 = 두 가장자리: settings 경로 · 이벤트 chevron / 이벤트 이름 · matcher · 명령 (18 = chevron 14 + gap 4). matcher 는 dim, 명령은 ink.
 - **System parts 목록** (`PartHealthBlockAR`): 카드 이름 = Dashboard stat 의 명사 `System parts`. 목록 하나 — flagged 먼저 (worst first), 그다음 not loaded · idle. 걸린 부품이 없으면 맨 위에 all-clear 한 줄.
   - lead 줄 (`getAttentionEmptyAR`): `No system part needs attention` · 잡아 둔 읽기 `Last known: no system part needed attention` · `Checking system parts…` · `Couldn't read system parts` · `System parts not read yet`.
-  - 행 한 줄 = 이름 → status atom → cause (`--fs-meta` `--dim`, 말줄임), meta 줄 (box · last run · schedule) 은 그 아래. 행 action "Open box" = `btn ghost sm` (quiet tier).
+  - 행 한 줄 = 이름 → status atom → cause (`--fs-meta` `--dim`, 말줄임), meta 줄 (box · last run · schedule) 은 그 아래. 행 글자 = `fs-body leading-row` (20 row line).
+  - status atom = `HeadStatus` (`fs-meta`, gap 4) · 잡아 둔 판정 (`Last known`) 과 판정 없는 행은 glyph 없이 낱말만. 행 action "Open box" = `btn ghost sm` (quiet tier).
   - healthy 부품은 `N system parts healthy` fold (1 이면 `1 system part healthy`) (`details` + `summary.disclosure`) 안으로 접힘 — 접힌 기본 상태. fold 안 행은 status atom 없음 (summary 가 이미 healthy) — 잡아 둔 읽기의 `Last known` 만 행에 남음.
 - **역할 테두리**: Orchestrator `--cat-2` · Safety checks `--cat-1`, 범례 swatch 와 노드 테두리가 한 key (`MAP_BORDER_KEY_AR`) — swatch 는 `--surface` 위 ≥ 3.0; 노드 테두리는 `getMapBorderRulesAR` 가 `#${ARCH_CANVAS_ID}` 범위에서 classDef stroke 를 같은 `--cat-*` 로 덮는다. 라벨도 같은 범위: box 라벨 `p` 의 `--ink` · zone 제목과 edge 라벨의 `--dim`.
 

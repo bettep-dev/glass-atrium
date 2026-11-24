@@ -1899,6 +1899,33 @@ test("T11 opening the hook part renders the whole configuration it was served", 
 	);
 });
 
+// the hook tree reads on two left edges: the settings path with every event chevron, then each event's name with its matchers and commands
+test("the hook configuration starts each child on its event's name, one disclosure inset past the chevrons", async () => {
+	await openMapWithHealth(getHookChainFixture());
+	await openHookHealth(HOOK_FIXTURE_EVENTS[0].groups[0].hooks[0].command);
+
+	// one inline body — tsx wraps a named inner function in __name, which the browser lacks
+	const edges = await page.evaluate(() => {
+		const chain = document.querySelector(".arch-hook-chain") as Element;
+		const summaries = [...chain.querySelectorAll(".arch-hook-event > details > summary")];
+		return Object.fromEntries(
+			Object.entries({
+				path: [chain.querySelector(".arch-hook-head > *")],
+				chevrons: summaries.map((summary) => summary.firstElementChild),
+				names: summaries.map((summary) => summary.lastElementChild),
+				children: [...chain.querySelectorAll(".arch-hook-group > :first-child, .arch-hook-list > li")],
+			}).map(([key, els]) => [key, els.map((el) => Math.round((el as Element).getBoundingClientRect().left))]),
+		) as Record<"path" | "chevrons" | "names" | "children", number[]>;
+	});
+	const [outer] = edges.path;
+	const [inner] = edges.names;
+
+	assert.ok(edges.children.length > 0, "precondition: an opened event lists its matchers and commands");
+	assert.deepEqual([...new Set(edges.chevrons)], [outer], "every event chevron starts on the settings path's edge");
+	assert.deepEqual([...new Set([...edges.names, ...edges.children])], [inner], "event names, matchers and commands share one edge");
+	assert.equal(inner - outer, 18, "the inner edge sits one chevron and its gap past the outer edge");
+});
+
 // AC-B2-5a: 한 상세 영역이 구성과 실패 이력을 함께 냄 — 훅 신고 하나를 가르는 두 반쪽이
 // 화면 두 곳에 흩어져 있으면 조작자가 그 둘을 손으로 맞춰야 함.
 // 두 사실을 한 영역 안에서 잼: 각각이 어딘가에 있음이 아니라 '같은 자리에 있음' 이 계약임.

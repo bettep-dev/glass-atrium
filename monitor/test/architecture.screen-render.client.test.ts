@@ -16,6 +16,11 @@ const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown
 
 type Component = (props: unknown) => unknown;
 
+// a row's status as drawn: the plain word's span, or the stubbed status atom's host — never the component node wrapping it
+function isStatusHost(node: { type: string }): boolean {
+  return node.type === "span" || node.type === "ui-atom";
+}
+
 // window.UI stub — components resolve to transparent host elements; state helpers and constants stay real.
 function uiStub(overrides: Record<string, unknown>): unknown {
   return new Proxy(
@@ -137,7 +142,7 @@ describe("a folded System parts row shows its status only when it says more than
   const part = (id: string, tone: string, statusLabel: string) =>
     ({ id, name: `${id}-part`, kind: "unknown-kind", daemonName: null, tone, statusLabel, nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null });
   const statusTexts = (root: unknown) =>
-    findNodes(root as ReturnType<typeof renderScreen>, (n) => n.type === "span" && /\barch-part-status\b/.test(String(n.props.className))).map((n) => collectText(n).trim());
+    findNodes(root as ReturnType<typeof renderScreen>, (n) => isStatusHost(n) && /\barch-part-status\b/.test(String(n.props.className))).map((n) => collectText(n).trim());
   const rows = [
     { name: "a fresh read drops the Healthy the fold's count already says", freshness: { at: readAt, regions: [], now }, folded: [] },
     { name: "a held read keeps Last known on every folded row", freshness: { at: readAt, failed: true, regions: [], now }, folded: ["Last known", "Last known"] },
@@ -210,17 +215,17 @@ test("the node drawer titles its sections at the title step in sans and writes i
   };
 
   const tree = renderScreen(mod.React.createElement(mod.NodeDetailBody, props));
-  const css = findNodes(renderScreen(mod.React.createElement(mod.ScreenArchitecture, {})), (n) => n.type === "style").map(collectText).join(" ");
   const headings = findNodes(tree, (n) => n.type === "h3");
   const [alsoLights] = findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith("Also lights"));
   const [flowList] = findNodes(tree, (n) => n.type === "ul" && collectText(n).includes("Agents"));
-  const [heading] = getRuleBodies(css, "arch-drawer-heading");
 
   assert.equal(headings.length, 3, "Health, Connections and Records each have a section heading");
   for (const h of headings)
     assert.deepEqual(String(h.props.className).split(/\s+/).filter((c) => /^(font-mono|uppercase|tracking-\w+|fs-meta|text-faint)$/.test(c)), [], `${collectText(h)} drops the caption look`);
-  assert.equal(getRuleFontPx(css, "arch-drawer-heading"), 16, "a drawer section title sits at the title step");
-  assert.match(heading ?? "", /font-weight:\s*600/, "a drawer section title is semibold");
+  for (const h of headings) {
+    assert.equal(getClassFontPx(h), 16, `${collectText(h)} sits at the title step`);
+    assert.match(String(h.props.className), /\bfont-semibold\b/, `${collectText(h)} is semibold`);
+  }
   assert.doesNotMatch(String(alsoLights?.props.className), /\bfont-mono\b/, "the Also lights line is prose");
   assert.deepEqual(findNodes(flowList, (n) => Object.hasOwn(Object(n.props.style), "color")).map(collectText), [], "no connection carries a colour dot");
 });
@@ -255,7 +260,7 @@ test("a map failure no other surface speaks for draws the alarm card in the map 
   const mod = await loadArch();
   const down = { status: "error", data: null, error: "HTTP 503 Service Unavailable — down", busy: false };
   const onRetry = () => {};
-  const tree = renderScreen(mod.React.createElement(mod.MapRegionAR, { diagState: down, pageFailure: null, isBusy: false, onRetry, copyNote: null, isEmpty: false }));
+  const tree = renderScreen(mod.React.createElement(mod.MapRegionAR, { diagState: down, pageFailure: null, isBusy: false, onRetry, isEmpty: false }));
   const [region] = findNodes(tree, (n) => n.props.id === "arch-map-region");
   const cards = findNodes(region, (n) => n.props.atom === "PageErrorBanner");
 
@@ -275,7 +280,7 @@ describe("the map card ends at its content when there is nothing to draw", () =>
   for (const row of rows)
     test(row.name, async () => {
       const mod = await loadArch();
-      const tree = renderScreen(mod.React.createElement(mod.MapRegionAR, { diagState: ready, pageFailure: null, isBusy: false, onRetry: () => {}, copyNote: null, isEmpty: row.isEmpty }));
+      const tree = renderScreen(mod.React.createElement(mod.MapRegionAR, { diagState: ready, pageFailure: null, isBusy: false, onRetry: () => {}, isEmpty: row.isEmpty }));
       const [region] = findNodes(tree, (n) => n.props.id === "arch-map-region");
 
       assert.equal(/\barch-main-undrawn\b/.test(String(region.props.className)), row.isUndrawn);
@@ -322,25 +327,22 @@ test("the node drawer draws every daemon row's status as a bare glyph and word",
 });
 
 // font-size a page rule sets for one class, in px — tokens resolved from the shipped tokens.css
-function getRuleFontPx(css: string, className: string): number {
+// an element's size through its type-scale class: fs-<step> → the --fs-<step> token's px
+function getClassFontPx(node: { props: { className?: unknown } } | undefined): number {
   const tokens = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
-  const rule = new RegExp(`\\.${className}\\s*\\{([^}]*)\\}`).exec(css)?.[1] ?? "";
-  const value = /font-size:\s*([^;]+);/.exec(rule)?.[1]?.trim() ?? "";
-  const token = /^var\((--[\w-]+)\)$/.exec(value)?.[1];
-  const px = token ? new RegExp(`${token}:\\s*(\\d+(?:\\.\\d+)?)px`).exec(tokens)?.[1] : /^(\d+(?:\.\d+)?)px$/.exec(value)?.[1];
-  assert.ok(px, `.${className} sets its own font-size in px or a size token, not '${value || "nothing"}'`);
+  const step = /(?:^|\s)fs-([a-z]+)(?=\s|$)/.exec(String(node?.props.className))?.[1];
+  const px = step ? new RegExp(`--fs-${step}:\\s*(\\d+(?:\\.\\d+)?)px`).exec(tokens)?.[1] : undefined;
+  assert.ok(px, `'${String(node?.props.className)}' sets its size through a type-scale class`);
   return Number(px);
 }
 
 test("every heading on the page and in the drawer is no larger than the heading it sits under", async () => {
   const mod = await loadArch();
-  const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
-  const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
-  const ladders = [
-    { name: "drawer section", upper: "arch-drawer-heading", lower: "arch-drawer-subheading" },
-  ];
-  for (const ladder of ladders)
-    assert.ok(getRuleFontPx(css, ladder.upper) >= getRuleFontPx(css, ladder.lower), `${ladder.name}: the lower heading outsizes the one above it`);
+  const flows = [{ id: "f1", from: "canonical.agent_layer", to: "canonical.hook_pipeline", edge_type: "data" }];
+  const tree = renderScreen(mod.React.createElement(mod.FlowSummary, { inbound: flows, outbound: [], nodeIndex: new Map() }));
+  const [upper] = findNodes(tree, (n) => n.type === "h3");
+  const [lower] = findNodes(tree, (n) => n.type === "h4");
+  assert.ok(getClassFontPx(upper) >= getClassFontPx(lower), "drawer section: the lower heading outsizes the one above it");
 });
 
 // a rule body for one class in the screen's style block — every match, so a class defined twice shows up as two
@@ -350,17 +352,20 @@ function getRuleBodies(css: string, className: string): string[] {
 
 test("the System parts title is no smaller than the row text under it", async () => {
   const mod = await loadArch();
-  const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
-  const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
-  assert.ok(getRuleFontPx(css, "arch-part-health-title") >= getRuleFontPx(css, "arch-part-row"), "the System parts rows outsize the card title");
+  const partRows = [{ id: "cron", name: "cron-scheduler", kind: "unknown-kind", daemonName: null, tone: "crit", statusLabel: "Overdue", nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null }];
+  const props = { partRows, attentionEmpty: "", freshness: { at: null, regions: [], now: Date.now() }, nodeIndex: new Map(), onSelectNode: () => {} };
+  const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
+  const [title] = findNodes(tree, (n) => n.type === "h2");
+  const [row] = findNodes(tree, (n) => /\barch-part-row\b/.test(String(n.props.className)));
+  assert.ok(getClassFontPx(title) >= getClassFontPx(row), "the System parts rows outsize the card title");
 });
 
-test("the System parts list and the drawer's part list each own one rule, so their gaps never cross-apply", async () => {
+test("the System parts list is defined once, so its gap never cross-applies to the drawer's part list", async () => {
   const mod = await loadArch();
   const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
   const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
   assert.equal(getRuleBodies(css, "arch-part-list").length, 1, "the System parts list is defined once");
-  assert.equal(getRuleBodies(css, "arch-drawer-part-list").length, 1, "the drawer's part list is defined once");
+  assert.equal(getRuleBodies(css, "arch-drawer-part-list").length, 0, "the drawer's part list takes its spacing from its Stack alone");
 });
 
 test("a System parts row keeps the name and the status on one line each", async () => {
@@ -368,18 +373,18 @@ test("a System parts row keeps the name and the status on one line each", async 
   const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
   const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
   const [name] = getRuleBodies(css, "arch-part-name");
-  const [status] = getRuleBodies(css, "arch-part-status");
   assert.match(name ?? "", /white-space:\s*nowrap/, "the part name stays on one line");
   assert.match(name ?? "", /text-overflow:\s*ellipsis/, "a long part name ends in an ellipsis");
-  assert.match(status ?? "", /display:\s*inline-flex/, "the glyph and the verdict word are one inline atom");
-  assert.match(status ?? "", /white-space:\s*nowrap/, "the verdict word never wraps under its glyph");
 
   const nodeIndex = new Map([["canonical.cron", { id: "canonical.cron", label: "Scheduled background jobs" }]]);
   const row = { id: "cron", name: "cron-scheduler", tone: "ok", statusLabel: "Healthy", nodeIds: ["cron"], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null };
   const freshness = { at: new Date().toISOString(), regions: [], now: Date.now() };
   const rowTree = renderScreen(mod.React.createElement(mod.PartHealthRowAR, { row, freshness, nodeIndex, onSelectNode: () => {} }));
   const [nameEl] = findNodes(rowTree, (n) => /\barch-part-name\b/.test(String(n.props.className)));
+  const [status] = findNodes(rowTree, (n) => isStatusHost(n) && /\barch-part-status\b/.test(String(n.props.className)));
   assert.equal(nameEl?.props.title, "cron-scheduler", "a truncated name keeps its full text in title");
+  assert.equal(status?.props.atom, "HeadStatus", "the glyph and the verdict word are one status atom");
+  assert.match(String(status?.props.className), /\bwhitespace-nowrap\b/, "the verdict word never wraps under its glyph");
 });
 
 test("a flagged System parts row reads its status right after the name and its cause on the same line, never in the meta line", async () => {
@@ -533,33 +538,32 @@ test("a part's Open box action is the quiet ghost button, so a list of parts car
   assert.match(String(action.props.className), /\bghost\b/, "the row action takes the quiet tier");
 });
 
-// A part's verdict word sits at the meta step, where warn/ok/info text falls below 4.5:1 — the tone rides a glyph beside it.
-test("a part's health verdict carries its tone on a tone-shaped glyph, its word staying neutral", async (t) => {
+// A part's verdict word sits at the meta step, where warn/ok/info text falls below 4.5:1 — the tone rides the status atom's glyph.
+test("a part's health verdict carries its tone on the status atom's glyph, an unjudged word staying faint and glyphless", async (t) => {
   const mod = await loadArch();
   const now = Date.now();
   const freshness = { at: new Date(now).toISOString(), regions: [], now };
-  const toneIcon = realUi.TONE_ICON as Record<string, string>;
   const rows = [
-    { name: "crit", tone: "crit", statusLabel: "Overdue", textClass: "text-dim" },
-    { name: "warn", tone: "warn", statusLabel: "Late", textClass: "text-dim" },
-    { name: "info", tone: "info", statusLabel: "Idle", textClass: "text-dim" },
-    { name: "ok", tone: "ok", statusLabel: "Healthy", textClass: "text-dim" },
-    { name: "no verdict yet", tone: null, statusLabel: "Not loaded", textClass: "text-faint" },
+    { name: "crit", tone: "crit", statusLabel: "Overdue" },
+    { name: "warn", tone: "warn", statusLabel: "Late" },
+    { name: "info", tone: "info", statusLabel: "Idle" },
+    { name: "ok", tone: "ok", statusLabel: "Healthy" },
+    { name: "no verdict yet", tone: null, statusLabel: "Not loaded" },
   ];
   for (const row of rows) {
     await t.test(row.name, () => {
       const part = { id: "cron", name: "cron", tone: row.tone, statusLabel: row.statusLabel, nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null };
       const tree = renderScreen(mod.React.createElement(mod.PartHealthRowAR, { row: part, freshness, nodeIndex: new Map(), onSelectNode: () => {} }));
-      const [status] = findNodes(tree, (n) => n.type === "span" && /\barch-part-status\b/.test(String(n.props.className)) && collectText(n).includes(row.statusLabel));
-      const glyphs = findNodes(status, (n) => n.props.atom === "Icon");
+      const [status] = findNodes(tree, (n) => isStatusHost(n) && /\barch-part-status\b/.test(String(n.props.className)) && collectText(n).includes(row.statusLabel));
       const classes = String(status.props.className).split(/\s+/);
 
-      assert.ok(classes.includes(row.textClass), `the ${row.name} verdict word reads ${row.textClass}`);
       assert.deepEqual(classes.filter((c) => /^text-(ok|warn|crit|info)$/.test(c)), [], `the ${row.name} verdict word carries no tone`);
-      if (!row.tone) return assert.equal(glyphs.length, 0, "a part with no verdict shows no tone glyph");
-      assert.equal(glyphs.length, 1, `the ${row.name} verdict leads with one glyph`);
-      assert.equal(glyphs[0].props.name, toneIcon[row.tone], `the ${row.name} glyph takes its tone's shape`);
-      assert.match(String(glyphs[0].props.className), new RegExp(`\\btext-${row.tone}\\b`), `the ${row.name} glyph carries the tone`);
+      if (!row.tone) {
+        assert.equal(status.props.atom, undefined, "a part with no verdict shows the word alone, no status atom");
+        return assert.ok(classes.includes("text-faint"), "a part with no verdict reads faint");
+      }
+      assert.equal(status.props.atom, "HeadStatus", `the ${row.name} verdict draws through the status atom`);
+      assert.equal(status.props.tone, row.tone, `the ${row.name} glyph takes its tone`);
     });
   }
 });
