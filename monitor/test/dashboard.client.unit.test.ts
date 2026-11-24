@@ -268,7 +268,8 @@ test("the hour grid keeps every cell, ends on the server's today and names the s
   assert.equal(grid.total, sum, "rotation neither drops nor duplicates a cell");
   assert.deepEqual([...(grid.rows.find((row) => row.day === "Mon")?.counts ?? [])], data[1], "a row keeps its own weekday's hours");
   assert.deepEqual({ ...grid.peak }, { day: "Sat", fold: null, hour: 23, count: 623 });
-  assert.equal(grid.span, "09-23 – today, 8 calendar dates");
+  assert.equal(grid.span, "09-23 – today", "the sub-line states the window once, in the Day form");
+  assert.equal(grid.dateCount, 8, "the date count rides the ⓘ basis, off the sub-line");
 });
 
 test("every weekday row that sums two of the server's bucket dates names both, and no other row is marked", () => {
@@ -289,7 +290,8 @@ test("every weekday row that sums two of the server's bucket dates names both, a
     assert.deepEqual(marked, row.folds, `${row.name}: marked rows`);
     assert.equal(grid.rows[grid.rows.length - 1].fold, row.folds[grid.rows[grid.rows.length - 1].day as keyof typeof row.folds],
       `${row.name}: today's row is shown last`);
-    assert.equal(grid.span, `${row.first.slice(5)} – today, ${row.count} calendar dates`, `${row.name}: span`);
+    assert.equal(grid.span, `${row.first.slice(5)} – today`, `${row.name}: span`);
+    assert.equal(grid.dateCount, row.count, `${row.name}: date count`);
   }
   const meta = { bucket_dates: { first: "2026-09-23", last: "2026-09-30", count: 8 } };
   assert.match(week.describeHourGrid(week.buildHourGrid({ data, meta })), /Wed \(09-23 \+ today\) 14:00 with 90 runs/,

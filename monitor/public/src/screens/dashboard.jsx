@@ -379,7 +379,7 @@ function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetr
   return (
     <>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-section">
-        <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
+        <WeekPanel id="dash-week-results" title="Task results" state={outcomesState} source="task results"
           note={`${OUTCOME.COUNTING_NOTE} ${RESULTS_PANEL_NOTE}`} isRetryShared={sharedSources.includes('task results')}
           render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
         <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
@@ -463,11 +463,11 @@ function SpendStrip({ strip }) {
 
 // a result's bar is a quantity → the data colour; the label word (ui.jsx RESULT_META) names the result
 function ResultPanel({ panel }) {
-  if (panel.writerTotal <= 0) return <p className="fs-meta text-dim">No reported outcomes, <window.UI.DayTokens>{panel.span}</window.UI.DayTokens>.</p>;
+  if (panel.writerTotal <= 0) return <p className="fs-meta text-dim">No task results, <window.UI.DayTokens>{panel.span}</window.UI.DayTokens>.</p>;
   return (
     <>
       <p className="fs-meta text-dim">
-        <window.UI.DayTokens>{panel.span}</window.UI.DayTokens> · {formatInt(panel.writerTotal)} reported outcomes
+        <window.UI.DayTokens>{panel.span}</window.UI.DayTokens> · {formatInt(panel.writerTotal)} task results
       </p>
       <ul className="flex flex-col gap-list">
         {panel.rows.map((row) => {
@@ -548,17 +548,18 @@ function HourGrid({ grid }) {
           {HOUR.STEPS.map((step) => <span key={step} className="dash-hour-swatch" data-heat={step}/>)}
         </span>
         <span>{formatInt(grid.max)} runs per hour</span>
+        {grid.folds.length > 0 && <span>· ×2 = two dates summed</span>}
       </div>
     </>
   );
 }
 
-// the ⓘ drawer — the basis always; the weekday fold once the payload names a doubled weekday
+// the ⓘ drawer — the basis and the window's date count; the weekday fold once the payload names a doubled weekday
 function HourGridNote({ grid }) {
   const { NoWrap } = window.UI;
   return (
     <>
-      <p className="fs-body">{HOUR.GRID_BASIS}</p>
+      <p className="fs-body">{HOUR.GRID_BASIS}{grid?.dateCount ? ` Covers ${grid.dateCount} calendar dates.` : ''}</p>
       {grid?.folds.length > 0 && (
         <p className="fs-body">
           {grid.folds.map((row, at) => (
@@ -1239,8 +1240,8 @@ function buildHourGrid(data) {
   const peak = cells.reduce((best, cell) => (cell.count > best.count ? cell : best), cells[0]);
   return {
     rows, peak, max: peak.count, total: cells.reduce((sum, cell) => sum + cell.count, 0),
-    folds: rows.filter((row) => row.fold),
-    span: dates ? `${formatDay(dates.first)} – today, ${dates.count} calendar dates` : 'Last 7 days',
+    folds: rows.filter((row) => row.fold), dateCount: dates?.count ?? null,
+    span: dates ? `${formatDay(dates.first)} – today` : 'Last 7 days',
   };
 }
 

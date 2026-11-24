@@ -66,7 +66,7 @@ async function openDashboard(viewport: Viewport): Promise<Page> {
     () => {
       const harness = document.querySelector("#dash-status .stat")?.textContent ?? "";
       const hasStrip = document.querySelector("#dash-week-spend ol") !== null;
-      const hasResults = (document.querySelector("#dash-week-results")?.textContent ?? "").includes("reported outcomes");
+      const hasResults = (document.querySelector("#dash-week-results")?.textContent ?? "").includes(" task results");
       const hasHours = document.querySelector("#dash-week-hours [role=img]") !== null;
       return / (up|down)/.test(harness) && hasStrip && hasResults && hasHours;
     },

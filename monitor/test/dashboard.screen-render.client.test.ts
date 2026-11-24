@@ -155,6 +155,15 @@ function renderResultPanel(byResult: Array<{ result: string; count: number }>): 
   return renderScreen(rateMod.React.createElement(rateMod.ResultPanel as Component, { panel })) as RenderedNode;
 }
 
+// spec 44084 §9.1: one noun, one window form → the sub-line says task results, never outcomes
+test("the results panel counts task results on its sub-line, filled or empty", () => {
+  for (const byResult of [[{ result: "done", count: 40 }, { result: "fail", count: 2 }], []]) {
+    const text = collectText(renderResultPanel(byResult)).replace(/\s+/g, " ");
+    assert.match(text, /task results/, text);
+    assert.doesNotMatch(text, /outcomes/, text);
+  }
+});
+
 test("spend and result bars carry the data colour; today's partial day keeps its outline in it", () => {
   const strip = (mod.buildSpendStrip as (points: unknown) => unknown)(
     ["2026-09-22", "2026-09-23", "2026-09-24"].map((date, i) => ({ date, cost_usd: 12.5 + i, session_count: 1 })),
@@ -461,6 +470,15 @@ describe("the week block", () => {
     assert.equal(pairs.length, 1, "one two-column row from xl");
     assert.deepEqual(sectionIds(pairs[0]), ["dash-week-results", "dash-week-hours"], "Spend stays out of the paired row");
   });
+
+  // spec 44084 §9.1: the Status card states the window → no panel title restates it
+  test("titles each panel by its subject alone", () => {
+    const tree = render("WeekRow", {
+      spendState: LOADING, outcomesState: LOADING, heatmapState: LOADING, onRetrySpend: () => {}, onRetryHeatmap: () => {},
+    });
+    const titles = findNodes(tree, (n) => n.type === "section").map((n) => n.props["aria-label"]);
+    assert.deepEqual(titles, ["Task results", "Runs by hour", "Spend per day"]);
+  });
 });
 
 test("hour ticks read as bare two-digit hours while each cell's tooltip keeps the full hour", () => {
@@ -492,6 +510,13 @@ test("a folded weekday keeps its ×2 token on one line in the fold sentence and 
   const [label] = findNodes(chart, (n) => n.props.title === "09-23 + today");
   assert.equal(label && collectText(label), "Wed ×2", "the row label names the folded weekday");
   assert.match(classOf(label), /\bwhitespace-nowrap\b/, "the row label never wraps inside its track");
+  const [key] = findNodes(render("HourGrid", { grid }), (n) => hasClass(n, "dash-hour-key"));
+  assert.match(collectText(key), /runs per hour · ×2 = two dates summed$/, "a folded row adds its key to the key line");
+});
+
+test("the hour grid's ⓘ states how many dates the window covers, beside the basis", () => {
+  const grid = { rows: [], total: 0, max: 0, span: "09-22 – today", dateCount: 9, folds: [], peak: null };
+  assert.match(collectText(render("HourGridNote", { grid })), /poisoned excluded\.\s*Covers 9 calendar dates\./);
 });
 
 describe("Runs by hour heat ramp", () => {
@@ -517,7 +542,7 @@ describe("Runs by hour heat ramp", () => {
     assert.equal(key.props["aria-hidden"], "true");
     assert.deepEqual(findNodes(key, (n) => hasClass(n, "dash-hour-swatch")).map((n) => n.props["data-heat"]), [0, 1, 2, 3, 4]);
     // formatInt is a stubbed atom here → the peak figure itself is asserted in the e2e
-    assert.match(collectText(key), /^0\s*1\s*runs per hour$/);
+    assert.match(collectText(key), /^0\s*1\s*runs per hour$/, "no fold → no ×2 key");
   });
 
   test("the method sentences leave the card body for its ⓘ", () => {
