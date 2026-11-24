@@ -2358,11 +2358,9 @@ function getTrendHintI(before, after) {
 	return "Rejected ÷ scored cycles (newer half) — unchanged";
 }
 
-// ----- Ranked candidate list (T-IMP-3 · T-IMP-5) -----------------------------
+// ----- Pattern ledger -------------------------------------------------------
 //
-// learning-aggregator 패턴을 frequency 내림차순 ranked 후보 리스트로. StatusDot
-// severity(빈도 밴드) + 클릭 → DetailSurface drawer (DetailDrawerI 의 pattern kind 재사용).
-// rejected 후보(반려 백로그)는 T-IMP-5 의 collapsible <details> 로 기본 접힘 분리.
+// learning-aggregator 패턴 → frequency 내림차순 후보 표 · 행 클릭 → DetailSurface drawer (DetailDrawerI 의 pattern kind 재사용).
 
 // 패턴 원장 — 한 표면에 한 사실. 활성 후보와 억제된 행이 다른 카드에 살면 둘 중 하나만
 // 읽히고, 억제된 행은 늘 읽히지 않는 쪽이 된다. 행 단위로 합쳐 live / inert / held 세
@@ -2419,7 +2417,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 	const open = sorted.filter((p) => p.status !== "rejected");
 	const live = open.filter((p) => p.intake_skipped !== true);
 	const inert = open.filter((p) => p.intake_skipped === true);
-	// severity 밴드 = 최대 빈도 대비 — StatusDot 색 + 텍스트 빈도 동반 (dual-encode).
+	// 막대 척도 = 원장 최대 빈도
 	const maxFreq = Math.max(1, ...sorted.map((p) => Number(p.frequency ?? 0)));
 
 	const candidates = [
@@ -2475,22 +2473,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 		<div className="flex flex-col gap-list">
 			{head}
 			<LedgerHeadLineI>×N = times seen, all time</LedgerHeadLineI>
-			{getPatternGroupsI(rows).map((group) => (
-				<div key={group.title} className="flex flex-col gap-stack">
-					<div className="fs-body text-ink truncate" title={group.title}>
-						{truncateI(group.title, 120)}
-					</div>
-					{group.entries.map(({ pattern, rank }) => (
-						<CandidateRowI
-							key={pattern.id}
-							rank={rank}
-							pattern={pattern}
-							maxFreq={maxFreq}
-							onClick={() => onRowClick({ ...pattern, kind: "pattern" })}
-						/>
-					))}
-				</div>
-			))}
+			<CandidateTableI rows={rows} maxFreq={maxFreq} onRowClick={onRowClick} />
 		</div>
 	);
 }
@@ -2506,61 +2489,63 @@ function getPatternGroupsI(rows) {
 	return [...groups].map(([title, entries]) => ({ title, entries }));
 }
 
-function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
-	const { StatusDot, Bar, AgentName } = window.UI;
-	const freq = Number(pattern.frequency ?? 0);
-	const status = candidateSeverityI(freq, maxFreq);
-	const badge = learningStatusBadgeI(pattern.status);
-	const label = patternNameI(pattern.pattern_signature, pattern.agent);
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			className="i-row-card i-tile-hover text-left w-full flex items-center gap-label"
-			aria-label={`Candidate ${rank}: ${label}${pattern.agent ? ` — ${pattern.agent}` : ""} — seen ${freq} times`}
-		>
-			<span
-				className="fs-meta text-faint"
-				style={{ width: "2ch", textAlign: "right" }}
-			>
-				{rank}
-			</span>
-			<StatusDot status={status} />
-			<span className="shrink-0 truncate" style={{ width: "18ch" }}>
-				{pattern.agent ? (
-					<AgentName name={pattern.agent} className="fs-body text-ink" />
-				) : (
-					<span className="fs-meta text-faint">no agent</span>
-				)}
-			</span>
-			<span className="flex-1 min-w-0" title="Times seen, relative to the most-seen live pattern">
-				<Bar
-					value={freq}
-					max={maxFreq}
-					tone={status}
-					ariaLabel={`Seen ${freq} times; the most-seen live pattern ${maxFreq}`}
-				/>
-			</span>
-			<span className="fs-meta shrink-0 inline-flex">
-				<window.UI.ToneGlyph tone={badge.severity} label={`Status: ${badge.label}`} title={`Status: ${badge.label}`} />
-			</span>
-			<span
-				className="fs-meta text-dim tnum shrink-0"
-				title="Times this pattern was seen"
-			>
-				×{formatIntI(freq)}
-			</span>
-		</button>
-	);
+const CANDIDATE_COLUMNS_I = [
+	{ key: "rank", label: "#", isNumeric: true },
+	{ key: "agent", label: "Agent" },
+	{ key: "seen", label: "Seen" },
+	{ key: "count", label: "×N", isNumeric: true },
+];
+
+// one body, each title a group row over its agents · roving index = the row's place in that body, not its rank
+function CandidateTableI({ rows, maxFreq, onRowClick }) {
+	const { Table, getRowFocusProps } = window.UI;
+	const [activeIndex, setActiveIndex] = useSI(0);
+	const groups = getPatternGroupsI(rows);
+	const entries = groups.flatMap((group) => group.entries);
+	const openRow = (index) => onRowClick({ ...entries[index].pattern, kind: "pattern" });
+	const getRowProps = (entry) => {
+		const index = entries.indexOf(entry);
+		const focusProps = getRowFocusProps({ index, activeIndex, count: entries.length, onActivate: openRow, onActiveChange: setActiveIndex });
+		return { focusProps, onClick: () => openRow(index) };
+	};
+	const body = (view) => groups.flatMap((group) => getCandidateGroupRowsI({ view, group, maxFreq, getRowProps }));
+	return <Table caption="Live candidates — open a row for its pattern" isNested columns={CANDIDATE_COLUMNS_I} bodies={[{ key: "live", className: "tbl-compact", rows: body }]} />;
 }
 
-// 빈도 → severity 밴드 (StatusDot). 최대 대비 비율 — ≥66% crit · ≥33% warn · 그 외 info.
-// 색 단독 아님 — 행에 ×빈도 텍스트 동반 (dual-encode).
-function candidateSeverityI(freq, maxFreq) {
-	const ratio = freq / Math.max(1, maxFreq);
-	if (ratio >= 0.66) return "crit";
-	if (ratio >= 0.33) return "warn";
-	return "info";
+// one title's group row, then a row per agent under it
+function getCandidateGroupRowsI({ view, group, maxFreq, getRowProps }) {
+	const { TableRow, TableCell } = window.UI;
+	return [
+		<TableRow key={`title-${group.title}`} view={view}>
+			<TableCell view={view} kind="group-header" title={group.title}>{truncateI(group.title, 120)}</TableCell>
+		</TableRow>,
+		...group.entries.map((entry) => (
+			<CandidateRowI key={entry.pattern.id} view={view} rank={entry.rank} pattern={entry.pattern} maxFreq={maxFreq} {...getRowProps(entry)} />
+		)),
+	];
+}
+
+// every live row reads Spotted → a status word prints only where it differs · bar length and ×N carry the frequency, no severity
+function CandidateRowI({ view, rank, pattern, maxFreq, focusProps, onClick }) {
+	const { Bar, AgentName, TableRow, TableCell } = window.UI;
+	const freq = Number(pattern.frequency ?? 0);
+	const statusWord = pattern.status && pattern.status !== "identified" ? learningStatusBadgeI(pattern.status).label : null;
+	const name = [`Candidate ${rank}: ${patternNameI(pattern.pattern_signature, pattern.agent)}`, pattern.agent, `seen ${freq} times`, statusWord];
+	return (
+		<TableRow view={view} {...focusProps} aria-label={name.filter(Boolean).join(" — ")} onClick={onClick}>
+			<TableCell view={view} isNumeric className="text-faint">{rank}</TableCell>
+			<TableCell view={view} className="whitespace-nowrap">
+				<span className="inline-flex items-baseline gap-label-inline">
+					{pattern.agent ? <AgentName name={pattern.agent} className="text-ink" /> : <span className="text-faint">no agent</span>}
+					{statusWord ? <span className="text-dim">{statusWord}</span> : null}
+				</span>
+			</TableCell>
+			<TableCell view={view} className="w-full" title="Times seen, relative to the most-seen live pattern">
+				<Bar value={freq} max={maxFreq} tone="data" ariaLabel={`Seen ${freq} times; the most-seen live pattern ${maxFreq}`} />
+			</TableCell>
+			<TableCell view={view} isNumeric className="text-dim" title="Times this pattern was seen">×{formatIntI(freq)}</TableCell>
+		</TableRow>
+	);
 }
 
 // ----- Shared chrome --------------------------------------------------------
