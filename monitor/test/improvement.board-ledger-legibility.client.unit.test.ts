@@ -661,6 +661,31 @@ describe("the drawer prints each field in words, never the stored machine key", 
   }
 });
 
+// a date is never mono: the face prints the short form, the full stamp rides the hover title
+describe("the pattern drawer prints its dates in sans, the full stamp on hover only", () => {
+  const row = { kind: "pattern", id: 7, agent: AGENT, discovered_date: "2026-11-22", last_updated: "2026-11-22T09:30:00.123Z" };
+  const tree = sandbox.DetailBodyI(sandbox.buildDetailPropsI(row));
+  const terms = findAll(tree, (el) => el.type === "dt");
+  const values = findAll(tree, (el) => el.type === "dd");
+  const valueOf = (label: string) => values[terms.findIndex((el) => visibleText(el) === label)];
+  const rows = [
+    { name: "first-seen day", label: "First seen", printed: "2026-11-22", title: undefined },
+    { name: "last update in the Day + time form", label: "Last updated", printed: "11-22 18:30", title: "2026-11-22 18:30:00 KST" },
+  ];
+  for (const item of rows) {
+    test(item.name, () => {
+      const value = valueOf(item.label);
+
+      assert.ok(value, `${item.label} is printed`);
+      assert.equal(visibleText(value), item.printed);
+      assert.deepEqual(machineTexts(value), [], `${item.label} drawn in mono`);
+      const titled = findAll(value, (el) => typeof el.props.title === "string").map((el) => el.props.title);
+      assert.deepEqual(titled, item.title ? [item.title] : []);
+      assert.ok(findAll(value, (el) => /\btnum\b/.test(classOf(el))).length > 0, `${item.label} digits tabular`);
+    });
+  }
+});
+
 test("the cycle breakdown names its window in the short form the band's Applied, 7d uses", () => {
   const screen = sandbox as unknown as Record<string, Component>;
   assert.match(visibleText(screen.CycleDecompositionRowI({ stats: {} })), /^Cycles, 7d /);

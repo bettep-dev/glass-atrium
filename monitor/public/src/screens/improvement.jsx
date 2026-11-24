@@ -2163,20 +2163,14 @@ function buildDetailPropsI(row) {
 					row?.approval_tier ? getTierWordsI(row.approval_tier) : row?.bucket,
 				],
 				["Frequency", row?.frequency],
+				// discovered_date = a display-zone day key → printed as stored, never zone-shifted
 				[
 					"First seen",
-					row?.discovered_date ? formatDateFullI(row.discovered_date) : null,
-					true,
+					row?.discovered_date ? <span className="tnum">{formatDateFullI(row.discovered_date)}</span> : null,
 				],
-				// last_updated = real-UTC ISO instant → formatKstFull (KST 상세 표기). last_seen fallback 동일.
 				[
 					"Last updated",
-					row?.last_updated
-						? window.UI.formatKstFull(row.last_updated)
-						: row?.last_seen
-							? window.UI.formatKstFull(row.last_seen)
-							: null,
-					true,
+					row?.last_updated || row?.last_seen ? buildKstDateTimeI(row.last_updated || row.last_seen) : null,
 				],
 			],
 			sections: [
@@ -2207,18 +2201,11 @@ function buildDetailPropsI(row) {
 			["Classification", getDetailWordsI("classification", row?.classification)],
 			["Target agent", row?.target_agent],
 			["Target file", row?.target_file, true],
-			// cycle_date = date-only string → tz-safe formatDateFullI · reviewed_at = UTC instant → formatKstFull
+			// cycle_date = date-only string → tz-safe formatDateFullI
 			["Cycle date", row?.cycle_date ? formatDateFullI(row.cycle_date) : null],
 			["Model check", getModelCheckWordsI(row?.haiku_status)],
 			["Cost guard", getDetailWordsI("costGuard", row?.cost_guard_state)],
-			[
-				"Reviewed at",
-				row?.reviewed_at ? (
-					<span title={window.UI.formatKstFull(row.reviewed_at)}>
-						{window.UI.formatKstDateTime(row.reviewed_at)}
-					</span>
-				) : null,
-			],
+			["Reviewed at", row?.reviewed_at ? buildKstDateTimeI(row.reviewed_at) : null],
 		],
 		sections: [
 			["Pattern label", row?.pattern_label, false],
@@ -2226,6 +2213,15 @@ function buildDetailPropsI(row) {
 		],
 		preVerify: preVerifyDetail,
 	};
+}
+
+// a UTC instant in a drawer → Day + time on the face, the full stamp on hover
+function buildKstDateTimeI(iso) {
+	return (
+		<span className="tnum" title={window.UI.formatKstFull(iso)}>
+			{window.UI.formatKstDateTime(iso)}
+		</span>
+	);
 }
 
 function getTierWordsI(tier) {
