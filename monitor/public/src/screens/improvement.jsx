@@ -1725,13 +1725,14 @@ function HeldCauseTableI({ buckets, rows }) {
 // One cause: its name opens its rows (the house ledger expander) · its remedy lives in the ledger drawer
 function HeldCauseRowsI({ view, bucket, rows, isHumanCause }) {
 	const [isOpen, setOpen] = useSI(false);
-	const { DisclosureChevron, TableRow, TableCell } = window.UI;
+	const { DisclosureChevron, TableRow, TableCell, ToneGlyph } = window.UI;
 	const listId = `${ANCHOR_ID_I.heldPatterns}-${bucket.cause}`;
 	return (
 		<TableRow view={view}>
 			<TableCell view={view} className="text-ink">
 				<span className="inline-flex items-center gap-label-inline">
-					<HeldGlyphSlotI isShown={isHumanCause} />
+					{/* glyph-size slot in every group → every name starts on one column */}
+					<ToneGlyph tone={isHumanCause ? "warn" : null} label="Needs a human" />
 					<button
 						type="button"
 						className="group inline-target gap-label-inline text-left"
@@ -1747,7 +1748,7 @@ function HeldCauseRowsI({ view, bucket, rows, isHumanCause }) {
 					<div className="flex items-start gap-label-inline">
 						{/* the name's lead track, unseen → the rows start on the name column */}
 						<span className="invisible inline-flex items-center gap-label-inline" aria-hidden="true">
-							<HeldGlyphSlotI isShown={false} />
+							<ToneGlyph tone={null} />
 							<DisclosureChevron isOpen={false} />
 						</span>
 						<div className="min-w-0 flex-1">
@@ -1760,12 +1761,6 @@ function HeldCauseRowsI({ view, bucket, rows, isHumanCause }) {
 			<TableCell view={view} isNumeric className="text-dim tnum">{formatIntI(Number(bucket.agents ?? 0))}</TableCell>
 		</TableRow>
 	);
-}
-
-// the warn glyph's own box in every group, unseen where the cause needs no human → every name starts on one column
-function HeldGlyphSlotI({ isShown }) {
-	const glyph = <window.UI.ToneGlyph tone="warn" label="Needs a human" />;
-	return isShown ? glyph : <span className="invisible inline-flex" aria-hidden="true">{glyph}</span>;
 }
 
 // 원장 안의 비활성 행 목록 — 클릭 대상이 아니다(활성 후보만 드로어를 연다).

@@ -51,7 +51,6 @@ interface Sandbox {
   LedgerHeldSectionI: (props: { suppression: unknown }) => RecordedElement | null;
   HeldCauseTableI: (props: { buckets: unknown; rows: unknown }) => RecordedElement;
   HeldCauseRowsI: unknown;
-  HeldGlyphSlotI: unknown;
   LedgerRecurrenceSectionI: unknown;
   LedgerFooterI: (props: Record<string, unknown>) => RecordedElement;
 }
@@ -400,15 +399,16 @@ test("held causes split into a needs-a-human group and a set-aside group, each l
   const groups = getHeldBodies().map(([lead, ...rows]) => {
     return {
       lead: faceTextOf(lead).replace(/\s+/g, " ").trim(),
-      glyphs: rows.map((row) =>
-        allByType((sandbox.HeldCauseRowsI as (props: unknown) => RecordedElement)(row.props), sandbox.HeldGlyphSlotI)
-          .filter((slot) => slot.props.isShown === true).length),
+      // per row: the name's lead slot, then the opened list's unseen lead track → a slot in both, the warn glyph only for a human
+      slots: rows.map((row) =>
+        allByType((sandbox.HeldCauseRowsI as (props: unknown) => RecordedElement)(row.props), sandbox.window.UI.ToneGlyph)
+          .map((slot) => slot.props.tone)),
     };
   });
   assert.deepEqual(Array.from(heldTable().props.columns as Array<{ label: string }>, (column) => column.label), ["Cause", "Held", "Agents"]);
   assert.deepEqual(groups, [
-    { lead: "Needs a human (1)", glyphs: [1] },
-    { lead: "Set aside by design (7)", glyphs: [0] },
+    { lead: "Needs a human (1)", slots: [["warn", null]] },
+    { lead: "Set aside by design (7)", slots: [[null, null]] },
   ]);
 });
 
