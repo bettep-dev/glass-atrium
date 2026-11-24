@@ -56,6 +56,7 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerImprovementRoutes } from "../src/server/routes/improvement.js";
 import { LIVE_URL_ENV, TEST_URL_ENV, isSameDatabase, isSameServer } from "./lib/select-test-db.js";
+import { lockTableWrites, unlockTableWrites } from "./lib/table-write-lock.js";
 
 const SUITE_MARKER = `impr-suppress-${randomUUID().slice(0, 8)}`;
 const AGENT_A = `${SUITE_MARKER}-a`;
@@ -226,6 +227,7 @@ before(async () => {
 
   // Deliberately UNGUARDED. fetchState asserts 200, so a route regression reds
   // here rather than flipping the suite to skipped.
+  await lockTableWrites("learning-log");
   baseline = await fetchState();
   await seed();
   body = await fetchState();
@@ -250,6 +252,7 @@ after(async () => {
       console.error("[impr-suppress cleanup] DB scrub failed:", error);
     }
   }
+  await unlockTableWrites("learning-log");
   await disconnectPrisma();
   delete process.env.AGENT_REGISTRY_PATH;
   resetAgentRegistryCache();
