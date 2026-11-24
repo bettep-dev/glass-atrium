@@ -6,7 +6,7 @@
 //
 // Runner: npx tsx --test test/improvement.instrumentation-errors.client.unit.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -211,4 +211,46 @@ test("the measurement gauges pair side by side, the two short gauges stacked bes
     [[sandbox.ProseOnlyAddCardI, sandbox.TierBreakdownCardI], [sandbox.ConfidenceDistCardI]],
   ]);
   assert.deepEqual(layouts, ["equal", "equal"], "peer gauges stretch to one height, so their bottoms meet");
+});
+
+// a row stretches only while every card in it holds data → an empty card keeps its own height, its partner too
+describe("a gauge row holding an empty card sizes each column to its content", () => {
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const FILLED: Record<string, unknown> = {
+    onRetry: () => {},
+    statsState: ready({ review_flag_last_7d: 3 }),
+    corpusAuditState: ready({ total_audits: 1, audits: [{ cycle_date: "2026-11-20", word_count: 41250 }] }),
+    correctionState: ready({ total_signals: 12 }),
+    listState: ready({}),
+    proseOnlyAdd: { window_days: 30, agents: [{ agent: "glass-atrium-dev-db", count: 2 }], total: 2 },
+    tierBreakdown: { window_days: 30, code_based_pass_30d: 12406, code_based_fail_30d: 538, pre_3tier_baseline_count: 0 },
+    confidenceDist: { buckets: [{ promotion_tier: "candidate", proposal_count: 12, confidence_observed_avg: 0.75 }], overall_confidence_observed_avg: 0.75 },
+  };
+  const rows = [
+    { name: "every card holds data", change: {}, layouts: ["equal", "equal"] },
+    { name: "no corpus reading", change: { corpusAuditState: ready({ total_audits: 0, audits: [] }) }, layouts: ["content", "equal"] },
+    { name: "no correction signal", change: { correctionState: ready({ total_signals: 0 }) }, layouts: ["content", "equal"] },
+    { name: "no add-only patch", change: { proseOnlyAdd: { window_days: 30, agents: [], total: 0 } }, layouts: ["equal", "content"] },
+    {
+      name: "no checked task",
+      change: { tierBreakdown: { window_days: 30, code_based_pass_30d: 0, code_based_fail_30d: 0, pre_3tier_baseline_count: 0 } },
+      layouts: ["equal", "content"],
+    },
+    { name: "no suggestion", change: { confidenceDist: { buckets: [], overall_confidence_observed_avg: null } }, layouts: ["equal", "content"] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const layouts: unknown[] = [];
+      const walk = (node: unknown): void => {
+        if (Array.isArray(node)) return node.forEach(walk);
+        if (!isElement(node)) return;
+        if (node.type === sandbox.window.UI.SplitRow) layouts.push(node.props.layout);
+        walk(node.props.children);
+      };
+
+      walk(sandbox.ImprovementInstrumentationViewI({ ...FILLED, ...row.change }));
+
+      assert.deepEqual(layouts, row.layouts);
+    });
+  }
 });

@@ -3,7 +3,7 @@
 //
 // Runner: npx tsx --test test/improvement.instrumentation-rows.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
-// App: stripped Fastify serving the suggestion payload below; every other /api read answers empty.
+// App: stripped Fastify serving the suggestion payload and region payloads below; every other /api read answers empty.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -84,16 +84,52 @@ const MIXED_CARD_SUGGESTIONS = {
   },
 };
 
+// a corpus audit and correction signals, so the upper gauge row holds data on both sides and stretches
+const FILLED_REGIONS: Record<string, object> = {
+  "/api/improvement/corpus-audits": {
+    total_audits: 12,
+    audits: [
+      { cycle_date: "2026-11-20", word_count: 41250, trend_delta: 120, file_count: 38, token_estimate: 53600, seeded_threshold: 60000,
+        gate_pass_count: 9, gate_trip_count: 1, gate_total_count: 10, compliance_rate: 0.9, override_rate: 0.1, trend_alert: false, absolute_alert: false },
+      { cycle_date: "2026-11-19", word_count: 41130, trend_delta: 85, file_count: 38, token_estimate: 53450, seeded_threshold: 60000,
+        gate_pass_count: 8, gate_trip_count: 2, gate_total_count: 10, compliance_rate: 0.8, override_rate: 0.2, trend_alert: false, absolute_alert: false },
+    ],
+  },
+  "/api/improvement/correction-signals": {
+    total_signals: 128,
+    latest_event_ts: "2026-11-20T05:00:00Z",
+    agreement: { total: 128, agreement_count: 120, both_matched: 70, stage1_only: 5, stage2_only: 3, neither_matched: 50 },
+    revision_delta_sum: 4,
+    revision_delta_max: 2,
+  },
+};
+
+// every region known and empty: no audit, no signal, no flagged row, no add-only patch, no task result, no suggestion
+const EMPTY_SUGGESTIONS = {
+  proposals: [],
+  prose_only_add_summary: { window_days: 30, agents: [], total: 0 },
+  tier_breakdown_30d: { window_days: 30, code_based_pass_30d: 0, code_based_fail_30d: 0, pre_3tier_baseline_count: 0 },
+  confidence_distribution: { window_days: 30, buckets: [], overall_confidence_observed_avg: null },
+  style_ref_summary: { overall_emission_rate: null, overall_uncorroborated_rate: null, agents: [] },
+};
+const EMPTY_CARD_COUNT = 6;
+
 interface RowReading {
   cards: string;
   bodies: number[];
 }
 
 // stripped app serving a suggestion payload, switched to the instrumentation view
-async function withInstrumentationPage(width: number, check: (page: Page) => Promise<void>, suggestions: object = SUGGESTIONS) {
+async function withInstrumentationPage(
+  width: number,
+  check: (page: Page) => Promise<void>,
+  suggestions: object = SUGGESTIONS,
+  regions: Record<string, object> = FILLED_REGIONS,
+) {
   const app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   app.get("/api/improvement", async () => suggestions);
+  for (const [path, payload] of Object.entries(regions)) app.get(path, async () => payload);
   app.get("/api/*", async () => ({ rows: [] }));
   const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
   const browser = await chromium.launch({ headless: true });
@@ -235,4 +271,66 @@ test("each mixed instrumentation card's bars state no number of their own", asyn
       assert.deepEqual(barForms, [], `"${name}" holds a bar's second number form`);
     }
   }, MIXED_CARD_SUGGESTIONS);
+});
+
+interface EmptyCardReading {
+  title: string;
+  lineLeft: number;
+  titleLeft: number;
+  height: number;
+  expectedHeight: number;
+  lineCount: number;
+}
+
+// each empty card: its title and line edges, its height against head + pad + one line + pad, the line's line count
+function readEmptyCards(page: Page): Promise<{ cards: EmptyCardReading[]; stretchedEmptyCount: number }> {
+  return page.evaluate(() => {
+    const root = document.querySelector("#improvement-instrumentation")!;
+    const cards = [...root.querySelectorAll<HTMLElement>(".card")].filter((card) => card.querySelector(".placeholder"));
+    return {
+      stretchedEmptyCount: root.querySelectorAll(".split-row--equal .placeholder").length,
+      cards: cards.map((card) => {
+        const line = card.querySelector<HTMLElement>(".placeholder > div")!;
+        const lineBox = line.getBoundingClientRect();
+        const cardStyle = getComputedStyle(card);
+        const pad = parseFloat(cardStyle.getPropertyValue("--card-pad"));
+        const borders = parseFloat(cardStyle.borderTopWidth) + parseFloat(cardStyle.borderBottomWidth);
+        const head = card.querySelector<HTMLElement>(".card-head")!.getBoundingClientRect().height;
+        return {
+          title: card.querySelector(".card-title")?.textContent ?? "",
+          lineLeft: lineBox.left,
+          titleLeft: card.querySelector<HTMLElement>(".card-title")!.getBoundingClientRect().left,
+          height: card.getBoundingClientRect().height,
+          expectedHeight: borders + head + pad + lineBox.height + pad,
+          lineCount: Math.round(lineBox.height / parseFloat(getComputedStyle(line).lineHeight)),
+        };
+      }),
+    };
+  });
+}
+
+// spec 44084 §2.2 Empty: an empty card is its head and one line on the title's column, and no row stretches it
+for (const width of [1440, 1920]) {
+  test(`every empty instrumentation card is its head and one line on the title's column, never stretched, at ${width}px`, async () => {
+    await withInstrumentationPage(width, async (page) => {
+      const { cards, stretchedEmptyCount } = await readEmptyCards(page);
+
+      assert.equal(cards.length, EMPTY_CARD_COUNT, `${width}px: every gauge with nothing to show renders its empty line`);
+      assert.equal(stretchedEmptyCount, 0, `${width}px: a stretched row holds an empty card`);
+      for (const card of cards) {
+        assert.ok(Math.abs(card.lineLeft - card.titleLeft) <= 1, `${width}px: "${card.title}" line opens at ${card.lineLeft}, title at ${card.titleLeft}`);
+        assert.ok(Math.abs(card.height - card.expectedHeight) <= 1, `${width}px: "${card.title}" is ${card.height} tall, head and one line make ${card.expectedHeight}`);
+      }
+    }, EMPTY_SUGGESTIONS, {});
+  });
+}
+
+// 1280 is the narrowest width where the empty cards sit in half columns
+test("every empty instrumentation line reads on one line at 1280px", async () => {
+  await withInstrumentationPage(1280, async (page) => {
+    const { cards } = await readEmptyCards(page);
+
+    assert.equal(cards.length, EMPTY_CARD_COUNT, "every gauge with nothing to show renders its empty line");
+    for (const card of cards) assert.equal(card.lineCount, 1, `"${card.title}" wraps onto ${card.lineCount} lines`);
+  }, EMPTY_SUGGESTIONS, {});
 });

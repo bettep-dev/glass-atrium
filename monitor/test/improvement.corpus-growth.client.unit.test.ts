@@ -1,8 +1,7 @@
 // Unit test for the instrumentation view's gauge helpers in
 // public/src/screens/improvement-instrumentation.jsx: the per-gauge verdicts the Operator view
 // reads through window.ImprovementInstrumentationVerdicts, the flagged-reason ranking, and
-// formatRateI, which the corpus-growth card reuses for compliance_rate /
-// override_rate. Those two are nullable end to end
+// the corpus-growth card's compliance_rate / override_rate. Those two are nullable end to end
 // because a null is insufficient data and a 0 is a measured total failure; a
 // renderer that folds them together destroys the distinction the column carries.
 // The view's cards are rendered too: their tone rides on a glyph, never on a word or a figure.
@@ -46,7 +45,7 @@ type Component = (props: Record<string, unknown>) => unknown;
 interface ImprovementHelpers {
   React: { createElement: unknown };
   [card: string]: unknown;
-  formatRateI: (rate: number | null | undefined) => string;
+  formatRateI: (rate: number) => string;
   styleRefGradeBadgeI: (emission: number | null, uncorroborated: number | null) => GaugeVerdict;
   getCorpusGrowthVerdictI: (latest: Record<string, unknown> | undefined) => GaugeVerdict;
   getRankedReasonsI: (segments: { items: ReasonSegment[] } | null) => ReasonSegment[];
@@ -68,13 +67,7 @@ helpers.React.createElement = (type: unknown, props: Record<string, unknown> | n
 });
 const TONE_GLYPH = helpers.window.UI.TONE_GLYPH as Record<string, string>;
 
-test("null rate renders as the insufficient-data dash, never a percentage", () => {
-  assert.equal(helpers.formatRateI(null), "—");
-  assert.equal(helpers.formatRateI(undefined), "—");
-});
-
-// The discriminating case: a falsy-check renderer passes the null case above and
-// fails here, collapsing a measured zero into "no data".
+// a falsy-check renderer collapses a measured zero into "no data"
 test("a measured zero rate stays a zero percentage", () => {
   assert.equal(helpers.formatRateI(0), "0.0%");
 });
@@ -182,6 +175,21 @@ function getRenderedProp(node: RecordedElement, key: string, value: unknown): un
 }
 
 const READY = { status: "ready" };
+
+// a null rate is a known absence (spec 44084 §2.2): the word None in faint ink, never a dash, a zero or a legend explaining a dash
+test("a corpus reading with no compliance or override rate shows each as None", () => {
+  const latest = {
+    cycle_date: "2026-11-20", word_count: 41250, trend_delta: null, file_count: 38, token_estimate: 53600,
+    seeded_threshold: 60000, gate_pass_count: 0, gate_trip_count: 0, gate_total_count: 0,
+    compliance_rate: null, override_rate: null, trend_alert: false, absolute_alert: false,
+  };
+  const tree = viewTree((helpers.CorpusGrowthCardI as Component)({ state: { status: "ready", data: { total_audits: 1, audits: [latest] } } }));
+  const absent = tree.filter((el) => el.type === helpers.window.UI.AbsentValue).map((el) => el.props.kind);
+  const strings = tree.flatMap((el) => [el.props.children].flat()).filter((child): child is string => typeof child === "string");
+
+  assert.deepEqual(absent, ["none", "none"], "compliance and override each read None");
+  assert.deepEqual(strings.filter((text) => /—|insufficient/.test(text)), [], "no dash and no dash legend");
+});
 
 describe("instrumentation cards leave their tone on the glyph, never on a word or a figure", () => {
   const card = (name: string) => helpers[name] as Component;

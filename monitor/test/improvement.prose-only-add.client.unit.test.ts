@@ -1,6 +1,6 @@
-// Roster guard for the Add-only patches card in public/src/screens/improvement-instrumentation.jsx.
-// The server sends the roster ordered by agent name, so the card must rank it by count before its
-// S slot cuts it — otherwise the collapsed card hides the agents with the most add-only patches.
+// Card guards for public/src/screens/improvement-instrumentation.jsx: the Add-only patches roster
+// ranks by count before its S slot cuts it (the server orders by agent name), the tables use the
+// house Table, and a card with nothing to show is its head and one line.
 //
 // Runner: npx tsx --test test/improvement.prose-only-add.client.unit.test.ts
 
@@ -56,6 +56,10 @@ sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | n
   type,
   props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
 });
+// the screen-shared atoms improvement.jsx publishes; the badge only names a mark, which these pins do not read
+(sandbox.window as unknown as Record<string, unknown>).ImprovementShared = {
+  SymI: () => null, confidenceBadgeMetaI: () => ({ symbol: "✓", tone: "text-ok" }),
+};
 const slotRowCount = sandbox.window.UI.CARD_SLOTS.S.rowCount;
 
 // a wide two-column view → the rows the card hands its Table
@@ -144,10 +148,6 @@ test("the three instrumentation tables render through the shared Table and its c
   const tables = sandbox as unknown as Record<string, (props: Record<string, unknown>) => unknown>;
   const ui = sandbox.window.UI as unknown as Record<string, unknown>;
   sandbox.React.useState = () => [false, () => {}];
-  // the screen-shared atoms improvement.jsx publishes; the badge only names a mark, which this pin does not read
-  (sandbox.window as unknown as Record<string, unknown>).ImprovementShared = {
-    SymI: () => null, confidenceBadgeMetaI: () => ({ symbol: "✓", tone: "text-ok" }),
-  };
   const rendered = [
     { name: "confidence lanes", tree: tables.ConfidenceLaneTableI({ buckets: [{ promotion_tier: "auto", proposal_count: 3, confidence_observed_avg: 0.7 }] }) },
     { name: "add-only patches", tree: sandbox.ProseOnlyAddCardI({
@@ -165,4 +165,92 @@ test("the three instrumentation tables render through the shared Table and its c
     const raw = findElements([tree, rows], (el) => ["table", "thead", "tbody", "tr", "td", "th"].includes(String(el.type)));
     assert.deepEqual(raw.map((el) => el.type), [], `${name}: no raw table markup beside the house Table`);
   }
+});
+
+const READY = { status: "ready", data: {}, error: null };
+
+// spec 44084 §2.2 Empty: the body is the one line, flush so the line starts at the title's inset; no stat, gate or None beside it
+const EMPTY_CARDS = [
+  {
+    name: "corpus growth with no audit row",
+    card: "CorpusGrowthCardI",
+    props: { state: { status: "ready", data: { total_audits: 0, audits: [] }, error: null } },
+    message: "No corpus readings yet — each daemon cycle writes one",
+  },
+  {
+    name: "detection agreement with no correction signal",
+    card: "CorrectionSignalsCardI",
+    props: { state: { status: "ready", data: { total_signals: 0 }, error: null } },
+    message: "No correction signals yet — each detection logs one",
+  },
+  {
+    name: "style-check rate with no reported rate",
+    card: "StyleRefCardI",
+    props: { state: READY, styleRef: { overall_emission_rate: null, overall_uncorroborated_rate: null, agents: [] } },
+    message: "No task results in this window",
+  },
+  {
+    name: "add-only patches with no agent row",
+    card: "ProseOnlyAddCardI",
+    props: { state: READY, summary: { window_days: 30, agents: [], total: 0 } },
+    message: "No add-only patches in this window",
+  },
+  {
+    name: "results by check status with no task",
+    card: "TierBreakdownCardI",
+    props: { state: READY, tierBreakdown: { window_days: 30, code_based_pass_30d: 0, code_based_fail_30d: 0, pre_3tier_baseline_count: 0 } },
+    message: "No task results in this window",
+  },
+  {
+    name: "suggestion confidence with no proposal",
+    card: "ConfidenceDistCardI",
+    props: { state: READY, confidenceDist: { buckets: [], overall_confidence_observed_avg: null } },
+    message: "No suggestions in this window",
+  },
+];
+
+describe("an instrumentation card with nothing to show is its head and one flush line", () => {
+  const ui = sandbox.window.UI as unknown as Record<string, unknown>;
+  for (const row of EMPTY_CARDS) {
+    test(row.name, () => {
+      sandbox.React.useState = () => [false, () => {}];
+      const cards = sandbox as unknown as Record<string, (props: unknown) => RecordedElement>;
+      const form = cards[row.card](row.props);
+      // the card hands its empty case to the screen's one empty-card form → read the Card that form renders
+      const card = (form.type as (props: unknown) => RecordedElement)(form.props);
+      const body = card.props.children;
+
+      assert.equal(card.type, ui.Card, "the card renders the shared Card");
+      assert.equal(card.props.isFlush, true, "the body is flush, so the line's own inset is the one inset");
+      assert.ok(isElement(body) && body.type === ui.EmptyState, "the body is the one empty line, nothing beside it");
+      assert.deepEqual({ message: body.props.message, hint: body.props.hint }, { message: row.message, hint: undefined });
+    });
+  }
+});
+
+// spec 44084 §2.2 Zero: outcomes exist and none reported a style check → a measured 0, not an empty card
+test("a known zero style-check rate keeps the stat row and the per-agent table", () => {
+  const ui = sandbox.window.UI as unknown as Record<string, unknown>;
+  const card = (sandbox as unknown as Record<string, (props: unknown) => RecordedElement>).StyleRefCardI({
+    state: READY,
+    styleRef: {
+      overall_emission_rate: 0,
+      overall_uncorroborated_rate: null,
+      agents: [{ agent: "glass-atrium-dev-db", emission_count: 0, emission_total: 13, emission_rate: 0, eligible_count: 0 }],
+    },
+  });
+  // a table body carries its stat row as its lead prop
+  const leads = findElements(card, () => true).map((el) => el.props.lead);
+  const types = findElements([card, leads], () => true).map((el) => el.type);
+
+  assert.ok(types.includes(ui.StatRow), "the stat row stays");
+  assert.ok(types.includes((sandbox as unknown as Record<string, unknown>).StyleRefAgentTableI), "the per-agent table stays");
+  assert.ok(!types.includes(ui.EmptyState), "no empty line");
+});
+
+// the title already says flagged results over 7 days → zero rows draw the 0 stat alone, no bars and no restating line
+test("zero flagged rows draw no reason bars and no line under the stat", () => {
+  const bars = (sandbox as unknown as Record<string, (props: unknown) => unknown>).FlaggedReasonBarsI;
+
+  assert.equal(bars({ segments: { items: [], classifiedTotal: 0 } }), null);
 });
