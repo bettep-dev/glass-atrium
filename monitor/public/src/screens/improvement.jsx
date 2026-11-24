@@ -1688,7 +1688,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 			/>
 			{getLoopSlotsI({
 				metric: cards.map(([sym, tone, label, value]) => (
-					<span key={label} className="inline-flex items-baseline gap-1">
+					<span key={label} className="inline-flex items-baseline gap-label-inline">
 						{Number(value) > 0 ? <SymI s={sym} className={tone} size={13} /> : null}
 						<span className="fs-stat font-semibold text-ink tnum">{formatIntI(value)}</span>
 						<span className="fs-meta text-dim">{label}</span>
@@ -1708,7 +1708,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 function AlarmLaneI({ applyCap }) {
 	if (Number(applyCap?.capped_patterns ?? 0) <= 0) return null;
 	return (
-		<div className="flex flex-col gap-2" role="region" aria-label="Alarms">
+		<div className="flex flex-col gap-list" role="region" aria-label="Alarms">
 			<ParkedLoopBannerI applyCap={applyCap} />
 		</div>
 	);
@@ -1785,7 +1785,7 @@ function LedgerHeldSectionI({ suppression }) {
 // One row per cause — held count · agents, readable without opening a row list · the remedy lives in the drawer
 function HeldCauseTableI({ buckets }) {
 	return (
-		<table className="w-full i-held-table mb-1">
+		<table className="w-full i-held-table mb-stack">
 			<thead className="tbl-head">
 				<tr className="fs-meta text-dim">
 					<th className="text-left font-medium">Cause</th>
@@ -1860,7 +1860,7 @@ function LedgerPlainRowsI({ rows }) {
 // 원장 구역 헤더 — 어떤 수도 자기 모집단(기간) 없이 서지 않는다.
 function LedgerSectionHeadI({ label, basis, count }) {
 	return (
-		<div className="fs-meta text-dim mb-1">
+		<div className="fs-meta text-dim mb-stack">
 			{label} · <window.UI.DayTokens>{basis}</window.UI.DayTokens> <span className="tnum">({formatIntI(count)})</span>
 		</div>
 	);
@@ -1920,7 +1920,7 @@ function LedgerRecurrenceSectionI({ suppression }) {
 	return (
 		<div className="i-ledger-sec">
 			<div
-				className="fs-meta text-dim mb-1"
+				className="fs-meta text-dim mb-stack"
 				title="Recurrences, not distinct patterns — these mechanisms write no lifecycle transition, so the same row is re-suppressed on every cycle."
 			>
 				Recurrence rates — last <window.UI.NoWrap>{formatIntI(windowDays)} days</window.UI.NoWrap> ·{" "}
@@ -2065,7 +2065,7 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 				.filter(([, v]) => v)
 				.map(([label, value, mono]) => (
 					<div key={label}>
-						<div className={`${labelCls} mb-1`}>{label}</div>
+						<div className={`${labelCls} mb-stack`}>{label}</div>
 						{mono ? (
 							<pre className="fs-meta font-mono text-dim bg-sunken px-3 py-2 rounded-md whitespace-pre-wrap break-words">
 								{value}
@@ -2091,8 +2091,8 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 	const { Badge } = window.UI;
 	return (
 		<div>
-			<div className={`${labelCls} mb-1`}>Pre-verify</div>
-			<div className="bg-sunken p-3 rounded-md flex flex-col gap-2">
+			<div className={`${labelCls} mb-stack`}>Pre-verify</div>
+			<div className="bg-sunken p-3 rounded-md flex flex-col gap-list">
 				<div className="flex items-center gap-1.5 fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
 					<span className="text-dim">{badge.label}</span>
@@ -2107,7 +2107,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 				)}
 				{axes.length > 0 && (
 					<dl
-						className="grid gap-1 items-center"
+						className="grid gap-stack items-center"
 						style={{ gridTemplateColumns: "1fr auto" }}>
 						{axes.map(({ key, label, value }) => (
 							<React.Fragment key={key}>
@@ -2306,7 +2306,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="px-4 pb-4">
+				<div className="px-card-pad pb-card-pad">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.changeSummary}
 						source="loop events"
@@ -2355,7 +2355,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 						<div className="fs-meta text-dim font-medium">
 							Lines changed
 						</div>
-						<div className="mt-1 flex items-baseline gap-x-4 gap-y-1 flex-wrap">
+						<div className="mt-stack flex items-baseline gap-x-block gap-y-stack flex-wrap">
 							<LineCountI
 								symbol="＋"
 								tone="text-ok"
@@ -2408,7 +2408,7 @@ function getLoopLoadingSlotI(label) {
 function LineCountI({ symbol, tone, count, word, title }) {
 	return (
 		// numeral and word share a baseline; the sign glyph centres on the numeral's line box (an svg would sit on the baseline by its bottom edge)
-		<span className="inline-flex items-baseline gap-1" title={title}>
+		<span className="inline-flex items-baseline gap-label-inline" title={title}>
 			<SymI s={symbol} className={`${tone} self-center`} size={13} />
 			<span className="fs-display font-semibold text-ink">{formatIntI(count)}</span>
 			<span className="fs-meta text-dim">{word}</span>
@@ -2458,7 +2458,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 		return (
 			<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger}>
 				<CardHead title="Pattern ledger" />
-				<div className="p-4">
+				<div className="p-card-pad">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.patternLedger}
 						source="pattern ledger"
@@ -2563,7 +2563,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 		<div className="i-ledger-sec flex flex-col gap-1.5">
 			{head}
 			{getPatternGroupsI(rows).map((group) => (
-				<div key={group.title} className="flex flex-col gap-1">
+				<div key={group.title} className="flex flex-col gap-stack">
 					<div className="fs-body text-ink truncate" title={group.title}>
 						{truncateI(group.title, 120)}
 					</div>
@@ -2603,7 +2603,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="sub-card i-row-card i-tile-hover bg-elev text-left p-3 w-full flex items-center gap-2"
+			className="sub-card i-row-card i-tile-hover bg-elev text-left p-3 w-full flex items-center gap-label"
 			aria-label={`Candidate ${rank}: ${label}${pattern.agent ? ` — ${pattern.agent}` : ""} — seen ${freq} times`}
 		>
 			<span

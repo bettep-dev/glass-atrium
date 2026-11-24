@@ -22,6 +22,7 @@ import { dirname, resolve } from "node:path";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
 import { loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { getRoleKeys } from "./lib/role-keys.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const IMPROVEMENT_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
@@ -156,7 +157,8 @@ test("the alarm lane stacks alert cards and paints nothing of its own", () => {
   });
   assert.ok(isElement(lane), "a populated cap must render the lane");
   const laneClasses = String(lane.props.className ?? "").split(/\s+/).filter(Boolean);
-  const paintClasses = laneClasses.filter((name) => !/^(flex|flex-col|gap-\d+)$/.test(name));
+  const layoutClasses = new Set(["flex", "flex-col", ...Object.keys(getRoleKeys().gap).map((key) => `gap-${key}`)]);
+  const paintClasses = laneClasses.filter((name) => !layoutClasses.has(name));
   assert.deepEqual(paintClasses, [], "the lane carries layout only — a tint or border on it frames the alarms twice");
   const alarms = ([] as unknown[]).concat(lane.props.children).filter(isElement);
   assert.ok(alarms.length > 0, "the lane renders its alarms");
