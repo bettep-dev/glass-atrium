@@ -220,7 +220,7 @@ describe("the card states", () => {
     assert.match(text, /No agent files in\s*~\/\.glass-atrium\/agents/);
     assert.match(text, /An agent appears here once its file is in that folder — then press Refresh\./);
     assert.doesNotMatch(text, /Select agents to set/);
-    assert.doesNotMatch(text, /Fable and Opus reason deepest/);
+    assert.doesNotMatch(text, /Fable and Opus/);
   });
   test("a failed read says the agent list could not be read", () => {
     assert.match(collectText(section({ state: "unavailable", agents: undefined })), /Not available — the agent list could not be read\./);
@@ -229,7 +229,7 @@ describe("the card states", () => {
     const text = collectText(section({ unreadable: UNREADABLE }));
     assert.match(text, /Agent models/);
     assert.match(text, /Applies after a session restart/);
-    assert.match(text, /Fable and Opus reason deepest and cost the most per token; Haiku is fastest and cheapest/);
+    assert.match(text, /Fable and Opus: deepest, costliest\. Haiku: fastest, cheapest\./);
     assert.match(text, /1 file not readable/);
   });
   test("loading holds twelve skeleton rows under the header", () => {

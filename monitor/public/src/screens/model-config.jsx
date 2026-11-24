@@ -632,7 +632,7 @@ const AGENT_NO_PIN_LABEL_MC = "No pin — session model";
 const AGENT_SELECT_ID_MC = "mc-agent-model";
 const AGENT_BAR_IDLE_MC = "Select agents to set one model for all of them";
 const AGENT_MISSING_MODEL_MC = "Choose a model first";
-const AGENT_FOOT_MC = "Fable and Opus reason deepest and cost the most per token; Haiku is fastest and cheapest";
+const AGENT_FOOT_MC = "Fable and Opus: deepest, costliest. Haiku: fastest, cheapest.";
 const NOT_REGISTERED_TITLE_MC = "No entry in agent-registry.json — the lifecycle CLI does not track this file";
 // unverified whether the agent-file watcher sees a write through the agents-folder link → the restart wording, never "next spawn"
 const AGENT_TIMING_MC = {
