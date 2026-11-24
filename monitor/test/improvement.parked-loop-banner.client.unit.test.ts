@@ -356,7 +356,10 @@ test("every held row renders under exactly one cause group", () => {
       : isElement(node)
         ? [node, ...walk(node.props.children)]
         : [];
-  const groups = walk(section).filter((el) => el.props.bucket !== undefined);
+  // the section hands its rows to the held table, which splits them per cause row
+  const table = walk(section).find((el) => el.type === (sandbox as unknown as Record<string, unknown>).HeldCauseTableI)!;
+  const render = table.type as (props: Record<string, unknown>) => unknown;
+  const groups = walk(render(table.props)).filter((el) => el.props.bucket !== undefined);
   const ids = groups.flatMap((g) => (g.props.rows as { id: number }[]).map((r) => r.id));
   assert.deepEqual(ids, [7], "a rejected row is counted under its cause and again under a second group");
 });

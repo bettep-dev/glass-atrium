@@ -392,8 +392,6 @@ function ScreenImprovement({ onNav }) {
         .i-ledger-sec { padding:var(--space-2) var(--card-pad) 0; }
         /* held rows are what a human acts on → the house table's body step, never the card's smallest text */
         .i-held-table { font-size:var(--fs-control); }
-        /* ledger columns stretch to one height → a column's later last section sits on the shared bottom edge · a lone section keeps the top */
-        .i-ledger-cols > .split-col > :not(:first-child):last-child { margin-top:auto; }
         /* plain ledger rows — one pattern | agent | date grid, each row a subgrid, so agent and date line up down the list */
         .i-plain-rows { display:grid; grid-template-columns:minmax(0,1fr) auto auto; }
         .i-plain-rows > li { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; }
@@ -1744,9 +1742,14 @@ function ParkedLoopBannerI({ applyCap }) {
 // 있으면 둘 중 하나만 읽힌다. 두 population(parked / per-cycle) 은 분리해 렌더하고 절대
 // 더하지 않는다: 종결 row 와 재발 횟수라 합계는 둘 중 어느 것도 아니다.
 
-// 펼쳐 두는 그룹 = 사람이 오늘 풀 수 있는 원인. 닫아 두는 그룹 = 그렇게 두기로 한 설계
-// 결정 — 매번 펼치면 행동 가능한 그룹이 그 아래로 묻힌다.
+// 보류 원인의 두 그룹 — 사람이 오늘 풀 수 있는 원인 / 그렇게 두기로 한 설계 결정.
 const HELD_DESIGN_DECISION_CAUSES = new Set(["non-promptable", "other"]);
+
+// held-cause groups in reading order — the first group's sum is the status band's held figure
+const HELD_GROUPS_I = [
+	{ label: "Needs a human", isHumanCause: true },
+	{ label: "Set aside by design", isHumanCause: false },
+];
 
 // suppression list field → [] when the read is absent or malformed
 function getSuppressionListI(suppression, key) {
@@ -1755,7 +1758,11 @@ function getSuppressionListI(suppression, key) {
 
 // held rows a human can clear today — the status band and the ledger head read this one count
 function getHeldNeedingHumanI(suppression) {
-	return sumCountsI(getSuppressionListI(suppression, "parked").filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)));
+	return sumCountsI(getSuppressionListI(suppression, "parked").filter(isHumanCauseI));
+}
+
+function isHumanCauseI(bucket) {
+	return !HELD_DESIGN_DECISION_CAUSES.has(bucket.cause);
 }
 
 // 보류(held) 구역 — 윈도우가 없다. 몇 주 전에 정지된 행이 오늘도 정지 상태이므로,
@@ -1764,68 +1771,78 @@ function getHeldNeedingHumanI(suppression) {
 function LedgerHeldSectionI({ suppression }) {
 	const buckets = getSuppressionListI(suppression, "parked");
 	if (buckets.length === 0) return null;
-	const rows = getSuppressionListI(suppression, "parked_patterns");
 	return (
 		<div id={ANCHOR_ID_I.heldPatterns} className="i-ledger-sec">
-			<LedgerSectionHeadI
-				label="Held — terminal rows"
-				basis="all time"
-				count={sumCountsI(buckets)}
-			/>
-			<HeldCauseTableI buckets={buckets} />
-			{buckets.map((b) => (
-				<HeldCauseGroupI
-					key={b.cause}
-					bucket={b}
-					rows={rows.filter((r) => r.cause === b.cause)}
-				/>
-			))}
+			<LedgerSectionHeadI label="Held" basis="all time" count={sumCountsI(buckets)} />
+			<HeldCauseTableI buckets={buckets} rows={getSuppressionListI(suppression, "parked_patterns")} />
 		</div>
 	);
 }
 
-// One row per cause — held count · agents, readable without opening a row list · the remedy lives in the drawer
-function HeldCauseTableI({ buckets }) {
+// One body per group, led by its sum · the first lead row also heads the Held and Agents columns
+function HeldCauseTableI({ buckets, rows }) {
+	const groups = HELD_GROUPS_I.map((group) => ({
+		...group,
+		buckets: buckets.filter((b) => isHumanCauseI(b) === group.isHumanCause),
+	})).filter((group) => group.buckets.length > 0);
 	return (
 		<table className="w-full i-held-table mb-stack">
-			<thead className="tbl-head">
-				<tr className="fs-meta text-dim">
-					<th className="text-left font-medium">Cause</th>
-					<th className="text-right font-medium pl-4">Held</th>
-					<th className="text-right font-medium pl-4">Agents</th>
-				</tr>
-			</thead>
-			<tbody className="tbl-compact">
-				{buckets.map((b) => {
-					const isHumanCause = !HELD_DESIGN_DECISION_CAUSES.has(b.cause);
-					return (
-						<tr key={b.cause} className="border-t border-line/50">
-							<td className="text-left text-ink">
-								<span title={isHumanCause ? "Needs a human" : "Held by design decision"}>
-									<SymI s={isHumanCause ? "⚠" : "ℹ"} className={isHumanCause ? "text-warn" : "text-faint"} size={13} />
-								</span>{" "}
-								{b.label}
-							</td>
-							<td className="text-right pl-4 text-ink tnum">{formatIntI(Number(b.count ?? 0))}</td>
-							<td className="text-right pl-4 text-dim tnum">{formatIntI(Number(b.agents ?? 0))}</td>
-						</tr>
-					);
-				})}
-			</tbody>
+			{groups.map((group, i) => (
+				<tbody key={group.label} className="tbl-compact">
+					<tr className={`fs-meta text-dim ${i > 0 ? "border-t border-line/50" : ""}`.trim()}>
+						<th scope="rowgroup" colSpan={i === 0 ? 1 : 3} className="text-left font-medium">
+							{`${group.label} (${formatIntI(sumCountsI(group.buckets))})`}
+						</th>
+						{i === 0 ? (
+							<>
+								<th scope="col" className="text-right font-medium pl-4">Held</th>
+								<th scope="col" className="text-right font-medium pl-4">Agents</th>
+							</>
+						) : null}
+					</tr>
+					{group.buckets.map((b) => (
+						<HeldCauseRowsI
+							key={b.cause}
+							bucket={b}
+							rows={rows.filter((r) => r.cause === b.cause)}
+							isHumanCause={group.isHumanCause}
+						/>
+					))}
+				</tbody>
+			))}
 		</table>
 	);
 }
 
-// Per-cause row list — every group folds the same way; the cause table above already states the counts.
-function HeldCauseGroupI({ bucket, rows }) {
+// One cause: its name opens its rows (the house ledger expander) · its remedy is the second line, printed once
+function HeldCauseRowsI({ bucket, rows, isHumanCause }) {
+	const [isOpen, setOpen] = useSI(false);
+	const { DisclosureChevron, ToneGlyph } = window.UI;
+	const listId = `${ANCHOR_ID_I.heldPatterns}-${bucket.cause}`;
 	return (
-		<details className="mt-1.5">
-			<summary className="group disclosure fs-meta select-none">
-				<window.UI.DisclosureChevron />
-				<span>{bucket.label} rows</span>
-			</summary>
-			<LedgerPlainRowsI rows={rows} />
-		</details>
+		<tr className="border-t border-line/50">
+			<td className="text-left text-ink">
+				<span className="inline-flex items-center gap-label-inline">
+					{isHumanCause ? <ToneGlyph tone="warn" label="Needs a human" /> : null}
+					<button
+						type="button"
+						className="group inline-target gap-label-inline text-left"
+						aria-expanded={isOpen}
+						aria-controls={listId}
+						onClick={() => setOpen((v) => !v)}
+					>
+						<DisclosureChevron isOpen={isOpen} />
+						<span>{bucket.label}</span>
+					</button>
+				</span>
+				<div className="fs-meta text-dim max-w-[72ch]">{bucket.hint}</div>
+				<div id={listId} hidden={!isOpen}>
+					<LedgerPlainRowsI rows={rows} />
+				</div>
+			</td>
+			<td className="text-right align-top pl-4 text-ink tnum">{formatIntI(Number(bucket.count ?? 0))}</td>
+			<td className="text-right align-top pl-4 text-dim tnum">{formatIntI(Number(bucket.agents ?? 0))}</td>
+		</tr>
 	);
 }
 
@@ -1857,13 +1874,19 @@ function LedgerPlainRowsI({ rows }) {
 	);
 }
 
-// 원장 구역 헤더 — 어떤 수도 자기 모집단(기간) 없이 서지 않는다.
-function LedgerSectionHeadI({ label, basis, count }) {
+// 원장 구역 헤더 — <Name> · <window> (<count>), 어떤 수도 자기 모집단(기간) 없이 서지 않는다.
+function LedgerSectionHeadI({ label, basis, count, title }) {
 	return (
-		<div className="fs-meta text-dim mb-stack">
-			{label} · <window.UI.DayTokens>{basis}</window.UI.DayTokens> <span className="tnum">({formatIntI(count)})</span>
+		<div className="fs-meta text-dim mb-stack" title={title}>
+			{label} · <window.UI.DayTokens>{basis}</window.UI.DayTokens>
+			{count === undefined ? null : <span className="tnum">{` (${formatIntI(count)})`}</span>}
 		</div>
 	);
+}
+
+// one dim line under a section head — what the head no longer explains
+function LedgerHeadLineI({ children }) {
+	return <p className="fs-meta text-dim mb-stack">{children}</p>;
 }
 
 // 비활성(inert) 구역 — status 는 pending 인데 intake 가 라벨로 매번 건너뛴다. 활성 목록에
@@ -1874,12 +1897,9 @@ function LedgerInertSectionI({ rows }) {
 		<details className="i-ledger-sec">
 			<summary className="group disclosure select-none">
 				<window.UI.DisclosureChevron />
-				<LedgerSectionHeadI
-					label="Inert — the intake skips this label every cycle"
-					basis="discovered in the last 7 days"
-					count={rows.length}
-				/>
+				<LedgerSectionHeadI label="Inert" basis="last 7 days" count={rows.length} />
 			</summary>
+			<LedgerHeadLineI>The loop skips these at intake every cycle.</LedgerHeadLineI>
 			<InertLabelRowsI groups={getPatternGroupsI(rows)} />
 		</details>
 	);
@@ -1919,13 +1939,14 @@ function LedgerRecurrenceSectionI({ suppression }) {
 	const windowCycles = Number(suppression.per_cycle_window_cycles ?? 0);
 	return (
 		<div className="i-ledger-sec">
-			<div
-				className="fs-meta text-dim mb-stack"
+			<LedgerSectionHeadI
+				label="Recurrence rates"
+				basis={`last ${formatIntI(windowDays)} days`}
 				title="Recurrences, not distinct patterns — these mechanisms write no lifecycle transition, so the same row is re-suppressed on every cycle."
-			>
-				Recurrence rates — last <window.UI.NoWrap>{formatIntI(windowDays)} days</window.UI.NoWrap> ·{" "}
-				<window.UI.NoWrap>{formatIntI(windowCycles)} cycle days</window.UI.NoWrap>
-			</div>
+			/>
+			{windowCycles < windowDays ? (
+				<LedgerHeadLineI>{`Cycles ran on ${formatIntI(windowCycles)} of the ${formatIntI(windowDays)} days.`}</LedgerHeadLineI>
+			) : null}
 			<RecurrenceRowsI buckets={buckets} windowCycles={windowCycles} />
 		</div>
 	);
@@ -1965,31 +1986,23 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 	);
 }
 
-// 원장 푸터 — 모든 수치가 자기 게이트를 데리고 다닌다. 이웃한 숫자가 서로 다른 윈도우와
-// 모집단을 가질 때, 게이트 없는 숫자는 조용히 비교당한다. 폐지된 Learned-patterns 카드에서
-// 살아남은 사실(전체 패턴 수 · 반려 수)도 여기에 있다.
-function LedgerFooterI({ total, declined }) {
-	return (
-		<div className="card-foot">
-			<window.UI.DayTokens>{`${formatIntI(total)} patterns · ${formatIntI(declined)} declined, all time · rows above: last 7 days`}</window.UI.DayTokens>
-		</div>
-	);
+// 원장 푸터 — 전체 기간 수치, 각 구역의 윈도우는 그 구역 헤더가 말한다.
+// rejected = status 가 rejected 인 모든 행 — Held 헤더(전이 사유가 있는 반려 행)보다 넓으므로 자기 이름을 갖는다.
+function LedgerFooterI({ total, rejected }) {
+	return <div className="card-foot">{`${formatIntI(total)} patterns · ${formatIntI(rejected)} rejected · all time`}</div>;
 }
 
-// "How this is counted" drawer — each cause's remedy and the figures' gates, kept off the card face.
+// "How this is counted" drawer — each recurring cause's remedy and the figures' gates.
 function LedgerNotesI({ suppression }) {
-	const causes = new Map();
-	for (const key of ["parked", "per_cycle"]) {
-		for (const b of getSuppressionListI(suppression, key)) causes.set(`${b.cause}:${b.hint}`, b);
-	}
+	// held remedies sit on their table rows → only the recurring causes' remedies live here
+	const causes = new Map(getSuppressionListI(suppression, "per_cycle").map((b) => [b.cause, b]));
 	const unpromptable = Number(suppression?.pending_unpromptable ?? 0);
 	const pendingTotal = Number(suppression?.pending_total ?? 0);
 	const offRegistry = Number(suppression?.off_registry_parked ?? 0);
 	return (
 		<div className="flex flex-col gap-3 fs-body">
-			<p>The live and inert rows are the last <window.UI.NoWrap>7 days</window.UI.NoWrap> of discovery; totals and declines are all time.</p>
 			{[...causes.values()].map((b) => (
-				<p key={`${b.cause}:${b.hint}`}>
+				<p key={b.cause}>
 					<span className="text-ink font-semibold">{b.label}</span> — {b.hint}
 				</p>
 			))}
@@ -2483,7 +2496,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 		: [];
 	// 반려 수는 status_distribution(전체 기간) 에서 온다 — 아래 백로그 목록은 7일 윈도우라
 	// 길이를 그대로 쓰면 푸터의 게이트와 목록의 게이트가 어긋난다.
-	const declinedAllTime = sumCountsI(
+	const rejectedAllTime = sumCountsI(
 		dist.filter((d) => d.status === "rejected"),
 	);
 	const total = Number(state.data.total_patterns ?? patterns.length);
@@ -2530,7 +2543,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 					candidates
 				)}
 			</div>
-			<LedgerFooterI total={total} declined={declinedAllTime} />
+			<LedgerFooterI total={total} rejected={rejectedAllTime} />
 		</section>
 	);
 }
@@ -2538,11 +2551,10 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 // Live zone — proposal-eligible rows only, card kept when empty (held still reads) · same-title rows grouped, each led by its agent.
 function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	const head = (
-		<LedgerSectionHeadI
-			label="Live — can propose"
-			basis="discovered in the last 7 days · ×N = times seen, all time"
-			count={rows.length}
-		/>
+		<>
+			<LedgerSectionHeadI label="Live" basis="last 7 days" count={rows.length} />
+			<LedgerHeadLineI>Patterns the loop can still propose a fix for.</LedgerHeadLineI>
+		</>
 	);
 	if (rows.length === 0) {
 		return (
@@ -2555,6 +2567,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	return (
 		<div className="i-ledger-sec flex flex-col gap-1.5">
 			{head}
+			<LedgerHeadLineI>×N = times seen, all time</LedgerHeadLineI>
 			{getPatternGroupsI(rows).map((group) => (
 				<div key={group.title} className="flex flex-col gap-stack">
 					<div className="fs-body text-ink truncate" title={group.title}>

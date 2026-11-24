@@ -1,5 +1,5 @@
 // Learning controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the screen's
-// own style block, rendered from the shipped components: the view toggle, the suggestion board rows and the held-cause fold —
+// own style block, rendered from the shipped components: the view toggle, the suggestion board rows and the held-cause toggle —
 // each keeps one box in every state (§7.16) — the Instrumentation corpus-growth value row on one baseline, and the Learning memory
 // headline counts on the ladder's 4 value step.
 // Runner: npx tsx --test test/improvement.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
@@ -74,7 +74,10 @@ const getLane = () =>
     getMarkup("CompactProposalCardI", { row: { id: 43, rationale: LONG, status: "unadjudicated" }, onClick: noop }),
     getMarkup("ProposalCardI", { row: { id: 44, pattern_label: LONG, rationale: LONG, status: "applied" }, onClick: noop }),
   ].join("");
-const HELD_CAUSE = getMarkup("HeldCauseGroupI", { bucket: { cause: "missing-approval", label: "Missing approval" }, rows: [] });
+const HELD_CAUSE = getMarkup("HeldCauseTableI", {
+  buckets: [{ cause: "missing-approval", label: "Missing approval", count: 2, agents: 1, hint: "Approve the pending row to let it through." }],
+  rows: [],
+});
 const CORPUS_GROWTH = getMarkup(
   "CorpusGrowthCardI",
   {
@@ -109,12 +112,12 @@ const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body
 </body></html>`;
 
 const TOGGLE_OPTIONS = ["Operator", "Instrumentation"] as const;
-const SUMMARY = "#held details > summary";
+const HELD_TOGGLE = "#held button.inline-target";
 
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
-const { readBox, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
+const { readBox, assertBoxHeldAcrossStates } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -173,10 +176,12 @@ describe("a proposal card keeps its clamped text under hover and focus", () => {
   }
 });
 
-describe("the held-cause fold opens on the disclosure atom", () => {
-  test("its summary is a 32 disclosure with the chevron as the one open-state cue, turned 90 once open", () => assertFoldOnOneBox("#held details", SUMMARY));
+describe("a held cause's name opens its rows on the ledger expander's inline target", () => {
+  test("the toggle is one 24 inline target", async () => {
+    assert.equal((await readBox(HELD_TOGGLE)).height, 24);
+  });
 
-  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(SUMMARY));
+  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(HELD_TOGGLE));
 });
 
 // the corpus-growth headline stat: the figure with its attached unit, the delta on the stat's context line

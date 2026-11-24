@@ -43,7 +43,7 @@ interface Sandbox {
   LoopOutputGroupI: Component;
   AppliedHeroHeaderI: Component;
   LedgerSectionHeadI: Component;
-  HeldCauseGroupI: Component;
+  HeldCauseRowsI: Component;
   LedgerRecurrenceSectionI: Component;
   LedgerLiveSectionI: Component;
   ParkedLoopBannerI: Component;
@@ -52,7 +52,6 @@ interface Sandbox {
   StatusBandI: Component;
   RejectedHeaderI: Component;
   BoardRowI: Component;
-  HeldCauseTableI: Component;
   buildDetailPropsI: (row: Record<string, unknown>) => Record<string, unknown>;
   confidenceBadgeMetaI: (value: unknown) => { label: string };
   ConfidenceBadgeI: Component;
@@ -503,9 +502,9 @@ describe("prose on the ledger, banner and drawer is set in sans; mono stays for 
       tree: () => sandbox.LedgerSectionHeadI({ label: "Inert rows", basis: "last 7 days", count: 2 }),
     },
     {
-      name: "held-cause summary",
+      name: "held-cause row",
       prose: "Missing approval",
-      tree: () => sandbox.HeldCauseGroupI({ bucket: { cause: "x", label: "Missing approval", count: 1, agents: 1, hint: "h" }, rows: [] }),
+      tree: () => sandbox.HeldCauseRowsI({ bucket: { cause: "x", label: "Missing approval", count: 1, agents: 1, hint: "h" }, rows: [], isHumanCause: true }),
     },
     {
       name: "recurrence section head",
@@ -589,16 +588,6 @@ test("a suggestion board row sets its title at the body size, leaving ids and da
   assert.ok(title, "the board row prints its title");
   assert.match(classOf(title), /\bfs-body\b/);
   assert.doesNotMatch(classOf(title), /\bfs-meta\b/);
-});
-
-test("a held cause reads as one table row of cause, held count and agents, its remedy kept for the ledger's drawer", () => {
-  const hint = "Raise the cap after a human reads the rows";
-  const tree = sandbox.HeldCauseTableI({ buckets: [{ cause: "repeat-apply-cap", label: "Repeat-apply cap", count: 2, agents: 1, hint }] });
-  const [row] = findAll(tree, (el) => el.type === "tr" && visibleText(el).includes("Repeat-apply cap"));
-
-  assert.ok(row, visibleText(tree));
-  assert.deepEqual(findAll(row, (el) => el.type === "td").map((cell) => visibleText(cell).trim()), ["Repeat-apply cap", "2", "1"]);
-  assert.doesNotMatch(visibleText(tree), /Raise the cap/, "remedy prose in the table");
 });
 
 test("the rejected column header never wraps its label, count or basis", () => {
