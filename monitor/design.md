@@ -982,7 +982,7 @@
   - Left column: search fill, result count, header labels, cell text, page range. Right column: reset, row actions, last pagination control.
   - A control's box sits on the column, its hover box too — no negative-margin overhang; a column-header sort control has zero inline padding.
   - Block padding = the gap above and below the tallest control: a bar holding a 32 control is 48 (8 + 32 + 8); bar height is never set by hand.
-- Rows: height from `--row-h` 40 / `--row-h-2` 56; rows never add margin on top. Table cells: inline 12 interior, `--card-pad` on the first and last cell.
+- Rows: height from `--row-h` 40 / `--row-h-2` 56; rows never add margin on top. Table cells: inline 12 interior, `--card-pad` on the first and last cell — 0 on a nested table (§12.6).
 - Layout primitives own spacing: `Stack({ gap })` and `Cluster({ gap })` take a role name, never a number.
 - Lint (static test over `screens/*.jsx`): fails on numeric spacing utilities, px or inline spacing, a role key outside its family, the W1-T3 names, and spacing or type in a screen `<style>` (grid templates allowed).
 
@@ -1089,6 +1089,7 @@
 - **Pagination** (O3): left column = the range line, sans tnum 13 dim; right column = Previous / Next quiet. Page numbers, where shown: current = sunken-fill square + ink label at 500; others dim at 400; no border on any.
 - **No horizontal scroll** in drawers or cards: width overflow is solved by stacking, not scrolling.
 - Stacked mode: when the measured width of the table's own wrapper falls under the table's threshold, rows become stacked two-line items (primary 15 ink + meta line 13 dim), not a scrolling grid.
+- **Nested ledger** (`Table isNested`): a table inside a padded card body sits on that body's column — caption, first and last cell and stacked rows take no inset of their own; interior 12, row rule and row height stay the house ones, group and clickable rows included.
 - Wide matrices (agent × task type): a per-agent row listing only off-target cells; the full matrix behind a disclosure.
 - No card inside a card: a disclosure is itself the card; its content goes straight into the body.
 - **Record detail** opens in a right-side drawer (or the fullscreen document view); modals only confirm destructive or irreversible actions.

@@ -1064,15 +1064,17 @@ function TableHead({ children, isNumeric = false, isSticky = false, className = 
  * @param widths - CSS width per column → a colgroup, dropped when stacked.
  * @param bodies - `{ key, rows, isBusy, onKeyDown, className }` per tbody; omit to render children as the one body.
  * @param foot - tfoot rows, after the last body.
+ * @param isNested - a ledger inside a padded card body → its caption, edge cells and stacked rows sit on that body's column, no inset of their own
  */
-function Table({ caption, isCaptionShown = false, isHeadSticky = false, columns, widths, stackBelowPx, bodies, foot, children, className = '' }) {
+function Table({ caption, isCaptionShown = false, isHeadSticky = false, isNested = false, columns, widths, stackBelowPx, bodies, foot, children, className = '' }) {
   const [wrapRef, widthPx] = useElementWidth();
   const mode = getTableMode(widthPx, stackBelowPx);
   const view = { isStacked: mode === 'stacked', columnCount: columns?.length ?? widths?.length ?? 0 };
   const groupRole = view.isStacked ? 'rowgroup' : undefined;
   const sections = bodies ?? [{ key: 'body', rows: children }];
+  const tableClass = `tbl ${isNested ? 'tbl--nested' : ''} ${view.isStacked ? 'tbl--stacked' : ''} ${className}`.replace(/\s+/g, ' ').trim();
   return <div ref={wrapRef} className="tbl-wrap" data-table-mode={mode}>
-    <table role={view.isStacked ? 'table' : undefined} className={`tbl ${view.isStacked ? 'tbl--stacked' : ''} ${className}`.replace(/\s+/g, ' ').trim()}>
+    <table role={view.isStacked ? 'table' : undefined} className={tableClass}>
       <caption className={isCaptionShown ? 'tbl-caption section-label' : 'sr-only'}>{caption}</caption>
       {widths && !view.isStacked && <colgroup>{widths.map((width, i) => <col key={i} style={{ width }} />)}</colgroup>}
       {columns && <TableColumns columns={columns} view={view} isSticky={isHeadSticky} />}

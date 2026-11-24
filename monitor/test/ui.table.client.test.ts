@@ -85,6 +85,12 @@ describe("table on the client render path", () => {
       [[undefined, true, undefined], ["true", true, "tbl-body--pseudo"]]);
   });
 
+  test("only a nested table carries the nested class", () => {
+    const getClass = (props: Record<string, unknown>) => byType(render("Table", { caption: "Held", ...props }), "table")[0].props.className;
+
+    assert.deepEqual([getClass({}), getClass({ isNested: true })], ["tbl", "tbl tbl--nested"]);
+  });
+
   test("a sorted column header carries aria-sort", () => {
     const heads = byType(getFixture(700), "th").filter((n) => n.props.scope === "col");
 

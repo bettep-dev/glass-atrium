@@ -1905,9 +1905,14 @@ tbody.tbl-compact {
 	--tbl-ctl-pad-block: calc(var(--space-1) - var(--tbl-rule) / 2);
 	--tbl-head-pad-block: calc((var(--row-h-compact) - var(--lh-row) - var(--tbl-rule)) / 2);
 }
+/* --tbl-edge — the caption, edge cells and stacked rows inset; a nested ledger already sits on its card body's padded column → 0 */
 .tbl {
+	--tbl-edge: var(--card-pad);
 	width: 100%;
 	border-collapse: collapse;
+}
+.tbl--nested {
+	--tbl-edge: 0px;
 }
 /* geometry-only routing — a table routed onto .tbl for its padding, row height and alignment alone takes .tbl--own-face and keeps
    the body size, header face and row states its own classes give it. The house rules match it out through :where(), so
@@ -1966,14 +1971,14 @@ tbody.tbl-compact > tr > :is(td, th) {
 tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	vertical-align: top;
 }
-/* edge cells take the card padding → the first and last column line up with the card head; flush comes from an unpadded card body */
+/* edge cells take --tbl-edge → the first and last column line up with the card head; flush comes from an unpadded card body */
 .tbl th:first-child,
 .tbl td:first-child {
-	padding-inline-start: var(--card-pad);
+	padding-inline-start: var(--tbl-edge);
 }
 .tbl th:last-child,
 .tbl td:last-child {
-	padding-inline-end: var(--card-pad);
+	padding-inline-end: var(--tbl-edge);
 }
 /* control cell — a cell holding a --ctl-min-h control takes the --space-1 step (less half the rule), so the row stays --row-h beside its text cells.
    Block longhands, so the inline edge rule above still applies. A new 32px control class joins this list in the change that creates it.
@@ -2045,7 +2050,7 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 }
 .tbl > caption.tbl-caption {
 	text-align: left;
-	padding: 0 var(--card-pad) var(--gap-label);
+	padding: 0 var(--tbl-edge) var(--gap-label);
 }
 /* cell atom — a long unbroken name wraps inside its cell instead of widening the table past its wrapper */
 .tbl :is(.tbl-cell--primary, .tbl-cell--row-header, .tbl-cell--span) {
@@ -2085,7 +2090,7 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	align-items: center;
 	column-gap: var(--gap-control-group);
 	min-height: var(--row-h-2);
-	padding: calc((var(--row-h-2) - 2 * var(--lh-row) - var(--tbl-rule)) / 2) var(--card-pad);
+	padding: calc((var(--row-h-2) - 2 * var(--lh-row) - var(--tbl-rule)) / 2) var(--tbl-edge);
 	border-bottom: var(--tbl-rule) solid rgb(var(--line));
 }
 /* the row owns padding and rule → cells drop the wide-mode box; specificity sits above the edge and control-cell rules */

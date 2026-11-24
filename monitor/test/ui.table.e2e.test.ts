@@ -35,7 +35,7 @@ after(async () => {
 
 // page-side source as text → tsx never wraps its named helpers in __name(), which the page lacks
 // fixture data per spec §6: a long name, an empty value, 1,000+ numbers; two bodies, the second busy and led by a span row
-const MOUNT_FIXTURE = `(widthPx) => {
+const MOUNT_FIXTURE = `(widthPx, tableProps) => {
   const { React, ReactDOM, UI } = window;
   const h = React.createElement;
   const COLUMNS = [{ key: 'agent', label: 'Agent' }, { key: 'runs', label: 'Runs', isNumeric: true, sort: 'descending' }, { key: 'cost', label: 'Cost', isNumeric: true }];
@@ -57,6 +57,7 @@ const MOUNT_FIXTURE = `(widthPx) => {
   host.style.width = widthPx + 'px';
   document.body.prepend(host);
   ReactDOM.createRoot(host).render(h(UI.Table, {
+    ...tableProps,
     caption: 'Runs by agent', columns: COLUMNS, widths: ['50%', '25%', '25%'], stackBelowPx: 700,
     bodies: [
       { key: 'agents', onKeyDown: move, rows: (view) => AGENTS.map((r) => row(view, r)) },
@@ -68,11 +69,11 @@ const MOUNT_FIXTURE = `(widthPx) => {
   }));
 }`;
 
-async function openFixture(widthPx: number): Promise<Page> {
+async function openFixture(widthPx: number, tableProps: Record<string, unknown> = {}): Promise<Page> {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
   await page.waitForFunction(() => Boolean((window as unknown as { UI?: unknown; ReactDOM?: unknown }).UI && (window as unknown as { ReactDOM?: unknown }).ReactDOM), null, { timeout: 30_000 });
-  await page.evaluate(`(${MOUNT_FIXTURE})(${widthPx})`);
+  await page.evaluate(`(${MOUNT_FIXTURE})(${widthPx}, ${JSON.stringify(tableProps)})`);
   await page.waitForSelector(`#fixture [data-table-mode="${widthPx < 700 ? "stacked" : "wide"}"]`, { timeout: 30_000 });
   return page;
 }
@@ -235,6 +236,39 @@ describe("table — fit and look", () => {
     assert.equal(look.captionPad, "16px");
     assert.doesNotMatch(look.numFont, /JetBrains Mono/);
     assert.deepEqual([look.numFigures, look.numAlign], ["tabular-nums", "right"]);
+    await page.close();
+  });
+
+  test("wide nested: the caption and the first and last cells sit on the table's own edges, the interior keeps 12 and the row 40 under its rule", async () => {
+    const page = await openFixture(WIDE_PX, { isNested: true, isCaptionShown: true });
+
+    const look = await page.evaluate(() => {
+      const table = document.querySelector("#fixture table") as HTMLTableElement;
+      const cells = [...(document.querySelector("#row-a") as HTMLTableRowElement).cells];
+      const [first, last] = [cells[0]!, cells[cells.length - 1]!];
+      const [firstText, lastText] = [first, last].map((cell) => { const range = document.createRange(); range.selectNodeContents(cell); return range.getBoundingClientRect(); });
+      const box = table.getBoundingClientRect();
+      return {
+        caption: getComputedStyle(table.caption!).paddingLeft,
+        edges: [Math.round(firstText!.left - box.left), Math.round(box.right - lastText!.right)],
+        interior: [getComputedStyle(first).paddingRight, getComputedStyle(last).paddingLeft],
+        row: [Math.round(first.getBoundingClientRect().height), getComputedStyle(first).borderBottomWidth],
+      };
+    });
+
+    assert.deepEqual(look, { caption: "0px", edges: [0, 0], interior: ["12px", "12px"], row: [40, "1px"] });
+    await page.close();
+  });
+
+  test("stacked nested: a row item starts and ends on the table's own edges", async () => {
+    const page = await openFixture(NARROW_PX, { isNested: true });
+
+    const pads = await page.evaluate(() => {
+      const row = getComputedStyle(document.querySelector("#row-a")!);
+      return [row.paddingLeft, row.paddingRight];
+    });
+
+    assert.deepEqual(pads, ["0px", "0px"]);
     await page.close();
   });
 
