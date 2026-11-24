@@ -510,7 +510,7 @@ describe("healthy live fixture", () => {
 			assert.ok(swatch.line <= swatch.inner, `"${swatch.mark}" sets a ${swatch.line}px line in a ${swatch.inner}px swatch`);
 	});
 
-	test("every text in the Part health block renders at 13px or larger, each row's meta line included", async () => {
+	test("every text in the System parts card renders at 13px or larger, each row's meta line included", async () => {
 		await ctx.page.waitForSelector(".arch-part-health .arch-part-meta", { timeout: 10_000 });
 		const texts = await ctx.page.evaluate(() =>
 			[...document.querySelectorAll(".arch-part-health *")]
@@ -977,7 +977,7 @@ describe("fault live fixture", () => {
 		);
 	});
 	// the head Status is the row status atom at head size → same glyph gap, glyph centred on the words
-	test("the Part health head Status spaces and centres its glyph as the row status atom does", async () => {
+	test("the System parts head Status spaces and centres its glyph as the row status atom does", async () => {
 		await ctx.page.waitForSelector(".arch-part-health-status svg", { timeout: 30_000 });
 		const [head, row] = await ctx.page.evaluate(() =>
 			[".arch-part-health-status", ".arch-part-status"].map((selector) => {

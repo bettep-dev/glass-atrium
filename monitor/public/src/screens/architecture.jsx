@@ -14,7 +14,7 @@ const {
 const MAP_LABEL = {
 	// map-only label size — the shared 14px renders under the 13px floor once the map is fitted to a 1024 pane
 	fontPx: 30,
-	// default-view label ceiling (CSS px) — a wide window shrinks the overview to it, so the pane clamps to the drawing and Part health rises onto the first screen
+	// default-view label ceiling (CSS px) — a wide window shrinks the overview to it, so the pane clamps to the drawing and System parts rises onto the first screen
 	ceilingPx: 16,
 	// mermaid wrap ceiling (SVG units) — above the widest one-line map label, so mermaid never breaks one
 	wrapPx: 2000,
@@ -57,14 +57,14 @@ const MAP = {
 		// one x,y pair of a path's d attribute
 		POINT_RE: /(-?[\d.]+(?:e-?\d+)?)[ ,](-?[\d.]+(?:e-?\d+)?)/g,
 	},
-	// map pane sizing (CSS px) — at any width the fit height never drops under FLOOR_PX, so labels keep the 13px floor even when the part health block leaves the first screen
+	// map pane sizing (CSS px) — at any width the fit height never drops under FLOOR_PX, so labels keep the 13px floor even when the System parts card leaves the first screen
 	PANE: { FLOOR_PX: 500, CONTROLS_MIN_INSET_PX: 48 },
 };
 
 // default/Reset view = this share of the contain fit — the overview keeps every label at the 13px floor down to a 1024 window
 const DEFAULT_VIEW_SHARE = 0.9;
 
-// band under the map kept on the first screen (CSS px) — the part health block's title shows there, so the page reads as scrollable
+// band under the map kept on the first screen (CSS px) — the System parts card's title shows there, so the page reads as scrollable
 const PART_HEALTH = { PEEK_PX: 48 };
 
 // svg-pan-zoom min/max zoom, relative to the zoom at the last resize() — the default view rebases it, so it bounds zoom-out from there
@@ -647,7 +647,7 @@ function ScreenArchitecture(
 					".arch-page { display: flex; flex-direction: column; height: 100%; min-height: 0; flex: 1; } " +
 					// 다이어그램 본체 = 단일 컬럼, 가용 폭 100% 회수. 부수 패널은 가로 스트립/접이식으로 외부 배치.
 					".arch-main { display: flex; flex-direction: column; min-height: 0; flex: 1; } " +
-					// part health takes the band the map leaves empty — a map floor keeps its fit scale, short viewports scroll
+					// System parts takes the band the map leaves empty — a map floor keeps its fit scale, short viewports scroll
 					".arch-page:has(.arch-part-health) { overflow-y: auto; } " +
 					".arch-page:has(.arch-part-health) .arch-main { min-height: 62vh; } " +
 					// a pane clamped to its drawing gives the unused height back — the fit scale the floor protects is already set
@@ -661,7 +661,7 @@ function ScreenArchitecture(
 					".arch-part-health-status { display: inline-flex; align-items: center; gap: var(--space-1_5); } " +
 					".arch-drawer-heading { font-size: var(--fs-title); font-weight: 600; color: rgb(var(--ink)); } " +
 					".arch-drawer-subheading { margin: 0 0 2px; font-size: var(--fs-meta); font-weight: 400; } " +
-					// Part health list · one line per part: name, status atom and cause | quiet button, meta below — body text centred on the 32px button
+					// System parts list · one line per part: name, status atom and cause | quiet button, meta below — body text centred on the 32px button
 					".arch-part-body { display: flex; flex-direction: column; } " +
 					".arch-part-fold > summary { list-style: none; } " +
 					".arch-part-list { display: flex; flex-direction: column; } " +
@@ -2350,7 +2350,7 @@ function applyPaneFloorAR(root) {
 	setCanvasHeightAR(root, MAP.PANE.FLOOR_PX);
 }
 
-// height the default view fits in — the first-screen height, raised to the floor, which wins over the part health peek band
+// height the default view fits in — the first-screen height, raised to the floor, which wins over the System parts peek band
 function getFitPaneHeightAR(root, paneH) {
 	const firstScreen = Math.min(paneH, getFirstScreenCanvasHeightAR(root));
 	return Math.min(paneH, Math.max(firstScreen, MAP.PANE.FLOOR_PX));
@@ -2443,7 +2443,7 @@ function getNodeAccessibleNameAR(label, tone, isUnverified) {
 	return word ? `${label}, ${word}` : label;
 }
 
-// unscoped node id → attention parts bound there — the same population the Part health head counts.
+// unscoped node id → attention parts bound there — the same population the System parts head counts.
 function buildAttentionCountByNodeIdAR(partRows) {
 	const counts = new Map();
 	for (const row of partRows || []) {
@@ -2878,7 +2878,7 @@ function getMapCopyNoteAR(diagState) {
 
 // the all-clear is a verdict on the rows' own freshness — a warm-error re-read keeps status ready, so only the verdict sees it
 function getAttentionEmptyAR(partRows, isBusy, freshness) {
-	if (isBusy) return "Checking part health…";
+	if (isBusy) return "Checking system parts…";
 	if (partRows.some((row) => row.tone)) {
 		const isFresh = window.UI.getFreshnessVerdict({ ...freshness, tone: "ok" }).tone === "ok";
 		// listed "No data" rows → the lead names what the list holds, not only what it lacks
@@ -2887,9 +2887,9 @@ function getAttentionEmptyAR(partRows, isBusy, freshness) {
 			const counted = `${unverifiedCount} ${UNVERIFIED_WORD_AR}`;
 			return isFresh ? `${counted} · none needs attention` : `Last known: ${counted} · none needed attention`;
 		}
-		return isFresh ? "No part needs attention" : "Last known: no part needed attention";
+		return isFresh ? "No system part needs attention" : "Last known: no system part needed attention";
 	}
-	return window.UI.getRegionSummary(freshness.regions).failedCount > 0 ? "Couldn't read part health" : "Part health not read yet";
+	return window.UI.getRegionSummary(freshness.regions).failedCount > 0 ? "Couldn't read system parts" : "System parts not read yet";
 }
 
 // 'Not loaded' (no verdict arrived) never shares a label with 'No data' (a verdict of absence).
@@ -2989,7 +2989,7 @@ function getFlaggedCountTextAR(tone, count) {
 	return `${count} ${HEALTH_WORD_AR[tone]}`;
 }
 
-// Part health head Status — flagged counts worst tone first; null when nothing is flagged (no all-clear line)
+// System parts head Status — flagged counts worst tone first; null when nothing is flagged (no all-clear line)
 function getPartHealthStatusAR(partRows, freshness) {
 	const attention = getPartHealthGroupsAR(partRows).listed.filter(isPartFlaggedAR);
 	if (attention.length === 0) return null;
@@ -3017,7 +3017,7 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 		<section className="card arch-part-health" id={PART_HEALTH_ID_AR} aria-labelledby={`${PART_HEALTH_ID_AR}-title`}>
 			<div className="card-head">
 				<div className="card-head-text">
-					<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title">Part health</h2>
+					<h2 id={`${PART_HEALTH_ID_AR}-title`} className="arch-part-health-title">System parts</h2>
 					{status && (
 						<HeadStatus tone={status.tone} className="card-sub arch-part-health-status">
 							{status.text}
@@ -3032,7 +3032,7 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 					<details className="arch-part-fold">
 						<summary className="group disclosure">
 							<DisclosureChevron />
-							<span>{`${healthy.length} healthy`}</span>
+							<span>{`${healthy.length} ${healthy.length === 1 ? "system part" : "system parts"} healthy`}</span>
 						</summary>
 						<PartHealthListAR rows={healthy} isFolded {...listProps} />
 					</details>

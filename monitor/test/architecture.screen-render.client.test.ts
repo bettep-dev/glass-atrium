@@ -78,13 +78,13 @@ test("a cold map Retry keeps the map's failure card in place, busy, with a focus
   assert.equal(findNodes(targets[0], (n) => n === cards[0]).length, 1, "the target wraps the card, so it outlives the error-to-map swap");
 });
 
-// one Part health list: flagged parts first, then every part not judged healthy; healthy parts fold under their count
-describe("Part health is one list, healthy parts folded under a count", () => {
+// one System parts list: flagged parts first, then every part not judged healthy; healthy parts fold under their count
+describe("System parts is one list, healthy parts folded under a count", () => {
   const part = (id: string, tone: string | null, statusLabel: string) =>
     ({ id, name: `${id}-part`, kind: "unknown-kind", daemonName: null, tone, statusLabel, nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null });
   const render = async (partRows: ReturnType<typeof part>[]) => {
     const mod = await loadArch();
-    const props = { partRows, attentionEmpty: "No part needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
+    const props = { partRows, attentionEmpty: "No system part needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
     const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
     const [fold] = findNodes(tree, (n) => n.type === "details");
     const rowIds = (root: unknown) => findNodes(root as ReturnType<typeof renderScreen>, (n) => n.type === "li").map((n) => String(n.props.id));
@@ -92,27 +92,27 @@ describe("Part health is one list, healthy parts folded under a count", () => {
     return { tree, fold, shownIds: rowIds(tree).filter((id) => !foldIds.includes(id)), foldIds };
   };
   const rows = [
-    { name: "a mixed read", parts: [part("ok1", "ok", "Healthy"), part("info", "info", "Idle"), part("crit", "crit", "Overdue"), part("cold", null, "Not loaded"), part("ok2", "ok", "Healthy"), part("warn", "warn", "Late")], shown: ["crit", "warn", "cold", "info"], folded: ["ok1", "ok2"], isAllClear: false },
-    { name: "a read with nothing flagged", parts: [part("ok1", "ok", "Healthy"), part("cold", null, "Not loaded")], shown: ["cold"], folded: ["ok1"], isAllClear: true },
-    { name: "a read with no healthy part", parts: [part("crit", "crit", "Overdue"), part("cold", null, "Not loaded")], shown: ["crit", "cold"], folded: [], isAllClear: false },
+    { name: "a mixed read", parts: [part("ok1", "ok", "Healthy"), part("info", "info", "Idle"), part("crit", "crit", "Overdue"), part("cold", null, "Not loaded"), part("ok2", "ok", "Healthy"), part("warn", "warn", "Late")], shown: ["crit", "warn", "cold", "info"], folded: ["ok1", "ok2"], foldText: "2 system parts healthy", isAllClear: false },
+    { name: "a read with nothing flagged", parts: [part("ok1", "ok", "Healthy"), part("cold", null, "Not loaded")], shown: ["cold"], folded: ["ok1"], foldText: "1 system part healthy", isAllClear: true },
+    { name: "a read with no healthy part", parts: [part("crit", "crit", "Overdue"), part("cold", null, "Not loaded")], shown: ["crit", "cold"], folded: [], foldText: null, isAllClear: false },
   ];
   for (const row of rows)
     test(row.name, async () => {
       const r = await render(row.parts);
       assert.deepEqual(r.shownIds.map((id) => id.replace(/^arch-part-/, "")), row.shown, "shown parts, flagged worst first");
       assert.deepEqual(r.foldIds.map((id) => id.replace(/^arch-part-/, "")).sort(), row.folded.sort(), "healthy parts sit inside the fold");
-      if (row.folded.length) assert.match(collectText(findNodes(r.fold, (n) => n.type === "summary")[0]).trim(), new RegExp(`^${row.folded.length} healthy$`), "the fold names its count");
+      if (row.folded.length) assert.equal(collectText(findNodes(r.fold, (n) => n.type === "summary")[0]).trim(), row.foldText, "the fold names its count with the shared noun");
       else assert.equal(r.fold, undefined, "no fold without a healthy part");
       assert.equal(findNodes(r.tree, (n) => n.type === "h3").length, 0, "no column title splits the list");
-      assert.equal(collectText(r.tree).includes("No part needs attention"), row.isAllClear, "the all-clear line shows exactly when nothing is flagged");
+      assert.equal(collectText(r.tree).includes("No system part needs attention"), row.isAllClear, "the all-clear line shows exactly when nothing is flagged");
     });
 });
 
 // the head Status is the page's in-page alarm → the shared head Status atom, the one Learning's head draws
-test("the Part health head Status is the shared head Status atom in the worst part's tone", async () => {
+test("the System parts head Status is the shared head Status atom in the worst part's tone", async () => {
   const mod = await loadArch();
   const flagged = { id: "crit", name: "crit-part", kind: "unknown-kind", daemonName: null, tone: "crit", statusLabel: "Overdue", nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null };
-  const props = { partRows: [flagged], attentionEmpty: "No part needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
+  const props = { partRows: [flagged], attentionEmpty: "No system part needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
   const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
   const statuses = findNodes(tree, (n) => n.props.atom === "HeadStatus");
 
@@ -121,8 +121,18 @@ test("the Part health head Status is the shared head Status atom in the worst pa
   assert.equal(findNodes(tree, (n) => n.props.atom === "Icon").length, 0, "no hand-drawn glyph beside it");
 });
 
+// the card takes the noun the Dashboard stat uses for the same watched parts (spec 44084 §9.4)
+test("the card is titled System parts, the Dashboard's noun for the watched parts", async () => {
+  const mod = await loadArch();
+  const flagged = { id: "crit", name: "crit-part", kind: "unknown-kind", daemonName: null, tone: "crit", statusLabel: "Overdue", nodeIds: [], lastRunAt: null, nextRunAt: null, cadenceMinutes: null, cause: null };
+  const props = { partRows: [flagged], attentionEmpty: "No system part needs attention", freshness: null, nodeIndex: new Map(), onSelectNode: () => {} };
+  const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
+
+  assert.deepEqual(findNodes(tree, (n) => n.type === "h2").map((n) => collectText(n).trim()), ["System parts"]);
+});
+
 // the fold's summary already says healthy — a folded row adds a status word only when its verdict says more than that
-describe("a folded Part health row shows its status only when it says more than the fold's count", () => {
+describe("a folded System parts row shows its status only when it says more than the fold's count", () => {
   const now = Date.now();
   const readAt = new Date(now - 5 * 60_000).toISOString();
   const part = (id: string, tone: string, statusLabel: string) =>
@@ -137,7 +147,7 @@ describe("a folded Part health row shows its status only when it says more than 
     test(row.name, async () => {
       const mod = await loadArch();
       const partRows = [part("ok1", "ok", "Healthy"), part("crit", "crit", "Overdue"), part("ok2", "ok", "Healthy")];
-      const props = { partRows, attentionEmpty: "No part needs attention", freshness: row.freshness, nodeIndex: new Map(), onSelectNode: () => {} };
+      const props = { partRows, attentionEmpty: "No system part needs attention", freshness: row.freshness, nodeIndex: new Map(), onSelectNode: () => {} };
       const tree = renderScreen(mod.React.createElement(mod.PartHealthBlockAR, props));
       const [fold] = findNodes(tree, (n) => n.type === "details");
 
@@ -268,22 +278,22 @@ function getRuleBodies(css: string, className: string): string[] {
   return [...css.matchAll(new RegExp(`\\.${className}\\s*\\{([^}]*)\\}`, "g"))].map((m) => m[1]);
 }
 
-test("the Part health title is no smaller than the row text under it", async () => {
+test("the System parts title is no smaller than the row text under it", async () => {
   const mod = await loadArch();
   const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
   const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
-  assert.ok(getRuleFontPx(css, "arch-part-health-title") >= getRuleFontPx(css, "arch-part-row"), "the Part health rows outsize the card title");
+  assert.ok(getRuleFontPx(css, "arch-part-health-title") >= getRuleFontPx(css, "arch-part-row"), "the System parts rows outsize the card title");
 });
 
-test("the Part health list and the drawer's part list each own one rule, so their gaps never cross-apply", async () => {
+test("the System parts list and the drawer's part list each own one rule, so their gaps never cross-apply", async () => {
   const mod = await loadArch();
   const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
   const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
-  assert.equal(getRuleBodies(css, "arch-part-list").length, 1, "the Part health list is defined once");
+  assert.equal(getRuleBodies(css, "arch-part-list").length, 1, "the System parts list is defined once");
   assert.equal(getRuleBodies(css, "arch-drawer-part-list").length, 1, "the drawer's part list is defined once");
 });
 
-test("a Part health row keeps the name and the status on one line each", async () => {
+test("a System parts row keeps the name and the status on one line each", async () => {
   const mod = await loadArch();
   const tree = renderScreen(mod.React.createElement(mod.ScreenArchitecture, {}));
   const css = findNodes(tree, (n) => n.type === "style").map(collectText).join(" ");
@@ -302,7 +312,7 @@ test("a Part health row keeps the name and the status on one line each", async (
   assert.equal(nameEl?.props.title, "cron-scheduler", "a truncated name keeps its full text in title");
 });
 
-test("a flagged Part health row reads its status right after the name and its cause on the same line, never in the meta line", async () => {
+test("a flagged System parts row reads its status right after the name and its cause on the same line, never in the meta line", async () => {
   const mod = await loadArch();
   const nodeIndex = new Map([["canonical.cron", { id: "canonical.cron", label: "Scheduled background jobs" }]]);
   const row = { id: "cron", name: "cron-scheduler", tone: "crit", statusLabel: "Overdue", nodeIds: ["cron"], lastRunAt: null, nextRunAt: null, cadenceMinutes: 60, cause: "exit 1 at the last run" };

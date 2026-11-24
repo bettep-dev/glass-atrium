@@ -1,5 +1,5 @@
 // The System map's page-level state copy: which failed reads earn the one page alert, when the
-// stamp may name a read time, how the Part health block groups, leads, counts and explains its
+// stamp may name a read time, how the System parts card groups, leads, counts and explains its
 // parts, and what a drawer row names.
 //
 // Runner: npx tsx --test test/architecture.page-state.client.unit.test.ts
@@ -194,7 +194,7 @@ const MIXED_ROWS: HealthRow[] = [
   healthRow("f", "crit"),
 ];
 
-test("the part health block holds every part once — healthy parts folded apart, every other part listed worst first, flagged before the rest", () => {
+test("the System parts card holds every part once — healthy parts folded apart, every other part listed worst first, flagged before the rest", () => {
   const { listed, healthy } = sandbox.getPartHealthGroupsAR(MIXED_ROWS);
   const rank = (tone: string | null) => ["crit", "warn", null, "info"].indexOf(tone);
   const isFlagged = (row: HealthRow) => row.tone === "crit" || row.tone === "warn";
@@ -218,7 +218,7 @@ test("while the first health read is in flight an unread part is left out of the
   assert.deepStrictEqual(pending.healthy.map((row) => row.id), settled.healthy.map((row) => row.id));
 });
 
-describe("the Part health lead line says why nothing is flagged, and its all-clear reads Last known exactly when the part rows do", () => {
+describe("the System parts lead line says why nothing is flagged, and its all-clear reads Last known exactly when the part rows do", () => {
   const now = Date.parse("2026-01-10T12:00:00.000Z");
   const readAt = new Date(now - 60_000).toISOString();
   const held: RegionState = { status: "ready", data: { ok: true }, error: null, busy: false };
@@ -230,15 +230,15 @@ describe("the Part health lead line says why nothing is flagged, and its all-cle
   // the empty-store case: two daemon parts answered "No data" — listed, so the lead names what the list is
   const unverified = [healthRow("a", "ok"), healthRow("b", "info"), healthRow("c", "info")];
   const rows = [
-    { name: "a read in flight is still checking", partRows: judged, busy: true, at: readAt, regions: [down], expected: /^Checking/ },
-    { name: "an all-clear under a warm-error re-read is last known", partRows: judged, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known/ },
-    { name: "an all-clear under a cold store failure is last known", partRows: judged, busy: false, at: readAt, regions: [down, held], expected: /^Last known/ },
-    { name: "an all-clear older than the stale threshold is last known", partRows: judged, busy: false, at: new Date(now - 10 * 60_000).toISOString(), regions: [held], expected: /^Last known/ },
-    { name: "an all-clear with every store freshly read is a plain all-clear", partRows: judged, busy: false, at: readAt, regions: [held, held], expected: /^No part needs attention$/ },
+    { name: "a read in flight is still checking", partRows: judged, busy: true, at: readAt, regions: [down], expected: /^Checking system parts…$/ },
+    { name: "an all-clear under a warm-error re-read is last known", partRows: judged, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known: no system part needed attention$/ },
+    { name: "an all-clear under a cold store failure is last known", partRows: judged, busy: false, at: readAt, regions: [down, held], expected: /^Last known: no system part needed attention$/ },
+    { name: "an all-clear older than the stale threshold is last known", partRows: judged, busy: false, at: new Date(now - 10 * 60_000).toISOString(), regions: [held], expected: /^Last known: no system part needed attention$/ },
+    { name: "an all-clear with every store freshly read is a plain all-clear", partRows: judged, busy: false, at: readAt, regions: [held, held], expected: /^No system part needs attention$/ },
     { name: "listed unverified parts are counted while none is flagged", partRows: unverified, busy: false, at: readAt, regions: [held], expected: /^2 not verified · none needs attention$/ },
     { name: "listed unverified parts under a failed re-read are counted as last known", partRows: unverified, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known: 2 not verified · none needed attention$/ },
-    { name: "no verdict and a failed read says the read failed", partRows: unjudged, busy: false, at: null, regions: [down, down], expected: /^Couldn't read part health$/ },
-    { name: "no verdict and no failure says it is not read yet", partRows: unjudged, busy: false, at: null, regions: [held], expected: /^Part health not read yet$/ },
+    { name: "no verdict and a failed read says the read failed", partRows: unjudged, busy: false, at: null, regions: [down, down], expected: /^Couldn't read system parts$/ },
+    { name: "no verdict and no failure says it is not read yet", partRows: unjudged, busy: false, at: null, regions: [held], expected: /^System parts not read yet$/ },
   ];
   for (const row of rows)
     test(row.name, () => {
@@ -305,7 +305,7 @@ describe("a down part says how often it runs and when it is due next, from the s
     test(name, () => assert.strictEqual(sandbox.getPartScheduleAR(row, formatRelative, NOW), schedule));
 });
 
-describe("the Part health head counts the flagged parts once, worst tone first, and says nothing when none is flagged", () => {
+describe("the System parts head counts the flagged parts once, worst tone first, and says nothing when none is flagged", () => {
   const settled = { at: "2026-01-10T11:59:00.000Z", regions: [], now: Date.parse("2026-01-10T12:00:00.000Z") };
   const rows = [
     { name: "a critical part outranks a warning", parts: [healthRow("a", "warn"), healthRow("b", "crit")], status: { tone: "crit", text: "1 critical · 1 needs attention" } },

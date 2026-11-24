@@ -1161,7 +1161,7 @@ test("C1 a daemons store that has not answered leaves no verdict ring from the l
   }
 });
 
-test("the per-node attention counts add up to the Part health head's count", () => {
+test("the per-node attention counts add up to the System parts head's count", () => {
   const rows = [
     { tone: "crit", nodeIds: ["cron"] },
     { tone: "crit", nodeIds: ["cron"] },
