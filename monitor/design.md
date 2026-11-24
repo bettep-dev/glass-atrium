@@ -1089,6 +1089,7 @@
 - **Sort**: the sorted column shows an up/down arrow + `aria-sort`; other sortable columns a two-way icon; a separate "Sort" trigger only where no column carries the key.
 - **Numbers**: right-aligned, sans `tnum`; a unit attaches to its number (`148,203 runs`, Korean `148,203회`).
 - **Cells**: a status column only where status varies; an empty cell reads `None` in faint ink, never blank.
+  - Exception: a cell whose group heading fixes its value for every row in that group stays visually empty, with `None` in sr-only text; a `None` that varies by row stays faint `None`.
 - **Fixtures**: test and screenshot data mix long names, empty values and 1,000+ numbers.
 - **Row actions**: visible on every row, two at most, the second an overflow menu (⋯); or the whole row is the click target with no action buttons.
 - **Master–detail desk**: a screen whose rows are pending owner actions (the Queue) opens the pressed row in the list's own pane, with a way back and previous / next; record detail elsewhere still opens in the drawer.
