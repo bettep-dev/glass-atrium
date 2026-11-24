@@ -2039,8 +2039,7 @@ function validateFormMC(form, knownModels) {
 	// per-call 캡은 각각 독립 검증 — daily≤monthly 류의 cross-field 불변식 없음 (단일 호출 캡).
 	for (const [key, v] of Object.entries(form.budgets)) {
 		if (!BUDGET_RE_MC.test(v)) {
-			errors[key] =
-				`Amount with exactly 2 decimals (e.g. 0.50), between $${BUDGET_MIN_USD_MC.toFixed(2)} and $${BUDGET_MAX_USD_MC.toFixed(2)}`;
+			errors[key] = `Two decimals, $${BUDGET_MIN_USD_MC.toFixed(2)} to $${BUDGET_MAX_USD_MC.toFixed(2)}`;
 			continue;
 		}
 		const n = Number(v);
@@ -2057,7 +2056,7 @@ function validateFormMC(form, knownModels) {
 		if (kind === "effort" && !EFFORT_LEVELS_MC.includes(v)) {
 			errors[key] = `Pick ${CLI_DEFAULT_LABEL_MC} or one of: ${EFFORT_LEVELS_MC.join(", ")}`;
 		} else if (kind === "output-cap" && !OUTPUT_CAP_RE_MC.test(v)) {
-			errors[key] = "A whole number of tokens from 1 to 999999, no leading zero — or blank";
+			errors[key] = "Whole number, 1 to 999999, or blank";
 		}
 	}
 

@@ -277,6 +277,30 @@ test("validateFormMC: budget out of [0.05, 50.00] bounds → error; in-bounds �
   assert.deepStrictEqual(edge, {}, "exact bounds accepted");
 });
 
+describe("validateFormMC: a field alert fits the 160 control slot", () => {
+  const rows = [
+    { name: "empty model", form: { models: { "model.daemon_cycle_worker": "" }, budgets: {} }, key: "model.daemon_cycle_worker" },
+    { name: "free-text model off the id pattern", form: { models: { "model.daemon_cycle_worker": "Claude-Custom" }, budgets: {} }, key: "model.daemon_cycle_worker" },
+    { name: "cap off the two-decimal form", form: { models: {}, budgets: { "budget.worker_max_usd": "1.234" } }, key: "budget.worker_max_usd" },
+    { name: "cap outside the bounds", form: { models: {}, budgets: { "budget.worker_max_usd": "50.01" } }, key: "budget.worker_max_usd" },
+    { name: "effort off the level list", form: { models: {}, budgets: {}, tiers: { "tier.worker_effort": "ultra" } }, key: "tier.worker_effort" },
+    { name: "output tokens off the whole-number form", form: { models: {}, budgets: {}, tiers: { "tier.worker_max_output_tokens": "0" } }, key: "tier.worker_max_output_tokens" },
+  ];
+  for (const row of rows) {
+    test(`${row.name}: the alert holds the 12-word bar`, () => {
+      const message = sameRealm(mc.validateFormMC(row.form, KNOWN_MODELS_FIXTURE))[row.key];
+      assert.ok(message, "the field is flagged");
+      assert.ok(message.split(/\s+/).length <= 12, `'${message}'`);
+    });
+  }
+
+  test("the format alerts read as the short range forms", () => {
+    const cap = sameRealm(mc.validateFormMC(rows[2].form, []))[rows[2].key];
+    const tokens = sameRealm(mc.validateFormMC(rows[5].form, []))[rows[5].key];
+    assert.deepStrictEqual([cap, tokens], ["Two decimals, $0.05 to $50.00", "Whole number, 1 to 999999, or blank"]);
+  });
+});
+
 // --- diffFormMC: partial-PUT payload builder (only changed fields, null when none) ---
 
 test("diffFormMC: no change → null (clean state — save-banner hidden, Save dormant not error-disabled)", () => {
