@@ -1722,7 +1722,7 @@ function HeldCauseTableI({ buckets, rows }) {
 	return <Table caption="Held causes" isNested columns={HELD_COLUMNS_I} bodies={bodies} className="mb-stack" />;
 }
 
-// One cause: its name opens its rows (the house ledger expander) · its remedy lives in the ledger drawer
+// One cause: its name opens its rows (the house ledger expander) · its remedy is the line under the name
 function HeldCauseRowsI({ view, bucket, rows, isHumanCause }) {
 	const [isOpen, setOpen] = useSI(false);
 	const { DisclosureChevron, TableRow, TableCell, ToneGlyph } = window.UI;
@@ -1744,14 +1744,15 @@ function HeldCauseRowsI({ view, bucket, rows, isHumanCause }) {
 						<span>{bucket.label}</span>
 					</button>
 				</span>
-				<div id={listId} hidden={!isOpen}>
-					<div className="flex items-start gap-label-inline">
-						{/* the name's lead track, unseen → the rows start on the name column */}
-						<span className="invisible inline-flex items-center gap-label-inline" aria-hidden="true">
-							<ToneGlyph tone={null} />
-							<DisclosureChevron isOpen={false} />
-						</span>
-						<div className="min-w-0 flex-1">
+				<div className="flex items-start gap-label-inline">
+					{/* the name's lead track, unseen → the remedy and the rows start on the name column */}
+					<span className="invisible inline-flex items-center gap-label-inline" aria-hidden="true">
+						<ToneGlyph tone={null} />
+						<DisclosureChevron isOpen={false} />
+					</span>
+					<div className="min-w-0 flex-1">
+						<div className="fs-meta text-dim">{bucket.hint}</div>
+						<div id={listId} hidden={!isOpen}>
 							<LedgerPlainRowsI rows={rows} />
 						</div>
 					</div>
@@ -1900,18 +1901,15 @@ function LedgerFooterI({ total }) {
 // "How this is counted" drawer — each recurring cause's remedy, the declined count and the figures' gates.
 // declined = every rejected pattern row — wider than the Held head (rejected rows with a transition cause)
 function LedgerNotesI({ suppression, declined }) {
-	// every cause's remedy, held and recurring, printed once here — the server sentences exceed the face's 12-word bar
-	// keyed by cause and hint → a cause both held and recurring prints each distinct remedy once
-	const causes = new Map(
-		["parked", "per_cycle"].flatMap((key) => getSuppressionListI(suppression, key)).map((b) => [`${b.cause}:${b.hint}`, b]),
-	);
+	// held remedies sit under their names on the face → only the recurring causes' remedies live here
+	const causes = new Map(getSuppressionListI(suppression, "per_cycle").map((b) => [b.cause, b]));
 	const unpromptable = Number(suppression?.pending_unpromptable ?? 0);
 	const pendingTotal = Number(suppression?.pending_total ?? 0);
 	const offRegistry = Number(suppression?.off_registry_parked ?? 0);
 	return (
 		<div className="flex flex-col gap-list fs-body">
-			{[...causes.entries()].map(([key, b]) => (
-				<p key={key}>
+			{[...causes.values()].map((b) => (
+				<p key={b.cause}>
 					<span className="text-ink font-semibold">{b.label}</span> — {b.hint}
 				</p>
 			))}
