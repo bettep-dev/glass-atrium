@@ -309,6 +309,42 @@ describe("an empty instrumentation card keeps the head its data form shows", () 
   }
 });
 
+// one head in every state: a failed read swaps the card's body, never its title, sub, ⓘ or head link
+describe("a failed instrumentation region keeps the head its data form shows", () => {
+  const ui = sandbox.window.UI as unknown as Record<string, unknown>;
+  const screen = sandbox as unknown as Record<string, (props: unknown) => RecordedElement>;
+  const failed = { status: "error", data: null, error: "HTTP 503" };
+  const regions = [
+    { name: "flagged results", state: "statsState", card: "FlaggedResultsCardI", data: { status: "ready", error: null, data: { review_flag_last_7d: 3 } } },
+    { name: "corpus growth", state: "corpusAuditState", card: "CorpusGrowthCardI", data: HEAD_FORMS[5].data.state },
+    { name: "detection agreement", state: "correctionState", card: "CorrectionSignalsCardI", data: HEAD_FORMS[4].data.state },
+  ];
+  const getHead = (card: RecordedElement) => ({
+    title: card.props.title,
+    sub: card.props.sub,
+    info: card.props.info,
+    right: getText(card.props.right),
+  });
+  const ready = { status: "ready", error: null, data: {} };
+  for (const row of regions) {
+    test(row.name, () => {
+      sandbox.React.useState = () => [false, () => {}];
+      const view = screen.ImprovementInstrumentationViewI({
+        statsState: ready, listState: ready, correctionState: ready, corpusAuditState: ready,
+        [row.state]: failed,
+        failures: [], onRetry: () => {},
+      });
+      const [banner] = findElements(view, (el) => el.type === screen.PayloadErrorCardI);
+      assert.ok(banner, "the failed region draws its error card");
+      const errorCard = (banner.type as (props: unknown) => RecordedElement)(banner.props);
+      const dataCard = screen[row.card]({ state: row.data, reviewReasons: null });
+
+      assert.equal(errorCard.type, ui.Card);
+      assert.deepEqual(getHead(errorCard), getHead(dataCard));
+    });
+  }
+});
+
 // the list read is open → the add-only card holds its slot as the card below it in the column does, with the same height
 test("while the list read is open, the add-only card is its titled S card with one announced placeholder", () => {
   const ui = sandbox.window.UI as unknown as Record<string, unknown>;

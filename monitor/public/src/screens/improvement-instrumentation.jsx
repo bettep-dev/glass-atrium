@@ -23,19 +23,33 @@ const PAYLOAD_SLOT_ID_I = Object.freeze({
 	proposalMeasurements: "improvement-proposal-measurements",
 });
 
-// one name per card → its error banner card reads the same title as its loading and data forms
-const CARD_TITLE_I = Object.freeze({
-	flaggedResults: "Flagged results (7 days)",
-	corpusGrowth: "Corpus growth",
-	correctionSignals: "Detection agreement",
+// one head per card in every state → its loading, data, empty and error forms read the same title, sub, ⓘ and head link
+const CARD_HEAD_I = Object.freeze({
+	flaggedResults: {
+		title: "Flagged results (7 days)",
+		sub: "Quarantined rows excluded",
+		link: { href: "#outcomes", label: "Task results" },
+	},
+	corpusGrowth: { title: "Corpus growth", sub: "Per-cycle audit" },
+	correctionSignals: {
+		title: "Detection agreement",
+		sub: "Correction signals",
+		info: "Agreement = both + neither (the two stages concur) ÷ all signals.",
+	},
+	proposalMeasurements: { title: "Proposal measurements" },
 });
+
+function getCardHeadPropsI({ title, sub, info, link }) {
+	const { Link } = window.UI;
+	return { title, sub, info, right: link && <Link href={link.href}>{link.label}</Link> };
+}
 
 // One banner per failed payload, in place of the group that payload owns.
 // `source` = the page's region name, so a shared outage banner naming it quiets this card
-function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTargetId }) {
+function PayloadErrorCardI({ head, source, state, onRetry, failures, focusTargetId }) {
 	const { Card, RegionFailure } = window.UI;
 	return (
-		<Card title={title}>
+		<Card {...getCardHeadPropsI(head)}>
 			<RegionFailure
 				source={source}
 				error={state.error}
@@ -51,24 +65,20 @@ function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTarge
 // 플래그된 결과 — 운영 밴드가 아니라 계기판에 산다. 이 수는 루프가 무엇을 내놓았는지가
 // 아니라 판정기가 무엇을 걸렀는지를 말하고, 걸린 행 자체는 Task results 가 소유한다.
 function FlaggedResultsCardI({ state, reviewReasons }) {
-	const { Card, Link, LoadingPlaceholder, Stack, StatRow } = window.UI;
-	const title = CARD_TITLE_I.flaggedResults;
+	const { Card, LoadingPlaceholder, Stack, StatRow } = window.UI;
+	const head = getCardHeadPropsI(CARD_HEAD_I.flaggedResults);
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
-			<Card title={title}>
+			<Card {...head}>
 				<LoadingPlaceholder label="flagged results" minHeight={60} />
 			</Card>
 		);
 	}
 
 	return (
-		<Card
-			title={title}
-			sub="Quarantined rows excluded"
-			right={<Link href="#outcomes">Task results</Link>}
-		>
+		<Card {...head}>
 			<Stack gap="block">
 				<StatRow stats={[{ key: "flagged", label: "Flagged rows", value: formatIntI(Number(state.data.review_flag_last_7d ?? 0)) }]} />
 				<FlaggedReasonBarsI segments={reviewReasons} />
@@ -144,7 +154,7 @@ function ImprovementInstrumentationViewI({
 				{getRegionView(statsState) === "error" ? (
 					<PayloadErrorCardI
 						focusTargetId={PAYLOAD_SLOT_ID_I.flaggedResults}
-						title={CARD_TITLE_I.flaggedResults}
+						head={CARD_HEAD_I.flaggedResults}
 						source="loop stats"
 						failures={failures}
 						state={statsState}
@@ -162,7 +172,7 @@ function ImprovementInstrumentationViewI({
 					{getRegionView(corpusAuditState) === "error" ? (
 						<PayloadErrorCardI
 							focusTargetId={PAYLOAD_SLOT_ID_I.corpusGrowth}
-							title={CARD_TITLE_I.corpusGrowth}
+							head={CARD_HEAD_I.corpusGrowth}
 							source="corpus audits"
 							failures={failures}
 							state={corpusAuditState}
@@ -176,7 +186,7 @@ function ImprovementInstrumentationViewI({
 					{getRegionView(correctionState) === "error" ? (
 						<PayloadErrorCardI
 							focusTargetId={PAYLOAD_SLOT_ID_I.correctionSignals}
-							title={CARD_TITLE_I.correctionSignals}
+							head={CARD_HEAD_I.correctionSignals}
 							source="correction signals"
 							failures={failures}
 							state={correctionState}
@@ -191,7 +201,7 @@ function ImprovementInstrumentationViewI({
 				{getRegionView(listState) === "error" ? (
 					<PayloadErrorCardI
 						focusTargetId={PAYLOAD_SLOT_ID_I.proposalMeasurements}
-						title="Proposal measurements"
+						head={CARD_HEAD_I.proposalMeasurements}
 						source="suggestions"
 						failures={failures}
 						state={listState}
@@ -799,17 +809,14 @@ function formatRateI(rate) {
 // correction_signals AGGREGATE 카드 — stage1(regex) vs stage2(agent-emit) 검출 일치율
 // + revision_count delta. orphan 테이블(미배포/빈 데이터)은 정직한 빈 상태로 노출 —
 // 가짜 0 금지. error(503/테이블 부재) → 뷰가 카드 대신 재시도 가능한 오류 배너를 렌더.
-const CORRECTION_SIGNALS_INFO_I = "Agreement = both + neither (the two stages concur) ÷ all signals.";
-
 function CorrectionSignalsCardI({ state }) {
 	const { Card, Cluster, formatKstDate, LoadingPlaceholder, Stack, StatRow } = window.UI;
-	const title = CARD_TITLE_I.correctionSignals;
-	const sub = "Correction signals";
+	const head = CARD_HEAD_I.correctionSignals;
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
-			<Card title={title} sub={sub} info={CORRECTION_SIGNALS_INFO_I}>
+			<Card {...getCardHeadPropsI(head)}>
 				<LoadingPlaceholder label="correction signals" minHeight={60} />
 			</Card>
 		);
@@ -818,7 +825,7 @@ function CorrectionSignalsCardI({ state }) {
 	const d = state.data;
 	// 빈 테이블 → 정직한 빈 카드 한 줄 (채워지는 조건 동반). 가짜 0% 미표기.
 	if (isCorrectionSignalsEmptyI(d)) {
-		return <EmptyCardI title={title} sub={sub} info={CORRECTION_SIGNALS_INFO_I} message="No correction signals yet — each detection logs one" />;
+		return <EmptyCardI {...head} message="No correction signals yet — each detection logs one" />;
 	}
 
 	const agr = d.agreement;
@@ -828,7 +835,7 @@ function CorrectionSignalsCardI({ state }) {
 	const latest = d.latest_event_ts ? formatKstDate(d.latest_event_ts) : null;
 
 	return (
-		<Card title={title} sub={sub} info={CORRECTION_SIGNALS_INFO_I}>
+		<Card {...getCardHeadPropsI(head)}>
 			<Stack gap="label">
 				<StatRow
 					stats={[{
@@ -874,20 +881,19 @@ function isCorrectionSignalsEmptyI(data) {
 // null 은 "판독 불가", 0 은 "측정된 0" 으로 서로 다른 판독 → null 을 0 으로 접지 않는다.
 function CorpusGrowthCardI({ state }) {
 	const { Card, Cluster, Sparkline, LoadingPlaceholder, Stack, StatRow } = window.UI;
-	const title = CARD_TITLE_I.corpusGrowth;
-	const sub = "Per-cycle audit";
+	const head = CARD_HEAD_I.corpusGrowth;
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
-			<Card title={title} sub={sub}>
+			<Card {...getCardHeadPropsI(head)}>
 				<LoadingPlaceholder label="corpus audits" minHeight={60} />
 			</Card>
 		);
 	}
 
 	if (isCorpusGrowthEmptyI(state.data)) {
-		return <EmptyCardI title={title} sub={sub} message="No corpus readings yet — each daemon cycle writes one" />;
+		return <EmptyCardI {...head} message="No corpus readings yet — each daemon cycle writes one" />;
 	}
 	const rows = state.data.audits;
 	const latest = rows[0];
@@ -919,7 +925,7 @@ function CorpusGrowthCardI({ state }) {
 	];
 
 	return (
-		<Card title={title} sub={sub}>
+		<Card {...getCardHeadPropsI(head)}>
 			<Stack gap="label">
 				<Cluster gap="control-group" className="items-end justify-between">
 					<StatRow stats={stats} />
