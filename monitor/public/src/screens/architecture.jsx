@@ -847,7 +847,7 @@ function ScreenArchitecture(
 					) : (
 						<div className="card card--fill arch-col-card" aria-busy={diagState.busy ? "true" : undefined}>
 							{mapCopyNote && (
-								<p className="fs-meta text-dim m-0 arch-map-copy-note">
+								<p className="fs-meta text-dim arch-map-copy-note">
 									<Icon name="warn" size={14} className={TONE_GLYPH_CLASS.warn} />
 									{mapCopyNote}
 								</p>
@@ -945,12 +945,12 @@ function DiagramBody({
 
 	if (diagState.status === "loading") return <MapLoadingAR />;
 	if (!activeDiagram) {
-		return <EmptyStateAR message="No diagrams to show." />;
+		return <window.UI.EmptyState message="No diagrams to show." />;
 	}
 	const source = activeDiagram.mermaid_source;
 	if (!source || typeof source !== "string" || source.trim().length === 0) {
 		return (
-			<EmptyStateAR message="This diagram has an empty mermaid_source." />
+			<window.UI.EmptyState message="This diagram has an empty mermaid_source." />
 		);
 	}
 	if (!mermaidReady) return <MapLoadingAR />;
@@ -1983,7 +1983,7 @@ function DetailModal({
 
 	let body;
 	if (!info)
-		body = <EmptyStateAR message="No node matches this label." />;
+		body = <window.UI.EmptyState message="No node matches this label." />;
 	else
 		body = (
 			<NodeDetailBody
@@ -2013,7 +2013,7 @@ function DetailModal({
 			title={<h2>{info ? info.label || info.id : "Node"}</h2>}
 			sub={info?.layer_label}
 			labelledBy="ar-node-detail-title"
-			bodyClassName="space-y-3"
+			bodyClassName="space-y-group-below"
 		>
 			{body}
 		</DetailSurface>
@@ -2108,7 +2108,7 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 			<h3 className="arch-drawer-heading mb-stack">
 				Connections ({total})
 			</h3>
-			<div className="space-y-2">
+			<div className="space-y-list">
 				{inbound.length > 0 && (
 					<FlowList
 						title="Incoming"
@@ -2138,7 +2138,7 @@ function FlowList({ title, items, nodeIndex, direction }) {
 			<h4 className="arch-drawer-subheading fs-meta text-dim">{title}</h4>
 			<ul
 				className="fs-meta text-dim space-y-0.5"
-				style={{ margin: 0, padding: 0, listStyle: "none", maxHeight: 160, overflowY: "auto" }}
+				style={{ maxHeight: 160, overflowY: "auto" }}
 			>
 				{items.map((f) => (
 					<li key={f.id} className="break-words">
@@ -2184,14 +2184,6 @@ function getZoneFullTitleAR(scopedId) {
 }
 
 // Shared chrome (AR-suffixed: 다른 screen 의 helper 와 충돌 방지)
-
-function EmptyStateAR({ message }) {
-	return (
-		<div className="placeholder">
-			{message}
-		</div>
-	);
-}
 
 // tone → 글리프 색 클래스. 리터럴 표인 이유: 조립한 클래스명은 클래스 스캐너가 보지 못함.
 // 읽는 쪽은 아이콘뿐임 — 글자에 얹으면 meta/micro 크기에서 AA 대비에 못 미침 (39578 §D).
@@ -3034,7 +3026,7 @@ function PartHealthBlockAR({ partRows, isPending, attentionEmpty, freshness, nod
 				</div>
 			</div>
 			<div className="card-body arch-part-body gap-group-below">
-				{!listed.some(isPartFlaggedAR) && <p className="fs-meta text-dim m-0">{attentionEmpty}</p>}
+				{!listed.some(isPartFlaggedAR) && <p className="fs-meta text-dim">{attentionEmpty}</p>}
 				{listed.length > 0 && <PartHealthListAR rows={listed} {...listProps} />}
 				{healthy.length > 0 && (
 					<details className="arch-part-fold">

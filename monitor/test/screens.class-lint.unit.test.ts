@@ -76,10 +76,7 @@ const BASELINE: Record<string, BaselineRow[]> = {
     { rule: "retired-class", count: 3, owner: "B3" },
   ],
   architecture: [
-    { rule: "numeric-spacing", count: 4, owner: "C3" },
-    { rule: "zero-reset", count: 2, owner: "C3" },
-    { rule: "inline-spacing", count: 2, owner: "C3" },
-    { rule: "retired-class", count: 1, owner: "C3" },
+    { rule: "numeric-spacing", count: 2, owner: "C3" },
     { rule: "style-spacing-type", count: 37, owner: "C3" },
   ],
   "clauded-docs": [
