@@ -58,6 +58,14 @@ function classOf(node: RenderedNode): string {
   return String(node.props.className ?? "");
 }
 
+// the lane's rows ride the shared AlarmRow atom → its words are the title and detail each row is handed
+function alarmRowsOfW(tree: RenderedNode | string | null): RenderedNode[] {
+  return findNodes(tree, (n) => n.props.atom === "AlarmRow");
+}
+function laneTextOf(tree: RenderedNode | string | null): string {
+  return alarmRowsOfW(tree).map((row) => [row.props.title, row.props.detail].filter(Boolean).join(" ")).join("\n");
+}
+
 // StatRow is a stub atom here → the band's stats render through the real atom
 function renderStatsOf(mod: ScreenModule, band: RenderedNode | string | null): RenderedNode | string | null {
   const rows = findNodes(band, (n) => n.props.atom === "StatRow");
@@ -659,9 +667,8 @@ test("the alarm lane keeps actionable rows only; waiting proposals stay in their
       cyclesState: ready({ cycles: [] }),
     }),
   );
-  const rows = findNodes(tree, (n) => classOf(n).split(/\s+/).includes("alarm-row"));
-  assert.equal(rows.length, 1, "the dirty index only");
-  assert.doesNotMatch(collectText(tree), /Merge proposal/);
+  assert.equal(alarmRowsOfW(tree).length, 1, "the dirty index only");
+  assert.doesNotMatch(laneTextOf(tree), /Merge proposal/);
   assert.equal(findNodes(tree, (n) => n.type === "button").length, 0);
 });
 
@@ -710,7 +717,7 @@ test("the maintenance section adds no broken-link line of its own", async () => 
   assert.doesNotMatch(collectText(tree), /broken link/i);
 });
 
-test("alarms are flat hairline rows whose tone rides a leading glyph, with no stripe", async () => {
+test("alarms sit as shared alarm rows in one list card, each naming its tone", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const lane = renderScreen(
@@ -720,14 +727,10 @@ test("alarms are flat hairline rows whose tone rides a leading glyph, with no st
       backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
     }),
   );
-  const rows = findNodes(lane, (n) => classOf(n).split(/\s+/).includes("alarm-row"));
-  assert.equal(rows.length, 2, "the dirty index and the missed cycle");
-  for (const row of rows) {
-    assert.ok(row.props["data-tone"], "each row names its tone");
-    assert.equal(findNodes(row, (n) => /\balarm-row-glyph\b/.test(classOf(n))).length, 1);
-  }
-  const [list] = findNodes(lane, (n) => n.type === "ul");
-  assert.doesNotMatch(classOf(list), /\b(border|rounded)/, "the lane is rows on the page, never a bordered box");
+  const [card] = findNodes(lane, (n) => classOf(n).split(/\s+/).includes("card"));
+  assert.ok(card, "the rows are framed by one list card");
+  const rows = alarmRowsOfW(card);
+  assert.deepEqual(rows.map((row) => row.props.tone), ["warn", "crit"], "the dirty index and the missed cycle, each with its tone");
   const table = renderScreen(
     mod.React.createElement(mod.WikiReportsTable as Component, { reports: [{ run_date: "2026-09-24", status: "error", deadlinks_count: 0, dedup_count: 0 }] }),
   );
@@ -941,7 +944,7 @@ test("the missed-cycle alarm dates its run once, as MM-DD, with the Last run til
     }),
   );
   const tile = (mod.buildLastRunTileW as (state: unknown) => { value: string })(summaryState);
-  const text = collectText(lane);
+  const text = laneTextOf(lane);
 
   assert.match(text, new RegExp(`Last run 10-10 · ${tile.value} —`));
   assert.doesNotMatch(text, /2026-10-10|\d+h ago/, "no year-long date, no second age form");
@@ -1027,7 +1030,7 @@ test("a feeder the alarm list could not read is named in plain words", async () 
       summaryState: ready({ hours_since_last_cycle: 2 }), indexState: ERRORED, backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
     }),
   );
-  const text = collectText(lane);
+  const text = laneTextOf(lane);
   assert.doesNotMatch(text, /\blane\b|incomplete/i);
   assert.match(text, /Alarms hidden: search index unread\./);
 });
@@ -1037,7 +1040,7 @@ describe("every wiki-owned sentence on the screen stays within 12 words", () => 
   const rows = [
     {
       name: "the alarm list's unread feeders",
-      read: (mod: ScreenModule) => collectText(renderScreen(mod.React.createElement(mod.WikiAlarmLane as Component, {
+      read: (mod: ScreenModule) => laneTextOf(renderScreen(mod.React.createElement(mod.WikiAlarmLane as Component, {
         summaryState: ERRORED, indexState: ERRORED, backlogState: ERRORED, cyclesState: ready({ cycles: [] }),
       }))),
     },

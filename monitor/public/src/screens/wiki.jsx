@@ -243,7 +243,7 @@ const WIKI_REGION_IDS = Object.freeze({
 // renders its banner at the group it feeds, never a lane row.
 
 function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) {
-	const { Icon, TONE_ICON } = window.UI;
+	const { AlarmRow } = window.UI;
 
 	const model = useMemoW(
 		() =>
@@ -269,36 +269,22 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 	}
 
 	return (
-		<ul
-			className="list-none"
-			aria-label="Wiki alarms"
-		>
+		<div role="region" aria-label="Wiki alarms" className="card">
 			{rows.map((alarm) => (
-				<li key={alarm.key} className="alarm-row" data-tone={alarm.tone}>
-					<span className="alarm-row-glyph" aria-hidden="true">
-						<Icon name={TONE_ICON[alarm.tone]} size={14} />
-					</span>
-					<span className="min-w-0">
-						<span className="fs-body text-ink font-medium block break-words">
-							{alarm.label}
-						</span>
-						<span className="fs-meta text-faint block leading-tight">
-							<window.UI.DayTokens>{alarm.detail}</window.UI.DayTokens>
-						</span>
-					</span>
-				</li>
+				<AlarmRow
+					key={alarm.key}
+					tone={alarm.tone}
+					title={alarm.label}
+					detail={alarm.detail}
+				/>
 			))}
 			{model.unchecked.length > 0 && (
-				<li className="alarm-row" data-tone="neutral">
-					<span className="alarm-row-glyph" aria-hidden="true">
-						<Icon name={TONE_ICON.neutral} size={14} />
-					</span>
-					<span className="fs-meta text-faint min-w-0 break-words">
-						{`Alarms hidden: ${model.unchecked.join(", ")} unread.`}
-					</span>
-				</li>
+				<AlarmRow
+					tone="neutral"
+					title={`Alarms hidden: ${model.unchecked.join(", ")} unread.`}
+				/>
 			)}
-		</ul>
+		</div>
 	);
 }
 
