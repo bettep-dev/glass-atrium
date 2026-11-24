@@ -239,7 +239,7 @@ test("the alarm lane, the spend strip and the results panel space by role keys, 
     ["2026-09-22", "2026-09-23"].map((date, i) => ({ date, cost_usd: 12.5 + i, session_count: 1 })),
   );
   const trees = [
-    render("AlarmLane", { alarms: [HARNESS_ALARM], readiness: { status: "unknown", unread: ["today's spend"] }, onNav: () => {} }),
+    render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: () => {} }),
     render("SpendStrip", { strip }),
     renderResultPanel([{ result: "done", count: 40 }, { result: "fail", count: 2 }]),
     render("BreakageAgents", { agents: [{ agent: "glass-atrium-dev-shell", count: 2 }, { agent: "glass-atrium-dev-db", count: 1 }] }),
@@ -458,63 +458,29 @@ describe("the page-wide re-reads also re-poll the shell's harness", async () => 
 });
 
 // an idle lane is no text and no space → it leaves the flow but keeps its polite region for a later card
-test("a lane with no alarm renders no text and leaves the layout, whether its sources are loading or read", () => {
-  for (const status of ["loading", "read"]) {
-    const lane = render("AlarmLane", { alarms: [], readiness: { status, unread: [] }, onNav: () => {} });
-    assert.equal(collectText(lane).trim(), "", `${status}: no text`);
-    assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, `${status}: no loading line`);
-    assert.equal(findNodes(lane, (n) => n.props["aria-live"] === "polite").length, 1, `${status}: the polite region stays mounted`);
-    const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Needs you");
-    assert.ok(classOf(section).split(/\s+/).includes("sr-only"), `${status}: the idle lane is out of flow`);
-    assert.equal(findNodes(lane, (n) => hasClass(n, "dash-alarm-list")).length, 0, `${status}: no list card`);
-  }
+// a read that could not run is stated on its stat line (the unknown glyph), never as a lane notice
+test("a lane with no alarm renders no text and leaves the layout", () => {
+  const lane = render("AlarmLane", { alarms: [], onNav: () => {} });
+  assert.equal(collectText(lane).trim(), "", "no text");
+  assert.equal(alertCardsOf(lane).length, 0, "no notice card");
+  assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "no loading line");
+  assert.equal(findNodes(lane, (n) => n.props["aria-live"] === "polite").length, 1, "the polite region stays mounted");
+  const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Needs you");
+  assert.ok(classOf(section).split(/\s+/).includes("sr-only"), "the idle lane is out of flow");
+  assert.equal(findNodes(lane, (n) => hasClass(n, "dash-alarm-list")).length, 0, "no list card");
 });
 
-test("a lane holding an alarm while another source loads shows only that row, in flow", () => {
-  const lane = render("AlarmLane", { alarms: [HARNESS_ALARM], readiness: { status: "loading", unread: [] }, onNav: () => {} });
+test("a lane holding an alarm shows only that row, in flow", () => {
+  const lane = render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: () => {} });
   const rows = alarmRowsOf(lane);
   assert.equal(rows.length, 1);
-  assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "no loading line under the row");
   const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Needs you");
   assert.ok(!classOf(section).split(/\s+/).includes("sr-only"));
   assert.equal(collectText(lane), collectText(rows[0]), "the lane carries no text beyond its row");
 });
-describe("an empty alarm lane stays silent once its sources are read, and says it couldn't check when one went unread", () => {
-  const READY = { status: "ready", data: {} };
-  // a fleet read answers only with its breaker summary loaded (the agents route marks it "unavailable" otherwise)
-  const breakerOf = (source: string) => ({ status: "ready", data: { meta: { circuit_breaker: { source, suspended_count: 0, streak_count: 0 } } } });
-  // every source that can raise a row, read → a row overrides one source at a time
-  const ALL_READ = { harness: READY, outcomesState: READY, agentsState: breakerOf("loaded"), costState: READY, updateState: READY };
-  const rows = [
-    { name: "every source read → silent", sources: ALL_READ, status: "read", unread: [] },
-    { name: "a source still loading → loading, even beside a failed one", sources: { ...ALL_READ, harness: { status: "loading" }, costState: { status: "error" } }, status: "loading", unread: [] },
-    { name: "fleet still loading → loading", sources: { ...ALL_READ, agentsState: { status: "loading" } }, status: "loading", unread: [] },
-    { name: "harness fold unavailable → unknown", sources: { ...ALL_READ, harness: { status: "unavailable" } }, status: "unknown", unread: ["system parts"] },
-    { name: "task results read failed → unknown", sources: { ...ALL_READ, outcomesState: { status: "error" } }, status: "unknown", unread: ["task results"] },
-    { name: "fleet read failed → unknown", sources: { ...ALL_READ, agentsState: { status: "error" } }, status: "unknown", unread: ["agents"] },
-    { name: "fleet breaker unavailable → unknown", sources: { ...ALL_READ, agentsState: breakerOf("unavailable") }, status: "unknown", unread: ["agents"] },
-    { name: "spend read failed → unknown", sources: { ...ALL_READ, costState: { status: "error" } }, status: "unknown", unread: ["today's spend"] },
-    { name: "install read failed → unknown", sources: { ...ALL_READ, updateState: { status: "error" } }, status: "unknown", unread: ["install state"] },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      const readiness = (mod.getAlarmReadiness as (s: unknown) => { status: string; unread: string[] })(row.sources);
-      assert.equal(readiness.status, row.status);
-      assert.deepEqual([...readiness.unread], row.unread);
-
-      const lane = render("AlarmLane", { alarms: [], readiness, onNav: () => {} });
-      const cards = alertCardsOf(lane);
-      assert.equal(cards.length, row.status === "unknown" ? 1 : 0, "only an unread source earns a card");
-      if (row.status !== "unknown") return assert.equal(collectText(lane).trim(), "");
-      assert.equal(cards[0].props.tone, "neutral");
-      assert.match(collectText(cards[0]), /Couldn't check for alarms/);
-      for (const source of row.unread) assert.ok(collectText(cards[0]).includes(source), `names the unread source ${source}`);
-    });
-  }
-});
 
 test("alarm rows stack worst first in one list card, with no list roles", () => {
-  const lane = render("AlarmLane", { alarms: [HARNESS_ALARM, { ...HARNESS_ALARM, id: "spend", tone: "warn" }], readiness: { status: "read", unread: [] }, onNav: () => {} });
+  const lane = render("AlarmLane", { alarms: [HARNESS_ALARM, { ...HARNESS_ALARM, id: "spend", tone: "warn" }], onNav: () => {} });
   const lists = findNodes(lane, (n) => hasClass(n, "dash-alarm-list"));
   assert.equal(lists.length, 1, "one card holds every row");
   assert.deepEqual(alarmRowsOf(lists[0]).map((row) => row.props["data-tone"]), ["crit", "warn"]);
@@ -668,7 +634,7 @@ const READY_STAT = {
   context: "7 of 40 failed or blocked", notes: [] as string[], target: "outcomes", region: "outcomes", source: "task results",
 };
 const FAILED_STAT = {
-  ...READY_STAT, id: "fleet", label: "Fleet", status: "error", tone: "neutral", value: null, absent: "not-loaded",
+  ...READY_STAT, id: "fleet", label: "Fleet", status: "error", tone: "unknown", isContextTripped: true, value: null, absent: "not-loaded",
   context: "Couldn't load the fleet summary.", region: "agents", source: "the fleet summary", error: "HTTP 500", canRetry: true,
   target: "agents",
 };

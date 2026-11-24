@@ -123,7 +123,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const isWaveBusy = getRegionSummary(waveStates).isBusy;
   const alarmSources = { harness, outcomesState, agentsState, costState, updateState, installKind };
   const alarms = buildAlarms(alarmSources);
-  const alarmReadiness = getAlarmReadiness(alarmSources, alarms);
   const stats = buildStats({ harness, costState, agentsState, outcomesState, isHarnessBusy });
   const weekPanels = [{ source: 'daily spend', error: spendDaysState.error }, { source: 'runs by hour', error: heatmapState.error }];
   const sharedFailure = getPageSharedFailure(stats, weekPanels);
@@ -190,7 +189,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         )}
         <AlarmLane
           alarms={alarms}
-          readiness={alarmReadiness}
           onNav={onNav}
           updateState={updateState}
           updateJobState={updateJobState}
@@ -222,9 +220,8 @@ function getPageSharedFailure(stats, panels = []) {
 
 // "Needs you" (spec 44084 §3.3) — one list card of alarm rows, worst first; no alarm → no card, no text, no space
 // the polite region stays mounted so a later row is announced, and it announces each row → no row carries a role
-function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateState, updateJobState, onRefetchJob }) {
-  const isUnread = readiness.status === 'unknown';
-  const isIdle = alarms.length === 0 && !isUnread;
+function AlarmLane({ alarms, onNav, updateState, updateJobState, onRefetchJob }) {
+  const isIdle = alarms.length === 0;
   return (
     <section className={isIdle ? 'dash-lane sr-only' : 'dash-lane'} aria-label="Needs you">
       <div aria-live="polite" className="flex flex-col gap-list">
@@ -239,7 +236,6 @@ function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateS
             ))}
           </div>
         )}
-        {isUnread && <UnreadAlarmsCard unread={readiness.unread}/>}
       </div>
     </section>
   );
@@ -257,46 +253,14 @@ function AlarmLaneRow({ alarm, onNav, children }) {
   return <AlarmRow tone={alarm.tone} title={alarm.title} detail={alarm.detail} isHeld={alarm.isHeld} actions={actions}/>;
 }
 
-// a source that settled without an answer is information, not an empty lane → the header Refresh is its action
-function UnreadAlarmsCard({ unread }) {
-  return (
-    <window.UI.AlertCard tone="neutral" hasLiveHost title="Couldn't check for alarms"
-      body={`Couldn't read ${unread.join(' · ')} — more alarms may be hidden.`}/>
-  );
-}
-
-const ALARM_READINESS_LOADING = Object.freeze({ status: 'loading', unread: [] });
-// each source of the lane, in tie order → its readiness label, the one alarm row it can raise and that row's builder;
-// isAnswered → a read payload that still lacks the reading its row is built on is no answer
+// each alarm the lane can raise, in tie order → its row id and builder
 const ALARM_SOURCES = [
-  { key: 'harness', label: 'system parts', alarmId: 'harness', build: buildHarnessAlarm },
-  { key: 'outcomesState', label: 'task results', alarmId: 'outcomes', build: buildOutcomeAlarm },
-  { key: 'agentsState', label: 'agents', alarmId: 'fleet', build: buildFleetAlarm, isAnswered: (source) => getBreakerCounts(source.data) != null },
-  { key: 'costState', label: "today's spend", alarmId: 'spend', build: buildSpendAlarm },
-  { key: 'updateState', label: 'install state', alarmId: 'install', build: buildInstallAlarm },
+  { alarmId: 'harness', build: buildHarnessAlarm },
+  { alarmId: 'outcomes', build: buildOutcomeAlarm },
+  { alarmId: 'fleet', build: buildFleetAlarm },
+  { alarmId: 'spend', build: buildSpendAlarm },
+  { alarmId: 'install', build: buildInstallAlarm },
 ];
-
-/**
- * Whether the lane may claim an all-clear: 'loading' while any source is unsettled,
- * 'unknown' once one settled without an answer, 'read' only when every source answered.
- * @param alarms - the listed rows; a source whose held row is listed hides nothing more
- * @returns unread - labels of the sources that settled without an answer
- */
-function getAlarmReadiness(sources, alarms = []) {
-  const entries = ALARM_SOURCES.map((meta) => ({ ...meta, source: sources[meta.key] }));
-  if (entries.some(({ source }) => !source || source.status === 'loading')) return ALARM_READINESS_LOADING;
-
-  // a held reading whose latest read failed is unread too — its all-clear is stale
-  const heldAlarmIds = new Set(alarms.filter((alarm) => alarm.isHeld).map((alarm) => alarm.id));
-  const unread = entries
-    .filter(({ source, alarmId, isAnswered }) => !isSourceAnswered(source, isAnswered) && !heldAlarmIds.has(alarmId))
-    .map(({ label }) => label);
-  return { status: unread.length > 0 ? 'unknown' : 'read', unread };
-}
-
-function isSourceAnswered(source, isAnswered) {
-  return source.status === 'ready' && source.error == null && (!isAnswered || isAnswered(source));
-}
 
 // the card outlives every recovery → a banner or stat Retry that leaves on success hands focus here
 const DASH_STATUS_ID = 'dash-status';
@@ -795,7 +759,7 @@ function mutationErrorMessage(status, data) {
 
 // the lane union — one row per firing Status-card source + the install state; a firing stat shows only its glyph,
 // so its sentence lives here (spec 44084 §9). Learning · Wiki · Models alarms ride their own nav counts
-/** @param sources - the ALARM_SOURCES region states by key, plus the install view's `installKind` */
+/** @param sources - the region states by key (harness, outcomesState, agentsState, costState, updateState), plus `installKind` */
 function buildAlarms(sources) {
   const rows = ALARM_SOURCES.flatMap(({ alarmId, build }) => {
     const row = build(sources);
@@ -910,15 +874,18 @@ function buildStats({ harness, costState, agentsState, outcomesState, isHarnessB
   }));
 }
 
+// a read that could not run leaves its alarm unchecked → the unknown glyph on its line, the lane's one statement of it
+const UNREAD_LINE = Object.freeze({ tone: 'unknown', isContextTripped: true });
+
 // held data whose latest read failed → Last known on the context line + own Retry; its error joins the shared-outage check
-// the failed refresh → the line's title and the card's ⓘ · shared freshness rule → a held warn/crit keeps its alarm, a held all-clear drops to neutral
+// the failed refresh → the line's title and the card's ⓘ · shared freshness rule → a held warn/crit keeps its alarm, a held all-clear reads unknown
 function markHeldStat(stat, state) {
   if (stat.status === 'loading' || stat.status === 'error' || state?.error == null) return stat;
   const { LAST_KNOWN_TEXT, getHeldCause } = window.UI;
   const isAlarm = FIRING_TONES.has(stat.tone);
   const cause = getHeldCause(stat.source);
   return {
-    ...stat, tone: isAlarm ? stat.tone : 'neutral', isHeld: true, error: state.error, canRetry: true, isContextTripped: false,
+    ...stat, ...(isAlarm ? { isContextTripped: false } : UNREAD_LINE), isHeld: true, error: state.error, canRetry: true,
     context: LAST_KNOWN_TEXT, cause, notes: [`${cause}.`, ...stat.notes],
   };
 }
@@ -937,7 +904,7 @@ function buildHarnessStat(harness) {
   }
   if (!harness || harness.status !== 'ready') {
     // not a region fetch error → never joins the page banner, so the stat keeps its own Retry
-    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', context: 'System parts unavailable.', canRetry: true };
+    return { ...base, ...UNREAD_LINE, status: 'unavailable', value: null, absent: 'not-loaded', context: 'System parts unavailable.', canRetry: true };
   }
   return { ...base, ...describeHarnessReading(harness), status: 'ready', error: harness.error ?? null };
 }
@@ -950,10 +917,10 @@ function describeHarnessReading(harness) {
   const partCount = lostCount > 0 ? harness.partsTotal : harness.partsChecked;
   const coverage = describeHarnessCoverage(harness, isPartlyUnread);
   // a known fault keeps crit; otherwise an unread source withholds the healthy verdict
-  const unreadTone = isPartlyUnread ? 'info' : 'ok';
+  const verdict = downCount > 0 ? { tone: 'crit' } : isPartlyUnread ? UNREAD_LINE : { tone: 'ok' };
   // a down part trips the value → the line goes empty, its coverage behind ⓘ
   const reading = {
-    tone: downCount > 0 ? 'crit' : unreadTone,
+    ...verdict,
     value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
     context: downCount > 0 ? null : coverage, notes: downCount > 0 ? [`${coverage}.`] : [], canRetry: isPartlyUnread,
   };
@@ -997,7 +964,7 @@ function buildPendingStat(base, state) {
 function buildFailedStat(base, error) {
   const copy = window.UI.getErrorCopy(error, base.source);
   return {
-    ...base, status: 'error', tone: 'neutral', value: null, absent: 'not-loaded', context: copy.sentence,
+    ...base, ...UNREAD_LINE, status: 'error', value: null, absent: 'not-loaded', context: copy.sentence,
     notes: [copy.next, copy.detail].filter(Boolean), error, canRetry: true,
   };
 }
@@ -1098,7 +1065,7 @@ function buildFleetStat(agentsState) {
   if (pending) return pending;
   const breaker = getBreakerCounts(agentsState.data);
   if (!breaker) {
-    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', context: 'Suspension state unavailable.' };
+    return { ...base, ...UNREAD_LINE, status: 'unavailable', value: null, absent: 'not-loaded', context: 'Suspension state unavailable.' };
   }
   const { suspended, streak } = breaker;
   const tone = suspended > 0 ? 'crit' : streak > 0 ? 'warn' : 'ok';
