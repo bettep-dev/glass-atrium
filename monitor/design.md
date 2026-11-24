@@ -737,9 +737,12 @@
 - **드로어 Health 행**: 데몬 이름 = `MachineString`. 모든 행의 상태 = bare glyph + 낱말, chip 없음 (`DrawerStatusAR`). 항목 사이 = `Stack gap="block"`, hairline 없음.
   - 펼친 상세 (`Recent runs`, 훅 구성) = `disclosure-body`: trigger 의 label 에서 시작. drill chevron 은 부품 이름의 x.
   - 훅 구성 = 두 가장자리: settings 경로 · 이벤트 chevron / 이벤트 이름 · matcher · 명령 (18 = chevron 14 + gap 4). matcher 는 dim, 명령은 ink.
+  - pricing advisory: 목록에 모델이 있으면 all-clear 문장 없음 — head 의 개수 = 목록과 서버 개수 중 큰 쪽.
+  - `Description` = `DetailField isStacked` (label 위, value 아래, 같은 시작 가장자리). `File path` 는 한 줄.
+- **데몬 판정 하나** (`getDaemonVerdictAR`): schedule 과 목록의 run 중 나쁜 쪽. run 실패 + schedule ok · idle → `Needs attention`, cause = `N of M runs clean`. 드로어 행과 System parts 행이 같은 행을 읽음.
 - **System parts 목록** (`PartHealthBlockAR`): 카드 이름 = Dashboard stat 의 명사 `System parts`. 목록 하나 — flagged 먼저 (worst first), 그다음 not loaded · idle. 걸린 부품이 없으면 맨 위에 all-clear 한 줄.
-  - lead 줄 (`getAttentionEmptyAR`): `No system part needs attention` · 잡아 둔 읽기 `Last known: no system part needed attention` · `Checking system parts…` · `Couldn't read system parts` · `System parts not read yet`.
-  - 행 한 줄 = 이름 → status atom → cause (`--fs-meta` `--dim`, 말줄임), meta 줄 (box · last run · schedule) 은 그 아래. 행 글자 = `fs-body leading-row` (20 row line).
+  - lead 줄 (`getAttentionEmptyAR`): `No system part needs attention` · 잡아 둔 읽기 `Last known: no system part needed attention` · `Checking system parts…` · `System parts not read yet`. 읽기 실패 = lead 없음 (alarm 행이 이미 말함).
+  - 행 한 줄 = 이름 → status atom → cause (`--fs-meta` `--dim`, 말줄임), meta 줄 (box · last run · schedule) 은 그 아래. box 는 이름이 부품 이름과 다를 때만 (`in PostgreSQL` 없음). 행 글자 = `fs-body leading-row` (20 row line).
   - status atom = `HeadStatus` (`fs-meta`, gap 4) · 잡아 둔 판정 (`Last known`) 과 판정 없는 행은 glyph 없이 낱말만. 행 action "Open box" = `btn ghost sm` (quiet tier).
   - healthy 부품은 `N system parts healthy` fold (1 이면 `1 system part healthy`) (`details` + `summary.disclosure`) 안으로 접힘 — 접힌 기본 상태. fold 안 행은 status atom 없음 (summary 가 이미 healthy) — 잡아 둔 읽기의 `Last known` 만 행에 남음.
 - **역할 테두리**: Orchestrator `--cat-2` · Safety checks `--cat-1`, 범례 swatch 와 노드 테두리가 한 key (`MAP_BORDER_KEY_AR`) — swatch 는 `--surface` 위 ≥ 3.0; 노드 테두리는 `getMapBorderRulesAR` 가 `#${ARCH_CANVAS_ID}` 범위에서 classDef stroke 를 같은 `--cat-*` 로 덮는다. 라벨도 같은 범위: box 라벨 `p` 의 `--ink` · zone 제목과 edge 라벨의 `--dim`.
