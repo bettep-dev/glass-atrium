@@ -139,6 +139,25 @@ describe("a stage status is a glyph and its stage word inline, with no container
   }
 });
 
+describe("a stage note rides the status tooltip and its screen-reader text, so the row keeps one line", () => {
+  const rows = [
+    { name: "a status with its stage menu", onPickStage: () => undefined },
+    { name: "a status without a menu", onPickStage: undefined },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderScreen((screen.DocStageCD as Component)({ docStatus: "doc_review", docTitle: "Plan", onPickStage: row.onPickStage, note: "members differ" }));
+      const [status] = findNodes(tree, hasClass("doc-stage"));
+      const spoken = findNodes(tree, hasClass("sr-only")).map((n) => collectText(n)).join(" ");
+      assert.deepEqual(
+        { tooltip: /members differ/.test(String(status?.props.title)), spoken: /members differ/.test(spoken), occurrences: collectText(tree).split("members differ").length - 1 },
+        { tooltip: true, spoken: true, occurrences: 1 },
+      );
+    });
+  }
+});
+
 const MARK_SYNTAX = /[#*`|>[\]~]/;
 
 test("a search snippet reads as plain words: markdown syntax and a leading title echo go, highlights stay balanced", async () => {

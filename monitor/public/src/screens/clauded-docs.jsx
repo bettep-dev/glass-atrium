@@ -1043,9 +1043,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
-        /* status and its menu share one line (the status track shrinks, the label ellipsizes) → the row keeps its 40 · the note takes a line of its own */
+        /* status and its menu share one line (the status track shrinks, the label ellipsizes) → the row keeps its 40 */
         .doc-stage-cell { grid-template-columns: minmax(0, auto) auto; }
-        .doc-stage-cell > .doc-stage-note { grid-column: 1 / -1; }
         /* a max-width caps the status's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
         .doc-ledger .doc-stage-cell, .doc-ledger .doc-stage { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
         /* the clip cuts at the label's line box → a control line box, so a tight line-height never clips a descender */
@@ -2822,7 +2821,8 @@ function DocStageCD({
 		);
 	}
 
-	const rankText = `stage ${stageRankCD(entry.value)} of ${DOC_STAGES_CD.length}`;
+	// note → tooltip + sr-only only, never a second line, so the row keeps its 40
+	const rankText = [`stage ${stageRankCD(entry.value)} of ${DOC_STAGES_CD.length}`, note].filter(Boolean).join(", ");
 	const status = (
 		<span className="doc-stage inline-flex items-center gap-label-inline min-w-0 font-sans" title={`${entry.label} — ${rankText}`}>
 			<Icon name={entry.value === TERMINAL_STAGE_CD ? "check" : "circle"} size={12} className="doc-stage-glyph flex-none text-dim" />
@@ -2849,7 +2849,6 @@ function DocStageCD({
 					if (!isChanging) onPickStage(stage);
 				}}
 			/>
-			{note && <span className="doc-stage-note fs-meta text-dim">{note}</span>}
 		</span>
 	);
 }
