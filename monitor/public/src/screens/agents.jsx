@@ -465,13 +465,13 @@ function ScreenAgents() {
   );
 }
 
-// Ledger head: crit rows as one count, Watch names only agents past the fleet cut; a clear fleet stays silent
+// Ledger head: crit rows and agents past the fleet cut as counts, names on the rows; a clear fleet stays silent
 function HealthMarkAg({ agents, failureByAgent, revisionState, reviewByAgentState }) {
   const { Icon, Cluster, TONE_ICON } = window.UI;
   const marks = getAgentMarksAg(agents, failureByAgent, revisionState, reviewByAgentState);
   const critCount = marks.filter((entry) => entry.mark === 'crit').length;
-  const watched = marks.filter((entry) => entry.mark === 'warn').map((entry) => entry.agent);
-  if (critCount === 0 && watched.length === 0) return null;
+  const watchCount = marks.filter((entry) => entry.mark === 'warn').length;
+  if (critCount === 0 && watchCount === 0) return null;
 
   return (
     <Cluster>
@@ -480,9 +480,9 @@ function HealthMarkAg({ agents, failureByAgent, revisionState, reviewByAgentStat
           <Icon name={TONE_ICON.crit} size={12} className="text-crit"/>{` ${critCount} ${critCount === 1 ? 'needs' : 'need'} attention`}
         </span>
       )}
-      {watched.length > 0 && (
+      {watchCount > 0 && (
         <span className="fs-meta text-dim whitespace-nowrap" data-health-mark="warn">
-          <Icon name={TONE_ICON.warn} size={12} className="text-warn"/>{` Watch · ${formatAgentListAg(watched)}`}
+          <Icon name={TONE_ICON.warn} size={12} className="text-warn"/>{` ${watchCount} to watch`}
         </span>
       )}
     </Cluster>
@@ -517,12 +517,6 @@ function getAgentMarkAg({ agent, failure, p95Scale, health, watchCut }) {
 
 function formatAgentCountAg(count) {
   return `${count} ${count === 1 ? 'agent' : 'agents'}`;
-}
-
-// names beyond the first three collapse to a count — the sentence stays one line
-function formatAgentListAg(agents) {
-  const names = agents.slice(0, 3).map((agent) => window.UI.getAgentDisplayName(agent));
-  return agents.length > 3 ? `${names.join(', ')} +${agents.length - 3} more` : names.join(', ');
 }
 
 // Status fold — open by default; the head carries both shares, the body the chart alone.

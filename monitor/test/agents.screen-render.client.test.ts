@@ -2057,7 +2057,7 @@ describe("a drawer sub-block label sits on its own content through the label rol
 
 // Stub LOW_N_MIN = 5, no review rows → penalty = 0.6 × min(1, avg revision ÷ 0.5).
 // {0:5,1:1} → 0.2 · {0:7,1:3} → 0.36 · {0:5,1:3} → 0.45 · {4+:10} → crit band.
-describe("the ledger head counts crit rows and lists under Watch only the agents past the fleet cut", () => {
+describe("the ledger head counts crit rows and the agents past the fleet cut, naming none", () => {
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const revision = (agent: string, buckets: Record<string, number>) =>
     Object.entries(buckets).map(([revision_bucket, occurrence_count]) => ({ agent, revision_bucket, occurrence_count }));
@@ -2073,9 +2073,9 @@ describe("the ledger head counts crit rows and lists under Watch only the agents
   const typical = (last: Record<string, number>, status?: string): Array<[string, Record<string, number>, string?]> =>
     [["a1", PENALTY.p20], ["a2", PENALTY.p20], ["a3", PENALTY.p20], ["a-last", last, status]];
   const rows = [
-    { name: "an agent past twice the fleet median penalty is watched", ...fleet(typical(PENALTY.p45)), marks: [{ tone: "warn", text: "Watch · a-last" }] },
+    { name: "an agent past twice the fleet median penalty is watched", ...fleet(typical(PENALTY.p45)), marks: [{ tone: "warn", text: "1 to watch" }] },
     { name: "a warn-band agent under twice the fleet median is not watched", ...fleet(typical(PENALTY.p36)), marks: [] },
-    { name: "a fleet under four falls back to the warn-band floor", ...fleet([["a1", PENALTY.healthy], ["a-last", PENALTY.p36]]), marks: [{ tone: "warn", text: "Watch · a-last" }] },
+    { name: "a fleet under four falls back to the warn-band floor", ...fleet([["a1", PENALTY.healthy], ["a-last", PENALTY.p36]]), marks: [{ tone: "warn", text: "1 to watch" }] },
     { name: "a row showing Error is counted crit, never also listed under Watch", ...fleet(typical(PENALTY.p45, "error")), marks: [{ tone: "crit", text: "1 needs attention" }] },
     { name: "crit-band rows are counted, not named", ...fleet([["a1", PENALTY.crit], ["a2", PENALTY.crit], ["a3", PENALTY.healthy]]), marks: [{ tone: "crit", text: "2 need attention" }] },
     { name: "a calm fleet is silent", ...fleet([["a1", PENALTY.healthy], ["a2", PENALTY.healthy]]), marks: [] },
