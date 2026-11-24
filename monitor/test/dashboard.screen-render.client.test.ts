@@ -371,10 +371,11 @@ test("a failed week panel whose cause the page banner carries points up to it in
   }
 });
 
-describe("a week panel's own failure is one inset alert card carrying its Retry: crit when nothing loaded, neutral over a held reading", () => {
+// a held panel's head already says Last known → its failure is one bare line, never a tinted box inside the card
+describe("a week panel's own failure carries its Retry: an inset crit card when nothing loaded, a bare line with a quiet Retry over a held reading", () => {
   const rows = [
-    { name: "nothing loaded", state: { data: null, error: "HTTP 500", busy: false }, tone: "crit" },
-    { name: "a held reading", state: { data: {}, error: "HTTP 500", busy: false }, tone: "neutral" },
+    { name: "nothing loaded", state: { data: null, error: "HTTP 500", busy: false }, tone: "crit", surface: "inset", isInline: false },
+    { name: "a held reading", state: { data: {}, error: "HTTP 500", busy: false }, tone: "neutral", surface: "bare", isInline: true },
   ];
   for (const row of rows) {
     test(row.name, () => {
@@ -382,12 +383,21 @@ describe("a week panel's own failure is one inset alert card carrying its Retry:
         id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state: row.state, onRetry: () => {}, render: () => null,
       });
       const cards = alertCardsOf(tree);
-      assert.equal(cards.length, 1, "one card");
-      assert.equal(cards[0].props.surface, "inset", "inside the panel");
+      assert.equal(cards.length, 1, "one alert");
+      assert.equal(cards[0].props.surface, row.surface, "surface");
       assert.equal(cards[0].props.tone, row.tone, "tone");
-      assert.equal(findNodes(cards[0], (n) => n.props.atom === "RetryButton").length, 1, "the Retry is the card's action");
+      const retries = findNodes(cards[0], (n) => n.props.atom === "RetryButton");
+      assert.equal(retries.length, 1, "the Retry is the alert's action");
+      assert.equal(Boolean(retries[0].props.isInline), row.isInline, "Retry form");
     });
   }
+});
+
+test("a held panel's failure line reads Couldn't refresh alone, the head already naming the panel", () => {
+  const tree = render("WeekPanel", {
+    id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state: { data: {}, error: "HTTP 500", busy: false }, onRetry: () => {}, render: () => null,
+  });
+  assert.equal(alertCardsOf(tree)[0].props.title, "Couldn't refresh.");
 });
 
 test("a stat Retry routes the harness region to the shell re-poll and every other region to its own reload", () => {
@@ -739,6 +749,7 @@ test("a failed stat states its error on the context line with its own Retry; a b
   assert.match(collectText(context), /Couldn't load the fleet summary/);
   const retries = findNodes(context, (n) => n.props.atom === "RetryButton");
   assert.equal(retries.length, 1, "one Retry, on the stat's own line");
+  assert.equal(retries[0].props.isInline, true, "a quiet text action on the context line, never the boxed control");
   (retries[0].props.onRetry as () => void)();
   assert.deepEqual(retried, ["agents"], "the Retry reloads only the stat's own region");
   assert.equal(alertCardsOf(own.tree).length, 0, "no card nests inside the status card");

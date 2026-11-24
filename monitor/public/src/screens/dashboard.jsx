@@ -345,9 +345,8 @@ function getStatContext(stat, { onRetry, isRetryShared }) {
     <>
       {text && <span title={stat.cause ?? text}>{stat.isContextTripped ? <HeadStatus tone={stat.tone}>{line}</HeadStatus> : line}</span>}
       {hasRetry && (
-        // a one-line box → the 32 control overhangs into the card padding, the card never grows
-        <span className="one-line-box ml-control">
-          <RetryButton onRetry={() => onRetry(stat.region)} isBusy={stat.isBusy} focusTargetId={DASH_STATUS_ID}/>
+        <span className="ml-control">
+          <RetryButton onRetry={() => onRetry(stat.region)} isBusy={stat.isBusy} isInline focusTargetId={DASH_STATUS_ID}/>
         </span>
       )}
     </>
@@ -419,7 +418,7 @@ function getPanelView(state) {
 }
 
 // a failure the page banner carries points up to it → one cause, one Retry
-// held → the head already says Last known, so the body names only the failed refresh
+// held → the head already says Last known and names the panel, so the body is one bare line
 function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
   const { AlertCard, RetryButton, getErrorCopy } = window.UI;
   if (view !== 'error' && view !== 'held') return null;
@@ -427,11 +426,12 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
     const lead = view === 'held' ? "Couldn't refresh" : 'Not loaded';
     return <p className="fs-meta text-dim">{window.UI.getNoticePointer(lead, isRetryShared ? undefined : RESULTS_STAT_POINTER)}</p>;
   }
-  const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>;
   if (view === 'held') {
-    return <AlertCard tone="neutral" surface="inset" title={`Couldn't refresh ${source}.`} actions={retry}/>;
+    const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} isInline focusTargetId={id}/>;
+    return <AlertCard tone="neutral" surface="bare" title="Couldn't refresh." actions={retry}/>;
   }
   const copy = getErrorCopy(state.error, source);
+  const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>;
   return <AlertCard tone="crit" surface="inset" title={copy.sentence} body={copy.next} details={copy.detail} actions={retry}/>;
 }
 
