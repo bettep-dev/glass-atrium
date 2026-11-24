@@ -161,7 +161,7 @@ const TIER_META_MC = {
 		label: "Pre-verify output tokens",
 		desc: `Sets ${OUTPUT_CAP_ENV_MC} for pre-verify`,
 		machine: OUTPUT_CAP_ENV_MC,
-		note: "Blank = the model default",
+		note: `Blank = ${CLI_DEFAULT_LABEL_MC}`,
 		kind: "output-cap",
 		source: "daemon-config.json",
 	},

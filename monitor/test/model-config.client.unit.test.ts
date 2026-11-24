@@ -1731,6 +1731,17 @@ test("long take-effect, cap and default sentences read as short labels; their de
   assert.ok(textMc(drawersMc(tiers)[0].children).includes(precedence), "the precedence note is in the drawer");
 });
 
+test("the tier drawer names an unset output-token field by the field's own placeholder", () => {
+  const tiers = renderComponentMc(screens.TiersSectionMC, tiersPropsMc());
+  const placeholders = new Set(tagsMc(faceMc(tiers), "input").map((input) => input.props.placeholder));
+  assert.strictEqual(placeholders.size, 1, "the output-token fields share one placeholder");
+  const unsetNames = textsMc(tagsMc(drawersMc(tiers)[0].children, "dd"))
+    .filter((note) => note.startsWith("Blank = "))
+    .map((note) => note.slice("Blank = ".length));
+  assert.ok(unsetNames.length > 0, "the drawer says what a blank field means");
+  assert.deepStrictEqual(new Set(unsetNames), placeholders);
+});
+
 test("the agent card leads at full width, and the three daemon ledgers share one split row under it", () => {
   const tree = renderComponentMc(screens.ScreenModelConfig);
   const cardSizesOf = (nodes: McNode[]): unknown[] =>
