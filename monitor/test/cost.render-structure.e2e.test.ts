@@ -50,6 +50,8 @@ interface CostFixture {
   parseErrorRatio: number;
   // every cost payload route answers 503 → a cold shared outage, nothing ever loaded
   isOutage?: boolean;
+  // this one payload route answers 503, the rest load
+  failedPrefix?: string;
   // every by-model row carries tokens but no priced cost → the share bar yields to its footnote
   isLedgerUnpriced?: boolean;
 }
@@ -101,9 +103,10 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     prefix: "/",
     index: ["index.html"],
   });
-  if (fixture.isOutage) {
+  const failedPrefixes = fixture.isOutage ? COST_PAYLOAD_PREFIXES : fixture.failedPrefix ? [fixture.failedPrefix] : [];
+  if (failedPrefixes.length > 0) {
     app.addHook("onRequest", async (request, reply) => {
-      if (COST_PAYLOAD_PREFIXES.some((prefix) => request.url.startsWith(prefix))) await reply.code(503).send({ error: "unavailable" });
+      if (failedPrefixes.some((prefix) => request.url.startsWith(prefix))) await reply.code(503).send({ error: "unavailable" });
     });
   }
 
@@ -735,6 +738,35 @@ describe("cold outage — every cost payload fails before any has loaded", () =>
     assert.ok(settled, `covered slots: ${counts.covered.join(", ")}`);
     assert.equal(counts.banners, 1);
     assert.equal(counts.retries, 1, "the banner's Retry is the only one");
+  });
+});
+
+describe("the KPI read fails alone — the Spend card speaks for it", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext({ ...getFixture(1, 0), failedPrefix: "/api/cost/kpi" });
+  });
+
+  after(async () => {
+    await closeRenderContext(ctx);
+  });
+
+  test("the failure is an alarm row on the card columns: glyph on the title's column, Retry on the right inset, a hairline before the stats", async () => {
+    const measured = await ctx.page.evaluate(() => {
+      const card = document.querySelector("#cost-region-kpis .card")!;
+      const [title, glyph, retry] = [".card-title", ".region-unavailable .alarm-row-glyph", ".region-unavailable .alarm-row-actions button"]
+        .map((selector) => card.querySelector(selector)!.getBoundingClientRect().toJSON() as DOMRect);
+      return {
+        frame: card.getBoundingClientRect().toJSON() as DOMRect, title: title!, glyph: glyph!, retry: retry!,
+        rule: getComputedStyle(card.querySelector(".region-unavailable")!).borderBottomWidth,
+        pad: parseFloat(getComputedStyle(card).getPropertyValue("--card-pad")),
+      };
+    });
+    assert.ok(Math.abs(measured.glyph.left - measured.title.left) <= 1, `glyph at ${measured.glyph.left}, title at ${measured.title.left}`);
+    assert.ok(Math.abs(measured.retry.right - (measured.frame.right - 1 - measured.pad)) <= 1,
+      `Retry ends ${measured.frame.right - measured.retry.right}px from the edge`);
+    assert.equal(measured.rule, "1px");
   });
 });
 
