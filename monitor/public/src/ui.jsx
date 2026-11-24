@@ -2901,8 +2901,8 @@ const ALERT_CARD_SHELLS = Object.freeze({ raised: 'card alert-card', inset: 'sub
  */
 function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, details, actions, hasLiveHost = false, onFocus, className = '' }) {
   const role = hasLiveHost ? undefined : tone === 'crit' ? 'alert' : 'status';
-  const isRaised = surface !== 'inset' && surface !== 'bare';
   const shell = ALERT_CARD_SHELLS[surface] ?? ALERT_CARD_SHELLS.raised;
+  const isRaised = shell === ALERT_CARD_SHELLS.raised;
 
   return (
     <div role={role} className={`${shell} ${className}`.trim()} data-tone={tone} onFocus={onFocus}>
