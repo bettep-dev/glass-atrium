@@ -410,7 +410,7 @@
 - **cap 초과 설명** → card header 의 focusable ⓘ (`CardInfo`)가 여는 drawer 로. **hover-only `title` 로 정의를 숨기지 않는다.**
   - drawer 제목 = `infoLabel`: 기본 "How this is counted" · 설정 용어집 "About settings" (`model-config.jsx` → `SETTINGS_INFO_LABEL_MC`). ⓘ 의 `aria-describedby` = 카드 제목.
 - **데이터는 고치지 않고 clamp**: 요약 · 문서 제목 = 1줄 ellipsis + `title` (Tailwind `truncate` 또는 `-webkit-line-clamp: 1`) · 사유 · 제안 = 2줄 (`-webkit-line-clamp: 2`), 전문은 행 drawer.
-- **header-meta slack**: 전체가 읽혀야 하는 header meta 는 텍스트를 1.1배 넓게 그려도 들어가야 한다 (`improvement.loop-output.e2e` · `outcomes.render-structure.e2e` → `TEXT_SCALE`).
+- **header-meta slack**: 전체가 읽혀야 하는 header meta 는 텍스트를 1.1배 넓게 그려도 들어가야 한다 (`improvement.loop-output.e2e` → `TEXT_SCALE`, `test/lib/painted-text.ts`).
   - 긴 형태는 caller 의 `<span title>` 에 — node meta 엔 `CardHead` 가 title 을 달지 않는다 (예: `improvement.jsx` → `getLoopBasisI` = `{ text, title }`).
 
 ---
@@ -616,7 +616,8 @@
 - **Dashboard alarm list** ("Needs you", §12.7): one list card (no visible head, region `aria-label="Needs you"`), one alarm row per alarm, worst first, action = Link to the owning page.
   - sources and row copy: §12.7 → Dashboard.
 - **`AlertCard({ tone, surface, title, body, subjects, details, actions, hasLiveHost })`**: 조건부 알림 카드의 유일한 atom — `.alert-card` 를 직접 조립하지 않는다.
-  - `surface`: `raised`(기본, 페이지 레벨 `.card`) · `inset`(카드 · 패널 안 `.sub-card.bg-sunken`).
+  - `surface`: `raised`(기본, 페이지 레벨 `.card`) · `inset`(카드 · 패널 안 `.sub-card.bg-sunken`) · `bare`(`.alert-card--bare`: shell · fill · radius 없음, glyph · title · actions 한 줄, actions 는 행 끝 — 어느 폭에서도 content 아래로 내려가지 않음).
+    - `bare` 의 Retry = `RetryButton isInline` (`.retry-inline`: border · box 없는 `--fs-meta` dim text action, `inline-target` 24 hit area).
   - tone: `crit` · `warn` · `info` · `ok` · `neutral`(glyph `--dim`). title 앞 sr-only 단어 (Critical / Warning / Notice / Resolved).
   - role: `hasLiveHost` 면 없음, 아니면 crit = `alert` · 그 외 = `status`.
   - `subjects` = neutral `Badge` chip · `details` = 접힌 Details 의 raw 오류 · `actions` = `.btn.sm` 최대 2개.
@@ -791,7 +792,7 @@
 
 - **No ambient loop** — a status mark never blinks or pulses (§12.9).
 - **로딩 표시** (로딩 중에만 돈다, 모두 reduced-motion 게이트 필수 §8.4):
-  - skeleton pulse 1.4s ease-in-out — 화면 `<style>` class 로만 (inline `animation` 은 reduce 블록이 덮지 못해 금지): `.skel-pulse-c`(cost) · `.skel-pulse-o`(outcomes).
+  - skeleton pulse 1.4s ease-in-out — 화면 `<style>` class 로만 (inline `animation` 은 reduce 블록이 덮지 못해 금지): `.skel-pulse-c`(cost).
   - spinner: `.ga-spin` 0.9s (dashboard) · `.doc-action-spinner` 900ms (clauded-docs) · `.i-act-spin` 0.7s (improvement) · `RefreshButton` · `LoadingPlaceholder` icon `motion-safe:animate-spin` (Tailwind 1s).
   - 정적 skeleton: `SkeletonRows` — 애니메이션 없음 (§3.3).
   - 새 로딩 표시는 `LoadingPlaceholder` (region) · `SkeletonRows` (표) atom 으로. screen-local skeleton keyframe 신설 금지.
@@ -821,7 +822,7 @@
 
 - 모든 모션은 `@media (prefers-reduced-motion: reduce)` 게이트를 갖는다. reduce 범위:
   - `base.css` (파일 순서): `DetailSurface` 3 variant 진입 (`.detail-drawer` · `.detail-fullscreen` · `.detail-confirm` 의 `.detail-panel`) `animation-duration: 0.01ms !important` · `.alert-card` 애니메이션 정지 · `.btn` transition 제거 · `.field` · `.field-affix` transition 제거.
-  - 화면별 `<style>`: `.ga-spin` · `.skel-pulse-c` · `.skel-pulse-o` · `.outcome-row` · `.doc-action-spinner` · `.doc-row` · `.tbl.doc-ledger-busy` · `.i-act-spin` (`animation-duration: 0.01ms`) · `.i-tile-hover` · architecture 노드 · dev-only `.twk-seg-thumb` · `.twk-toggle` (`__TWEAKS_STYLE`).
+  - 화면별 `<style>`: `.ga-spin` · `.skel-pulse-c` · `.outcome-row` · `.doc-action-spinner` · `.doc-row` · `.tbl.doc-ledger-busy` · `.i-act-spin` (`animation-duration: 0.01ms`) · `.i-tile-hover` · architecture 노드 · dev-only `.twk-seg-thumb` · `.twk-toggle` (`__TWEAKS_STYLE`).
   - Tailwind 유틸: `motion-safe:` prefix 가 게이트 (`animate-spin` · `transition-colors` · `transition-opacity`).
 - **finder** (merged tree 에서 허용 hit 만):
   - CSS: `grep -rnE "@keyframes|animation *:|transition *:|translateY" public/src public/styles` — hit 마다 같은 selector 의 reduce 블록이 있어야 한다. 허용 hit: 위 reduce 범위의 rule 과 그 keyframe · 정적 `translateY(-50%)` ×2 · 주석.
@@ -1126,9 +1127,9 @@
   - A label holding its counting rule's ⓘ (`CardInfo`) stays one line tall: the trigger sits in a box one label line tall, its 24 target a hit area that adds no height, so every label's text shares one top.
   - Only signals that change the next action; source and as-of time sit once in the card sub-line when every stat shares them, else on the stat's context line.
   - A stat that opens a drill-down is a Link-styled value, not a button tile.
-  - Detail past a stat's context line goes to the card's one ⓘ, its body `StatNotes({ stats })`: one paragraph per stat with a note, its label in ink, then the note — a string, or a node such as `DayTokens` to keep a window token whole. Callers: Wiki Health (`wiki.jsx` → `WikiTileBand`).
+  - Detail past a stat's context line goes to the card's one ⓘ, its body `StatNotes({ stats })`: one paragraph per stat with a note, its label in ink, then the note — a string, or a node such as `DayTokens` to keep a window token whole. Callers: Wiki Health (`wiki.jsx` → `WikiTileBand`) · Dashboard Status (`dashboard.jsx` → `StatusCard`).
 - **`ToneGlyph({ tone, label, title })`** (`ui.jsx`): the alarm-size tone mark with its screen-reader word — the alarm row's glyph in `.one-line-box.tone-glyph`, a box one text line tall (`1lh`) so the glyph centres on that line; `aria-hidden`, its word (`label`, default the tone's severity word) read first as sr-only text. Callers: a firing stat's value (`dashboard.jsx` → `StatValue` · `cost.jsx` → `SpendStatValueC`) · `HeadStatus` · Learning's reject-rate headline and candidate rows (`improvement.jsx` → `RejectRateHeadlineI` · `CandidateRowI`); only on the value line (`.stat-value`) does it carry a trailing `--gap-label-inline`.
-- **`HeadStatus({ tone, className, children })`** (`ui.jsx`): a card head's own Status in the head's sub slot — `ToneGlyph` then the words, `--fs-meta` dim, `data-role="head-status"`; `className` sets the glyph-to-words flex gap (default `gap-label-inline`). Consumers: System map Part health (`architecture.jsx` → `PartHealthBlockAR`, the row status atom's gap) · Learning board heads (`improvement.jsx` → `HeadStatusI`, inside its mounted live region).
+- **`HeadStatus({ tone, className, children })`** (`ui.jsx`): status glyph + words at meta size — card-head sub, drawer field, row verdict — `ToneGlyph` then the words, `--fs-meta` dim, `data-role="head-status"`, top-aligned so the glyph never grows its line; `className` sets the glyph-to-words flex gap (default `gap-label-inline`). Consumers: System map `System parts` head and rows (`architecture.jsx` → `PartHealthBlockAR`) · Learning board heads (`improvement.jsx` → `HeadStatusI`, inside its mounted live region).
 - Rules:
   - A display name and its id never sit together: model name only (id → `title` tooltip and drawer).
   - No percentage-of-percentage or window-arithmetic prose: one delta ("+0.2 pt") with its comparison window inside ⓘ.
