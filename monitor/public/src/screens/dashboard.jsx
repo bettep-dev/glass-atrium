@@ -389,12 +389,9 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
     const lead = view === 'held' ? "Couldn't refresh" : 'Not loaded';
     return <p className="fs-meta text-dim">{window.UI.getNoticePointer(lead, isRetryShared ? undefined : RESULTS_STAT_POINTER)}</p>;
   }
-  if (view === 'held') {
-    const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} isInline focusTargetId={id}/>;
-    return <AlertCard tone="neutral" surface="bare" title="Couldn't refresh." actions={retry}/>;
-  }
+  const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} isInline={view === 'held'} focusTargetId={id}/>;
+  if (view === 'held') return <AlertCard tone="neutral" surface="bare" title="Couldn't refresh." actions={retry}/>;
   const copy = getErrorCopy(state.error, source);
-  const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>;
   return <AlertCard tone="crit" surface="inset" title={copy.sentence} body={copy.next} details={copy.detail} actions={retry}/>;
 }
 
