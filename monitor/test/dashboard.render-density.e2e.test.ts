@@ -218,6 +218,31 @@ const STATUS_CARD_STATES: Array<{ name: string; open: () => Promise<Page> }> = [
     },
   },
   {
+    name: "when open caveats and a failing streak trip the context lines, each naming its count",
+    open: async () => {
+      const outcomes = PAYLOADS["/api/outcomes/cross-analysis"] as { by_result: Array<{ result: string }> };
+      const agents = PAYLOADS["/api/agents/summary"] as { meta: { circuit_breaker: object } };
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      // 500 of 4,656 writer results open → over the 10% caveat line, breakage under its own; 3 on a streak, none suspended
+      await page.route(/\/api\/outcomes\/cross-analysis/, (route) => route.fulfill({ json: {
+        ...outcomes,
+        by_result: outcomes.by_result.map((row) => (row.result === "done_with_concerns" ? { ...row, writer_open_count: 500 } : row)),
+      } }));
+      await page.route(/\/api\/agents\/summary/, (route) => route.fulfill({ json: {
+        ...agents,
+        meta: { ...agents.meta, circuit_breaker: { ...agents.meta.circuit_breaker, streak_count: 3 } },
+      } }));
+      await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+      await page.waitForFunction(
+        () => Array.from(document.querySelectorAll("#dash-status .stat-context")).map((el) => el.textContent ?? "")
+          .filter((text) => /with open caveats$|on a failing streak$/.test(text)).length === 2,
+        undefined,
+        { timeout: 30_000 },
+      );
+      return page;
+    },
+  },
+  {
     name: "when one stat failed alone and keeps its own Retry",
     open: async () => {
       const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
