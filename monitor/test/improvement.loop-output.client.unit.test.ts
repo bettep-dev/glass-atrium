@@ -33,7 +33,7 @@ interface LoopAggregate {
 
 interface LoopSandbox {
   React: { createElement: unknown };
-  window: { UI: Record<string, unknown> };
+  window: { UI: Record<string, unknown> & { CARD_SLOTS: Record<"S", { plotPx: number }> } };
   deriveLoopAggregateI: (data: { events: LoopEvent[] }) => LoopAggregate;
   getLoopBasisI: (aggregate: LoopAggregate) => { text: string; title: string };
   ChangeSummaryCardI: (props: Record<string, unknown>) => RecordedElement;
@@ -436,25 +436,27 @@ test("every loading loop card draws its loading line in the metric slot, unsized
   }
 });
 
-describe("every loop card stacks one metric, one visual and one pinned foot, in that order", () => {
+const isPlottedCard = (card: RecordedElement) => collectElements(card, []).some((el) => el.type === sandbox.window.UI.TrendChart);
+
+describe("every loop card stacks its metric, its plot when it draws one, then its pinned foot", () => {
   for (const { name, card } of getLoopCards()) {
     test(name, () => {
       const order = collectElements(card, [])
         .map((el) => LOOP_SLOTS.find((slot) => new RegExp(`\\b${slot}\\b`).test(String(el.props.className ?? ""))))
         .filter(Boolean);
-      assert.deepEqual(order, LOOP_SLOTS, `${name}: slots ${order.join(" > ")}`);
+      const expected = isPlottedCard(card) ? LOOP_SLOTS : LOOP_SLOTS.filter((slot) => slot !== "i-loop-visual");
+      assert.deepEqual(order, expected, `${name}: slots ${order.join(" > ")}`);
     });
   }
 });
 
-// a card with no plot ends at its content → a row where nothing plots holds no plot-height block
-describe("a loop card's visual slot takes the plot height only when the card draws a plot", () => {
+// a card with no plot ends at its content → no empty visual block, and a plot sits in a plot-height slot
+describe("a loop card draws its visual slot exactly when it draws a plot, at the plot height", () => {
   for (const { name, card } of getLoopCards()) {
     test(name, () => {
-      const [visual] = getSlotOf(card, "i-loop-visual");
-      const isPlotted = collectElements(card, []).some((el) => el.type === sandbox.window.UI.TrendChart);
-      const height = (visual?.props.style as { height?: unknown } | undefined)?.height;
-      assert.equal(height !== undefined, isPlotted, `${name}: height ${String(height)}`);
+      const visuals = getSlotOf(card, "i-loop-visual");
+      const heights = visuals.map((visual) => (visual.props.style as { height?: unknown } | undefined)?.height);
+      assert.deepEqual(heights, isPlottedCard(card) ? [sandbox.window.UI.CARD_SLOTS.S.plotPx] : [], `${name}: visual heights ${String(heights)}`);
     });
   }
 });

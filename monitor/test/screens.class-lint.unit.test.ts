@@ -82,10 +82,6 @@ const BASELINE: Record<string, BaselineRow[]> = {
     { rule: "numeric-spacing", count: 1, owner: "C1" },
     { rule: "style-spacing-type", count: 2, owner: "C1" },
   ],
-  improvement: [
-    { rule: "inline-spacing", count: 1, owner: "C2" },
-    { rule: "style-spacing-type", count: 14, owner: "C2" },
-  ],
 };
 
 const roleKeys = getRoleKeys();

@@ -411,7 +411,7 @@ const BOARD_LANE_ROWS = [
   { name: "rejected", column: { key: "rejected", label: "Rejected", symbol: "✕", variant: "compact" }, total: 29, more: 21, noun: "closed" },
 ];
 
-describe("each board lane shows eight rows and pins a show-all foot below its list", () => {
+describe("each board lane shows eight rows and a Show N more button for the rest", () => {
   for (const row of BOARD_LANE_ROWS) {
     test(row.name, () => {
       const rows = Array.from({ length: row.total }, (_, i) => ({
@@ -422,14 +422,12 @@ describe("each board lane shows eight rows and pins a show-all foot below its li
       }));
       const tree = sandbox.KanbanColumnI({ column: row.column, rows, onRowClick: () => {} });
       const shown = findRendered(tree, (el) => el.type === sandbox.AppliedHistoryRowI || el.type === sandbox.CompactProposalCardI);
-      const [list] = findAll(tree, (el) => /\boverflow-y-auto\b/.test(classOf(el)));
-      const [foot] = findRendered(tree, (el) => el.type === "button" && /\bi-more-btn\b/.test(classOf(el)));
+      const [foot] = findRendered(tree, (el) => el.type === sandbox.window.UI.QuietButton);
 
       assert.equal(shown.length, 8, `${row.name}: ${shown.length} rows shown`);
-      assert.ok(foot, `${row.name}: no show-all foot`);
-      assert.match(visibleText(foot), new RegExp(`\\b${row.more}\\s+more\\b`));
-      assert.match(String(foot.props["aria-label"]), new RegExp(`\\b${row.noun} suggestions\\b`));
-      assert.ok(!findRendered(list, (el) => el === foot).length, "the foot pins below the list instead of scrolling with it");
+      assert.ok(foot, `${row.name}: no show-more button`);
+      assert.equal(visibleText(foot).trim(), `Show ${row.more} more`);
+      assert.equal(String(foot.props["aria-label"]), `Show ${row.more} more ${row.noun} suggestions`);
     });
   }
 });

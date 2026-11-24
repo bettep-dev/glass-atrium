@@ -377,37 +377,20 @@ function ScreenImprovement({ onNav }) {
         /* T3 — 종결 그리드 비대칭(applied 2fr : rejected 1fr). 인라인 gridTemplateColumns 금지
            (미디어쿼리가 인라인 스타일을 못 이김) → 클래스 선언 + <640px 단일 컬럼 붕괴를 같은
            블록에서 직접 출하(base.css L607 은 drawer 전용 → 보드 붕괴 미담당 · 검증 완료). */
-        /* loop output — peer cards share one height · the third card spans the row until three fit (no lone half-width card at 1024) */
-        .i-loop-grid { --i-loop-metric-h:56px; display:grid; grid-template-columns:minmax(0,1fr); gap:12px; align-items:stretch; }
+        /* loop output — column template only (SplitRow owns gap + shared tracks, no three-column preset) · the third card spans the row until three fit */
+        .i-loop-grid { --i-loop-metric-h:56px; }
         @media (min-width:768px) { .i-loop-grid { grid-template-columns:repeat(2, minmax(0,1fr)); } .i-loop-grid > :nth-child(3) { grid-column:1 / -1; } }
         @media (min-width:1280px) { .i-loop-grid { grid-template-columns:repeat(3, minmax(0,1fr)); } .i-loop-grid > :nth-child(3) { grid-column:auto; } }
-        /* one loop-card anatomy — metric and visual slots start at the same offsets in all three cards */
-        /* subgrid rows → a metric that wraps in one card moves the visual slot of all three together */
-        .i-loop-grid > .card { display:grid; grid-row:span 4; grid-template-rows:subgrid; row-gap:0; }
-        .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; padding:8px var(--card-pad) 0; }
-        .i-loop-visual { flex:none; padding:8px var(--card-pad) 0; overflow:hidden; }
-        .i-loop-visual:empty { padding:0; }
-        /* ledger sections share the card's one inline edge · the body opens one step under the head rule */
-        .i-ledger-body { padding-block:var(--space-1) var(--space-3); }
-        .i-ledger-sec { padding:var(--space-2) var(--card-pad) 0; }
+        .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; }
+        .i-loop-visual { flex:none; overflow:hidden; }
         /* plain ledger rows — one pattern | agent | date grid, each row a subgrid, so agent and date line up down the list */
         .i-plain-rows { display:grid; grid-template-columns:minmax(0,1fr) auto auto; }
         .i-plain-rows > li { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; }
-        .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
+        .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
-        /* 1px inset → the sub-card ring (an outside box-shadow) draws inside the scroll box, never clipped by it */
-        .i-await-body { display:flex; flex-direction:column; max-height:40vh; overflow-y:auto; padding:1px; }
         /* T6 — APPLIED/REJECTED 종결-컬럼 헤더 공용 밴드. 두 헤더 동일 min-height + 세로중앙 정렬 →
            헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). */
         .i-col-header { min-height:26px; display:flex; align-items:center; }
-        /* T5 — REJECTED 컴팩트 행(단일행 · rationale 숨김 · 중립 chrome). --crit 는 ✕ 심볼에만. */
-        .i-compact-row { display:flex; align-items:center; gap:6px; padding:var(--space-1_5) var(--space-2); }
-        /* T5/T8 — '＋N more' 실제 포커스 가능 버튼(요약 토글). 중립 chrome. */
-        .i-more-btn { display:flex; flex-shrink:0; align-items:center; justify-content:center; gap:4px; width:100%;
-          padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
-          color:rgb(var(--faint)); font-size:var(--fs-meta); cursor:pointer;
-          white-space:normal; text-align:center; min-height:32px; overflow:visible; }
-        .i-more-btn:hover { color:rgb(var(--dim)); border-color:rgb(var(--faint) / 0.5); }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -795,7 +778,6 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 						points={points}
 					/>
 				),
-				isPlotted: true,
 				foot: `${formatIntI(aggregate.verifiedTotal)} verified and ${formatIntI(aggregate.rejectTotal)} rejected across all ${formatIntI(series.length)} cycle days`,
 			})}
 		</div>
@@ -865,7 +847,7 @@ function LoopOutputGroupI({
 			) : null}
 			{/* 세 카드는 한 질문의 세 답이므로 한 행에 나란히 — 쌓으면 묶음 헤더의 기준이
           첫 카드에만 걸린 것으로 읽힌다(와이어프레임 Tier 4 = 3-col). */}
-			<div className="i-loop-grid">
+			<window.UI.SplitRow layout="aligned" className="i-loop-grid">
 				<ChangeSummaryCardI
 					state={loopEventsState}
 					aggregate={loopAggregate}
@@ -874,7 +856,7 @@ function LoopOutputGroupI({
 				/>
 				<TrendCardI state={loopEventsState} aggregate={loopAggregate} failures={failures} onRetry={onRetry} />
 				<BucketRowI state={listState} buckets={buckets} failures={failures} onRetry={onRetry} />
-			</div>
+			</window.UI.SplitRow>
 		</section>
 	);
 }
@@ -925,14 +907,9 @@ function KanbanCardI({
 	const awaitingRows = columnRows.safety || [];
 	const isBoardEmpty = KANBAN_COLUMNS.every((col) => !(columnRows[col.key] || []).length);
 
-	// card max-h 70vh → only the lanes scroll · awaiting list above the applied 2fr / rejected 1fr grid
+	// awaiting list above the applied 2fr / rejected 1fr grid · lanes cap at their slot, no inner scroll
 	return (
-		<section
-			className="card flex flex-col"
-			aria-label="Suggestion board"
-			id={ANCHOR_ID_I.suggestionBoard}
-			style={{ maxHeight: "70vh", overflow: "hidden" }}
-		>
+		<section className="card flex flex-col" aria-label="Suggestion board" id={ANCHOR_ID_I.suggestionBoard}>
 			<div className="flex-shrink-0">
 				<CardHead
 					title="Suggestion board"
@@ -959,7 +936,7 @@ function KanbanCardI({
 			) : isBoardEmpty ? (
 				<window.UI.EmptyState message={hasNoCycleI(stats) ? "No suggestions yet" : "No suggestions waiting"} />
 			) : (
-				<div className="flex flex-col gap-block p-card-pad flex-1 min-h-0 overflow-hidden">
+				<div className="flex flex-col gap-block p-card-pad">
 					{awaitingRows.length > 0 ? (
 						<AwaitingListI
 							rows={awaitingRows}
@@ -968,7 +945,7 @@ function KanbanCardI({
 							pendingActionId={pendingActionId}
 						/>
 					) : null}
-					<div className="board-terminal-grid flex-1 min-h-0 overflow-hidden">
+					<div className="board-terminal-grid gap-x-block">
 						{TERMINAL_COLUMNS.map((col) => (
 							<KanbanColumnI
 								key={col.key}
@@ -997,10 +974,10 @@ function HeadStatusI({ count, words }) {
 	);
 }
 
-// Awaiting suggestions — the only lane asking for an action, so it leads the board · list scrolls past 40vh
+// Awaiting suggestions — the only lane asking for an action, so it leads the board
 function AwaitingListI({ rows, onRowClick, onAction, pendingActionId }) {
 	return (
-		<div className="i-await-body gap-list flex-shrink-0">
+		<window.UI.Stack gap="block">
 			{rows.map((row) => (
 				<ProposalCardI
 					key={row.id}
@@ -1010,7 +987,7 @@ function AwaitingListI({ rows, onRowClick, onAction, pendingActionId }) {
 					pendingActionId={pendingActionId}
 				/>
 			))}
-		</div>
+		</window.UI.Stack>
 	);
 }
 
@@ -1036,19 +1013,9 @@ function KanbanColumnI({
 		column.key === "applied"
 			? "Approved suggestions move here once the loop applies them."
 			: "Suggestions turned down, or closed without a verdict, show up here.";
-	// 헤더 sticky + --elev 배경 — 카드 본문 톤과 통일 · row scroll 시 헤더 비침 차단.
 	return (
-		<div className="flex flex-col min-h-0 min-w-0 gap-list">
-			<div
-				className="flex flex-col gap-stack flex-shrink-0"
-				style={{
-					position: "sticky",
-					top: 0,
-					zIndex: 1,
-					background: "rgb(var(--elev))",
-					paddingBottom: 4,
-				}}
-			>
+		<div className="flex flex-col min-w-0 gap-label">
+			<div className="flex flex-col gap-stack">
 				{column.key === "applied" ? (
 					<AppliedHeroHeaderI
 						count={rows.length}
@@ -1067,7 +1034,7 @@ function KanbanColumnI({
 					</React.Fragment>
 				)}
 			</div>
-			<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-list">
+			<div className="flex flex-col gap-list">
 				{rows.length === 0 ? (
 					<EmptyState message={emptyMessage} hint={emptyHint} />
 				) : isCompact ? (
@@ -1094,30 +1061,13 @@ function KanbanColumnI({
 	);
 }
 
-// '＋N more' — a real focusable toggle, expanding the lane in place; volume stays a number.
+// Show N more — expands the lane in place; the accessible name adds the lane's noun
 function LaneMoreToggleI({ hiddenCount, isExpanded, noun, onToggle }) {
+	const label = isExpanded ? "Show fewer" : `Show ${formatIntI(hiddenCount)} more`;
 	return (
-		<button
-			type="button"
-			className="i-more-btn"
-			onClick={onToggle}
-			aria-expanded={isExpanded}
-			aria-label={
-				isExpanded
-					? `Show fewer ${noun} suggestions`
-					: `View all ${noun} suggestions (${formatIntI(hiddenCount)} more)`
-			}
-		>
-			{isExpanded ? (
-				<>
-					<SymI s="−" size={13} /> show less
-				</>
-			) : (
-				<>
-					<SymI s="＋" size={13} /> {formatIntI(hiddenCount)} more · view all
-				</>
-			)}
-		</button>
+		<window.UI.QuietButton className="self-start" onClick={onToggle} aria-expanded={isExpanded} aria-label={`${label} ${noun} suggestions`}>
+			{label}
+		</window.UI.QuietButton>
 	);
 }
 
@@ -1673,7 +1623,6 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 						<span className="fs-meta text-dim">{label}</span>
 					</span>
 				)),
-				visual: null,
 				foot: "All agents",
 			})}
 		</div>
@@ -1751,7 +1700,7 @@ function LedgerHeldSectionI({ suppression }) {
 	const buckets = getSuppressionListI(suppression, "parked");
 	if (buckets.length === 0) return null;
 	return (
-		<div id={ANCHOR_ID_I.heldPatterns} className="i-ledger-sec">
+		<div id={ANCHOR_ID_I.heldPatterns}>
 			<LedgerSectionHeadI label="Held" basis="all time" count={sumCountsI(buckets)} />
 			<HeldCauseTableI buckets={buckets} rows={getSuppressionListI(suppression, "parked_patterns")} />
 		</div>
@@ -1843,7 +1792,7 @@ function HeldGlyphSlotI({ isShown }) {
 function LedgerPlainRowsI({ rows }) {
 	if (rows.length === 0) {
 		return (
-			<window.UI.EmptyState className="placeholder--flush-inline" message="Counted, but no row came back within the read limit" />
+			<window.UI.EmptyState message="Counted, but no row came back within the read limit" />
 		);
 	}
 	return (
@@ -1886,7 +1835,7 @@ function LedgerHeadLineI({ children }) {
 function LedgerInertSectionI({ rows }) {
 	if (rows.length === 0) return null;
 	return (
-		<details className="i-ledger-sec">
+		<details>
 			<summary className="group disclosure select-none">
 				<window.UI.DisclosureChevron />
 				<LedgerSectionHeadI label="Inert" basis="last 7 days" count={rows.length} />
@@ -1930,7 +1879,7 @@ function LedgerRecurrenceSectionI({ suppression }) {
 	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
 	const windowCycles = Number(suppression.per_cycle_window_cycles ?? 0);
 	return (
-		<div className="i-ledger-sec">
+		<div>
 			<LedgerSectionHeadI
 				label="Recurrence rates"
 				basis={`last ${formatIntI(windowDays)} days`}
@@ -2361,15 +2310,17 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 }
 
 // One loop-card anatomy → metric, visual and foot start at the same offsets in all three cards; the foot keeps its day tokens whole.
-// plot height only under a drawn plot → a row where nothing plots ends at its content
-function getLoopSlotsI({ metric, visual, foot, isPlotted = false }) {
+// visual = a plot, in a plot-height slot · no plot → no slot, the card ends at its content
+function getLoopSlotsI({ metric, visual, foot }) {
 	const { CARD_SLOTS } = window.UI;
 	return (
 		<>
-			<div className="i-loop-metric gap-y-stack gap-x-block">{metric}</div>
-			<div className="i-loop-visual" style={isPlotted ? { height: CARD_SLOTS.S.plotPx } : undefined}>
-				{visual}
-			</div>
+			<div className="i-loop-metric px-card-pad mt-label gap-y-stack gap-x-block">{metric}</div>
+			{visual ? (
+				<div className="i-loop-visual px-card-pad mt-label" style={{ height: CARD_SLOTS.S.plotPx }}>
+					{visual}
+				</div>
+			) : null}
 			<div className="card-foot">
 				<window.UI.DayTokens>{foot}</window.UI.DayTokens>
 			</div>
@@ -2380,7 +2331,7 @@ function getLoopSlotsI({ metric, visual, foot, isPlotted = false }) {
 // a loading loop card → its line in the metric slot, so sibling cards draw it at one height
 function getLoopLoadingSlotI(label) {
 	return (
-		<div className="i-loop-metric gap-y-stack gap-x-block">
+		<div className="i-loop-metric px-card-pad mt-label gap-y-stack gap-x-block">
 			<window.UI.LoadingPlaceholder label={label} />
 		</div>
 	);
@@ -2486,7 +2437,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 				sub={<HeadStatusI count={heldNeedingHuman} words={heldNeedingHuman === 1 ? "needs a human" : "need a human"} />}
 				info={<LedgerNotesI suppression={suppression} />}
 			/>
-			<div className="i-ledger-body">
+			<div className="p-card-pad">
 				{hasProblems ? (
 					<SplitRow ratio="1:1" layout="equal" className="i-ledger-cols">
 						<SplitColumn>
@@ -2496,7 +2447,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 						<SplitColumn>{candidates}</SplitColumn>
 					</SplitRow>
 				) : (
-					candidates
+					<window.UI.Stack gap="block">{candidates}</window.UI.Stack>
 				)}
 			</div>
 			<LedgerFooterI total={total} rejected={rejectedAllTime} />
@@ -2514,14 +2465,14 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	);
 	if (rows.length === 0) {
 		return (
-			<div className="i-ledger-sec">
+			<div>
 				{head}
-				<window.UI.EmptyState className="placeholder--flush-inline" message="No candidate patterns in the last 7 days" />
+				<window.UI.EmptyState message="No candidate patterns in the last 7 days" />
 			</div>
 		);
 	}
 	return (
-		<div className="i-ledger-sec flex flex-col gap-list">
+		<div className="flex flex-col gap-list">
 			{head}
 			<LedgerHeadLineI>×N = times seen, all time</LedgerHeadLineI>
 			{getPatternGroupsI(rows).map((group) => (
