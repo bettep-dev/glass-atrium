@@ -1814,16 +1814,16 @@ function HeldCauseTableI({ buckets, rows }) {
 	);
 }
 
-// One cause: its name opens its rows (the house ledger expander) · its remedy is the second line, printed once
+// One cause: its name opens its rows (the house ledger expander) · its remedy lives in the ledger drawer
 function HeldCauseRowsI({ bucket, rows, isHumanCause }) {
 	const [isOpen, setOpen] = useSI(false);
-	const { DisclosureChevron, ToneGlyph } = window.UI;
+	const { DisclosureChevron } = window.UI;
 	const listId = `${ANCHOR_ID_I.heldPatterns}-${bucket.cause}`;
 	return (
 		<tr className="border-t border-line/50">
 			<td className="text-left text-ink">
 				<span className="inline-flex items-center gap-label-inline">
-					{isHumanCause ? <ToneGlyph tone="warn" label="Needs a human" /> : null}
+					<HeldGlyphSlotI isShown={isHumanCause} />
 					<button
 						type="button"
 						className="group inline-target gap-label-inline text-left"
@@ -1835,15 +1835,29 @@ function HeldCauseRowsI({ bucket, rows, isHumanCause }) {
 						<span>{bucket.label}</span>
 					</button>
 				</span>
-				<div className="fs-meta text-dim max-w-[72ch]">{bucket.hint}</div>
 				<div id={listId} hidden={!isOpen}>
-					<LedgerPlainRowsI rows={rows} />
+					<div className="flex items-start gap-label-inline">
+						{/* the name's lead track, unseen → the rows start on the name column */}
+						<span className="invisible inline-flex items-center gap-label-inline" aria-hidden="true">
+							<HeldGlyphSlotI isShown={false} />
+							<DisclosureChevron isOpen={false} />
+						</span>
+						<div className="min-w-0 flex-1">
+							<LedgerPlainRowsI rows={rows} />
+						</div>
+					</div>
 				</div>
 			</td>
 			<td className="text-right align-top pl-4 text-ink tnum">{formatIntI(Number(bucket.count ?? 0))}</td>
 			<td className="text-right align-top pl-4 text-dim tnum">{formatIntI(Number(bucket.agents ?? 0))}</td>
 		</tr>
 	);
+}
+
+// the warn glyph's own box in every group, unseen where the cause needs no human → every name starts on one column
+function HeldGlyphSlotI({ isShown }) {
+	const glyph = <window.UI.ToneGlyph tone="warn" label="Needs a human" />;
+	return isShown ? glyph : <span className="invisible inline-flex" aria-hidden="true">{glyph}</span>;
 }
 
 // 원장 안의 비활성 행 목록 — 클릭 대상이 아니다(활성 후보만 드로어를 연다).
@@ -1994,15 +2008,18 @@ function LedgerFooterI({ total, rejected }) {
 
 // "How this is counted" drawer — each recurring cause's remedy and the figures' gates.
 function LedgerNotesI({ suppression }) {
-	// held remedies sit on their table rows → only the recurring causes' remedies live here
-	const causes = new Map(getSuppressionListI(suppression, "per_cycle").map((b) => [b.cause, b]));
+	// every cause's remedy, held and recurring, printed once here — the server sentences exceed the face's 12-word bar
+	// keyed by cause and hint → a cause both held and recurring prints each distinct remedy once
+	const causes = new Map(
+		["parked", "per_cycle"].flatMap((key) => getSuppressionListI(suppression, key)).map((b) => [`${b.cause}:${b.hint}`, b]),
+	);
 	const unpromptable = Number(suppression?.pending_unpromptable ?? 0);
 	const pendingTotal = Number(suppression?.pending_total ?? 0);
 	const offRegistry = Number(suppression?.off_registry_parked ?? 0);
 	return (
 		<div className="flex flex-col gap-3 fs-body">
-			{[...causes.values()].map((b) => (
-				<p key={b.cause}>
+			{[...causes.entries()].map(([key, b]) => (
+				<p key={key}>
 					<span className="text-ink font-semibold">{b.label}</span> — {b.hint}
 				</p>
 			))}

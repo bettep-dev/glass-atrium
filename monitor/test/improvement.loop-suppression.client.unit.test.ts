@@ -51,6 +51,7 @@ interface Sandbox {
   LedgerHeldSectionI: (props: { suppression: unknown }) => RecordedElement | null;
   HeldCauseTableI: (props: { buckets: unknown; rows: unknown }) => RecordedElement;
   HeldCauseRowsI: unknown;
+  HeldGlyphSlotI: unknown;
   LedgerRecurrenceSectionI: unknown;
   LedgerFooterI: (props: Record<string, unknown>) => RecordedElement;
 }
@@ -96,6 +97,8 @@ function faceTextOf(node: unknown): string {
     const render = node.type as (props: Record<string, unknown>) => unknown;
     return faceTextOf(render(node.props));
   }
+  // an aria-hidden box is unseen layout, read by no one
+  if (node.props["aria-hidden"] === "true") return "";
   return faceTextOf(node.props.children);
 }
 
@@ -292,11 +295,12 @@ test("every suppression cause is rendered on its own row", () => {
   }
 });
 
-describe("each cause prints its remedy once: a held cause on its table row, a recurring cause in the drawer", () => {
+// the server's remedy sentences run past the 12-word face bar → every remedy prints once, in the ledger drawer
+describe("each cause prints its remedy once, in the ledger drawer, never on the card face", () => {
   const face = () => faceTextOf(sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION, onRowClick: () => {} }));
   const rows = [
-    { name: "a held cause's remedy is its row's second line", hint: "cap remedy text", onFace: 1, inNotes: false },
-    { name: "a held-by-design cause's remedy is its row's second line", hint: "design decision remedy text", onFace: 1, inNotes: false },
+    { name: "a held cause's remedy stays in the drawer", hint: "cap remedy text", onFace: 0, inNotes: true },
+    { name: "a held-by-design cause's remedy stays in the drawer", hint: "design decision remedy text", onFace: 0, inNotes: true },
     { name: "a recurring cause's remedy stays in the drawer", hint: "non-promptable remedy text", onFace: 0, inNotes: true },
     { name: "every recurring cause keeps its remedy in the drawer", hint: "roster remedy text", onFace: 0, inNotes: true },
   ];
@@ -378,7 +382,8 @@ test("each held cause's rows open from its name in the table and start folded", 
     assert.equal(list.props.hidden, true, "a folded list keeps its rows out of view");
   }
   const [name, held, agents] = allByType(causes[1], "td").map((cell) => faceTextOf(cell).replace(/\s+/g, " ").trim());
-  assert.match(name, /^Non-promptable signal design decision remedy text\b/, "the name, then its remedy, read without opening anything");
+  assert.ok(name.startsWith("Non-promptable signal"), name);
+  assert.ok(!name.includes("design decision remedy text"), "the remedy stays off the cause cell");
   assert.deepEqual([held, agents], ["7", "6"], "the count and agents sit in their own columns");
 });
 
@@ -390,8 +395,8 @@ test("held causes split into a needs-a-human group and a set-aside group, each l
     return {
       lead: faceTextOf(lead).replace(/\s+/g, " ").trim(),
       glyphs: rows.map((row) =>
-        allByType((sandbox.HeldCauseRowsI as (props: unknown) => RecordedElement)(row.props), sandbox.window.UI.ToneGlyph)
-          .filter((glyph) => glyph.props.tone === "warn" && glyph.props.label === "Needs a human").length),
+        allByType((sandbox.HeldCauseRowsI as (props: unknown) => RecordedElement)(row.props), sandbox.HeldGlyphSlotI)
+          .filter((slot) => slot.props.isShown === true).length),
     };
   });
   // the first group's lead row carries the column heads for every row below it
