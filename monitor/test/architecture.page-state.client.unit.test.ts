@@ -57,13 +57,17 @@ interface PageStateSandbox {
   ) => { at: string | null; regions: RegionState[] };
   getFlowPeerLabelAR: (flow: Flow, direction: "in" | "out", nodeIndex: Map<string, { label: string }>) => string;
   getPartHealthGroupsAR: (partRows: HealthRow[], isPending?: boolean) => { listed: HealthRow[]; healthy: HealthRow[] };
-  getAttentionEmptyAR: (partRows: HealthRow[], busy: boolean, freshness: HealthFreshness) => string;
+  getAttentionEmptyAR: (partRows: HealthRow[], busy: boolean, freshness: HealthFreshness) => string | null;
   getPartStatusAR: (row: HealthRow & { statusLabel: string }, freshness: HealthFreshness) => { tone: string | null; text: string };
   getPartBoxAR: (row: HealthRow, nodeIndex: Map<string, { label: string }>) => { nodeId: string; label: string } | null;
   getPartCauseAR: (facts: Record<string, unknown>) => string | null;
   getPartScheduleAR: (row: ScheduleRow, formatRelative: (iso: string) => string, now: number) => string | null;
   getDrillDaemonAR: (partRows: DaemonPartRow[], unscopedId: string) => string | null;
   getRunSummaryAR: (runs: RunRow[]) => { text: string; failures: RunRow[] };
+  getDaemonVerdictAR: (
+    row: VerdictRow,
+    runs: RunRow[] | null,
+  ) => VerdictRow;
   getMapLegendItemsAR: () => Array<{ key: string; mark?: string; text?: string }>;
   getPartHealthStatusAR: (partRows: HealthRow[], freshness: HealthFreshness) => { tone: string; text: string } | null;
 }
@@ -73,6 +77,11 @@ interface DaemonPartRow {
   daemonName: string | null;
   tone: string | null;
   nodeIds: string[];
+}
+
+interface VerdictRow extends DaemonPartRow {
+  statusLabel: string | null;
+  cause: string | null;
 }
 
 interface RunRow {
@@ -238,19 +247,22 @@ describe("the System parts lead line says why nothing is flagged, and its all-cl
     { name: "an all-clear with every store freshly read is a plain all-clear", partRows: judged, busy: false, at: readAt, regions: [held, held], expected: /^No system part needs attention$/ },
     { name: "listed unverified parts are counted while none is flagged", partRows: unverified, busy: false, at: readAt, regions: [held], expected: /^2 not verified · none needs attention$/ },
     { name: "listed unverified parts under a failed re-read are counted as last known", partRows: unverified, busy: false, at: readAt, regions: [warmError, held], expected: /^Last known: 2 not verified · none needed attention$/ },
-    { name: "no verdict and a failed read says the read failed", partRows: unjudged, busy: false, at: null, regions: [down, down], expected: /^Couldn't read system parts$/ },
     { name: "no verdict and no failure says it is not read yet", partRows: unjudged, busy: false, at: null, regions: [held], expected: /^System parts not read yet$/ },
   ];
   for (const row of rows)
     test(row.name, () => {
-      assert.match(sandbox.getAttentionEmptyAR(row.partRows, row.busy, { at: row.at, regions: row.regions, now }), row.expected);
+      assert.match(sandbox.getAttentionEmptyAR(row.partRows, row.busy, { at: row.at, regions: row.regions, now }) ?? "", row.expected);
     });
+
+  test("no verdict under a failed read writes no lead, leaving the failure to the alarm row", () => {
+    assert.strictEqual(sandbox.getAttentionEmptyAR(unjudged, false, { at: null, regions: [down, down], now }), null);
+  });
 
   test("the all-clear and an ok part row agree on Last known for every settled read", () => {
     const okRow = { ...healthRow("a", "ok"), statusLabel: "Healthy" };
     for (const row of rows.filter((candidate) => !candidate.busy && candidate.partRows === judged)) {
       const freshness = { at: row.at, regions: row.regions, now };
-      const text = sandbox.getAttentionEmptyAR(judged, false, freshness);
+      const text = sandbox.getAttentionEmptyAR(judged, false, freshness) ?? "";
       const rowText = sandbox.getPartStatusAR(okRow, freshness).text;
       assert.strictEqual(text.startsWith("Last known"), rowText.startsWith("Last known"), `${row.name}: "${text}" vs "${rowText}"`);
     }
@@ -337,9 +349,32 @@ test("the run history counts clean runs and keeps every other run as a row", () 
   const runs = [run("1", "ok"), run("2", "ok", ["haiku quota"]), run("3", "unknown"), run("4", "ok"), run("5", "fail")];
   const summary = sandbox.getRunSummaryAR(runs);
 
-  assert.strictEqual(summary.text, "2/5 runs clean");
+  assert.strictEqual(summary.text, "2 of 5 runs clean");
   assert.deepStrictEqual(summary.failures.map((row) => row.key), ["2", "3", "5"]);
-  assert.strictEqual(sandbox.getRunSummaryAR([]).text, "0/0 runs clean");
+  assert.strictEqual(sandbox.getRunSummaryAR([]).text, "0 of 0 runs clean");
+});
+
+describe("a daemon part's verdict is the worse of its schedule and its listed runs", () => {
+  const run = (key: string, verdict: string): RunRow => ({ key, verdict, reasons: [] });
+  const failing = [run("1", "fail"), run("2", "unknown")];
+  const clean = [run("1", "ok"), run("2", "ok")];
+  const daemonRow = (tone: string | null, statusLabel: string | null) => ({
+    id: "daemon-cycle", daemonName: "autoagent", tone, statusLabel, cause: null, nodeIds: ["autoagent_d"],
+  });
+  const rows = [
+    { name: "on schedule with a failed run needs attention, the run line its reason", row: daemonRow("ok", "Healthy"), runs: failing, expected: { tone: "warn", statusLabel: "Needs attention", cause: "0 of 2 runs clean" } },
+    { name: "an idle schedule with a failed run needs attention", row: daemonRow("info", "No data"), runs: failing, expected: { tone: "warn", statusLabel: "Needs attention", cause: "0 of 2 runs clean" } },
+    { name: "on schedule with every run clean stays healthy", row: daemonRow("ok", "Healthy"), runs: clean, expected: { tone: "ok", statusLabel: "Healthy", cause: null } },
+    { name: "an overdue schedule outranks a failed run", row: daemonRow("crit", "Overdue"), runs: failing, expected: { tone: "crit", statusLabel: "Overdue", cause: null } },
+    { name: "runs not read leave the schedule verdict", row: daemonRow("ok", "Healthy"), runs: null, expected: { tone: "ok", statusLabel: "Healthy", cause: null } },
+    { name: "an unread schedule stays unjudged", row: daemonRow(null, null), runs: failing, expected: { tone: null, statusLabel: null, cause: null } },
+    { name: "a part with no daemon takes no run leg", row: { ...daemonRow("ok", "Healthy"), daemonName: null }, runs: failing, expected: { tone: "ok", statusLabel: "Healthy", cause: null } },
+  ];
+  for (const row of rows)
+    test(row.name, () => {
+      const { tone, statusLabel, cause } = sandbox.getDaemonVerdictAR(row.row, row.runs);
+      assert.deepStrictEqual({ tone, statusLabel, cause }, row.expected);
+    });
 });
 
 test("the map legend explains the multi-part count on a box's corner glyph", () => {

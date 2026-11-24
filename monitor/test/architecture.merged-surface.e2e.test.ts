@@ -1899,6 +1899,33 @@ test("T11 opening the hook part renders the whole configuration it was served", 
 	);
 });
 
+// the hook tree reads on two left edges: the settings path with every event chevron, then each event's name with its matchers and commands
+test("the hook configuration starts each child on its event's name, one disclosure inset past the chevrons", async () => {
+	await openMapWithHealth(getHookChainFixture());
+	await openHookHealth(HOOK_FIXTURE_EVENTS[0].groups[0].hooks[0].command);
+
+	// one inline body — tsx wraps a named inner function in __name, which the browser lacks
+	const edges = await page.evaluate(() => {
+		const chain = document.querySelector(".arch-hook-chain") as Element;
+		const summaries = [...chain.querySelectorAll(".arch-hook-event > details > summary")];
+		return Object.fromEntries(
+			Object.entries({
+				path: [chain.querySelector(".arch-hook-head > *")],
+				chevrons: summaries.map((summary) => summary.firstElementChild),
+				names: summaries.map((summary) => summary.lastElementChild),
+				children: [...chain.querySelectorAll(".arch-hook-group > :first-child, .arch-hook-list > li")],
+			}).map(([key, els]) => [key, els.map((el) => Math.round((el as Element).getBoundingClientRect().left))]),
+		) as Record<"path" | "chevrons" | "names" | "children", number[]>;
+	});
+	const [outer] = edges.path;
+	const [inner] = edges.names;
+
+	assert.ok(edges.children.length > 0, "precondition: an opened event lists its matchers and commands");
+	assert.deepEqual([...new Set(edges.chevrons)], [outer], "every event chevron starts on the settings path's edge");
+	assert.deepEqual([...new Set([...edges.names, ...edges.children])], [inner], "event names, matchers and commands share one edge");
+	assert.equal(inner - outer, 18, "the inner edge sits one chevron and its gap past the outer edge");
+});
+
 // AC-B2-5a: 한 상세 영역이 구성과 실패 이력을 함께 냄 — 훅 신고 하나를 가르는 두 반쪽이
 // 화면 두 곳에 흩어져 있으면 조작자가 그 둘을 손으로 맞춰야 함.
 // 두 사실을 한 영역 안에서 잼: 각각이 어딘가에 있음이 아니라 '같은 자리에 있음' 이 계약임.
@@ -2690,14 +2717,29 @@ test("the expanded region counts the clean runs and lists only the failed run wi
 	);
 	const { entries } = getFailingPayload();
 	const cleanCount = entries.filter((entry) => entry.summary.verdict === "ok" && entry.summary.error_signatures.length === 0).length;
-	assert.ok(
-		text.includes(`${cleanCount}/${entries.length} runs clean`),
-		`the region must count the clean runs against every stored run — read "${text}"`,
-	);
+	const runLine = `${cleanCount} of ${entries.length} runs clean`;
+	assert.ok(text.includes(runLine), `the region must count the clean runs against every stored run — read "${text}"`);
 	assert.ok(
 		!text.includes(okDay),
 		`a clean run is counted in the summary, never listed — the list names failures only — read "${text}"`,
 	);
+});
+
+test("a daemon on schedule with a failed run reads one verdict in the drawer and in System parts", async () => {
+	await openMapWithHealth(getHealthFixture({ payload: getFailingPayload() }));
+	await openDaemonHealth(BOUND_DAEMON);
+	await waitForRegionText(BOUND_DAEMON, "runs clean");
+
+	const { entries } = getFailingPayload();
+	const cleanCount = entries.filter((entry) => entry.summary.verdict === "ok" && entry.summary.error_signatures.length === 0).length;
+	const runLine = `${cleanCount} of ${entries.length} runs clean`;
+	const drawerRow = await page.$eval(`[data-health-row="${DAEMON_PART_ID}"]`, (el) => el.textContent || "");
+	const partsRow = await page.$eval(`#arch-part-${DAEMON_PART_ID}`, (el) => el.textContent || "");
+	for (const [where, text] of [["drawer", drawerRow], ["System parts", partsRow]])
+		assert.ok(
+			text.includes("Needs attention") && text.includes(runLine) && !text.includes("Healthy"),
+			`the ${where} row reads Needs attention with the run line as its reason — read "${text}"`,
+		);
 });
 
 // 드릴다운이 연 노드를 따라가는지 재는 반증 케이스 — 고정 리터럴 구현은 여기서 붉어짐.

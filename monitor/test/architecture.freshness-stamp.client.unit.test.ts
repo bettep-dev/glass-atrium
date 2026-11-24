@@ -45,7 +45,6 @@ interface StampSandbox {
   getFreshnessInputAR: (healthAsOf: string | null, regions: RegionState[], mapState: RegionState) => FreshnessInput;
   getPartHealthStatusAR: (partRows: PartRow[], freshness: FreshnessInput & { now: number }) => { tone: string; text: string } | null;
   getPartStatusAR: (row: PartRow, freshness: FreshnessInput & { now: number }) => { tone: string | null; text: string };
-  getMapCopyNoteAR: (diagState: RegionState) => string | null;
 }
 
 const sandbox = await buildScreenSandbox<StampSandbox>(ARCH_SRC);
@@ -111,20 +110,5 @@ test("a part row's verdict follows the health stamp: an ok row under a failed re
   for (const row of rows) {
     const shown = sandbox.getPartStatusAR(row.row, { at: READ_AT, regions: row.regions, now: NOW });
     assert.deepStrictEqual({ tone: shown.tone, text: shown.text }, { tone: row.tone, text: row.text }, row.name);
-  }
-});
-
-test("the map carries a last-good-copy label exactly when a re-read failed over the held map", () => {
-  const rows = [
-    { name: "failed re-read over held map", state: FAILED_OVER_HELD, isLabelled: true },
-    { name: "held map, settled", state: HELD, isLabelled: false },
-    { name: "held map, re-reading", state: REREADING, isLabelled: false },
-    { name: "cold error, nothing held", state: DOWN, isLabelled: false },
-    { name: "first read in flight", state: FIRST_READ, isLabelled: false },
-  ];
-
-  for (const row of rows) {
-    const note = sandbox.getMapCopyNoteAR(row.state);
-    assert.strictEqual(/last good copy/i.test(note ?? ""), row.isLabelled, `${row.name}: ${note}`);
   }
 });

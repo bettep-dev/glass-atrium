@@ -478,10 +478,12 @@ describe("healthy live fixture", () => {
 				px: Number.parseFloat(getComputedStyle(el).fontSize),
 			})),
 		);
-		const captionChildren = await ctx.page.evaluate(() => [...document.querySelectorAll(".arch-caption > *")].map((el) => el.matches("ul.arch-legend")));
+		const captionChildren = await ctx.page.evaluate(() =>
+			[...document.querySelectorAll(".arch-caption > *")].map((el) => (el.matches("ul.arch-legend") ? "legend" : (el as HTMLElement).innerText)),
+		);
 		const probe = { legend };
 
-		assert.deepStrictEqual(captionChildren, [true], "nothing but the legend stands between the h1 and the first card");
+		assert.deepStrictEqual(captionChildren, ["legend", "Click a box for details"], "the legend, then how to open a box, and nothing else before the first card");
 		for (const line of probe.legend) {
 			assert.notEqual(line.transform, "uppercase", `"${line.text}" renders uppercase`);
 			assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
@@ -566,8 +568,8 @@ describe("healthy live fixture", () => {
 		);
 	});
 
-	// the canvas notes are prose, not data: body sans, faint, on an opaque chip so the map under them never shows through
-	test("the canvas hint and the loading note set body sans in faint on an opaque chip", async () => {
+	// the loading note is prose, not data: body sans, faint, on an opaque chip so the map under it never shows through
+	test("the loading note sets body sans in faint on an opaque chip", async () => {
 		// one inline body — tsx wraps a named inner function in __name, which the browser lacks
 		const read = await ctx.page.evaluate((canvas) => {
 			const host = document.querySelector(canvas) as Element;
@@ -577,7 +579,7 @@ describe("healthy live fixture", () => {
 			probe.textContent = "Loading health…";
 			host.append(probe);
 			const faint = getComputedStyle(document.documentElement).getPropertyValue("--faint").trim().split(/\s+/).join(", ");
-			const notes = [".arch-canvas-hint", ".arch-canvas-busy"].map((selector) => {
+			const notes = [".arch-canvas-busy"].map((selector) => {
 				const style = getComputedStyle(host.querySelector(selector) as Element);
 				return { selector, family: style.fontFamily, color: style.color, background: style.backgroundColor };
 			});
@@ -996,9 +998,9 @@ describe("fault live fixture", () => {
 	});
 	// the head Status is the row status atom at head size → same glyph gap, glyph centred on the words
 	test("the System parts head Status spaces and centres its glyph as the row status atom does", async () => {
-		await ctx.page.waitForSelector(".arch-part-health-status svg", { timeout: 30_000 });
+		await ctx.page.waitForSelector('.arch-part-health .card-head [data-role="head-status"] svg', { timeout: 30_000 });
 		const [head, row] = await ctx.page.evaluate(() =>
-			[".arch-part-health-status", ".arch-part-status"].map((selector) => {
+			['.arch-part-health .card-head [data-role="head-status"]', '.arch-part-row [data-role="head-status"]'].map((selector) => {
 				const style = getComputedStyle(document.querySelector(selector) as Element);
 				return { display: style.display, alignItems: style.alignItems, gap: style.columnGap };
 			}),
