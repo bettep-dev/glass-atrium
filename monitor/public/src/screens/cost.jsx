@@ -783,10 +783,14 @@ function getTrendReadout(row, bandOn) {
   return hasBand ? `${base}, ${formatNormalRangeC(row).toLowerCase()}` : base;
 }
 
+// a day's band as a range Area value — a day with no lower bound draws no band
+function getBandRangeC(row) {
+  return Number.isFinite(row.lowerBand) && Number.isFinite(row.upperBand) ? [row.lowerBand, row.upperBand] : null;
+}
+
 /**
  * Single Y axis, faint horizontal gridlines only.
- * Band on → rolling mean + ±2σ envelope ride the same chart: upper Area over a lower Area masked
- * in the card surface, the layering Recharts 2.x needs because an array dataKey is unstable there.
+ * Band on → rolling mean + ±2σ envelope ride the same chart, the envelope one range Area.
  */
 function CostTrendChart({ rows, bandOn }) {
   const { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine } = window.Recharts;
@@ -844,19 +848,9 @@ function CostTrendChart({ rows, bandOn }) {
             {bandOn && (
               <Area
                 type="linear"
-                dataKey="upperBand"
+                dataKey={getBandRangeC}
                 stroke="none"
                 fill="rgb(var(--faint) / 0.18)"
-                isAnimationActive={false}
-                connectNulls={false}
-              />
-            )}
-            {bandOn && (
-              <Area
-                type="linear"
-                dataKey="lowerBand"
-                stroke="none"
-                fill="rgb(var(--elev))"
                 isAnimationActive={false}
                 connectNulls={false}
               />

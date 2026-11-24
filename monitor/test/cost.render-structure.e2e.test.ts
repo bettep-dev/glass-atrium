@@ -18,8 +18,11 @@ import fastifyStatic from "@fastify/static";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
+import { buildScreenSandbox } from "./client-sandbox.js";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
+const COST_SRC = resolve(PUBLIC_ROOT, "src", "screens", "cost.jsx");
 
 // The screen's own tier order, as the target composition states it: the Spend stat card, then the
 // three decision cards, then the three instrumentation status cards.
@@ -72,6 +75,19 @@ function getDayKey(index: number): string {
   return new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10);
 }
 
+// the cost-timeseries payload's points for a run of daily costs
+function getTrendRows(trendCosts: readonly number[]): Array<Record<string, number | string>> {
+  return trendCosts.map((cost, i) => ({
+    date: getDayKey(i),
+    cost_usd: cost,
+    session_count: 3,
+    input_tokens: 1000,
+    output_tokens: 500,
+    cache_read_tokens: 4000,
+    cache_creation_tokens: 800,
+  }));
+}
+
 interface RenderContext {
   app: FastifyInstance;
   browser: Browser;
@@ -91,15 +107,7 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     });
   }
 
-  const trendRows = fixture.trendCosts.map((cost, i) => ({
-    date: getDayKey(i),
-    cost_usd: cost,
-    session_count: 3,
-    input_tokens: 1000,
-    output_tokens: 500,
-    cache_read_tokens: 4000,
-    cache_creation_tokens: 800,
-  }));
+  const trendRows = getTrendRows(fixture.trendCosts);
 
   app.get("/api/cost/kpi", async () => fixture.kpi);
   app.get<{ Querystring: { prior_window?: string } }>("/api/dashboard/cost-timeseries", async (request) => ({
@@ -127,13 +135,13 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     })),
   }));
   app.get("/api/cost/cache-hit", async () => ({
-    // Alternating days reach a whole 100% → the y-axis carries its widest label.
-    rows: trendRows.map((r, i) => ({
-      event_date: r.date,
-      cache_hit_rate: i % 2 === 0 ? 1 : 0.9,
-      total_cache_read: r.cache_read_tokens,
-      total_input: r.input_tokens,
-    })),
+    // Alternating days reach a whole 100% → the y-axis carries its widest label; each rate is its own day's read share,
+    // so the pooled figure is the series' weighted mean.
+    rows: trendRows.map((r, i) => {
+      const read = 9000;
+      const input = i % 2 === 0 ? 0 : 1000;
+      return { event_date: r.date, cache_hit_rate: read / (read + input), total_cache_read: read, total_input: input };
+    }),
   }));
   app.get("/api/cost/session-distribution", async () => ({
     // A month holds hundreds of sessions → the table always shows its full top rows plus Other.
@@ -425,6 +433,41 @@ describe("calm fixture — nothing is running hot", () => {
         ).length,
     );
     assert.equal(strayRoots, 0, "every chart lives in a card");
+  });
+
+  test("the normal range band's bottom edge sits on each banded day's lower bound", async () => {
+    const { computeAnomalyRows } = await buildScreenSandbox<{
+      computeAnomalyRows: (points: unknown[], window: number, sigma: number) => Array<{ lowerBand: number | null }>;
+    }>(COST_SRC);
+    // the screen's rolling window and σ (cost.jsx → ROLLING_WINDOW, ANOMALY_SIGMA)
+    const lowerBands = computeAnomalyRows(getTrendRows(CALM_TREND_COSTS), 7, 2)
+      .map((row) => row.lowerBand).filter((value): value is number => value !== null);
+    const toggle = ctx.page.getByRole("button", { name: "Normal range" });
+    await toggle.click();
+    try {
+      await ctx.page.waitForSelector("#cost-region-trend .recharts-area-area");
+      const drawn = await ctx.page.evaluate(() => {
+        const region = document.querySelector("#cost-region-trend")!;
+        const ticks = Array.from(region.querySelectorAll(".recharts-yAxis .recharts-cartesian-axis-tick-value")).map((tick) => ({
+          value: Number((tick.textContent || "").replace(/[$,]/g, "")),
+          y: Number(tick.getAttribute("y")),
+        }));
+        const paths = Array.from(region.querySelectorAll(".recharts-area-area")).map((path) => path.getAttribute("d") || "");
+        return { ticks, paths };
+      });
+      assert.equal(drawn.paths.length, 1, "one band area — no fill from $0 and no surface mask");
+      // the two lowest ticks set the scale — the top label is nudged inside the plot, off its value's y
+      const [low, high] = [drawn.ticks[0]!, drawn.ticks[1]!];
+      const toY = (value: number): number => low.y + ((value - low.value) * (high.y - low.y)) / (high.value - low.value);
+      const coords = (drawn.paths[0]!.match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/g) ?? []).map(Number);
+      const points = Array.from({ length: coords.length / 2 }, (_, i) => coords[i * 2 + 1]!);
+      // a range area runs its top edge forward, then its bottom edge back → the second half, reversed
+      const bottomEdge = points.slice(points.length / 2).reverse();
+      assert.equal(bottomEdge.length, lowerBands.length, "only a day with a lower bound draws band");
+      bottomEdge.forEach((y, i) => assert.ok(Math.abs(y - toY(lowerBands[i]!)) <= 1, `day ${i}: edge at ${y}, bound at ${toY(lowerBands[i]!)}`));
+    } finally {
+      await toggle.click();
+    }
   });
 
   test("each ranged stat names its window in its label", async () => {
