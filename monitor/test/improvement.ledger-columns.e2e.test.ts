@@ -314,27 +314,6 @@ test(`held table body cells set their text at the --fs-control step at ${SIDE_BY
   for (const size of reading.sizes) assert.equal(size, reading.step, "a held cell sits at the house table's body step");
 });
 
-test(`each awaiting suggestion's ring sits inside the list's scroll box at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
-  const awaiting = [1, 2].map((id) => ({ id, status: "pending", approval_tier: "safety", pattern_label: `Awaiting suggestion ${id}`, rationale: "r", cycle_date: "2026-09-28" }));
-  const routes = { "/api/improvement": { proposals: [], actionable_proposals: awaiting } };
-  const insets = await getPageReading(routes, ".i-await-body > *", () => {
-    const box = document.querySelector<HTMLElement>(".i-await-body")!;
-    const edge = box.getBoundingClientRect();
-    return [...box.children].map((card) => {
-      const rect = card.getBoundingClientRect();
-      // the ring is an outside box-shadow → its spread is the room the card needs on every side
-      const ring = parseFloat(getComputedStyle(card).boxShadow.match(/(-?[\d.]+)px\s*$/)?.[1] ?? "0");
-      return { ring, room: Math.min(rect.left - edge.left, edge.right - rect.right, rect.top - edge.top) };
-    });
-  });
-
-  assert.equal(insets.length, 2, "every awaiting suggestion renders");
-  for (const inset of insets) {
-    assert.ok(inset.ring > 0, "an awaiting card draws its ring");
-    assert.ok(inset.room >= inset.ring - 0.01, `the ring needs ${inset.ring}px but the card sits ${inset.room}px from the scroll edge`);
-  }
-});
-
 test(`a held cause's name opens its rows under it, inside its table row, at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
   const learningLog = getLearningLog(1, 0, 2);
   learningLog.loop_suppression_state.parked_patterns = [
@@ -389,4 +368,46 @@ test(`held cause names and their opened rows start on one column in both groups 
   assert.equal(reading.names.length, 2, "one cause in each group");
   assert.ok(Math.abs(reading.names[0] - reading.names[1]) <= EDGE_TOLERANCE_PX, `names start at ${reading.names.join(" and ")}`);
   assert.ok(Math.abs(reading.listStart - reading.names[1]) <= EDGE_TOLERANCE_PX, `the opened rows start at ${reading.listStart}, the name at ${reading.names[1]}`);
+});
+
+// Live is the nested house table: each title a group row on its column's start edge, each row opening its drawer by click or by Enter
+test(`a live row opens its pattern drawer by click and by Enter, under a title row on its column's start, at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
+  const app = Fastify({ logger: false });
+  await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+  app.get("/api/improvement/learning-log", async () => getLearningLog(2, 0, 1));
+  app.get("/api/*", async () => ({ rows: [] }));
+  const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+  const browser = await chromium.launch({ headless: true });
+
+  try {
+    const page = await browser.newPage({ viewport: { width: SIDE_BY_SIDE_WIDTH, height: 900 } });
+    await page.goto(`${serverUrl}/#improvement`, { waitUntil: "load" });
+    const rows = page.locator("#improvement-pattern-ledger tbody tr[data-roving-row]");
+    await rows.first().waitFor({ timeout: 30_000 });
+    await page.evaluate(() => document.fonts.ready);
+    const titleInsets = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>("#improvement-pattern-ledger tbody th[role='heading']")]
+        .filter((cell) => cell.closest("table")?.querySelector("tr[data-roving-row]"))
+        .map((cell) => cell.getBoundingClientRect().left + parseFloat(getComputedStyle(cell).paddingLeft) - cell.closest(".split-col")!.getBoundingClientRect().left),
+    );
+    const drawer = page.locator(".detail-overlay");
+
+    await rows.nth(0).click();
+    await drawer.waitFor({ timeout: 5_000 });
+    const clicked = await drawer.textContent();
+    await page.getByRole("button", { name: "Close details" }).click();
+    await drawer.waitFor({ state: "detached", timeout: 5_000 });
+    await rows.nth(1).focus();
+    await page.keyboard.press("Enter");
+    await drawer.waitFor({ timeout: 5_000 });
+    const entered = await drawer.textContent();
+
+    assert.equal(titleInsets.length, 2, "each live title is its own group row");
+    for (const inset of titleInsets) assert.ok(Math.abs(inset) <= EDGE_TOLERANCE_PX, `a live title starts ${inset}px off its column's start`);
+    assert.match(clicked ?? "", /live signature 1\b/i, "a click opens the clicked row's pattern");
+    assert.match(entered ?? "", /live signature 2\b/i, "Enter opens the focused row's pattern");
+  } finally {
+    await browser.close();
+    await app.close();
+  }
 });

@@ -118,41 +118,58 @@ test("a ledger row names its agent once, never as a label suffix", () => {
   assert.ok(!text.includes("|"), text);
 });
 
+// a live row renders inside the nested ledger table → its cells take the table view
+const LIVE_VIEW = { isStacked: false, columnCount: 4 };
+
+function getCandidateRow(pattern: Record<string, unknown>, maxFreq: number): unknown {
+  return sandbox.CandidateRowI({ view: LIVE_VIEW, rank: 1, pattern, maxFreq, focusProps: {}, onClick: () => {} });
+}
+
 test("a live candidate row names its agent once, never as a label suffix", () => {
   const pattern = { id: 1, pattern_signature: SIGNATURE, agent: AGENT, frequency: 3, status: "identified" };
-  const text = visibleText(sandbox.CandidateRowI({ rank: 1, pattern, maxFreq: 3, onClick: () => {} }));
+  const text = visibleText(getCandidateRow(pattern, 3));
   assert.equal(occurrences(text, AGENT), 1, text);
   assert.ok(!text.includes("|"), text);
 });
 
-// the status glyph stands with no word beside it → it takes the alarm glyph size, the size that clears 3:1
-describe("a live candidate row draws its lone status glyph as the shared tone mark", () => {
+// every live row is Spotted by default → a row prints its status only when it differs, as a dim word with no mark
+describe("a live candidate row states its status in words only when it is not Spotted", () => {
   const rows = [
-    { name: "a spotted pattern", status: "identified", tone: "info" },
-    { name: "a proposed pattern", status: "proposed", tone: "warn" },
+    { name: "a spotted pattern prints no status", status: "identified", word: null },
+    { name: "a proposed pattern prints its word", status: "proposed", word: "Proposed" },
+    { name: "an applied pattern prints its word", status: "applied", word: "Applied" },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const pattern = { id: 1, pattern_signature: SIGNATURE, agent: AGENT, frequency: 3, status: row.status };
-      const tree = sandbox.CandidateRowI({ rank: 1, pattern, maxFreq: 3, onClick: () => {} });
-      const marks = findAll(tree, (el) => el.type === sandbox.window.UI.ToneGlyph);
+      const tree = getCandidateRow(pattern, 3);
+      const words = findRendered(tree, (el) => ["Spotted", "Proposed", "Applied"].includes(visibleText(el).trim()) && el.type === "span");
+      const marks = findRendered(tree, (el) => el.type === sandbox.window.UI.ToneGlyph || el.type === sandbox.window.UI.StatusDot);
 
-      assert.equal(marks.length, 1);
-      assert.equal(marks[0].props.tone, row.tone);
+      assert.deepEqual(marks, [], "no status mark on a live row");
+      assert.deepEqual(words.map((el) => visibleText(el).trim()), row.word ? [row.word] : []);
+      for (const word of words) assert.match(classOf(word), /\btext-dim\b/);
     });
   }
 });
 
-test("live rows sharing a title print it once, each row led by its agent", () => {
+// the shared Table with each title as its group row → the title prints once, each row under it led by its agent
+function getLiveBodyRows(rows: unknown[], maxFreq: number): unknown {
+  return findRendered(sandbox.LedgerLiveSectionI({ rows, maxFreq, onRowClick: () => {} }), (el) => el.type === "tbody");
+}
+
+test("live rows sharing a title print it once as their group row, each row led by its agent", () => {
   const other = "glass-atrium-dev-react";
   const rows = [
     { id: 1, pattern_signature: `failure rate|${AGENT}`, agent: AGENT, frequency: 150, status: "identified" },
     { id: 2, pattern_signature: `failure rate|${other}`, agent: other, frequency: 3, status: "identified" },
   ];
-  const tree = sandbox.LedgerLiveSectionI({ rows, maxFreq: 150, onRowClick: () => {} });
-  assert.equal(occurrences(visibleText(tree), "Failure rate"), 1, visibleText(tree));
+  const body = getLiveBodyRows(rows, 150);
+  const groupRows = findRendered(body, (el) => el.type === sandbox.window.UI.TableCell && el.props.kind === "group-header");
+  assert.deepEqual(groupRows.map((el) => visibleText(el)), ["Failure rate"]);
+  assert.equal(occurrences(visibleText(body), "Failure rate"), 1, visibleText(body));
 
-  const rowEls = findAll(tree, (el) => el.type === sandbox.CandidateRowI);
+  const rowEls = findRendered(body, (el) => el.type === sandbox.CandidateRowI);
   assert.equal(rowEls.length, 2);
   for (const rowEl of rowEls) {
     const row = expand(rowEl);
@@ -162,14 +179,15 @@ test("live rows sharing a title print it once, each row led by its agent", () =>
   }
 });
 
-test("×N is drawn as a bar scaled to the ledger's largest count", () => {
+test("×N is drawn as a bar scaled to the ledger's largest count, on the one data tone", () => {
   for (const freq of [150, 3]) {
     const pattern = { id: 1, pattern_signature: SIGNATURE, agent: AGENT, frequency: freq, status: "identified" };
-    const row = sandbox.CandidateRowI({ rank: 1, pattern, maxFreq: 150, onClick: () => {} });
+    const row = getCandidateRow(pattern, 150);
     const bars = findAll(row, (el) => el.props.max !== undefined);
     assert.equal(bars.length, 1, `×${freq}: one bar per row`);
     assert.equal(bars[0].props.value, freq);
     assert.equal(bars[0].props.max, 150);
+    assert.equal(bars[0].props.tone, "data", `×${freq}: the bar's share of the top count is no severity`);
     assert.match(visibleText(row), new RegExp(`×\\s*${freq}\\b`), "the count stays printed beside its bar");
   }
 });
@@ -411,7 +429,7 @@ const BOARD_LANE_ROWS = [
   { name: "rejected", column: { key: "rejected", label: "Rejected", symbol: "✕", variant: "compact" }, total: 29, more: 21, noun: "closed" },
 ];
 
-describe("each board lane shows eight rows and pins a show-all foot below its list", () => {
+describe("each board lane shows eight rows and a Show N more button for the rest", () => {
   for (const row of BOARD_LANE_ROWS) {
     test(row.name, () => {
       const rows = Array.from({ length: row.total }, (_, i) => ({
@@ -422,14 +440,12 @@ describe("each board lane shows eight rows and pins a show-all foot below its li
       }));
       const tree = sandbox.KanbanColumnI({ column: row.column, rows, onRowClick: () => {} });
       const shown = findRendered(tree, (el) => el.type === sandbox.AppliedHistoryRowI || el.type === sandbox.CompactProposalCardI);
-      const [list] = findAll(tree, (el) => /\boverflow-y-auto\b/.test(classOf(el)));
-      const [foot] = findRendered(tree, (el) => el.type === "button" && /\bi-more-btn\b/.test(classOf(el)));
+      const [foot] = findRendered(tree, (el) => el.type === sandbox.window.UI.QuietButton);
 
       assert.equal(shown.length, 8, `${row.name}: ${shown.length} rows shown`);
-      assert.ok(foot, `${row.name}: no show-all foot`);
-      assert.match(visibleText(foot), new RegExp(`\\b${row.more}\\s+more\\b`));
-      assert.match(String(foot.props["aria-label"]), new RegExp(`\\b${row.noun} suggestions\\b`));
-      assert.ok(!findRendered(list, (el) => el === foot).length, "the foot pins below the list instead of scrolling with it");
+      assert.ok(foot, `${row.name}: no show-more button`);
+      assert.equal(visibleText(foot).trim(), `Show ${row.more} more`);
+      assert.equal(String(foot.props["aria-label"]), `Show ${row.more} more ${row.noun} suggestions`);
     });
   }
 });
@@ -574,11 +590,12 @@ test("ledger rows set their label at the body size, leaving the meta size to the
   assert.ok(!machineTexts(item).includes("2026-09-10"), "a date is set in sans");
 });
 
-test("a live candidate group heads its rows at the body size", () => {
-  const tree = sandbox.LedgerLiveSectionI({ rows: [{ id: 1, pattern_signature: SIGNATURE, agent: AGENT, frequency: 2 }], maxFreq: 2, onRowClick: () => {} });
-  const [head] = findAll(tree, (el) => typeof el.props.title === "string" && el.props.title.length > 0 && el.type === "div");
+test("a live candidate title heads its rows as the table's group row, its full title kept on hover", () => {
+  const body = getLiveBodyRows([{ id: 1, pattern_signature: SIGNATURE, agent: AGENT, frequency: 2 }], 2);
+  const [head] = findRendered(body, (el) => el.type === sandbox.window.UI.TableCell && el.props.kind === "group-header");
 
-  assert.match(classOf(head), /\bfs-body\b/);
+  assert.ok(head, "the title is a group-header cell");
+  assert.equal(head.props.title, "Size est overrun concentration");
 });
 
 test("a suggestion board row sets its title at the body size, leaving ids and dates at the meta size", () => {
@@ -625,6 +642,12 @@ test("the drawer names the approval tier in words, never echoing the raw tier ke
   assert.ok(!text.includes("auto (auto)"), text);
 });
 
+// the drawer's fields, each drawn through the shared DetailField → its dt / dd pair
+function getDrawerFacts(tree: unknown): unknown[] {
+  const fields = findAll(tree, (el) => el.type === sandbox.window.UI.DetailField);
+  return fields.map((field) => (field.type as (props: unknown) => unknown)(field.props));
+}
+
 describe("the drawer prints each field in words, never the stored machine key", () => {
   const row = {
     id: 42,
@@ -637,9 +660,9 @@ describe("the drawer prints each field in words, never the stored machine key", 
     cost_guard_state: "warn",
     reviewed_at: "2026-09-10T05:20:07Z",
   };
-  const tree = sandbox.DetailBodyI(sandbox.buildDetailPropsI(row));
-  const terms = findAll(tree, (el) => el.type === "dt");
-  const values = findAll(tree, (el) => el.type === "dd");
+  const facts = getDrawerFacts(sandbox.DetailBodyI(sandbox.buildDetailPropsI(row)));
+  const terms = findAll(facts, (el) => el.type === "dt");
+  const values = findAll(facts, (el) => el.type === "dd");
   const valueOf = (label: string) => values[terms.findIndex((el) => visibleText(el) === label)];
   const rows = [
     { name: "status", label: "Status", printed: "Rejected", mono: false },
@@ -664,9 +687,9 @@ describe("the drawer prints each field in words, never the stored machine key", 
 // a date is never mono: the face prints the short form, the full stamp rides the hover title
 describe("the pattern drawer prints its dates in sans, the full stamp on hover only", () => {
   const row = { kind: "pattern", id: 7, agent: AGENT, discovered_date: "2026-11-22", last_updated: "2026-11-22T09:30:00.123Z" };
-  const tree = sandbox.DetailBodyI(sandbox.buildDetailPropsI(row));
-  const terms = findAll(tree, (el) => el.type === "dt");
-  const values = findAll(tree, (el) => el.type === "dd");
+  const facts = getDrawerFacts(sandbox.DetailBodyI(sandbox.buildDetailPropsI(row)));
+  const terms = findAll(facts, (el) => el.type === "dt");
+  const values = findAll(facts, (el) => el.type === "dd");
   const valueOf = (label: string) => values[terms.findIndex((el) => visibleText(el) === label)];
   const rows = [
     { name: "first-seen day", label: "First seen", printed: "2026-11-22", title: undefined },

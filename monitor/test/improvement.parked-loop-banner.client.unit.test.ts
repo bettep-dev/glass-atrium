@@ -41,11 +41,7 @@ interface BannerSandbox {
   window: { UI: Record<string, unknown> };
   ParkedLoopBannerI: (props: { applyCap: unknown }) => RecordedElement | null;
   AlarmLaneI: (props: { applyCap: unknown }) => RecordedElement | null;
-  LedgerFooterI: (props: {
-    total: number;
-    declined: number;
-    suppression: unknown;
-  }) => RecordedElement | null;
+  LedgerFooterI: (props: { total: number }) => RecordedElement | null;
   BucketRowI: (props: { state: unknown; buckets: unknown }) => RecordedElement | null;
   CycleDecompositionRowI: (props: { stats: unknown }) => RecordedElement | null;
   TrendCardI: (props: { state: unknown; aggregate: unknown }) => RecordedElement | null;
@@ -244,12 +240,8 @@ function tintedTextNodes(tree: unknown): string[] {
     .map((el) => String(el.props.className));
 }
 
-test("the ledger footer reports its worst figures with no hue on text", () => {
-  const footer = sandbox.LedgerFooterI({
-    total: 40,
-    declined: 9,
-    suppression: { pending_total: 12, pending_unpromptable: 7, off_registry_parked: 3 },
-  });
+test("the ledger footer reports its pattern count with no hue on text", () => {
+  const footer = sandbox.LedgerFooterI({ total: 40 });
   assert.deepEqual(
     tintedTextNodes(footer),
     [],
@@ -358,8 +350,10 @@ test("every held row renders under exactly one cause group", () => {
         : [];
   // the section hands its rows to the held table, which splits them per cause row
   const table = walk(section).find((el) => el.type === (sandbox as unknown as Record<string, unknown>).HeldCauseTableI)!;
-  const render = table.type as (props: Record<string, unknown>) => unknown;
-  const groups = walk(render(table.props)).filter((el) => el.props.bucket !== undefined);
+  const render = table.type as (props: Record<string, unknown>) => RecordedElement;
+  // the house Table builds each body's rows for its view → build them for a wide one
+  const bodies = render(table.props).props.bodies as Array<{ rows: (view: unknown) => unknown }>;
+  const groups = walk(Array.from(bodies, (body) => body.rows({ isStacked: false, columnCount: 3 }))).filter((el) => el.props.bucket !== undefined);
   const ids = groups.flatMap((g) => (g.props.rows as { id: number }[]).map((r) => r.id));
   assert.deepEqual(ids, [7], "a rejected row is counted under its cause and again under a second group");
 });
@@ -452,7 +446,7 @@ test("the status band never announces a failure the owning group already announc
   assert.equal(pointers.length, 3, "each stat points at its owning group");
 });
 
-// ----- Board headers, proposal actions and tiles: tone on the glyph, tiles on the sub-card ---
+// ----- Board headers and proposal actions: tone on the glyph ---
 
 type ScreenComponent = (props: Record<string, unknown>) => unknown;
 
@@ -576,46 +570,6 @@ describe("the awaiting count is the board head's warn status, announced live, ne
       assert.equal(statuses.length, 1, "the head draws the shared head Status");
       assert.equal(statuses[0].props.tone, "warn");
       assert.equal(statuses[0].props.children, row.status);
-    });
-  }
-});
-
-test("approve and reject are shared buttons: approve keeps a neutral label, reject is the destructive outline", () => {
-  const tree = screenTree(component("ProposalActionsI")({ row: PROPOSAL, isSafety: false, onAction: () => {}, isPending: false }));
-  const [approve, reject] = tree.filter((el) => el.type === "button");
-  assert.ok(approve && reject, "both actions render");
-  for (const button of [approve, reject]) {
-    assert.match(String(button.props.className), /\bbtn\b.*\bsm\b|\bsm\b.*\bbtn\b/, "an action outside the shared .btn family");
-  }
-  const approveGlyph = screenTree(approve.props.children).find((el) => el.props.s === "✓");
-  assert.match(String(approveGlyph?.props.className ?? ""), /\btext-ok\b/, "the approve glyph carries the ok tone");
-  const style = (reject.props.style ?? {}) as Record<string, unknown>;
-  assert.equal(style.color, "rgb(var(--crit))", "the destructive label is crit");
-  assert.equal(style.borderColor, "rgb(var(--crit))", "the destructive outline is crit");
-  assert.equal(style.background, undefined, "the destructive outline carries no fill");
-});
-
-describe("a ledger tile rests on a shared surface and answers hover", () => {
-  const rows = [
-    {
-      name: "a live candidate row",
-      surface: /\bsub-card\b/,
-      isInteractive: true,
-      render: () =>
-        component("CandidateRowI")({
-          rank: 1,
-          pattern: { frequency: 3, status: "pending", pattern_signature: "size overrun", agent: "glass-atrium-dev-node" },
-          maxFreq: 5,
-          onClick: () => {},
-        }),
-    },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      const root = row.render() as RecordedElement;
-      const className = String(root.props.className ?? "");
-      assert.match(className, row.surface, "a tile drawing its own ring or shadow");
-      assert.equal(/\bi-tile-hover\b/.test(className), row.isInteractive, "hover affordance on a tile that does nothing");
     });
   }
 });

@@ -109,3 +109,16 @@ for (const width of [1280, 1440]) {
   });
 }
 
+
+// peer cards share the row's tracks → a card whose plot is missing still ends its foot on its neighbours' line
+test("the three loop cards set their foot lines on one y at 1440px", async () => {
+  await withLearningPage(1440, getLoopEvents(), async (page) => {
+    await page.waitForSelector(TREND_LABELS, { timeout: 30_000 });
+    const tops = await page.$$eval(
+      ["#improvement-change-summary", "#improvement-trend", "#improvement-learning-memory"].map((card) => `${card} > .card-foot`).join(", "),
+      (feet) => feet.map((foot) => foot.getBoundingClientRect().top),
+    );
+    assert.equal(tops.length, 3, "every loop card pins a foot");
+    for (const top of tops) assert.ok(Math.abs(top - tops[0]) < 0.5, `foot tops ${tops.join(", ")}`);
+  });
+});

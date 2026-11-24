@@ -57,6 +57,7 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   .line-clamp-1, .line-clamp-3 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; }
   .line-clamp-1 { -webkit-line-clamp: 1; } .line-clamp-3 { -webkit-line-clamp: 3; }
   .font-medium { font-weight: 500; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
   .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; } .rounded-md { border-radius: 0.375rem; }`;
 
 const noop = () => undefined;
@@ -74,6 +75,12 @@ const getLane = () =>
     getMarkup("CompactProposalCardI", { row: { id: 43, rationale: LONG, status: "unadjudicated" }, onClick: noop }),
     getMarkup("ProposalCardI", { row: { id: 44, pattern_label: LONG, rationale: LONG, status: "applied" }, onClick: noop }),
   ].join("");
+const AWAITING_CARD = getMarkup("ProposalCardI", {
+  row: { id: 45, pattern_label: LONG, rationale: LONG, status: "pending", approval_tier: "user" },
+  onClick: noop,
+  onAction: noop,
+  pendingActionId: null,
+});
 const HELD_CAUSE = getMarkup("HeldCauseTableI", {
   buckets: [{ cause: "missing-approval", label: "Missing approval", count: 2, agents: 1, hint: "Approve the pending row to let it through." }],
   rows: [],
@@ -105,6 +112,7 @@ const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body
     <div id="view-instrumentation">${getToggle("instrumentation")}</div>
   </div>
   ${LANE_WIDTHS.map((w) => `<div id="lane-${w}" style="width: ${w}px; padding: 0; display: flex; flex-direction: column; gap: 8px;">${getLane()}</div>`).join("")}
+  <div id="awaiting" style="width: 600px; padding: 24px;">${AWAITING_CARD}</div>
   <div id="held" style="width: 420px; padding: 24px;">${HELD_CAUSE}</div>
   <div id="corpus" style="width: 560px; padding: 24px;">${CORPUS_GROWTH}</div>
   <div id="learning-memory" style="width: 560px; padding: 24px;">${LEARNING_MEMORY}</div>
@@ -172,8 +180,60 @@ describe("a suggestion board row sits on the 32 control tier and keeps it in eve
 describe("a proposal card keeps its clamped text under hover and focus", () => {
   for (const width of LANE_WIDTHS) {
     test(`hover, focus-visible and active keep the card's box at ${width} wide`, () =>
-      assertBoxHeldAcrossStates(`#lane-${width} > .sub-card > button.i-row-card`));
+      assertBoxHeldAcrossStates(`#lane-${width} > div > button.i-row-card`));
   }
+});
+
+describe("an awaiting suggestion's actions are a word-only button pair at its row end", () => {
+  const readActions = () =>
+    page.$eval("#awaiting", (root) => {
+      const card = root.firstElementChild as HTMLElement;
+      const buttons = [...card.querySelectorAll<HTMLButtonElement>("button.btn")];
+      const actionRow = buttons[0].closest("#awaiting > div > div") as HTMLElement;
+      const call = [...actionRow.children].find((el) => el.textContent?.includes("Your call")) as HTMLElement;
+      return {
+        cardBox: card.getBoundingClientRect().toJSON() as DOMRect,
+        callLeft: call.getBoundingClientRect().left,
+        buttons: buttons.map((button) => {
+          const words = document.createRange();
+          words.selectNodeContents(button);
+          const style = getComputedStyle(button);
+          const frame = ["paddingLeft", "paddingRight", "borderLeftWidth", "borderRightWidth"]
+            .reduce((sum, key) => sum + parseFloat(style[key as keyof CSSStyleDeclaration] as string), 0);
+          const box = button.getBoundingClientRect();
+          return {
+            text: button.textContent?.trim() ?? "",
+            glyphs: button.querySelectorAll("svg").length,
+            left: box.left, right: box.right, width: box.width,
+            wordsWidth: words.getBoundingClientRect().width + frame,
+            color: style.color, borderColor: style.borderTopColor,
+          };
+        }),
+      };
+    });
+
+  test("Reject comes before Approve, each reading its word alone", async () => {
+    const { buttons } = await readActions();
+    assert.deepEqual(buttons.map((b) => b.text), ["Reject", "Approve"]);
+    assert.deepEqual(buttons.map((b) => b.glyphs), [0, 0], "no glyph inside either button");
+    assert.ok(buttons[0].right < buttons[1].left, "Reject sits left of Approve");
+  });
+
+  test("each button is as wide as its word, the pair ending on the card's end edge", async () => {
+    const { cardBox, buttons } = await readActions();
+    for (const b of buttons) assert.ok(Math.abs(b.width - b.wordsWidth) < 1, `${b.text} ${b.width} wide for ${b.wordsWidth} of word and frame`);
+    assert.ok(Math.abs(buttons[1].right - cardBox.right) < 0.5, `pair ends at ${buttons[1].right}, card at ${cardBox.right}`);
+  });
+
+  test("Your call starts the action row on the card's start edge", async () => {
+    const { cardBox, callLeft } = await readActions();
+    assert.ok(Math.abs(callLeft - cardBox.left) < 0.5, `Your call at ${callLeft}, card at ${cardBox.left}`);
+  });
+
+  test("Reject and Approve share one ink and one edge", async () => {
+    const [reject, approve] = (await readActions()).buttons;
+    assert.deepEqual([reject.color, reject.borderColor], [approve.color, approve.borderColor]);
+  });
 });
 
 describe("a held cause's name opens its rows on the ledger expander's inline target", () => {

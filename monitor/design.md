@@ -315,7 +315,7 @@
     - 명암비 (`--surface` · `--elev` 위): warn ≥ 10.48 · crit ≥ 6.32 (UI 3:1).
   - **System map 범례 swatch** (`base.css` → `.arch-legend-swatch-warn` / `-crit` / `-count`, the map-legend mark) = 링의 key: 2px tone border + mark (`!` · `!!` · `!!×N`) + `--dim` 라벨 ("Needs attention" · "Critical" · "N parts in this box need attention"). page `--surface` 위 → warn 11.83 · crit 7.14.
   - **Amber badge** (`.pill--warn`, §7.3): `--tint-warn` shell + `⚠` + word, both in ink — the tint alone is 1.43 on `--elev`, so the glyph shape and the word carry it; ink on it ≥ 9.33.
-- **범위 밖 — destructive action** (severity 아닌 action role, 단어 = 버튼 라벨): `.btn.danger` · red-outline 버튼 (`DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`) — §7.4.
+- **범위 밖 — destructive action** (severity 아닌 action role, 단어 = 버튼 라벨): `.btn.danger` · red-outline 버튼 (`DELETE_OUTLINE_STYLE` · `DiscardConfirmMC`) — §7.4.
 - **Badge 3 role** (`ui.jsx` → `Badge`):
   - `status` — 반응이 필요한 lifecycle/health. 선행 glyph 가 tone, 라벨 `--dim`. `glyph` false 면 tone 없음 (라벨도 neutral). tone 있는 `Pill` → glyph 가 있는 status `Badge`.
   - `metadata` — 서술 속성 (agent-only · md · model id): neutral · glyph 없음 · 소문자.
@@ -330,7 +330,7 @@
     - 허용 hit: categorical fill (`cost.jsx` token-type chart fill · category share bar — `--cat-*` only, §4.3).
     - 허용 hit: the bar atoms themselves (`ui.jsx` → `Bar` fill · `BulletBar` fill and zone bands) — the tone arrives from the caller through `BAR_TONE_VAR`, so each caller's tone is read at its call site under §4.3 (a severity tone only over a stated threshold).
   - finder 1b (full-opacity tone border · stroke · box-shadow): `grep -rnE "(border(-[a-z]+)?|stroke|outline|box-shadow) *: *[^;\"]*rgb\(var\(--(crit|warn|ok|info)\)\)|(border[A-Za-z]*|stroke|boxShadow) *: *[\"'][^\"']*rgb\(var\(--(crit|warn|ok|info)\)\)|stroke=\"rgb\(var\(--(crit|warn|ok|info)\)\)\"" public/src public/styles`.
-    - 허용 hit: 위 허용 예외 (폼 오류 · System map 링 · 범례) · destructive action (`.btn.danger` · `DELETE_OUTLINE_STYLE` · `REJECT_OUTLINE_STYLE` · `DiscardConfirmMC`). No chart stroke.
+    - 허용 hit: 위 허용 예외 (폼 오류 · System map 링 · 범례) · destructive action (`.btn.danger` · `DELETE_OUTLINE_STYLE` · `DiscardConfirmMC`). No chart stroke.
   - finder 2 (tone 을 칠한 라벨 · 수치): `grep -rnE "text-(crit|warn|ok|info)\b" public/src` + 보간 class `grep -rnE 'text-\$\{' public/src`.
     - 준수 hit: class 가 glyph · `Icon` · `SymI` 에 붙거나, 그 class 를 담는 tone 표 · 헬퍼 반환값 (`clauded-docs.jsx` → `TONE_TEXT_CLASS_CD` · `architecture.jsx` → `TONE_GLYPH_CLASS`) · 정렬 class (`` `text-${align}` ``) · 차트 막대 `currentColor`.
     - 단어를 감싸는 허용 hit 은 폼 오류 메시지뿐 (`model-config.jsx` field 메시지 · save-banner 요약 · `agents.jsx` 이름 불일치 메시지).
@@ -537,9 +537,9 @@
   - A familiar glyph that is not a commit is an icon button `.btn.ghost.icon`: the glyph alone, 16 in a 32 square, no edge in any state · `--dim` glyph at rest · hover `--tint-select` fill (the sunken fill is 1.05:1 on the card, no shape) + `--ink` glyph · held `--tint-fill`, one step stronger · disabled `--faint` glyph, no fill · an `aria-label` with the act, a `title` with the act and its key (`Back to the list (Esc)`) · the global focus ring. A commit, a re-send (`Try again` on a failed upload), `later`, `Show`, `Show more` and `Show earlier` keep their word.
 - `.danger`: `--crit` fill + `--elev` knock-out text — 6.32.
 - **red-outline destructive** (§4.2 destructive action): `.btn` variant 아닌 screen-local inline style — crit 텍스트 + crit border, fill 없음.
-  - `agents.jsx` → `DELETE_OUTLINE_STYLE` "Delete" · `improvement.jsx` → `REJECT_OUTLINE_STYLE` "Reject": `.btn` 의 `--elev` 위 6.32 · hover `--sunken` 6.62.
+  - `agents.jsx` → `DELETE_OUTLINE_STYLE` "Delete": `.btn` 의 `--elev` 위 6.32 · hover `--sunken` 6.62.
   - `model-config.jsx` → `DiscardConfirmMC` "Discard changes": `background: transparent` → `.detail-foot` `--sunken` 위, rest · hover 6.62.
-- 긍정 action (improvement Approve) = `.btn sm` + ✓ glyph `text-ok`, 라벨 `--ink`.
+- Learning suggestion pair (`improvement.jsx` → `ProposalActionsI`) = content-width `.btn sm` ×2 at the row end, `Reject` then `Approve`, words only, no tone.
 - `.sm`: padding 6px 8px (`--space-1_5` × `--space-2`) · `--fs-meta`. `.icon`: 32×32 정사각, padding 0.
 - disabled: opacity 0.5 · `not-allowed`. pressed (`aria-pressed="true"`) keeps its resting fill: ink edge + ink text + a leading ✓ glyph, no `--selected-fill` inversion. Every toggle (`.btn[aria-pressed]`) holds the ✓ slot at rest, so pressing never widens it; the quiet toggle (`.btn.ghost`) pressed = ink text + ✓, no edge, no fill.
 
@@ -1137,7 +1137,7 @@
   - Only signals that change the next action; source and as-of time sit once in the card sub-line when every stat shares them, else on the stat's context line.
   - A stat that opens a drill-down is a Link-styled value, not a button tile.
   - Detail past a stat's context line goes to the card's one ⓘ, its body `StatNotes({ stats })`: one paragraph per stat with a note, 8 apart (`--gap-list`), its label in ink, then the note — a string, or a node such as `DayTokens` to keep a window token whole. Callers: Wiki Health (`wiki.jsx` → `WikiTileBand`) · Dashboard Status (`dashboard.jsx` → `StatusCard`).
-- **`ToneGlyph({ tone, label, title })`** (`ui.jsx`): the alarm-size tone mark with its screen-reader word — the alarm row's glyph in `.one-line-box.tone-glyph`, a box one text line tall (`1lh`) so the glyph centres on that line; `aria-hidden`, its word (`label`, default the tone's severity word) read first as sr-only text. Callers: a firing stat's value (`dashboard.jsx` → `StatValue` · `cost.jsx` → `SpendStatValueC`) · `HeadStatus` · Learning's reject-rate headline and candidate rows (`improvement.jsx` → `RejectRateHeadlineI` · `CandidateRowI`); only on the value line (`.stat-value`) does it carry a trailing `--gap-label-inline`.
+- **`ToneGlyph({ tone, label, title })`** (`ui.jsx`): the alarm-size tone mark with its screen-reader word — the alarm row's glyph in `.one-line-box.tone-glyph`, a box one text line tall (`1lh`) so the glyph centres on that line; `aria-hidden`, its word (`label`, default the tone's severity word) read first as sr-only text. Callers: a firing stat's value (`dashboard.jsx` → `StatValue` · `cost.jsx` → `SpendStatValueC`) · `HeadStatus` · Learning's held-cause lead slot (`improvement.jsx` → `HeldCauseRowsI`, `tone={null}` where no human is needed); only on the value line (`.stat-value`) does it carry a trailing `--gap-label-inline`.
 - **`HeadStatus({ tone, className, children })`** (`ui.jsx`): status glyph + words at meta size — card-head sub, drawer field, row verdict — `ToneGlyph` then the words, `--fs-meta` dim, `data-role="head-status"`, top-aligned so the glyph never grows its line; `className` sets the glyph-to-words flex gap (default `gap-label-inline`). Consumers: System map `System parts` head and rows (`architecture.jsx` → `PartHealthBlockAR`) · Learning board heads (`improvement.jsx` → `HeadStatusI`, inside its mounted live region).
 - Rules:
   - A display name and its id never sit together: model name only (id → `title` tooltip and drawer).

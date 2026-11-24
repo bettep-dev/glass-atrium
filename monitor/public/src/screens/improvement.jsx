@@ -377,39 +377,20 @@ function ScreenImprovement({ onNav }) {
         /* T3 — 종결 그리드 비대칭(applied 2fr : rejected 1fr). 인라인 gridTemplateColumns 금지
            (미디어쿼리가 인라인 스타일을 못 이김) → 클래스 선언 + <640px 단일 컬럼 붕괴를 같은
            블록에서 직접 출하(base.css L607 은 drawer 전용 → 보드 붕괴 미담당 · 검증 완료). */
-        /* loop output — peer cards share one height · the third card spans the row until three fit (no lone half-width card at 1024) */
-        .i-loop-grid { --i-loop-metric-h:56px; display:grid; grid-template-columns:minmax(0,1fr); gap:12px; align-items:stretch; }
+        /* loop output — column template only (SplitRow owns gap + shared tracks, no three-column preset) · the third card spans the row until three fit */
+        .i-loop-grid { --i-loop-metric-h:56px; }
         @media (min-width:768px) { .i-loop-grid { grid-template-columns:repeat(2, minmax(0,1fr)); } .i-loop-grid > :nth-child(3) { grid-column:1 / -1; } }
         @media (min-width:1280px) { .i-loop-grid { grid-template-columns:repeat(3, minmax(0,1fr)); } .i-loop-grid > :nth-child(3) { grid-column:auto; } }
-        /* one loop-card anatomy — metric and visual slots start at the same offsets in all three cards */
-        /* subgrid rows → a metric that wraps in one card moves the visual slot of all three together */
-        .i-loop-grid > .card { display:grid; grid-row:span 4; grid-template-rows:subgrid; row-gap:0; }
-        .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; padding:8px var(--card-pad) 0; }
-        .i-loop-visual { flex:none; padding:8px var(--card-pad) 0; overflow:hidden; }
-        .i-loop-visual:empty { padding:0; }
-        /* ledger sections share the card's one inline edge · the body opens one step under the head rule */
-        .i-ledger-body { padding-block:var(--space-1) var(--space-3); }
-        .i-ledger-sec { padding:var(--space-2) var(--card-pad) 0; }
-        /* held rows are what a human acts on → the house table's body step, never the card's smallest text */
-        .i-held-table { font-size:var(--fs-control); }
+        .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; }
+        .i-loop-visual { flex:none; overflow:hidden; }
         /* plain ledger rows — one pattern | agent | date grid, each row a subgrid, so agent and date line up down the list */
         .i-plain-rows { display:grid; grid-template-columns:minmax(0,1fr) auto auto; }
         .i-plain-rows > li { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; }
-        .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
+        .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
-        /* 1px inset → the sub-card ring (an outside box-shadow) draws inside the scroll box, never clipped by it */
-        .i-await-body { display:flex; flex-direction:column; max-height:40vh; overflow-y:auto; padding:1px; }
         /* T6 — APPLIED/REJECTED 종결-컬럼 헤더 공용 밴드. 두 헤더 동일 min-height + 세로중앙 정렬 →
            헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). */
         .i-col-header { min-height:26px; display:flex; align-items:center; }
-        /* T5 — REJECTED 컴팩트 행(단일행 · rationale 숨김 · 중립 chrome). --crit 는 ✕ 심볼에만. */
-        .i-compact-row { display:flex; align-items:center; gap:6px; padding:var(--space-1_5) var(--space-2); }
-        /* T5/T8 — '＋N more' 실제 포커스 가능 버튼(요약 토글). 중립 chrome. */
-        .i-more-btn { display:flex; flex-shrink:0; align-items:center; justify-content:center; gap:4px; width:100%;
-          padding:6px 8px; border:1px dashed rgb(var(--line)); border-radius:8px; background:transparent;
-          color:rgb(var(--faint)); font-size:var(--fs-meta); cursor:pointer;
-          white-space:normal; text-align:center; min-height:32px; overflow:visible; }
-        .i-more-btn:hover { color:rgb(var(--dim)); border-color:rgb(var(--faint) / 0.5); }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -725,7 +706,7 @@ function ViewTabsI({ view, onChange }) {
 		{ key: "operator", label: "Operator" },
 		{ key: "instrumentation", label: "Instrumentation" },
 	];
-	return <window.UI.Tabs id={VIEW_TABS_ID_I} label="Learning view" tabs={tabs} value={view} onChange={onChange} className="mt-3 mb-section" />;
+	return <window.UI.Tabs id={VIEW_TABS_ID_I} label="Learning view" tabs={tabs} value={view} onChange={onChange} className="mt-header mb-section" />;
 }
 
 // ----- Rolling trend card (T-IMP-4) ------------------------------------------
@@ -797,7 +778,6 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 						points={points}
 					/>
 				),
-				isPlotted: true,
 				foot: `${formatIntI(aggregate.verifiedTotal)} verified and ${formatIntI(aggregate.rejectTotal)} rejected across all ${formatIntI(series.length)} cycle days`,
 			})}
 		</div>
@@ -836,7 +816,7 @@ function LoopOutputGroupI({
 }) {
 	const { CardHead, Icon, getRegionView } = window.UI;
 	return (
-		<section className="space-y-3 i-loop-output" aria-label="Loop output" id={ANCHOR_ID_I.loopOutput}>
+		<section className="space-y-group-below i-loop-output" aria-label="Loop output" id={ANCHOR_ID_I.loopOutput}>
 			<CardHead
 				title="Loop output"
 				right={
@@ -867,7 +847,7 @@ function LoopOutputGroupI({
 			) : null}
 			{/* 세 카드는 한 질문의 세 답이므로 한 행에 나란히 — 쌓으면 묶음 헤더의 기준이
           첫 카드에만 걸린 것으로 읽힌다(와이어프레임 Tier 4 = 3-col). */}
-			<div className="i-loop-grid">
+			<window.UI.SplitRow layout="aligned" className="i-loop-grid">
 				<ChangeSummaryCardI
 					state={loopEventsState}
 					aggregate={loopAggregate}
@@ -876,7 +856,7 @@ function LoopOutputGroupI({
 				/>
 				<TrendCardI state={loopEventsState} aggregate={loopAggregate} failures={failures} onRetry={onRetry} />
 				<BucketRowI state={listState} buckets={buckets} failures={failures} onRetry={onRetry} />
-			</div>
+			</window.UI.SplitRow>
 		</section>
 	);
 }
@@ -898,7 +878,7 @@ function CycleDecompositionRowI({ stats }) {
 				Cycles, 7d
 			</span>
 			{chips.map(([label, count]) => (
-				<span key={label} className="fs-meta inline-flex items-center gap-1.5">
+				<span key={label} className="fs-meta inline-flex items-center gap-label-inline">
 					<span>{label}</span>
 					<Badge role="count">{formatIntI(count)}</Badge>
 				</span>
@@ -927,14 +907,9 @@ function KanbanCardI({
 	const awaitingRows = columnRows.safety || [];
 	const isBoardEmpty = KANBAN_COLUMNS.every((col) => !(columnRows[col.key] || []).length);
 
-	// card max-h 70vh → only the lanes scroll · awaiting list above the applied 2fr / rejected 1fr grid
+	// awaiting list above the applied 2fr / rejected 1fr grid · lanes cap at their slot, no inner scroll
 	return (
-		<section
-			className="card flex flex-col"
-			aria-label="Suggestion board"
-			id={ANCHOR_ID_I.suggestionBoard}
-			style={{ maxHeight: "70vh", overflow: "hidden" }}
-		>
+		<section className="card flex flex-col" aria-label="Suggestion board" id={ANCHOR_ID_I.suggestionBoard}>
 			<div className="flex-shrink-0">
 				<CardHead
 					title="Suggestion board"
@@ -955,13 +930,13 @@ function KanbanCardI({
 					/>
 				</div>
 			) : isLoading ? (
-				<div className="flex flex-col p-3 flex-1 min-h-0">
+				<div className="flex flex-col p-card-pad flex-1 min-h-0">
 					<LoadingPlaceholder label="suggestions" className="flex-1" />
 				</div>
 			) : isBoardEmpty ? (
 				<window.UI.EmptyState message={hasNoCycleI(stats) ? "No suggestions yet" : "No suggestions waiting"} />
 			) : (
-				<div className="flex flex-col gap-3 p-3 flex-1 min-h-0 overflow-hidden">
+				<div className="flex flex-col gap-block p-card-pad">
 					{awaitingRows.length > 0 ? (
 						<AwaitingListI
 							rows={awaitingRows}
@@ -970,7 +945,7 @@ function KanbanCardI({
 							pendingActionId={pendingActionId}
 						/>
 					) : null}
-					<div className="board-terminal-grid flex-1 min-h-0 overflow-hidden">
+					<div className="board-terminal-grid gap-x-block">
 						{TERMINAL_COLUMNS.map((col) => (
 							<KanbanColumnI
 								key={col.key}
@@ -999,10 +974,10 @@ function HeadStatusI({ count, words }) {
 	);
 }
 
-// Awaiting suggestions — the only lane asking for an action, so it leads the board · list scrolls past 40vh
+// Awaiting suggestions — the only lane asking for an action, so it leads the board
 function AwaitingListI({ rows, onRowClick, onAction, pendingActionId }) {
 	return (
-		<div className="i-await-body gap-list flex-shrink-0">
+		<window.UI.Stack gap="block">
 			{rows.map((row) => (
 				<ProposalCardI
 					key={row.id}
@@ -1012,7 +987,7 @@ function AwaitingListI({ rows, onRowClick, onAction, pendingActionId }) {
 					pendingActionId={pendingActionId}
 				/>
 			))}
-		</div>
+		</window.UI.Stack>
 	);
 }
 
@@ -1038,19 +1013,9 @@ function KanbanColumnI({
 		column.key === "applied"
 			? "Approved suggestions move here once the loop applies them."
 			: "Suggestions turned down, or closed without a verdict, show up here.";
-	// 헤더 sticky + --elev 배경 — 카드 본문 톤과 통일 · row scroll 시 헤더 비침 차단.
 	return (
-		<div className="flex flex-col min-h-0 min-w-0 gap-list">
-			<div
-				className="flex flex-col gap-stack flex-shrink-0"
-				style={{
-					position: "sticky",
-					top: 0,
-					zIndex: 1,
-					background: "rgb(var(--elev))",
-					paddingBottom: 4,
-				}}
-			>
+		<div className="flex flex-col min-w-0 gap-label">
+			<div className="flex flex-col gap-stack">
 				{column.key === "applied" ? (
 					<AppliedHeroHeaderI
 						count={rows.length}
@@ -1069,7 +1034,7 @@ function KanbanColumnI({
 					</React.Fragment>
 				)}
 			</div>
-			<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-list">
+			<div className="flex flex-col gap-list">
 				{rows.length === 0 ? (
 					<EmptyState message={emptyMessage} hint={emptyHint} />
 				) : isCompact ? (
@@ -1096,30 +1061,13 @@ function KanbanColumnI({
 	);
 }
 
-// '＋N more' — a real focusable toggle, expanding the lane in place; volume stays a number.
+// Show N more — expands the lane in place; the accessible name adds the lane's noun
 function LaneMoreToggleI({ hiddenCount, isExpanded, noun, onToggle }) {
+	const label = isExpanded ? "Show fewer" : `Show ${formatIntI(hiddenCount)} more`;
 	return (
-		<button
-			type="button"
-			className="i-more-btn"
-			onClick={onToggle}
-			aria-expanded={isExpanded}
-			aria-label={
-				isExpanded
-					? `Show fewer ${noun} suggestions`
-					: `View all ${noun} suggestions (${formatIntI(hiddenCount)} more)`
-			}
-		>
-			{isExpanded ? (
-				<>
-					<SymI s="−" size={13} /> show less
-				</>
-			) : (
-				<>
-					<SymI s="＋" size={13} /> {formatIntI(hiddenCount)} more · view all
-				</>
-			)}
-		</button>
+		<window.UI.QuietButton className="self-start" onClick={onToggle} aria-expanded={isExpanded} aria-label={`${label} ${noun} suggestions`}>
+			{label}
+		</window.UI.QuietButton>
 	);
 }
 
@@ -1155,7 +1103,7 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="i-row-card i-board-row i-tile-hover bg-elev rounded-md w-full min-w-0 text-left px-2 flex items-center gap-label fs-meta"
+			className="i-row-card i-board-row i-tile-hover w-full min-w-0 text-left flex items-center gap-label fs-meta"
 			title={title}
 			aria-label={ariaLabel}
 		>
@@ -1169,7 +1117,7 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 // applied lane header — the rejected head's one-line shape: ok ✓ glyph, dim label, ink count
 function AppliedHeroHeaderI({ count, label, symbol }) {
 	return (
-		<div className="i-col-header gap-1.5 fs-meta whitespace-nowrap min-w-0">
+		<div className="i-col-header gap-label-inline fs-meta whitespace-nowrap min-w-0">
 			<SymI s={symbol} className="text-ok" size={13} />
 			<span className="text-dim">{label}</span>
 			<span className="text-ink tnum">{formatIntI(count)}</span>
@@ -1185,7 +1133,7 @@ function RejectedHeaderI({ rowCount, summary, label, symbol }) {
 	const hasWindow = Number.isFinite(windowDays) && Number.isFinite(windowTotal);
 	const basis = `of the latest ${formatIntI(BOARD_RECENT_LIMIT)}`;
 	return (
-		<div className="i-col-header gap-1.5 fs-meta whitespace-nowrap min-w-0">
+		<div className="i-col-header gap-label-inline fs-meta whitespace-nowrap min-w-0">
 			<SymI s={symbol} className="text-crit" size={13} />
 			<span className="text-dim">{label}</span>
 			<span className="text-ink tnum">{formatIntI(rowCount)}</span>
@@ -1230,7 +1178,7 @@ function RejectBucketSplitI({ summary, trend }) {
 	const hasSpark = Array.isArray(trend) && trend.length >= 2 && trend.some((d) => Number(d.reject) > 0);
 	// the header above counts the lane's rows → the split names its own day window, with its daily trend
 	return (
-		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 fs-meta">
+		<div className="flex flex-wrap items-baseline gap-x-list gap-y-stack fs-meta">
 			{[
 				<span key="basis" className="text-faint">{`By cause, last ${formatIntI(Number(summary.window_days))} days`}</span>,
 				...cells.map(([label, count, hint]) => (
@@ -1400,18 +1348,18 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 	const isSnoozed = status === "snoozed";
 
 	return (
-		<div className="sub-card flush i-tile-hover bg-elev">
+		<div>
 			<button
 				type="button"
 				onClick={onClick}
-				className="i-row-card text-left p-3 w-full block"
+				className="i-row-card i-tile-hover text-left w-full block"
 				aria-label={`View suggestion ${row.id} details`}
 			>
 				{/* 반복 메타를 단일 배지 행으로 통합(USER) — 전부 canonical window.UI.Badge(.pill family)로 렌더.
             순서 [agent][pre-check][NN%] … (ml-auto spacer) … [#id][date]. tone 은 status Badge 의
             내부 Icon(text-{tone})이 운반 · shell 은 항상 neutral(loud green fill 금지 · dual-encode 보존).
             중립 서술 배지(agent·#id·date·snoozed)=metadata role, tone 배지(pre-check·confidence)=status role. */}
-				<div className="flex items-center gap-1.5 whitespace-nowrap overflow-hidden">
+				<div className="flex items-center gap-label-inline whitespace-nowrap overflow-hidden">
 					{row.target_agent && (
 						<Badge
 							role="metadata"
@@ -1456,7 +1404,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 				{/* rationale = 1차 콘텐츠로 승격(USER) — fs-body · text-ink · medium weight · 2~3줄 clamp. 카드면에서 가장 강한 텍스트. 부재 시 graceful 미렌더. */}
 				{row.rationale && (
 					<div
-						className="fs-body text-ink font-medium mt-1.5 line-clamp-3"
+						className="fs-body text-ink font-medium mt-label line-clamp-3"
 						title={String(row.rationale)}
 					>
 						{row.rationale}
@@ -1483,8 +1431,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 	);
 }
 
-// approve / reject row — shared .btn sm: approve = ok ✓ glyph + ink label · reject = destructive crit outline.
-// a safety card adds a "Your call" line (warn ⚠ glyph, dim words).
+// a safety card's "Your call" leads the row · the content-width Reject / Approve pair sits at its end, words only.
 // isPending → both buttons disabled + aria-busy + spinner until the answer lands (no double submit).
 function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 	const stop = (fn) => (e) => {
@@ -1492,57 +1439,37 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 		if (!isPending) fn();
 	};
 	return (
-		<div className="px-3 pb-3">
+		<div className="flex items-center gap-control mt-label">
 			{isSafety && (
-				<div className="fs-meta text-dim mb-1.5 flex items-center gap-label-inline">
+				<span className="fs-meta text-dim flex items-center gap-label-inline">
 					<SymI s="⚠" className="text-warn" size={11} /> Your call
-				</div>
+				</span>
 			)}
-			<div className="flex items-center gap-1.5">
+			<div className="flex items-center gap-control ml-auto">
 				<button
 					type="button"
-					className="btn sm flex-1 justify-center"
-					onClick={stop(() => onAction("approve", row))}
-					disabled={isPending}
-					aria-busy={isPending}
-					aria-label={`Approve suggestion ${row.id} (apply)`}
-				>
-					{isPending ? (
-						<>
-							<SymI s="↻" className="i-act-spin" size={13} /> Approving…
-						</>
-					) : (
-						<>
-							<SymI s="✓" className="text-ok" size={13} /> Approve
-						</>
-					)}
-				</button>
-				<button
-					type="button"
-					className="btn sm flex-1 justify-center"
-					style={REJECT_OUTLINE_STYLE}
+					className="btn sm"
 					onClick={stop(() => onAction("reject", row))}
 					disabled={isPending}
 					aria-busy={isPending}
 					aria-label={`Reject suggestion ${row.id}`}
 				>
-					{isPending ? (
-						<>
-							<SymI s="↻" className="i-act-spin" size={13} /> Rejecting…
-						</>
-					) : (
-						<>
-							<SymI s="✕" size={13} /> Reject
-						</>
-					)}
+					{isPending ? <><SymI s="↻" className="i-act-spin" size={13} /> Rejecting…</> : "Reject"}
+				</button>
+				<button
+					type="button"
+					className="btn sm"
+					onClick={stop(() => onAction("approve", row))}
+					disabled={isPending}
+					aria-busy={isPending}
+					aria-label={`Approve suggestion ${row.id} (apply)`}
+				>
+					{isPending ? <><SymI s="↻" className="i-act-spin" size={13} /> Approving…</> : "Approve"}
 				</button>
 			</div>
 		</div>
 	);
 }
-
-// destructive outline (design.md §7.4) — crit label + crit border, no fill; the agents Delete button's shape
-const REJECT_OUTLINE_STYLE = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))" };
 
 // confidence_observed(NN%) 배지 — empirical posterior (0.0-1.0).
 // canonical status Badge(.pill)로 렌더 — 밴드 tone 은 선행 Icon(TONE_ICON[tone])이 운반, shell 은 neutral.
@@ -1625,7 +1552,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
 				<CardHead title="Learning memory" />
-				<div className="p-3">
+				<div className="p-card-pad">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.learningMemory}
 						source="suggestions"
@@ -1661,7 +1588,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 				title="Learning memory"
 				sub="All time"
 				info={
-					<div className="flex flex-col gap-3 fs-body">
+					<div className="flex flex-col gap-list fs-body">
 						{cards.map(([label, , hint]) => (
 							<p key={label}>
 								<span className="text-ink font-semibold">{label}</span> — {hint}
@@ -1677,7 +1604,6 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 						<span className="fs-meta text-dim">{label}</span>
 					</span>
 				)),
-				visual: null,
 				foot: "All agents",
 			})}
 		</div>
@@ -1755,58 +1681,58 @@ function LedgerHeldSectionI({ suppression }) {
 	const buckets = getSuppressionListI(suppression, "parked");
 	if (buckets.length === 0) return null;
 	return (
-		<div id={ANCHOR_ID_I.heldPatterns} className="i-ledger-sec">
+		<div id={ANCHOR_ID_I.heldPatterns}>
 			<LedgerSectionHeadI label="Held" basis="all time" count={sumCountsI(buckets)} />
 			<HeldCauseTableI buckets={buckets} rows={getSuppressionListI(suppression, "parked_patterns")} />
 		</div>
 	);
 }
 
-// One body per group, led by its sum · the first lead row also heads the Held and Agents columns
+// Cause | Held | Agents ledger, one body per group, each led by its group row and sum
+const HELD_COLUMNS_I = [
+	{ key: "cause", label: "Cause" },
+	{ key: "held", label: "Held", isNumeric: true },
+	{ key: "agents", label: "Agents", isNumeric: true },
+];
+
 function HeldCauseTableI({ buckets, rows }) {
+	const { Table, TableRow, TableCell } = window.UI;
 	const groups = HELD_GROUPS_I.map((group) => ({
 		...group,
 		buckets: buckets.filter((b) => isHumanCauseI(b) === group.isHumanCause),
 	})).filter((group) => group.buckets.length > 0);
-	return (
-		<table className="w-full i-held-table mb-stack">
-			{groups.map((group, i) => (
-				<tbody key={group.label} className="tbl-compact">
-					<tr className={`fs-meta text-dim ${i > 0 ? "border-t border-line/50" : ""}`.trim()}>
-						<th scope="rowgroup" colSpan={i === 0 ? 1 : 3} className="text-left font-medium">
-							{`${group.label} (${formatIntI(sumCountsI(group.buckets))})`}
-						</th>
-						{i === 0 ? (
-							<>
-								<th scope="col" className="text-right font-medium pl-4">Held</th>
-								<th scope="col" className="text-right font-medium pl-4">Agents</th>
-							</>
-						) : null}
-					</tr>
-					{group.buckets.map((b) => (
-						<HeldCauseRowsI
-							key={b.cause}
-							bucket={b}
-							rows={rows.filter((r) => r.cause === b.cause)}
-							isHumanCause={group.isHumanCause}
-						/>
-					))}
-				</tbody>
-			))}
-		</table>
-	);
+	const bodies = groups.map((group) => ({
+		key: group.label,
+		className: "tbl-compact",
+		rows: (view) => [
+			<TableRow key="group" view={view}>
+				<TableCell view={view} kind="group-header">{`${group.label} (${formatIntI(sumCountsI(group.buckets))})`}</TableCell>
+			</TableRow>,
+			...group.buckets.map((b) => (
+				<HeldCauseRowsI
+					key={b.cause}
+					view={view}
+					bucket={b}
+					rows={rows.filter((r) => r.cause === b.cause)}
+					isHumanCause={group.isHumanCause}
+				/>
+			)),
+		],
+	}));
+	return <Table caption="Held causes" isNested columns={HELD_COLUMNS_I} bodies={bodies} className="mb-stack" />;
 }
 
 // One cause: its name opens its rows (the house ledger expander) · its remedy lives in the ledger drawer
-function HeldCauseRowsI({ bucket, rows, isHumanCause }) {
+function HeldCauseRowsI({ view, bucket, rows, isHumanCause }) {
 	const [isOpen, setOpen] = useSI(false);
-	const { DisclosureChevron } = window.UI;
+	const { DisclosureChevron, TableRow, TableCell, ToneGlyph } = window.UI;
 	const listId = `${ANCHOR_ID_I.heldPatterns}-${bucket.cause}`;
 	return (
-		<tr className="border-t border-line/50">
-			<td className="text-left text-ink">
+		<TableRow view={view}>
+			<TableCell view={view} className="text-ink">
 				<span className="inline-flex items-center gap-label-inline">
-					<HeldGlyphSlotI isShown={isHumanCause} />
+					{/* glyph-size slot in every group → every name starts on one column */}
+					<ToneGlyph tone={isHumanCause ? "warn" : null} label="Needs a human" />
 					<button
 						type="button"
 						className="group inline-target gap-label-inline text-left"
@@ -1822,7 +1748,7 @@ function HeldCauseRowsI({ bucket, rows, isHumanCause }) {
 					<div className="flex items-start gap-label-inline">
 						{/* the name's lead track, unseen → the rows start on the name column */}
 						<span className="invisible inline-flex items-center gap-label-inline" aria-hidden="true">
-							<HeldGlyphSlotI isShown={false} />
+							<ToneGlyph tone={null} />
 							<DisclosureChevron isOpen={false} />
 						</span>
 						<div className="min-w-0 flex-1">
@@ -1830,17 +1756,11 @@ function HeldCauseRowsI({ bucket, rows, isHumanCause }) {
 						</div>
 					</div>
 				</div>
-			</td>
-			<td className="text-right align-top pl-4 text-ink tnum">{formatIntI(Number(bucket.count ?? 0))}</td>
-			<td className="text-right align-top pl-4 text-dim tnum">{formatIntI(Number(bucket.agents ?? 0))}</td>
-		</tr>
+			</TableCell>
+			<TableCell view={view} isNumeric className="text-ink tnum">{formatIntI(Number(bucket.count ?? 0))}</TableCell>
+			<TableCell view={view} isNumeric className="text-dim tnum">{formatIntI(Number(bucket.agents ?? 0))}</TableCell>
+		</TableRow>
 	);
-}
-
-// the warn glyph's own box in every group, unseen where the cause needs no human → every name starts on one column
-function HeldGlyphSlotI({ isShown }) {
-	const glyph = <window.UI.ToneGlyph tone="warn" label="Needs a human" />;
-	return isShown ? glyph : <span className="invisible inline-flex" aria-hidden="true">{glyph}</span>;
 }
 
 // 원장 안의 비활성 행 목록 — 클릭 대상이 아니다(활성 후보만 드로어를 연다).
@@ -1848,11 +1768,11 @@ function HeldGlyphSlotI({ isShown }) {
 function LedgerPlainRowsI({ rows }) {
 	if (rows.length === 0) {
 		return (
-			<window.UI.EmptyState className="placeholder--flush-inline" message="Counted, but no row came back within the read limit" />
+			<window.UI.EmptyState message="Counted, but no row came back within the read limit" />
 		);
 	}
 	return (
-		<ul className="mt-1.5 i-plain-rows gap-x-label gap-y-stack">
+		<ul className="mt-stack i-plain-rows gap-x-label gap-y-stack">
 			{rows.map((r) => (
 				<li key={r.id} className="fs-body">
 					<span
@@ -1891,7 +1811,7 @@ function LedgerHeadLineI({ children }) {
 function LedgerInertSectionI({ rows }) {
 	if (rows.length === 0) return null;
 	return (
-		<details className="i-ledger-sec">
+		<details>
 			<summary className="group disclosure select-none">
 				<window.UI.DisclosureChevron />
 				<LedgerSectionHeadI label="Inert" basis="last 7 days" count={rows.length} />
@@ -1905,7 +1825,7 @@ function LedgerInertSectionI({ rows }) {
 // one line per label — row count past one · its agent, or how many · latest first-seen date
 function InertLabelRowsI({ groups }) {
 	return (
-		<ul className="mt-1.5 i-plain-rows gap-x-label gap-y-stack">
+		<ul className="mt-stack i-plain-rows gap-x-label gap-y-stack">
 			{groups.map(({ title, entries }) => {
 				const agents = [...new Set(entries.map(({ pattern }) => pattern.agent))];
 				const latest = entries.map(({ pattern }) => String(pattern.discovered_date ?? "")).sort().at(-1);
@@ -1935,7 +1855,7 @@ function LedgerRecurrenceSectionI({ suppression }) {
 	const windowDays = Number(suppression.per_cycle_window_days ?? 0);
 	const windowCycles = Number(suppression.per_cycle_window_cycles ?? 0);
 	return (
-		<div className="i-ledger-sec">
+		<div>
 			<LedgerSectionHeadI
 				label="Recurrence rates"
 				basis={`last ${formatIntI(windowDays)} days`}
@@ -1950,47 +1870,36 @@ function LedgerRecurrenceSectionI({ suppression }) {
 }
 
 // 재발 행 — 영향 에이전트 + 사이클 커버리지가 앞, 이벤트 수는 뒤(항목 볼륨은 선두 금지).
+const RECURRENCE_COLUMNS_I = [
+	{ key: "cause", label: "Cause" },
+	{ key: "agents", label: "Agents affected", isNumeric: true },
+	{ key: "cycles", label: "Cycle days", isNumeric: true },
+	{ key: "events", label: "Events", isNumeric: true },
+];
+
 function RecurrenceRowsI({ buckets, windowCycles }) {
-	return (
-		<table className="i-recurrence-tbl w-full fs-meta">
-			<thead className="tbl-head">
-				<tr className="text-faint">
-					<th className="text-left font-medium">Cause</th>
-					<th className="text-right font-medium pl-4">Agents affected</th>
-					<th className="text-right font-medium pl-4">Cycle days</th>
-					<th className="text-right font-medium pl-4">Events</th>
-				</tr>
-			</thead>
-			<tbody className="tbl-compact">
-				{buckets.map((b) => (
-					<tr key={b.cause} className="border-t border-line/50">
-						<td className="text-left text-ink" title={b.hint}>
-							{b.label}
-						</td>
-						<td className="text-right pl-4 text-ink tnum">
-							{formatIntI(Number(b.agents ?? 0))}
-						</td>
-						<td className="text-right pl-4 text-ink tnum">
-							{formatIntI(Number(b.cycles ?? 0))} of {formatIntI(windowCycles)}
-						</td>
-						<td className="text-right pl-4 text-dim tnum">
-							{formatIntI(Number(b.count ?? 0))}
-						</td>
-					</tr>
-				))}
-			</tbody>
-		</table>
-	);
+	const { Table, TableRow, TableCell } = window.UI;
+	const rows = (view) => buckets.map((b) => (
+		<TableRow key={b.cause} view={view}>
+			<TableCell view={view} className="text-ink" title={b.hint}>{b.label}</TableCell>
+			<TableCell view={view} isNumeric className="text-ink tnum">{formatIntI(Number(b.agents ?? 0))}</TableCell>
+			<TableCell view={view} isNumeric className="text-ink tnum">
+				{formatIntI(Number(b.cycles ?? 0))} of {formatIntI(windowCycles)}
+			</TableCell>
+			<TableCell view={view} isNumeric className="text-dim tnum">{formatIntI(Number(b.count ?? 0))}</TableCell>
+		</TableRow>
+	));
+	return <Table caption="Recurrence rates" isNested columns={RECURRENCE_COLUMNS_I} bodies={[{ key: "causes", className: "tbl-compact", rows }]} />;
 }
 
-// 원장 푸터 — 전체 기간 수치, 각 구역의 윈도우는 그 구역 헤더가 말한다.
-// rejected = status 가 rejected 인 모든 행 — Held 헤더(전이 사유가 있는 반려 행)보다 넓으므로 자기 이름을 갖는다.
-function LedgerFooterI({ total, rejected }) {
-	return <div className="card-foot">{`${formatIntI(total)} patterns · ${formatIntI(rejected)} rejected · all time`}</div>;
+// 원장 푸터 — 전체 기간 패턴 수, 각 구역의 윈도우는 그 구역 헤더가 말한다.
+function LedgerFooterI({ total }) {
+	return <div className="card-foot">{`${formatIntI(total)} patterns, all time`}</div>;
 }
 
-// "How this is counted" drawer — each recurring cause's remedy and the figures' gates.
-function LedgerNotesI({ suppression }) {
+// "How this is counted" drawer — each recurring cause's remedy, the declined count and the figures' gates.
+// declined = every rejected pattern row — wider than the Held head (rejected rows with a transition cause)
+function LedgerNotesI({ suppression, declined }) {
 	// every cause's remedy, held and recurring, printed once here — the server sentences exceed the face's 12-word bar
 	// keyed by cause and hint → a cause both held and recurring prints each distinct remedy once
 	const causes = new Map(
@@ -2000,12 +1909,16 @@ function LedgerNotesI({ suppression }) {
 	const pendingTotal = Number(suppression?.pending_total ?? 0);
 	const offRegistry = Number(suppression?.off_registry_parked ?? 0);
 	return (
-		<div className="flex flex-col gap-3 fs-body">
+		<div className="flex flex-col gap-list fs-body">
 			{[...causes.entries()].map(([key, b]) => (
 				<p key={key}>
 					<span className="text-ink font-semibold">{b.label}</span> — {b.hint}
 				</p>
 			))}
+			<p>
+				<span className="text-ink font-semibold">Declined</span>
+				{` — ${formatIntI(declined)} ${declined === 1 ? "pattern" : "patterns"}, all time`}
+			</p>
 			{suppression ? (
 				<p>
 					{formatIntI(unpromptable)} of {formatIntI(pendingTotal)} pending rows can never propose —
@@ -2063,17 +1976,12 @@ function DetailDrawerI({ row, onClose }) {
 function DetailBodyI({ fields, sections, preVerify }) {
 	const labelCls = "fs-meta text-dim font-medium";
 	return (
-		<div className="flex flex-col gap-3">
-			<dl className="grid gap-1.5" style={{ gridTemplateColumns: "120px 1fr" }}>
+		<div className="flex flex-col gap-block">
+			<window.UI.Stack gap="list">
 				{fields.filter(([, v]) => window.UI.hasFieldValue(v)).map(([k, v, mono]) => (
-					<React.Fragment key={k}>
-						<dt className={labelCls}>{k}</dt>
-						<dd className="fs-body text-ink break-words">
-							{mono ? <window.UI.MachineString>{String(v)}</window.UI.MachineString> : typeof v === "object" ? v : String(v)}
-						</dd>
-					</React.Fragment>
+					<window.UI.DetailField key={k} label={k} value={typeof v === "object" ? v : String(v)} mono={mono} />
 				))}
-			</dl>
+			</window.UI.Stack>
 			{sections
 				.filter(([, v]) => v)
 				.map(([label, value, mono]) => (
@@ -2096,12 +2004,11 @@ function DetailBodyI({ fields, sections, preVerify }) {
 // Pre-verify drawer 블록 — badge 헤더 + rationale + keyed axis 행 (P10 · 원시 JSON 대체).
 // axis value boolean → Passed/Failed 배지 · 그 외 → 문자열.
 function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
-	const { Badge } = window.UI;
+	const { Badge, Stack } = window.UI;
 	return (
-		<div>
-			<div className={`${labelCls} mb-stack`}>Pre-verify</div>
-			<div className="bg-sunken p-3 rounded-md flex flex-col gap-list">
-				<div className="flex items-center gap-1.5 fs-meta">
+		<Stack gap="list">
+			<div className={labelCls}>Pre-verify</div>
+				<div className="flex items-center gap-label-inline fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
 					<span className="text-dim">{badge.label}</span>
 					{badge.titleHint && badge.titleHint !== badge.label && (
@@ -2139,8 +2046,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 						))}
 					</dl>
 				)}
-			</div>
-		</div>
+		</Stack>
 	);
 }
 
@@ -2384,15 +2290,17 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 }
 
 // One loop-card anatomy → metric, visual and foot start at the same offsets in all three cards; the foot keeps its day tokens whole.
-// plot height only under a drawn plot → a row where nothing plots ends at its content
-function getLoopSlotsI({ metric, visual, foot, isPlotted = false }) {
+// visual = a plot, in a plot-height slot · no plot → no slot, the card ends at its content
+function getLoopSlotsI({ metric, visual, foot }) {
 	const { CARD_SLOTS } = window.UI;
 	return (
 		<>
-			<div className="i-loop-metric gap-y-stack gap-x-block">{metric}</div>
-			<div className="i-loop-visual" style={isPlotted ? { height: CARD_SLOTS.S.plotPx } : undefined}>
-				{visual}
-			</div>
+			<div className="i-loop-metric px-card-pad mt-label gap-y-stack gap-x-block">{metric}</div>
+			{visual ? (
+				<div className="i-loop-visual px-card-pad mt-label" style={{ height: CARD_SLOTS.S.plotPx }}>
+					{visual}
+				</div>
+			) : null}
 			<div className="card-foot">
 				<window.UI.DayTokens>{foot}</window.UI.DayTokens>
 			</div>
@@ -2403,7 +2311,7 @@ function getLoopSlotsI({ metric, visual, foot, isPlotted = false }) {
 // a loading loop card → its line in the metric slot, so sibling cards draw it at one height
 function getLoopLoadingSlotI(label) {
 	return (
-		<div className="i-loop-metric gap-y-stack gap-x-block">
+		<div className="i-loop-metric px-card-pad mt-label gap-y-stack gap-x-block">
 			<window.UI.LoadingPlaceholder label={label} />
 		</div>
 	);
@@ -2430,11 +2338,9 @@ function getTrendHintI(before, after) {
 	return "Rejected ÷ scored cycles (newer half) — unchanged";
 }
 
-// ----- Ranked candidate list (T-IMP-3 · T-IMP-5) -----------------------------
+// ----- Pattern ledger -------------------------------------------------------
 //
-// learning-aggregator 패턴을 frequency 내림차순 ranked 후보 리스트로. StatusDot
-// severity(빈도 밴드) + 클릭 → DetailSurface drawer (DetailDrawerI 의 pattern kind 재사용).
-// rejected 후보(반려 백로그)는 T-IMP-5 의 collapsible <details> 로 기본 접힘 분리.
+// learning-aggregator 패턴 → frequency 내림차순 후보 표 · 행 클릭 → DetailSurface drawer (DetailDrawerI 의 pattern kind 재사용).
 
 // 패턴 원장 — 한 표면에 한 사실. 활성 후보와 억제된 행이 다른 카드에 살면 둘 중 하나만
 // 읽히고, 억제된 행은 늘 읽히지 않는 쪽이 된다. 행 단위로 합쳐 live / inert / held 세
@@ -2462,7 +2368,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 		return (
 			<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger}>
 				<CardHead title="Pattern ledger" />
-				<div className="p-3">
+				<div className="p-card-pad">
 					<LoadingPlaceholder label="the pattern ledger" minHeight={44} />
 				</div>
 			</section>
@@ -2474,8 +2380,8 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 		? state.data.status_distribution
 		: [];
 	// 반려 수는 status_distribution(전체 기간) 에서 온다 — 아래 백로그 목록은 7일 윈도우라
-	// 길이를 그대로 쓰면 푸터의 게이트와 목록의 게이트가 어긋난다.
-	const rejectedAllTime = sumCountsI(
+	// 길이를 그대로 쓰면 드로어의 게이트와 목록의 게이트가 어긋난다.
+	const declinedAllTime = sumCountsI(
 		dist.filter((d) => d.status === "rejected"),
 	);
 	const total = Number(state.data.total_patterns ?? patterns.length);
@@ -2491,7 +2397,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 	const open = sorted.filter((p) => p.status !== "rejected");
 	const live = open.filter((p) => p.intake_skipped !== true);
 	const inert = open.filter((p) => p.intake_skipped === true);
-	// severity 밴드 = 최대 빈도 대비 — StatusDot 색 + 텍스트 빈도 동반 (dual-encode).
+	// 막대 척도 = 원장 최대 빈도
 	const maxFreq = Math.max(1, ...sorted.map((p) => Number(p.frequency ?? 0)));
 
 	const candidates = [
@@ -2507,9 +2413,9 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 			<CardHead
 				title="Pattern ledger"
 				sub={<HeadStatusI count={heldNeedingHuman} words={heldNeedingHuman === 1 ? "needs a human" : "need a human"} />}
-				info={<LedgerNotesI suppression={suppression} />}
+				info={<LedgerNotesI suppression={suppression} declined={declinedAllTime} />}
 			/>
-			<div className="i-ledger-body">
+			<div className="p-card-pad">
 				{hasProblems ? (
 					<SplitRow ratio="1:1" layout="equal" className="i-ledger-cols">
 						<SplitColumn>
@@ -2519,10 +2425,10 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 						<SplitColumn>{candidates}</SplitColumn>
 					</SplitRow>
 				) : (
-					candidates
+					<window.UI.Stack gap="block">{candidates}</window.UI.Stack>
 				)}
 			</div>
-			<LedgerFooterI total={total} rejected={rejectedAllTime} />
+			<LedgerFooterI total={total} />
 		</section>
 	);
 }
@@ -2537,32 +2443,17 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	);
 	if (rows.length === 0) {
 		return (
-			<div className="i-ledger-sec">
+			<div>
 				{head}
-				<window.UI.EmptyState className="placeholder--flush-inline" message="No candidate patterns in the last 7 days" />
+				<window.UI.EmptyState message="No candidate patterns in the last 7 days" />
 			</div>
 		);
 	}
 	return (
-		<div className="i-ledger-sec flex flex-col gap-1.5">
+		<div className="flex flex-col gap-list">
 			{head}
 			<LedgerHeadLineI>×N = times seen, all time</LedgerHeadLineI>
-			{getPatternGroupsI(rows).map((group) => (
-				<div key={group.title} className="flex flex-col gap-stack">
-					<div className="fs-body text-ink truncate" title={group.title}>
-						{truncateI(group.title, 120)}
-					</div>
-					{group.entries.map(({ pattern, rank }) => (
-						<CandidateRowI
-							key={pattern.id}
-							rank={rank}
-							pattern={pattern}
-							maxFreq={maxFreq}
-							onClick={() => onRowClick({ ...pattern, kind: "pattern" })}
-						/>
-					))}
-				</div>
-			))}
+			<CandidateTableI rows={rows} maxFreq={maxFreq} onRowClick={onRowClick} />
 		</div>
 	);
 }
@@ -2578,61 +2469,63 @@ function getPatternGroupsI(rows) {
 	return [...groups].map(([title, entries]) => ({ title, entries }));
 }
 
-function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
-	const { StatusDot, Bar, AgentName } = window.UI;
-	const freq = Number(pattern.frequency ?? 0);
-	const status = candidateSeverityI(freq, maxFreq);
-	const badge = learningStatusBadgeI(pattern.status);
-	const label = patternNameI(pattern.pattern_signature, pattern.agent);
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			className="sub-card i-row-card i-tile-hover bg-elev text-left p-3 w-full flex items-center gap-label"
-			aria-label={`Candidate ${rank}: ${label}${pattern.agent ? ` — ${pattern.agent}` : ""} — seen ${freq} times`}
-		>
-			<span
-				className="fs-meta text-faint"
-				style={{ width: "2ch", textAlign: "right" }}
-			>
-				{rank}
-			</span>
-			<StatusDot status={status} />
-			<span className="shrink-0 truncate" style={{ width: "18ch" }}>
-				{pattern.agent ? (
-					<AgentName name={pattern.agent} className="fs-body text-ink" />
-				) : (
-					<span className="fs-meta text-faint">no agent</span>
-				)}
-			</span>
-			<span className="flex-1 min-w-0" title="Times seen, relative to the most-seen live pattern">
-				<Bar
-					value={freq}
-					max={maxFreq}
-					tone={status}
-					ariaLabel={`Seen ${freq} times; the most-seen live pattern ${maxFreq}`}
-				/>
-			</span>
-			<span className="fs-meta shrink-0 inline-flex">
-				<window.UI.ToneGlyph tone={badge.severity} label={`Status: ${badge.label}`} title={`Status: ${badge.label}`} />
-			</span>
-			<span
-				className="fs-meta text-dim tnum shrink-0"
-				title="Times this pattern was seen"
-			>
-				×{formatIntI(freq)}
-			</span>
-		</button>
-	);
+const CANDIDATE_COLUMNS_I = [
+	{ key: "rank", label: "#", isNumeric: true },
+	{ key: "agent", label: "Agent" },
+	{ key: "seen", label: "Seen" },
+	{ key: "count", label: "×N", isNumeric: true },
+];
+
+// one body, each title a group row over its agents · roving index = the row's place in that body, not its rank
+function CandidateTableI({ rows, maxFreq, onRowClick }) {
+	const { Table, getRowFocusProps } = window.UI;
+	const [activeIndex, setActiveIndex] = useSI(0);
+	const groups = getPatternGroupsI(rows);
+	const entries = groups.flatMap((group) => group.entries);
+	const openRow = (index) => onRowClick({ ...entries[index].pattern, kind: "pattern" });
+	const getRowProps = (entry) => {
+		const index = entries.indexOf(entry);
+		const focusProps = getRowFocusProps({ index, activeIndex, count: entries.length, onActivate: openRow, onActiveChange: setActiveIndex });
+		return { focusProps, onClick: () => openRow(index) };
+	};
+	const body = (view) => groups.flatMap((group) => getCandidateGroupRowsI({ view, group, maxFreq, getRowProps }));
+	return <Table caption="Live candidates — open a row for its pattern" isNested columns={CANDIDATE_COLUMNS_I} bodies={[{ key: "live", className: "tbl-compact", rows: body }]} />;
 }
 
-// 빈도 → severity 밴드 (StatusDot). 최대 대비 비율 — ≥66% crit · ≥33% warn · 그 외 info.
-// 색 단독 아님 — 행에 ×빈도 텍스트 동반 (dual-encode).
-function candidateSeverityI(freq, maxFreq) {
-	const ratio = freq / Math.max(1, maxFreq);
-	if (ratio >= 0.66) return "crit";
-	if (ratio >= 0.33) return "warn";
-	return "info";
+// one title's group row, then a row per agent under it
+function getCandidateGroupRowsI({ view, group, maxFreq, getRowProps }) {
+	const { TableRow, TableCell } = window.UI;
+	return [
+		<TableRow key={`title-${group.title}`} view={view}>
+			<TableCell view={view} kind="group-header" title={group.title}>{truncateI(group.title, 120)}</TableCell>
+		</TableRow>,
+		...group.entries.map((entry) => (
+			<CandidateRowI key={entry.pattern.id} view={view} rank={entry.rank} pattern={entry.pattern} maxFreq={maxFreq} {...getRowProps(entry)} />
+		)),
+	];
+}
+
+// every live row reads Spotted → a status word prints only where it differs · bar length and ×N carry the frequency, no severity
+function CandidateRowI({ view, rank, pattern, maxFreq, focusProps, onClick }) {
+	const { Bar, AgentName, TableRow, TableCell } = window.UI;
+	const freq = Number(pattern.frequency ?? 0);
+	const statusWord = pattern.status && pattern.status !== "identified" ? learningStatusBadgeI(pattern.status).label : null;
+	const name = [`Candidate ${rank}: ${patternNameI(pattern.pattern_signature, pattern.agent)}`, pattern.agent, `seen ${freq} times`, statusWord];
+	return (
+		<TableRow view={view} {...focusProps} aria-label={name.filter(Boolean).join(" — ")} onClick={onClick}>
+			<TableCell view={view} isNumeric className="text-faint">{rank}</TableCell>
+			<TableCell view={view} className="whitespace-nowrap">
+				<span className="inline-flex items-baseline gap-label-inline">
+					{pattern.agent ? <AgentName name={pattern.agent} className="text-ink" /> : <span className="text-faint">no agent</span>}
+					{statusWord ? <span className="text-dim">{statusWord}</span> : null}
+				</span>
+			</TableCell>
+			<TableCell view={view} className="w-full" title="Times seen, relative to the most-seen live pattern">
+				<Bar value={freq} max={maxFreq} tone="data" ariaLabel={`Seen ${freq} times; the most-seen live pattern ${maxFreq}`} />
+			</TableCell>
+			<TableCell view={view} isNumeric className="text-dim" title="Times this pattern was seen">×{formatIntI(freq)}</TableCell>
+		</TableRow>
+	);
 }
 
 // ----- Shared chrome --------------------------------------------------------
