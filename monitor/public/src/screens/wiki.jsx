@@ -90,9 +90,6 @@ function ScreenWiki() {
         .w-disclosure > summary { display: flex; }
         /* base.css tints only status tones → a parked (neutral) glyph recedes locally. */
         .alarm-row[data-tone="neutral"] .alarm-row-glyph { color: rgb(var(--dim)); }
-        /* Name, bar and count stay within reading distance on a wide panel. */
-        .w-type-list { max-width: 40rem; }
-        .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; height: var(--row-h); }
       `}</style>
 
 			<div className="flex-shrink-0">
@@ -136,7 +133,6 @@ function ScreenWiki() {
 					summaryState={summaryState}
 					indexState={indexState}
 					backlogState={backlogState}
-					cyclesState={cyclesState}
 					at={settledAt}
 					shared={outage}
 					onRetry={triggerRefresh}
@@ -225,13 +221,13 @@ const PROPOSAL_PARKED_DAYS = PROPOSAL_PARKED_RUNS;
 // Element id of the merge-proposals fold — the backlog failure's Retry target.
 const MERGE_PROPOSALS_ID = "wiki-merge-proposals";
 
-// Wave section names — the banner lists them, and a region is covered when its feeder is among them.
+// Wave section names = the regions' visible titles — the banner lists them, and a region is covered when its feeder is among them.
 const WIKI_FEEDERS = Object.freeze({
-	summary: "summary",
-	runHistory: "run history",
-	notesByType: "notes by type",
-	backlog: "maintenance backlog",
-	runTable: "per-run table",
+	summary: "Health",
+	runHistory: "Run history",
+	notesByType: "Notes by type",
+	backlog: "Merge proposals",
+	runTable: "Runs",
 });
 
 // Region card ids — a covered region's slot names its card, so the banner's Retry lands there on recovery.
@@ -298,7 +294,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 						<Icon name={TONE_ICON.neutral} size={14} />
 					</span>
 					<span className="fs-meta text-faint min-w-0 break-words">
-						{`Couldn't read ${model.unchecked.join(", ")} — alarms from ${model.unchecked.length === 1 ? "it" : "them"} are not shown.`}
+						{`Alarms hidden: ${model.unchecked.join(", ")} unread.`}
 					</span>
 				</li>
 			)}
@@ -332,7 +328,7 @@ function buildAlarmLaneModel(
 			key: "cycle-overdue",
 			tone: "crit",
 			label: "The daily cycle has not run",
-			detail: `Last run ${summary.last_run_date || "unknown"} · ${hours}h ago — inspect launchd.`,
+			detail: `Last run ${describeRunDayW(summary.last_run_date)} · ${window.UI.formatRelativeTime(summary.last_cycle_started_at)} — inspect launchd.`,
 		});
 	}
 
@@ -480,11 +476,11 @@ function describeSnapshotAgeW(runDate) {
 // One stat row — last run · compiled last cycle · search index · library totals.
 // Steady state carries no tint (the last-run context still names the outcome); only an actionable state marks its value.
 
-function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at, shared, onRetry }) {
+function WikiTileBand({ summaryState, indexState, backlogState, at, shared, onRetry }) {
 	const { Card, StatRow, StatNotes } = window.UI;
 	const tiles = useMemoW(
-		() => buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at),
-		[summaryState, indexState, backlogState, cyclesState, at],
+		() => buildTileBandModel(summaryState, indexState, backlogState, at),
+		[summaryState, indexState, backlogState, at],
 	);
 	const failures = readTileBandFailuresW(summaryState, indexState);
 	// a feeder the banner does not cover keeps its own sentence and Retry
@@ -493,22 +489,24 @@ function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at,
 	const details = tiles.filter((tile) => tile.info);
 
 	return (
-		<div id={WIKI_REGION_IDS.tiles} className="flex flex-col gap-section">
-			{shown.length > 0 && (
-				<WikiRegionFailureW
-					feeders={shown.map((f) => f.feeder)}
-					source={`the ${shown.map((f) => f.label).join(" and ")}`}
-					error={shown[0].state.error}
-					isBusy={shown.some((f) => f.state.busy)}
-					shared={shared}
-					focusTargetId={WIKI_REGION_IDS.tiles}
-					onRetry={onRetry}
-				/>
-			)}
+		<div id={WIKI_REGION_IDS.tiles}>
 			<Card title="Health" info={details.length > 0 && <StatNotes stats={details} />} infoLabel="How these figures are read">
-				<div aria-busy={tiles.some((tile) => tile.state === "loading") ? "true" : undefined}>
-					<StatRow stats={tiles.map(buildStatW)} />
-				</div>
+				<window.UI.Stack gap="block">
+					{shown.length > 0 && (
+						<WikiRegionFailureW
+							feeders={shown.map((f) => f.feeder)}
+							source={`the ${shown.map((f) => f.label).join(" and ")}`}
+							error={shown[0].state.error}
+							isBusy={shown.some((f) => f.state.busy)}
+							shared={shared}
+							focusTargetId={WIKI_REGION_IDS.tiles}
+							onRetry={onRetry}
+						/>
+					)}
+					<div aria-busy={tiles.some((tile) => tile.state === "loading") ? "true" : undefined}>
+						<StatRow stats={tiles.map(buildStatW)} />
+					</div>
+				</window.UI.Stack>
 			</Card>
 		</div>
 	);
@@ -522,34 +520,22 @@ function readTileBandFailuresW(summaryState, indexState) {
 	].filter((f) => window.UI.getRegionView(f.state) === "error");
 }
 
-// tile model → one StatRow stat; the full context line rides its title when the caption is cut short
+// tile model → one StatRow stat; an empty read leaves the slot to the row's None, the full context line rides its title
 function buildStatW(tile) {
+	const { key, label } = tile;
+	if (tile.state === "loading") return { key, label, isLoading: true };
+	if (tile.state === "empty") return { key, label, value: null };
+	if (tile.state !== "ready") {
+		return { key, label, value: <window.UI.AbsentValue kind="not-loaded" title={tile.cause} /> };
+	}
 	const context = tile.sub ? <span title={tile.hint || tile.sub}>{tile.sub}</span> : null;
-	return { key: tile.key, label: tile.label, value: <WikiStatValueW tile={tile} />, context };
+	return { key, label, value: <WikiStatValueW tile={tile} />, context };
 }
 
 // Report surface → neutral chrome; a warn/crit stat carries its tone on a glyph beside the
 // figure, leaving tinted containers to the alarm lane.
 function WikiStatValueW({ tile }) {
-	const { TONE_GLYPH, LoadingPlaceholder } = window.UI;
-	// loading is stated once, through the shared placeholder — never as a "…" figure; inline-flex keeps it on the stat's start edge
-	if (tile.state === "loading") {
-		return (
-			<div className="inline-flex">
-				<LoadingPlaceholder label={tile.label.toLowerCase()} />
-			</div>
-		);
-	}
-	// the unknown dash names its cause on the context line; a failed read has none, so it is named here
-	if (tile.state !== "ready") {
-		const isFailed = tile.state === "error";
-		return (
-			<span className="text-faint">
-				<span aria-hidden={isFailed ? "true" : undefined}>{tile.value}</span>
-				{isFailed && <span className="sr-only">Not loaded</span>}
-			</span>
-		);
-	}
+	const { TONE_GLYPH } = window.UI;
 	if (tile.tone !== "warn" && tile.tone !== "crit") return tile.value;
 	return (
 		<>
@@ -560,33 +546,20 @@ function WikiStatValueW({ tile }) {
 	);
 }
 
-function buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at) {
+function buildTileBandModel(summaryState, indexState, backlogState, at) {
 	return [
 		buildLastRunTileW(summaryState, at),
-		buildCompiledTileW(summaryState, backlogState, cyclesState),
+		buildCompiledTileW(summaryState, backlogState),
 		buildIndexTileW(indexState),
 		buildLibraryTileW(indexState, summaryState, backlogState),
 	];
 }
 
-// Shared non-ready tile shapes — loading, error and unavailable stay distinguishable and
-// none of them renders as a number (a zero nobody loaded is the failure mode).
-// Loading and errored tiles carry no sub text: the shared loading placeholder and the band's single banner speak for them.
+// Non-ready tile shapes carry no value, so a zero nobody loaded never renders; the cause rides the absent word's title.
+const TILE_CAUSES_W = { error: "The read failed", unavailable: "Not reported yet" };
+
 function tilePlaceholderW(key, label, state) {
-	const SUB = {
-		loading: null,
-		error: null,
-		unavailable: "Not reported yet",
-		empty: "Nothing recorded",
-	};
-	return {
-		key,
-		label,
-		state,
-		value: "—",
-		sub: SUB[state],
-		tone: "neutral",
-	};
+	return { key, label, state, cause: TILE_CAUSES_W[state], tone: "neutral" };
 }
 
 function tileFetchStateW(state) {
@@ -615,9 +588,7 @@ function buildLastRunTileW(state, at) {
 		label,
 		state: "ready",
 		value: window.UI.formatRelativeTime(d.last_cycle_started_at),
-		sub: overdue
-			? `${outcome.label}${describeCycleDateW(d.last_run_date)}`
-			: `${outcome.label}${describeP95W(d.cycle_p95_ms)}`,
+		sub: outcome.label,
 		hint: d.last_run_date ? `Cycle ${d.last_run_date}` : undefined,
 		tone,
 	};
@@ -637,17 +608,13 @@ function getLastRunOutcomeW(state, at, overdue) {
 function describeP95W(ms) {
 	return typeof ms === "number" ? ` · p95 ${window.UI.formatDuration(ms, "ms")}` : "";
 }
-// unrecorded cycle date → no suffix, never "cycle undefined"
-function describeCycleDateW(date) {
-	return date ? ` · cycle ${date}` : "";
+// Day form MM-DD (spec §2.1); an unrecorded date reads unknown, never "undefined"
+function describeRunDayW(date) {
+	return date ? window.UI.formatKstDay(date) : "unknown";
 }
 
-// A zero names its cause: idle (nothing waiting) stays quiet, stalled (originals waiting) tints.
-function buildCompiledTileW(
-	state,
-	backlogState = UNKNOWN_REGION_W,
-	cyclesState = UNKNOWN_REGION_W,
-) {
+// A zero names its cause: idle (nothing waiting) stays quiet, stalled (originals waiting) tints; the waiting count is Library notes' fact.
+function buildCompiledTileW(state, backlogState = UNKNOWN_REGION_W) {
 	const label = "Compiled last cycle";
 	const pending = tileFetchStateW(state);
 	if (pending) return tilePlaceholderW("compiled", label, pending);
@@ -661,22 +628,14 @@ function buildCompiledTileW(
 		backlogState.status === "ready" ? backlogState.data?.backlog?.true_backlog : undefined;
 	const isStalled = count === 0 && typeof waiting === "number" && waiting > 0;
 	const cause =
-		count !== 0 || typeof waiting !== "number"
-			? null
-			: isStalled
-				? `Stalled · ${formatCountW(waiting)} waiting`
-				: "Nothing waiting";
-	// same span as Run history → the two totals read alike
-	const trend = buildThroughputModel(cyclesState);
-	const windowTotal =
-		trend.rows.length > 0 ? `${formatCountW(trend.total)} in ${trend.spanDays}d` : null;
+		count !== 0 || typeof waiting !== "number" ? null : isStalled ? "Stalled" : "Idle";
 
 	return {
 		key: "compiled",
 		label,
 		state: "ready",
 		value: formatCountW(count),
-		sub: [cause, windowTotal].filter(Boolean).join(" · ") || null,
+		sub: cause,
 		info: isStalled
 			? `${formatCountW(waiting)} saved originals are waiting and the last cycle compiled none.`
 			: undefined,
@@ -702,13 +661,10 @@ function buildIndexTileW(state) {
 	const flagMissing =
 		d.has_dirty_flag === false ||
 		(d.has_dirty_flag == null && d.dirty !== true && d.last_dirty_ms == null);
-	// No row yet → say what is unknown rather than show a bare dash.
 	if (flagMissing) {
 		return {
 			...tilePlaceholderW("index", label, "unavailable"),
-			value: "Not reported",
-			sub: "Freshness not reported",
-			hint: "No dirty flag on record — the compiler has not written one, so cleanliness is unknown",
+			cause: "No dirty flag on record — the compiler has not written one, so cleanliness is unknown",
 		};
 	}
 	if (d.dirty === true) {
@@ -730,7 +686,6 @@ function buildIndexTileW(state) {
 		label,
 		state: "ready",
 		value: "Clean",
-		sub: "Master index current",
 		tone: "neutral",
 	};
 }
@@ -794,18 +749,6 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 
 	return (
 		<div className="flex flex-col gap-section">
-			{model.state === "error" ? (
-				<WikiRegionFailureW
-					feeders={[WIKI_FEEDERS.backlog]}
-					source="the maintenance backlog"
-					error={backlogState.error}
-					isBusy={backlogState.busy}
-					shared={shared}
-					focusTargetId={MERGE_PROPOSALS_ID}
-					onRetry={onRetry}
-				/>
-			) : null}
-
 			{/* Always present, so the backlog failure's Retry target and the page layout never lose it. */}
 			<WikiDisclosureW
 				id={MERGE_PROPOSALS_ID}
@@ -820,9 +763,20 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 						<LoadingPlaceholder label="merge proposals" />
 					</div>
 				) : model.state === "error" ? (
-					<EmptyStateW message="The maintenance backlog could not be read — see above." />
+					// flush body → the failure block takes the card inset itself, as the Runs fold does
+					<div className="px-card-pad pb-card-pad">
+						<WikiRegionFailureW
+							feeders={[WIKI_FEEDERS.backlog]}
+							source="merge proposals"
+							error={backlogState.error}
+							isBusy={backlogState.busy}
+							shared={shared}
+							focusTargetId={MERGE_PROPOSALS_ID}
+							onRetry={onRetry}
+						/>
+					</div>
 				) : !model.proposals || model.proposals.length === 0 ? (
-					<EmptyStateW
+					<window.UI.EmptyState
 						message={
 							model.proposals
 								? "No merge proposals waiting."
@@ -871,10 +825,16 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 	);
 }
 
+// Waiting pairs lead, since they open the fold; a list nobody read is Not loaded, never None.
 function describeProposalCountW(model) {
 	if (model.state === "loading") return "Loading…";
-	if (model.state === "error") return "Unavailable";
-	return model.proposals ? formatCountW(model.proposals.length) : "Not reported";
+	if (!model.proposalRows) return "Not loaded";
+	if (model.proposalRows.length === 0) return "None";
+	const parked = model.proposalRows.filter((row) => row.parked).length;
+	const waiting = model.proposalRows.length - parked;
+	return [waiting > 0 && `${formatCountW(waiting)} waiting`, parked > 0 && `${formatCountW(parked)} parked`]
+		.filter(Boolean)
+		.join(" · ");
 }
 
 const UNKNOWN_REGION_W = { status: "idle", data: null, error: null };
@@ -904,6 +864,7 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_REGION_W) {
 	return {
 		state: "ready",
 		proposals,
+		proposalRows,
 		isDryRun: Boolean(proposals?.some(isDryRunProposalW)),
 		// A waiting pair → warn, so the fold holding it opens itself; parked pairs stay neutral.
 		proposalTone: proposalRows && window.UI.getWorstTone(proposalRows.map((row) => row.tone)),
@@ -911,7 +872,7 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_REGION_W) {
 		linkFixes,
 		residueLine:
 			typeof notVerified === "number" && notVerified > 0
-				? `${formatCountW(notVerified)} candidate pairs went unverified this cycle (cost guard) — the proposal count is a floor.`
+				? `${formatCountW(notVerified)} pairs unverified (cost guard); the count is a floor.`
 				: null,
 	};
 }
@@ -927,7 +888,7 @@ function WikiStatusRow({ cyclesState, summaryState, indexState, shared, onRetry 
 	const { SplitRow } = window.UI;
 
 	return (
-		<SplitRow ratio="2:1" layout="equal">
+		<SplitRow ratio="2:1" layout="content">
 			<WikiRunHistorySection
 				cyclesState={cyclesState}
 				summaryState={summaryState}
@@ -967,15 +928,14 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 						onRetry={onRetry}
 					/>
 				) : model.rows.length === 0 ? (
-					<EmptyStateW {...describeRunHistoryEmptyW(summaryState)} />
+					<window.UI.EmptyState {...describeRunHistoryEmptyW(summaryState)} />
 				) : (
 					<window.UI.Stack gap="block">
-						{/* The window is a fetch bound, not what is drawn → name the days the bars cover. */}
 						<SparseTrendW
-							label={`Notes per day · ${model.spanDays} ${model.spanDays === 1 ? "day" : "days"}`}
+							label="Notes per day"
 							series={model.compiledSeries}
 							dates={model.compiledDates}
-							stat={`${formatCountW(model.total)} notes in ${model.spanDays}d · ${model.activeDays} active days`}
+							stat={describeNotesStatW(model)}
 						/>
 						{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
 						{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
@@ -986,6 +946,12 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 	);
 }
 
+// The window and its run count are the card head's facts → the stat line names notes and days only.
+function describeNotesStatW(model) {
+	const notes = `${formatCountW(model.total)} ${model.total === 1 ? "note" : "notes"}`;
+	return `${notes} · ${model.activeDays} active ${model.activeDays === 1 ? "day" : "days"}`;
+}
+
 // Never-run and quiet-window are different facts → the summary's last run tells them apart.
 function describeRunHistoryEmptyW(summaryState) {
 	const summary = summaryState.status === "ready" ? summaryState.data : null;
@@ -994,7 +960,7 @@ function describeRunHistoryEmptyW(summaryState) {
 	}
 	return {
 		message: `No runs in the last ${WIKI_CYCLE_DAYS} days`,
-		hint: summary?.last_run_date ? `Last run ${summary.last_run_date}` : null,
+		hint: summary?.last_run_date ? `Last run ${describeRunDayW(summary.last_run_date)}` : null,
 	};
 }
 
@@ -1005,7 +971,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 	return (
 		<WikiDisclosureW
 			id={WIKI_REGION_IDS.runTable}
-			label="Per-run table"
+			label="Runs"
 			count={describeRunTableW(reportState, days)}
 			bodyClassName="flex flex-col"
 		>
@@ -1025,15 +991,15 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 					className="ml-auto"
 				/>
 			</window.UI.Cluster>
-			<WikiReportsBody state={reportState} days={days} shared={shared} onRetry={onRetry} />
+			<WikiReportsBody state={reportState} shared={shared} onRetry={onRetry} />
 		</WikiDisclosureW>
 	);
 }
 
-// header meta ≤ 32 chars → "27 runs · all healthy" or "30 runs · 12 changes"; the body ⓘ defines a change.
+// header meta ≤ 32 chars → "30 · all healthy" or "30 · 12 changes"; the body ⓘ defines a change.
 function describeRunTableW(state, days) {
 	if (window.UI.getRegionView(state) === "loading") return "Loading…";
-	if (window.UI.getRegionView(state) === "error") return "Unavailable";
+	if (window.UI.getRegionView(state) === "error") return "Not loaded";
 
 	const reports = state.data?.reports || [];
 	if (reports.length === 0) return `No runs in ${days}d`;
@@ -1041,14 +1007,12 @@ function describeRunTableW(state, days) {
 	const groups = groupConstantRunsW(sortRunsNewestFirstW(reports));
 	if (groups.length > 1) {
 		const changes = groups.length - 1;
-		return `${reports.length} runs · ${changes} ${changes === 1 ? "change" : "changes"}`;
+		return `${reports.length} · ${changes} ${changes === 1 ? "change" : "changes"}`;
 	}
 
 	const [only] = groups;
 	const status = wikiStatusLabelW(only.newest.status).toLowerCase();
-	return only.count === 1
-		? `1 ${status} run on ${only.newest.run_date}`
-		: `${only.count} runs · all ${status}`;
+	return only.count === 1 ? `1 · ${status}` : `${only.count} · all ${status}`;
 }
 
 // The server returns runs ascending by run_date.
@@ -1059,10 +1023,9 @@ function sortRunsNewestFirstW(reports) {
 }
 
 // The server's p95 shares the cycles window, so it rides the same summary line.
+// No runs or a failed read → the body states it, so the head stays silent.
 function describeRunHistoryW(cyclesState, model, summaryState) {
-	if (window.UI.getRegionView(cyclesState) === "loading") return null;
-	if (window.UI.getRegionView(cyclesState) === "error") return "Unavailable";
-	if (model.rows.length === 0) return "No runs in range";
+	if (window.UI.getRegionView(cyclesState) !== "ready" || model.rows.length === 0) return null;
 
 	const p95 =
 		summaryState.status === "ready" ? summaryState.data?.cycle_p95_ms : null;
@@ -1117,29 +1080,25 @@ function openOnOwnFocusW(event) {
 	if (event.target === event.currentTarget) event.currentTarget.open = true;
 }
 
-// Status-row peers share one slot → their feet pin to one edge of the stretched row.
+// Status-row peers take one card slot size; the content layout lets each end at its rows.
 const STATUS_CARD_SIZE_W = "S";
 
-// Notes by type — the library's composition, open as a compact list.
+// Notes by type — the library's composition as a caption-only table; the card ends at its rows.
 function WikiNotesByTypeSection({ state, shared, onRetry }) {
 	const { LoadingPlaceholder } = window.UI;
+	const view = window.UI.getRegionView(state);
 	const rows =
 		state.status === "ready" && Array.isArray(state.data?.by_type)
 			? buildNoteTypeRowsW(state.data.by_type)
 			: [];
-	const coverage = describeNoteCoverageW(rows);
+	const hasTable = view !== "loading" && view !== "error" && rows.length > 0;
 
 	return (
 		<div id={WIKI_REGION_IDS.notesByType} className="min-w-0">
-			<window.UI.Card
-				size={STATUS_CARD_SIZE_W}
-				title="Notes by type"
-				sub={describeNotesByTypeW(state)}
-				foot={coverage && <span className="truncate">{coverage}</span>}
-			>
-				{window.UI.getRegionView(state) === "loading" ? (
+			<window.UI.Card size={STATUS_CARD_SIZE_W} title="Notes by type" isFlush={hasTable}>
+				{view === "loading" ? (
 					<LoadingPlaceholder label="note types" />
-				) : window.UI.getRegionView(state) === "error" ? (
+				) : view === "error" ? (
 					<WikiRegionFailureW
 						feeders={[WIKI_FEEDERS.notesByType]}
 						source="notes by type"
@@ -1149,65 +1108,48 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 						focusTargetId={WIKI_REGION_IDS.notesByType}
 						onRetry={onRetry}
 					/>
-				) : rows.length === 0 ? (
-					<EmptyStateW message="No notes indexed yet." />
+				) : hasTable ? (
+					<WikiNoteTypesTable rows={rows} />
 				) : (
-					<ul className="w-type-list flex flex-col list-none">
-						{rows.map((t) => (
-							<li key={t.type} className="w-type-row gap-label fs-meta" title={t.type}>
-								<span className="text-dim truncate">{t.label}</span>
-								<span className="block h-1.5 rounded-sm overflow-hidden bg-line" aria-hidden="true">
-									<span className="block h-full bg-dim" style={{ width: `${t.share}%` }} />
-								</span>
-								<span className="text-ink text-right tabular-nums">{formatCountW(t.count)}</span>
-								<span className="text-faint text-right tabular-nums">{`${t.pct}%`}</span>
-							</li>
-						))}
-					</ul>
+					<window.UI.EmptyState message="No notes indexed yet." />
 				)}
 			</window.UI.Card>
 		</div>
 	);
 }
 
+// flush card body → the table's edge cells hold the card-pad column once
+function WikiNoteTypesTable({ rows }) {
+	const { Table, TableRow, TableCell } = window.UI;
+
+	return (
+		<Table caption="Notes by type, one row per type">
+			{(view) => rows.map((t) => (
+				<TableRow key={t.type} view={view} title={t.type}>
+					<TableCell view={view} kind="row-header">{t.label}</TableCell>
+					<TableCell view={view} isNumeric>{formatCountW(t.count)}</TableCell>
+				</TableRow>
+			))}
+		</Table>
+	);
+}
+
 // Internal note_type → reader label; an unlisted type keeps its name after "Other".
 const NOTE_TYPE_LABELS = { raw: "Saved originals", "source-summary": "Summary notes" };
 
-// Bar length = share of the largest type; pct = share of all notes.
 function buildNoteTypeRowsW(rows) {
-	const counts = rows.map((t) => Number(t.count) || 0);
-	const max = Math.max(0, ...counts);
-	const total = counts.reduce((sum, n) => sum + n, 0);
-	return rows.map((t, i) => ({
+	return rows.map((t) => ({
 		type: t.note_type,
 		label: NOTE_TYPE_LABELS[t.note_type] || `Other · ${t.note_type}`,
-		count: counts[i],
-		share: max > 0 ? Math.round((counts[i] / max) * 100) : 0,
-		pct: total > 0 ? Math.round((counts[i] / total) * 100) : 0,
+		count: Number(t.count) || 0,
 	}));
-}
-
-// Summaries against the originals they cover; either type missing → no line.
-function describeNoteCoverageW(rows) {
-	const countOf = (type) => rows.find((t) => t.type === type)?.count;
-	const summaries = countOf("source-summary");
-	const originals = countOf("raw");
-	if (typeof summaries !== "number" || typeof originals !== "number") return null;
-	return `${formatCountW(summaries)} summary notes for ${formatCountW(originals)} saved originals`;
-}
-
-function describeNotesByTypeW(state) {
-	if (window.UI.getRegionView(state) === "loading") return null;
-	if (window.UI.getRegionView(state) === "error") return "Unavailable";
-	const rows = Array.isArray(state.data?.by_type) ? state.data.by_type : [];
-	return `${rows.length} types`;
 }
 
 // 백로그 stale 임계(일) — wiki 데몬 사이클이 일일 → run_date 가 1일 초과 경과면 stale.
 // CYCLE_FRESH_OK_HOURS(24h)와 정합하되 run_date 는 날짜 단위라 일 카운트로 비교.
 const BACKLOG_STALE_DAYS = 1;
 const LIBRARY_COUNTING_NOTE_W =
-	"Waiting counts saved originals not yet compiled into notes; broken links come from the last dead-link dry run.";
+	"Waiting: originals not yet compiled. Broken links: last dry run.";
 
 // 'YYYY-MM-DD'(UTC) run_date → 오늘(UTC) 대비 경과일. 비정상/null → null (stale 분기 보류).
 // 데몬 run_date 가 UTC date 기준이므로 today 도 UTC 로 맞춰 비교 (outcomes.isoDayKeyO 패턴 미러).
@@ -1447,7 +1389,7 @@ function isDryRunProposalW(proposal) {
 	return DRY_RUN_TAIL_W.test(proposal.suggested_action || "");
 }
 
-function WikiReportsBody({ state, days, shared, onRetry }) {
+function WikiReportsBody({ state, shared, onRetry }) {
 	if (window.UI.getRegionView(state) === "loading") {
 		return <WikiReportsTable reports={[]} isLoading />;
 	}
@@ -1457,7 +1399,7 @@ function WikiReportsBody({ state, days, shared, onRetry }) {
 			<div className="px-card-pad pb-card-pad">
 				<WikiRegionFailureW
 					feeders={[WIKI_FEEDERS.runTable]}
-					source="the run table"
+					source="runs"
 					error={state.error}
 					isBusy={state.busy}
 					shared={shared}
@@ -1468,11 +1410,8 @@ function WikiReportsBody({ state, days, shared, onRetry }) {
 		);
 	}
 	const reports = state.data?.reports || [];
-	if (reports.length === 0) {
-		return (
-			<EmptyStateW message={`No wiki compile runs in the last ${days} days.`} />
-		);
-	}
+	// the fold count already says no runs in the window
+	if (reports.length === 0) return null;
 
 	const sortedDesc = sortRunsNewestFirstW(reports);
 
@@ -1592,20 +1531,14 @@ function isSameRunW(a, b) {
 	);
 }
 
-// Shared chrome (wiki-scoped — health.jsx 패턴 미러).
-
-function EmptyStateW({ message, hint }) {
-	const { EmptyState } = window.UI;
-	return <EmptyState message={message} hint={hint} />;
-}
-
 // 희소 추세(비0 포인트 < SPARSE_MIN_NONZERO) 공용 렌더 — 넓은 트랙 외톨이 막대가 "차트 깨짐"으로 읽히는 문제 회피.
 //   sparse → TrendChart 대신 한 줄 안내 · 헤드라인 수치(합계·활성일·피크)는 항상 차트 위.
 //   충분히 채워진 시리즈(비0 ≥ SPARSE_MIN_NONZERO) → 패널 폭 TrendChart(막대별 날짜·값 readout).
 function SparseTrendW({ label, series, dates, stat }) {
-	const { TrendChart } = window.UI;
+	const { TrendChart, formatKstDay } = window.UI;
 	const sparse = series.filter((v) => v > 0).length < SPARSE_MIN_NONZERO;
-	const headline = [stat, describePeakW(series, dates)].filter(Boolean).join(" · ");
+	const days = dates.map((date) => (date ? formatKstDay(date) : ""));
+	const headline = [stat, describePeakW(series, days)].filter(Boolean).join(" · ");
 
 	return (
 		<window.UI.Stack gap="label">
@@ -1614,12 +1547,12 @@ function SparseTrendW({ label, series, dates, stat }) {
 				<div className="card-sub">{label}</div>
 			</window.UI.Stack>
 			{sparse ? (
-				<EmptyStateW message="Too few active days to draw a trend." />
+				<window.UI.EmptyState message="Too few active days to draw a trend." />
 			) : (
 				<TrendChart
 					label={label}
 					kind="bars"
-					points={series.map((value, i) => ({ label: dates[i] || "", value }))}
+					points={series.map((value, i) => ({ label: days[i] ?? "", value }))}
 					formatValue={formatCountW}
 					yScale
 					maxTicks={getEvenTickCapW(series.length)}

@@ -57,7 +57,7 @@ const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body
   <div id="merge" style="width: ${FOLD_WIDTHS[0]}px; padding: 24px;">${MAINTENANCE}</div>
 </body></html>`;
 
-const FOLDS = [...FOLD_WIDTHS.map((w) => ({ name: `Per-run table at ${w}`, id: `runs-${w}` })), { name: "Merge proposals", id: "merge" }];
+const FOLDS = [...FOLD_WIDTHS.map((w) => ({ name: `Runs at ${w}`, id: `runs-${w}` })), { name: "Merge proposals", id: "merge" }];
 const SUMMARY = (id: string) => `#${id} details > summary`;
 
 let browser: Browser;
