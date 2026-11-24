@@ -84,6 +84,8 @@ const APPLY_MODE_META_MC = {
 		desc: "In force as soon as the save lands",
 	},
 };
+// The daemon reads daemon-config.json once per cycle → every daemon card's head timing, read or not
+const DAEMON_APPLY_MODE_MC = "next-cycle";
 
 const SYNC_META_MC = {
 	drift: {
@@ -1364,28 +1366,13 @@ function getApplyModeMetaMC(mode) {
 	return APPLY_MODE_META_MC[mode] || { when: mode, desc: "" };
 }
 
-// Most rows share one apply_mode → the section states it once; rows that differ name their own.
-function getSharedApplyModeMC(rows) {
-	const counts = new Map();
-	for (const r of rows) {
-		if (r.apply_mode) counts.set(r.apply_mode, (counts.get(r.apply_mode) ?? 0) + 1);
-	}
-	let shared = null;
-	for (const [mode, n] of counts) {
-		if (shared === null || n > counts.get(shared)) shared = mode;
-	}
-	return shared;
-}
-
 /**
- * A card's take-effect timing: the shared mode as header meta, its caveat for the drawer,
+ * A card's take-effect timing: the daemon-config mode as header meta in every state, its caveat for the drawer,
  * and departures (domain → that row's own "Applies …" line, rendered in the row only).
  */
 function getApplyTimingMC(rows) {
-	const mode = getSharedApplyModeMC(rows);
+	const mode = DAEMON_APPLY_MODE_MC;
 	const departures = new Map();
-	if (!mode) return { meta: null, caveat: null, departures };
-
 	for (const r of rows) {
 		if (r.apply_mode && r.apply_mode !== mode) departures.set(r.domain, getApplyLineMC(r.apply_mode));
 	}

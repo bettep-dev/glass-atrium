@@ -34,6 +34,7 @@ import {
   BUDGET_SEED_DEFAULT_USD,
   EFFORT_LEVELS,
   INHERIT_VALUE,
+  BUDGET_DOMAINS,
   MODEL_DOMAINS,
   TIER_DOMAINS,
   validateTierValue,
@@ -1652,19 +1653,33 @@ test("a model option reads as its friendly name with the id leading its title; a
   }
 });
 
-describe("each card states its shared timing in a header meta within the 32-char cap", () => {
+// one head in every state: an empty or failed read swaps the body, never the card's timing meta
+describe("each card states its daemon timing in a header meta within the 32-char cap, in every state", () => {
   const rows = [
-    { name: "model assignment", section: "DomainsSectionMC", props: () => domainsPropsMc(THREE_TIERS_MC), meta: "Applies at next cycle" },
-    { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), meta: "Applies at next cycle" },
-    { name: "call tiers", section: "TiersSectionMC", props: () => tiersPropsMc(), meta: "Applies at next cycle" },
+    { name: "model assignment", section: "DomainsSectionMC", props: () => domainsPropsMc(THREE_TIERS_MC), list: "domains" },
+    { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), list: "budgets" },
+    { name: "call tiers", section: "TiersSectionMC", props: () => tiersPropsMc(), list: "tiers" },
+  ];
+  const forms = [
+    { name: "ready", props: (props: Record<string, unknown>) => props },
+    { name: "empty", props: (props: Record<string, unknown>, list: string) => ({ ...props, [list]: [] }) },
+    { name: "unavailable", props: (props: Record<string, unknown>, list: string) => ({ ...props, state: "unavailable", [list]: [] }) },
   ];
   for (const row of rows) {
-    test(row.name, () => {
-      const metas = headMetaMc(renderComponentMc(screens[row.section], row.props()));
-      assert.deepStrictEqual(metas, [row.meta], `${row.name}: one header meta`);
-      assert.ok(metas[0].length <= 32, `${row.name}: "${metas[0]}" exceeds the 32-char meta cap`);
-    });
+    for (const form of forms) {
+      test(`${row.name}, ${form.name}`, () => {
+        const metas = headMetaMc(renderComponentMc(screens[row.section], form.props(row.props(), row.list)));
+        assert.deepStrictEqual(metas, ["Applies at next cycle"], `${row.name}: one header meta`);
+        assert.ok(metas[0].length <= 32, `${row.name}: "${metas[0]}" exceeds the 32-char meta cap`);
+      });
+    }
   }
+});
+
+test("the card timing is the mode every daemon-config domain the server defines applies at", () => {
+  const [mode] = vm.runInContext("[DAEMON_APPLY_MODE_MC]", screens) as string[];
+  const served = [...MODEL_DOMAINS, ...BUDGET_DOMAINS, ...TIER_DOMAINS].map((def) => def.applyMode);
+  assert.deepStrictEqual([...new Set(served)], [mode]);
 });
 
 test("a row departing from the card's timing states its own timing in its row", () => {
