@@ -520,13 +520,13 @@ function readTileBandFailuresW(summaryState, indexState) {
 	].filter((f) => window.UI.getRegionView(f.state) === "error");
 }
 
-// tile model → one StatRow stat; an empty read leaves the slot to the row's None, the full context line rides its title
+// tile model → one StatRow stat; an empty read leaves the slot to the row's None, a Not loaded stat states its cause, the long form in its title
 function buildStatW(tile) {
 	const { key, label } = tile;
 	if (tile.state === "loading") return { key, label, isLoading: true };
 	if (tile.state === "empty") return { key, label, value: null };
 	if (tile.state !== "ready") {
-		const context = tile.state === "error" ? window.UI.getReadFailureCause(tile.error) : null;
+		const context = tile.state === "error" ? window.UI.getReadFailureCause(tile.error) : tile.sub ?? null;
 		return { key, label, value: <window.UI.AbsentValue kind="not-loaded" title={tile.cause} />, context };
 	}
 	const context = tile.sub ? <span title={tile.hint || tile.sub}>{tile.sub}</span> : null;
@@ -561,6 +561,11 @@ const TILE_CAUSES_W = { error: "The read failed", unavailable: "Not reported yet
 
 function tilePlaceholderW(key, label, state, error = null) {
 	return { key, label, state, cause: TILE_CAUSES_W[state], error, tone: "neutral" };
+}
+
+// a source that never reported is no fetch failure → its own words, not the read-failure cause
+function unreportedTileW(key, label, source) {
+	return { ...tilePlaceholderW(key, label, "unavailable"), sub: `${source} not reported` };
 }
 
 function tileFetchStateW(state) {
@@ -622,7 +627,7 @@ function buildCompiledTileW(state, backlogState = UNKNOWN_REGION_W) {
 
 	const count = state.data?.latest_compiled_count;
 	if (typeof count !== "number") {
-		return tilePlaceholderW("compiled", label, "unavailable");
+		return unreportedTileW("compiled", label, "Cycle");
 	}
 
 	const waiting =
@@ -664,7 +669,7 @@ function buildIndexTileW(state) {
 		(d.has_dirty_flag == null && d.dirty !== true && d.last_dirty_ms == null);
 	if (flagMissing) {
 		return {
-			...tilePlaceholderW("index", label, "unavailable"),
+			...unreportedTileW("index", label, "Index"),
 			cause: "No dirty flag on record — the compiler has not written one, so cleanliness is unknown",
 		};
 	}
@@ -704,7 +709,7 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 			? indexState.data.notes_total
 			: summaryState.data?.notes_total;
 	if (typeof total !== "number") {
-		return tilePlaceholderW("library", label, "unavailable");
+		return unreportedTileW("library", label, "Index");
 	}
 
 	const payload =
@@ -712,16 +717,16 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 	const tile = { key: "library", label, state: "ready", value: formatCountW(total), tone: "neutral" };
 	if (!payload) return { ...tile, sub: "Backlog not reported" };
 
-	const sub = `${describeOriginalsW(payload.true_backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}`;
+	const figures = `${describeOriginalsW(payload.true_backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}`;
 	const age = describeSnapshotAgeW(payload.run_date);
 	const info = [LIBRARY_COUNTING_NOTE_W, age && `${age}.`].filter(Boolean).join(" ");
-	if (!age) return { ...tile, sub, info };
+	if (!age) return { ...tile, sub: figures, info };
 
-	// the caption stays at the 40-char cap → the warn glyph marks the snapshot, its date rides info + tooltip
+	// a stale snapshot's context names the warn glyph's cause; the figures ride the tooltip
 	return {
 		...tile,
-		sub,
-		hint: `${sub} · ${age}`,
+		sub: payload.run_date ? `Stale snapshot ${window.UI.formatKstDay(payload.run_date)}` : figures,
+		hint: `${figures} · ${age}`,
 		info,
 		tone: "warn",
 		toneLabel: payload.run_date ? "Stale snapshot" : "Undated snapshot",
@@ -780,13 +785,16 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 						/>
 					</div>
 				) : !model.proposals || model.proposals.length === 0 ? (
-					<window.UI.EmptyState
-						message={
-							model.proposals
-								? "No merge proposals waiting."
-								: "The last cycle did not report merge proposals."
-						}
-					/>
+					// flush body → the empty line's host takes the card column, as the loading line's does
+					<div className="px-card-pad">
+						<window.UI.EmptyState
+							message={
+								model.proposals
+									? "No merge proposals waiting."
+									: "The last cycle did not report merge proposals."
+							}
+						/>
+					</div>
 				) : (
 					<window.UI.Stack gap="label">
 						<window.UI.Stack gap="label" className="px-card-pad">
@@ -812,11 +820,9 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 
 			{/* Dead-link lists appear only once the fixer has something to report. */}
 			{model.deadLinks && model.deadLinks.length > 0 && (
-				<BacklogExplorer
-					label="Broken links"
-					count={model.deadLinks.length}
-					payload={model.deadLinks}
-				/>
+				<WikiDisclosureW label="Broken links" count={model.deadLinks.length} bodyClassName="flex flex-col">
+					<WikiBrokenLinksTable links={model.deadLinks} />
+				</WikiDisclosureW>
 			)}
 			{model.linkFixes && model.linkFixes.length > 0 && (
 				<BacklogExplorer
@@ -981,9 +987,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 		>
 			{/* flush body → the table's edge cells carry the card-pad column once (spec §1 O4); controls ride the card bar */}
 			<window.UI.Cluster gap="control" className="card-bar">
-				<span className="fs-meta text-faint leading-tight">
-					<window.UI.DayTokens>{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}</window.UI.DayTokens>
-				</span>
+				<span className="fs-meta text-faint leading-tight">{`Sets this table only; the trend keeps ${WIKI_CYCLE_DAYS}d.`}</span>
 				<CardInfo label="How a change is counted" describedBy={`${WIKI_REGION_IDS.runTable}-title`}>
 					A change is a run whose status or backlog differs from the run before.
 				</CardInfo>
@@ -1331,7 +1335,7 @@ function computeStatusMix(rows) {
 	};
 }
 
-// payload JSON dump(<pre>) 원형 표시 — dead-link · link-fix 목록 전용.
+// payload JSON dump(<pre>) 원형 표시 — link-fix 목록 전용.
 function BacklogExplorer({ label, count, payload }) {
 	return (
 		<WikiDisclosureW label={label} count={count}>
@@ -1363,7 +1367,7 @@ function WikiProposalsTable({ proposals }) {
 }
 
 function MergeSuggestionItem({ proposal, view }) {
-	const { TableRow, TableCell, MachineString } = window.UI;
+	const { TableRow, TableCell } = window.UI;
 	const sources = Array.isArray(proposal.source_slugs) ? proposal.source_slugs.join(", ") : "";
 	const similarity =
 		typeof proposal.similarity_score === "number" ? `${Math.round(proposal.similarity_score * 100)}%` : null;
@@ -1371,10 +1375,10 @@ function MergeSuggestionItem({ proposal, view }) {
 	return (
 		<TableRow view={view}>
 			<TableCell view={view} kind="row-header">
-				<WikiCellValueW value={proposal.target_slug ? <MachineString>{proposal.target_slug}</MachineString> : null} />
+				<WikiMachineCellW value={proposal.target_slug} />
 			</TableCell>
 			<TableCell view={view} textRole="meta" label="Absorbs">
-				<WikiCellValueW value={sources ? <MachineString>{sources}</MachineString> : null} />
+				<WikiMachineCellW value={sources} />
 			</TableCell>
 			<TableCell view={view} textRole="meta" label="Similarity" isNumeric>
 				<WikiCellValueW value={similarity} />
@@ -1384,6 +1388,37 @@ function MergeSuggestionItem({ proposal, view }) {
 			</TableCell>
 		</TableRow>
 	);
+}
+
+const WIKI_BROKEN_LINK_COLUMNS = [
+	{ key: "source", label: "Source" },
+	{ key: "target", label: "Target" },
+];
+
+// records from scripts/wiki_deadlinks.py → DeadlinkRecord: the note holding the link, and the slug it points at
+function WikiBrokenLinksTable({ links }) {
+	const { Table, TableRow, TableCell } = window.UI;
+
+	return (
+		<Table caption="Broken links, one row per link" columns={WIKI_BROKEN_LINK_COLUMNS}>
+			{(view) => links.map((link, i) => (
+				<TableRow key={i} view={view}>
+					<TableCell view={view} kind="row-header">
+						<WikiMachineCellW value={link?.source_slug} />
+					</TableCell>
+					<TableCell view={view} textRole="meta" label="Target">
+						<WikiMachineCellW value={link?.link_target} />
+					</TableCell>
+				</TableRow>
+			))}
+		</Table>
+	);
+}
+
+// a slug or path cell: a non-empty string reads in machine type, anything else as the faint None
+function WikiMachineCellW({ value }) {
+	const text = typeof value === "string" && value ? value : null;
+	return <WikiCellValueW value={text && <window.UI.MachineString>{text}</window.UI.MachineString>} />;
 }
 
 // The cleaner tags every action DRY-RUN → the list states it once above the table.
@@ -1437,7 +1472,7 @@ function WikiReportsBody({ state, shared, onRetry }) {
 	return (
 		<div>
 			{/* per-run 보고는 동질 카드 N개 → 슬롭 card-grid 가 아니라 RECORD 표(.tbl)로 노출 (S1/S6).
-          최신 우선 · 수치 셀 .num · 시각 relative-time · 상태 DAEMON_STATUS_TONE · 상태 톤은 톤 글리프 + 상태어가 담당. */}
+          최신 우선 · 수치 셀 .num · 시작 HH:mm · 상태 DAEMON_STATUS_TONE · 상태 톤은 날짜 뒤 톤 글리프 + 상태어가 담당. */}
 			<WikiReportsTable reports={sortedDesc} />
 		</div>
 	);
@@ -1445,63 +1480,57 @@ function WikiReportsBody({ state, shared, onRetry }) {
 
 const WIKI_REPORT_COLUMNS = [
 	{ key: "run_date", label: "Run date" },
-	{ key: "status", label: "Status" },
+	{ key: "started", label: "Started" },
 	{ key: "deadlinks", label: "Broken links", isNumeric: true },
 	{ key: "dedup", label: "Duplicates", isNumeric: true },
-	{ key: "started", label: "Started" },
 ];
+// the run date takes the slack; fixed layout → no column moves with what a run's cells hold
+const WIKI_REPORT_WIDTHS_W = Object.freeze([undefined, "6rem", "8rem", "8rem"]);
+const WIKI_REPORT_TABLE_CLASS_W = "table-fixed";
 
 // Rows flow in page scroll; the Table wrapper clips, so a narrow pane never scrolls the run table sideways.
 function WikiReportsTable({ reports, isLoading = false }) {
 	const { Table, SkeletonRows } = window.UI;
-	// Every run healthy → the caption names it once and the column drops (spec §6 Cells, §7).
-	// Any other shared status is a deviation, and the caption is sr-only → its cells stay visible.
-	const sharedStatus = isLoading ? null : readSharedRunStatusW(reports);
-	const hasStatusColumn = sharedStatus === null || wikiStatusToneW(sharedStatus) !== "ok";
-	const columns = hasStatusColumn ? WIKI_REPORT_COLUMNS : WIKI_REPORT_COLUMNS.filter((c) => c.key !== "status");
-	const caption = hasStatusColumn
-		? "Wiki compile runs, newest first, one row per run"
-		: `Wiki compile runs, newest first, one row per run, every run ${wikiStatusLabelW(sharedStatus)}`;
 
 	return (
-		<Table caption={caption} columns={columns}>
+		<Table
+			caption="Wiki compile runs, newest first, one row per run"
+			columns={WIKI_REPORT_COLUMNS}
+			widths={WIKI_REPORT_WIDTHS_W}
+			className={WIKI_REPORT_TABLE_CLASS_W}
+		>
 			{isLoading
-				? <SkeletonRows rows={5} columns={columns.length} rowHeight={36} />
-				: (view) => reports.map((report) => (
-					<WikiReportRow key={report.run_date} report={report} view={view} hasStatusColumn={hasStatusColumn} />
-				))}
+				? <SkeletonRows rows={5} columns={WIKI_REPORT_COLUMNS.length} rowHeight={36} />
+				: (view) => reports.map((report) => <WikiReportRow key={report.run_date} report={report} view={view} />)}
 		</Table>
 	);
 }
 
-// The status every run shares, or null when the window's runs differ (or there are none).
-function readSharedRunStatusW(reports) {
-	const statuses = new Set(reports.map((r) => r.status));
-	return statuses.size === 1 ? [...statuses][0] ?? "" : null;
-}
-
-// Status = tone glyph + word, no pill; the backlog columns are snapshots re-stamped each run.
-function WikiReportRow({ report, view, hasStatusColumn }) {
+// a healthy run shows its date alone (the fold count says all healthy); any other states its glyph + word after the date
+function WikiReportRow({ report, view }) {
 	const { TableRow, TableCell, TONE_GLYPH } = window.UI;
 	const tone = wikiStatusToneW(report.status);
 
 	return (
 		<TableRow view={view}>
-			<TableCell view={view} kind="row-header" className="tabular-nums">{report.run_date}</TableCell>
-			{hasStatusColumn && (
-				<TableCell view={view} textRole="meta" label="Status">
-					<span className={tone === "neutral" ? "text-dim" : `text-${tone}`} aria-hidden="true">{`${TONE_GLYPH[tone]} `}</span>
-					{wikiStatusLabelW(report.status)}
-				</TableCell>
-			)}
+			<TableCell view={view} kind="row-header" className="tabular-nums">
+				{describeRunDayW(report.run_date)}
+				{tone !== "ok" && (
+					<>
+						{" "}
+						<span className={tone === "neutral" ? "text-dim" : `text-${tone}`} aria-hidden="true">{`${TONE_GLYPH[tone]} `}</span>
+						{wikiStatusLabelW(report.status)}
+					</>
+				)}
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Started" className="tabular-nums" title={report.started_at ? window.UI.formatKstFull(report.started_at) : undefined}>
+				<WikiCellValueW value={report.started_at ? window.UI.formatKstTime(report.started_at) : null} />
+			</TableCell>
 			<TableCell view={view} textRole="meta" label="Broken links" isNumeric>
 				<WikiCellValueW value={report.deadlinks_count} />
 			</TableCell>
 			<TableCell view={view} textRole="meta" label="Duplicates" isNumeric>
 				<WikiCellValueW value={report.dedup_count} />
-			</TableCell>
-			<TableCell view={view} textRole="meta" label="Started" title={report.started_at ? window.UI.formatKstFull(report.started_at) : undefined}>
-				<WikiCellValueW value={report.started_at ? window.UI.formatRelativeTime(report.started_at) : null} />
 			</TableCell>
 		</TableRow>
 	);

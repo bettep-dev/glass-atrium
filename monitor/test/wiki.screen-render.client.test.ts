@@ -230,13 +230,12 @@ test("the Runs fold's body prose fits the 90-char footnote cap, a longer qualifi
   assert.equal(findNodes(fold, (n) => n.props.atom === "CardInfo").length, 1, "the change definition opens from one ⓘ");
 });
 
-// R-c: the trend note hands its sentence to the shared DayTokens atom, so "30-day" never breaks at its hyphen
-test("the Runs fold's trend note rides DayTokens, so its N-day window stays whole", async () => {
+test("the Runs fold's bar line says the range sets this table only and names the trend's fixed window", async () => {
   const mod = await loadWikiScreen();
   const tree = renderScreen(mod.React.createElement(mod.WikiRunTableSection as Component, RUN_TABLE_LOADING));
-  const notes = findNodes(tree, (n) => n.props.atom === "DayTokens").map((n) => String(n.props.children));
-  assert.equal(notes.length, 1, "one note rides DayTokens");
-  assert.match(notes[0], /^The window drives the table only — the trend keeps a fixed \d+-day window\.$/);
+  const [bar] = findNodes(tree, (n) => /\bcard-bar\b/.test(classOf(n)));
+  const [note] = findNodes(bar, (n) => n.type === "span" && /\btext-faint\b/.test(classOf(n)));
+  assert.equal(collectText(note), "Sets this table only; the trend keeps 30d.");
 });
 
 test("the Runs fold body is flush so the table's edge cells hold the one card-pad column, controls on the card bar", async () => {
@@ -511,27 +510,14 @@ function renderRunRowsOf(mod: ScreenModule, reports: unknown[]): RenderedNode | 
 
 const WIDE_VIEW = { isStacked: false, columnCount: 4 };
 
-describe("the run table drops its Status column only when every run in the window is healthy", () => {
+const RUN_COLUMN_LABELS = ["Run date", "Started", "Broken links", "Duplicates"];
+
+describe("the run table keeps one column set, and a run that is not healthy states its glyph and word after its date", () => {
   const run = (run_date: string, status: string, deadlinks_count: number) => ({ run_date, status, deadlinks_count, dedup_count: 3 });
   const rows = [
-    {
-      name: "a uniform healthy window, its backlog still moving, states the shared status once in the caption",
-      reports: [run("2026-09-26", "ok", 2), run("2026-09-25", "ok", 1), run("2026-09-24", "ok", 1)],
-      hasStatusColumn: false,
-      shownWords: [],
-    },
-    {
-      name: "a mixed window states each run's status in its own cell",
-      reports: [run("2026-09-26", "ok", 1), run("2026-09-25", "partial", 1), run("2026-09-24", "ok", 1)],
-      hasStatusColumn: true,
-      shownWords: ["Healthy", "Warning"],
-    },
-    {
-      name: "a uniform failing window, its backlog still moving, shows the failure in every row",
-      reports: [run("2026-09-26", "fail", 2), run("2026-09-25", "fail", 1), run("2026-09-24", "fail", 1)],
-      hasStatusColumn: true,
-      shownWords: ["Failed"],
-    },
+    { name: "a healthy window", reports: [run("2026-09-26", "ok", 2), run("2026-09-25", "ok", 1)], dateTexts: ["09-26", "09-25"] },
+    { name: "a mixed window", reports: [run("2026-09-26", "ok", 1), run("2026-09-25", "partial", 1)], dateTexts: ["09-26", "09-25 ⚠ Warning"] },
+    { name: "a failing window", reports: [run("2026-09-26", "fail", 2), run("2026-09-25", "error", 1)], dateTexts: ["09-26 ✕ Failed", "09-25 ✕ Down"] },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -539,29 +525,36 @@ describe("the run table drops its Status column only when every run in the windo
       const tree = renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports: row.reports }));
       const [table] = findNodes(tree, (n) => n.props.atom === "Table");
       const heads = Array.from(table.props.columns as Array<{ label: string }>, (c) => c.label);
-      const tbody = renderTableRowsOf(mod, tree);
-      const statusCells = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.label === "Status");
+      const dateCells = findNodes(renderTableRowsOf(mod, tree), (n) => n.props.atom === "TableCell" && n.props.kind === "row-header");
 
-      assert.equal(heads.includes("Status"), row.hasStatusColumn, "the Status head follows the window's health");
-      assert.equal(statusCells.length, row.hasStatusColumn ? row.reports.length : 0, "status cells match the head");
-      assert.equal(/Healthy/.test(String(table.props.caption)), !row.hasStatusColumn, "only a shared healthy status is named once, in the caption");
-      // the caption is sr-only → a non-healthy status must reach sighted users through visible row text
-      for (const word of row.shownWords) assert.match(collectText(tbody), new RegExp(word), `the rows show ${word}`);
+      assert.deepEqual(heads, RUN_COLUMN_LABELS, "no Status column, in the ruled order");
+      const widths = Array.from(table.props.widths as Array<string | undefined>);
+      assert.equal(widths[0], undefined, "the run date takes the slack");
+      assert.ok(widths.length === heads.length && widths.slice(1).every(Boolean), "every other column has a set width");
+      assert.deepEqual(dateCells.map((cell) => collectText(cell).replace(/\s+/g, " ")), row.dateTexts);
     });
   }
 });
 
-test("a run's status reads as a tone glyph and a word, never a pill", async () => {
+test("a run's status reads as a tone glyph and a word in its date cell, never a pill", async () => {
   const mod = await loadWikiScreen();
   const tbody = renderRunRowsOf(mod, [
     { run_date: "2026-09-24", status: "fail", deadlinks_count: 0, dedup_count: 0 },
     { run_date: "2026-09-23", status: "ok", deadlinks_count: 0, dedup_count: 0 },
   ]);
-  const [status] = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.label === "Status");
-  const [glyph] = findNodes(status, (n) => n.props["aria-hidden"] === "true");
+  const [failed] = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.kind === "row-header");
+  const [glyph] = findNodes(failed, (n) => n.props["aria-hidden"] === "true");
   assert.match(classOf(glyph), /\btext-crit\b/, "the glyph carries the tone");
-  assert.match(collectText(status), /Failed/, "the word names the state");
+  assert.match(collectText(failed), /Failed/, "the word names the state");
   assert.equal(findNodes(tbody, (n) => n.props.atom === "Badge" || /\bpill\b/.test(classOf(n))).length, 0);
+});
+
+test("a run's start reads as its clock time, the full stamp in the cell title", async () => {
+  const mod = await loadWikiScreen();
+  const tbody = renderRunRowsOf(mod, [{ run_date: "2026-09-24", status: "ok", deadlinks_count: 0, dedup_count: 3, started_at: "2026-09-24T19:30:00Z" }]);
+  const [started] = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.label === "Started");
+  assert.match(collectText(started), /^\d{2}:\d{2}$/);
+  assert.match(String(started.props.title), /^2026-09-2\d \d{2}:\d{2}:\d{2}/);
 });
 
 test("an unrecorded run cell reads None in faint ink, never a blank or a dash", async () => {
@@ -676,7 +669,27 @@ test("the per-run table gives every run its own row, unchanged runs included", a
   const dates = ["2026-09-24", "2026-09-23", "2026-09-22"];
   const reports = dates.map((run_date) => ({ run_date, status: "ok", deadlinks_count: 0, dedup_count: 3 }));
   const rows = findNodes(renderRunRowsOf(mod, reports), (n) => n.props.atom === "TableRow");
-  assert.deepEqual(rows.map((row) => dates.find((d) => collectText(row).includes(d))), dates);
+  assert.deepEqual(rows.map((row) => dates.find((d) => collectText(row).includes(d.slice(5)))), dates);
+});
+
+test("the Broken links fold is a table of each link's source and target, one row per link, never a data dump", async () => {
+  const mod = await loadWikiScreen();
+  const deadlinks = [
+    { source_slug: "agent-engineering", broken_link: "[[prompt-cache]]", link_target: "prompt-cache", fix_status: "dry-run-no-match" },
+    { source_slug: "rag-eval", broken_link: "[[bm25-tuning]]", link_target: "bm25-tuning", fix_status: "dry-run-ambiguous" },
+  ];
+  const backlogState = { status: "ready", error: null, data: { backlog: { run_date: "2026-09-24", deadlink_dryrun: deadlinks } } };
+  const tree = renderScreen(mod.React.createElement(mod.WikiMaintenanceSection as Component, { backlogState, onRetry: () => {} }));
+  const [fold] = findNodes(tree, (n) => n.type === "details" && findSummaryHeading(n, "Broken links") !== undefined);
+  const [table] = findNodes(fold, (n) => n.props.atom === "Table");
+  const rows = findNodes(renderTableRowsOf(mod, fold), (n) => n.props.atom === "TableRow");
+
+  assert.deepEqual(Array.from(table.props.columns as Array<{ label: string }>, (c) => c.label), ["Source", "Target"]);
+  assert.deepEqual(rows.map((row) => findNodes(row, (n) => n.props.atom === "MachineString").map(collectText)), [
+    ["agent-engineering", "prompt-cache"],
+    ["rag-eval", "bm25-tuning"],
+  ]);
+  assert.equal(findNodes(fold, (n) => n.type === "pre").length, 0, "no raw record dump");
 });
 
 test("the maintenance section adds no broken-link line of its own", async () => {
@@ -1097,7 +1110,31 @@ test("a stat whose read failed states the read's cause on its context line", asy
   const contextOf = Object.fromEntries(Array.from(row.props.stats as Array<{ label: string; context: unknown }>, (stat) => [stat.label, stat.context ?? null]));
 
   assert.deepEqual([contextOf["Search index"], contextOf["Library notes"]], ["Server error, not read.", "Server error, not read."]);
-  assert.equal(contextOf["Compiled last cycle"], null, "an unreported count carries no read-failure words");
+  assert.equal(contextOf["Compiled last cycle"], "Cycle not reported", "an unreported count names its source, not read-failure words");
+});
+
+describe("a stat its source never reported reads Not loaded and names that source on its context line", () => {
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const rows = [
+    { name: "a cycle without a compiled count", label: "Compiled last cycle", summary: {}, index: { notes_total: 40, has_dirty_flag: true, dirty: false }, context: "Cycle not reported" },
+    { name: "an index without a dirty flag", label: "Search index", summary: {}, index: { notes_total: 40, has_dirty_flag: false }, context: "Index not reported" },
+    { name: "an index and cycle without a note total", label: "Library notes", summary: {}, index: { has_dirty_flag: true, dirty: false }, context: "Index not reported" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadWikiScreen();
+      const band = renderScreen(
+        mod.React.createElement(mod.WikiTileBand as Component, { summaryState: ready(row.summary), indexState: ready(row.index), backlogState: READY_BACKLOG, onRetry: () => {} }),
+      );
+      const [statRow] = findNodes(band, (n) => n.props.atom === "StatRow");
+      const stat = Array.from(statRow.props.stats as Array<{ label: string; value: unknown; context: unknown }>).find((s) => s.label === row.label);
+      const [absent] = findNodes(renderScreen(stat?.value as RenderedNode), (n) => n.props.atom === "AbsentValue");
+
+      assert.equal(absent?.props.kind, "not-loaded", "the value reads Not loaded");
+      assert.equal(stat?.context, row.context, "the context line names the source");
+      assert.notEqual(absent?.props.title, row.context, "the title keeps the long form");
+    });
+  }
 });
 
 test("the two status cards share the S slot inside their region hosts", async () => {
