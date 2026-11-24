@@ -139,6 +139,25 @@ describe("a stage status is a glyph and its stage word inline, with no container
   }
 });
 
+describe("a stage note rides the status tooltip and its screen-reader text, so the row keeps one line", () => {
+  const rows = [
+    { name: "a status with its stage menu", onPickStage: () => undefined },
+    { name: "a status without a menu", onPickStage: undefined },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderScreen((screen.DocStageCD as Component)({ docStatus: "doc_review", docTitle: "Plan", onPickStage: row.onPickStage, note: "members differ" }));
+      const [status] = findNodes(tree, hasClass("doc-stage"));
+      const spoken = findNodes(tree, hasClass("sr-only")).map((n) => collectText(n)).join(" ");
+      assert.deepEqual(
+        { tooltip: /members differ/.test(String(status?.props.title)), spoken: /members differ/.test(spoken), occurrences: collectText(tree).split("members differ").length - 1 },
+        { tooltip: true, spoken: true, occurrences: 1 },
+      );
+    });
+  }
+});
+
 const MARK_SYNTAX = /[#*`|>[\]~]/;
 
 test("a search snippet reads as plain words: markdown syntax and a leading title echo go, highlights stay balanced", async () => {
@@ -1326,20 +1345,86 @@ function viewerDoc(extra: Record<string, unknown> = {}) {
   return { id: 9, title: "Doc 9", format: "txt", body: "probe", doc_status: "open", supersedes_id: null, superseded_by_id: null, ...extra };
 }
 
-function renderViewerPanel(screen: Record<string, unknown>, state: Record<string, unknown>) {
+function renderViewerPanel(screen: Record<string, unknown>, state: Record<string, unknown>, extra: Record<string, unknown> = {}) {
   return renderScreen((screen.ViewerPanelCD as Component)({
     state, pendingDelete: null, onDelete: noop, onClose: noop, onPickStage: noop, togglingIds: new Set(),
-    optimisticStatusOverrides: new Map(), onNavigate: noop, showToast: noop,
+    optimisticStatusOverrides: new Map(), onNavigate: noop, onRetry: noop, showToast: noop, ...extra,
   }));
 }
+
+describe("the viewer head names its state, keeps its close button in every state, and offers download only on a ready document", () => {
+  const rows = [
+    { name: "loading", state: { status: "loading" }, title: "Document viewer", controls: ["Close viewer"] },
+    { name: "failed read", state: { status: "error", error: "HTTP 500" }, title: "Document viewer", controls: ["Close viewer"] },
+    { name: "ready", state: { status: "ready", data: viewerDoc() }, title: viewerDoc().title, controls: ["Download as HTML", "Close viewer"] },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const [head] = findNodes(renderViewerPanel(screen, row.state), isAtom("CardHead"));
+      const right = head.props.right == null ? null : renderScreen(head.props.right);
+      const controls = right == null ? [] : findNodes(right, (n) => n.type === "button").map((n) => n.props["aria-label"]);
+      assert.deepEqual({ title: head.props.title, controls }, { title: row.title, controls: row.controls });
+    });
+  }
+});
+
+test("a failed document read offers a Retry that reads the document again", async () => {
+  const screen = await loadDocsScreen();
+  let reads = 0;
+  const tree = renderViewerPanel(screen, { status: "error", error: "HTTP 500" }, { onRetry: () => { reads += 1; } });
+  const [notice] = findNodes(tree, isAtom("RegionUnavailable"));
+  (notice.props.onRetry as () => void)();
+  assert.equal(reads, 1);
+});
 
 test("a ready viewer renders its head, the metadata rail and exactly one document body", async () => {
   const screen = await loadDocsScreen();
   const tree = renderViewerPanel(screen, { status: "ready", data: viewerDoc() });
 
-  assert.equal(findNodes(tree, isAtom("CardHead")).length, 1, "the viewer head");
+  const heads = findNodes(tree, isAtom("CardHead"));
+  assert.equal(heads.length, 1, "the viewer head");
+  assert.equal(heads[0].props.isCompact, true, "the viewer head is the compact head, so the reading area keeps the width");
   assert.equal(findNodes(tree, (n) => n.type === "aside" && n.props["aria-label"] === "Document metadata").length, 1, "the metadata rail");
   assert.equal(findNodes(tree, hasClass("doc-body-isolation")).length, 1, "one document body");
+});
+
+test("the viewer's reading column centres on mx-auto, and its screen rule sets no margin", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderViewerPanel(screen, { status: "ready", data: viewerDoc() });
+  const [column] = findNodes(tree, hasClass("doc-fs-body-inner"));
+  assert.ok(column, "the reading column renders");
+  assert.ok(hasClass("mx-auto")(column), String(column.props.className));
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-fs-body-inner"), /(^|[;\s])margin(-inline)?\s*:/);
+});
+
+test("the list card's bar adds no inset of its own, since its full-bleed strips own theirs", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
+  const cards = findNodes(tree, (n) => n.type === "div" && hasClass("doc-list-card")(n));
+  assert.equal(cards.filter(hasClass("card--bar-flush")).length, 1);
+});
+
+test("the opened row's title alone takes the heavier weight, beside its aria-current cue", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
+  const rows = findNodes(tree, (n) => n.type === "tr" && hasClass("doc-row")(n));
+  const titleWeights = rows.map((row) => ({
+    isOpened: row.props["aria-current"] === "true",
+    isHeavy: findNodes(row, hasClass("doc-title-text")).every(hasClass("font-semibold")),
+  }));
+  assert.deepEqual(titleWeights, [{ isOpened: false, isHeavy: false }, { isOpened: true, isHeavy: true }]);
+});
+
+test("the editor's title, author and body boxes are the shared field controls", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.EditorModalCD as Component)({ seed: { id: 9, title: "Doc 9", author: "user" }, onClose: noop, onUpdate: noop }));
+  const fields = findNodes(tree, (n) => n.type === "input" || n.type === "textarea").map((n) => ({ type: n.type, className: n.props.className }));
+  assert.deepEqual(fields, [
+    { type: "input", className: "field" },
+    { type: "input", className: "field" },
+    { type: "textarea", className: "field field--mono doc-editor-textarea" },
+  ]);
 });
 
 describe("a viewer with no rendered document shows its state in place of the body", () => {
@@ -1506,6 +1591,35 @@ describe("a group member state line keeps the cell atom's padding and colours it
       assert.equal(spanCell.props.style, undefined, `${row.name}: no inline style on the span cell`);
       const classed = findNodes(spanCell, (n) => String(n.props?.className ?? "").split(/\s+/).includes(row.wordsClass));
       assert.equal(classed.length, 1, `${row.name}: words coloured by ${row.wordsClass}`);
+    });
+  }
+});
+
+describe("a group member row draws its title and Created in the root row's face", () => {
+  const memberProps = {
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  };
+  const createdAt = new Date(Date.now() - 12 * 86_400_000).toISOString();
+  const rows = [
+    { name: "an open member past seven days", doc_status: "implementing", isStale: true },
+    { name: "a done member past seven days", doc_status: "done", isStale: false },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const member = { id: 21, title: "Member", doc_status: row.doc_status, format: "md", audience: "exposed", author: "a", created_at: createdAt };
+      const state = { status: "ready", data: [member, { ...member, id: 22 }], error: null };
+      const screen = await loadDocsScreen(stubbedStateReact(state));
+      const tree = renderScreen(inTbody((screen.GroupMembersRowsCD as Component)(memberProps)));
+      const [titleRow] = findNodes(tree, hasClass("doc-title-row"));
+      const [ageCell] = findNodes(tree, (n) => n.type === "DocAgeCellCD");
+      // the age prop is getDocAgeCD's result object → its label is the drawn age
+      const age = ageCell?.props.age as { label: string } | undefined;
+      assert.deepEqual(
+        { face: String(titleRow.props.className).split(/\s+/).filter((c) => c.startsWith("fs-")), age: age?.label, isStale: ageCell?.props.isStale },
+        { face: ["fs-body"], age: "12d", isStale: row.isStale },
+      );
     });
   }
 });

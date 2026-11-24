@@ -47,10 +47,10 @@ const LEDGER_CD = {
 	FLOOR: {
 		select: 44, // 16px checkbox + edge 28 — .doc-checkbox-cell takes this width
 		status: 168, // widest face, "Implementing" + its row menu, 139.8px natural (glyph 12 · gap 4 · label 87.8 in the e2e's fallback face, wider than Pretendard's 81 · gap 4 · ⋯ 32) + 4.2 slack + interior 24 — the ledger caps the status at this floor minus interior and ellipsizes a wider label → font-independent
-		id: 86, // "#" + 6 digits in 13px mono, 54.6 (7 × 0.6em) + 7.4 slack = 62 + interior 24 — slack held there → floor sum 938 + rail 200 fits the 1440 layout's 1170, so the rail shows at 1440
+		id: 86, // "#" + 6 digits in 13px mono, 54.6 (7 × 0.6em) + 7.4 slack = 62 + interior 24
 		title: 434, // a title beside its trailing "rev of #N" link · the Documents title floor stays
 		tags: 148, // 124 content allowance + interior 24
-		author: 106, // 82 content allowance + interior 24
+		author: 134, // 110 content allowance: "qa-code-reviewer", the longest shown agent name, 108.4 in the e2e's fallback face (wider than Pretendard) + 1.6 slack · + interior 24
 		created: 100, // 72 content allowance (a 3-digit age, then the stale glyph inline: gap 4 · glyph 12 — the word rides the glyph's title and sr-only text) + edge 28
 		titleNarrow: 240,
 		// Tags drops first + the narrow title floor applies only below this sum → both left out
@@ -122,6 +122,12 @@ function getDocAgeCD(iso, nowMs) {
 	return { days, label: getAgeLabelCD(days), bucket, isStale: bucket === "stale" };
 }
 
+// A row's age · stale only on an open row — a done document never goes stale.
+function getRowAgeCD(row, nowMs) {
+	const age = getDocAgeCD(row.created_at, nowMs);
+	return { age, isStale: age?.isStale === true && getOpenStageEntryCD(row) != null };
+}
+
 // Stage entry of an open row (a known stage short of done) · null otherwise.
 function getOpenStageEntryCD(row) {
 	const entry = stageEntryCD(rowStageCD(row));
@@ -184,7 +190,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	const {
 		PageHeader,
 		Icon,
-		Pill,
 		Badge,
 		TypeScaleStyle,
 		DetailSurface,
@@ -902,11 +907,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
            124px = 컬럼 152px − td 좌우 padding 28px. 상한을 넘긴 칩은 잘려 사라지고(rev 가시폭 0px), 그 rev 가 가리키는 선행 문서는 뷰어 Version history 패널이 운반한다. */
         .doc-tags-cell > span { max-width: 124px; overflow: hidden; }
         /* plain hover → base.css --sunken (design.md §7.5) · row-state fills scoped .tbl tbody tr.doc-row → they outrank it and hold under hover */
-        /* accent row-state ladder viewer 0.035 < checked 0.07 < both 0.11 → the empty stage pip, the faintest mark on a row, holds ≥ 3:1 on every step at the default accent (3.52 · 3.38 · 3.22) · the heavier title is the viewer's non-colour cue, the checkbox the checked one */
-        .tbl tbody tr.doc-row.is-selected { background: rgb(var(--accent) / 0.035); }
-        .doc-row.is-selected .doc-title-text { font-weight: 600; }
+        /* ink row-state ladder (design.md §7.5) — viewer --tint-row-1 < checked -2 < both -3; floors on every step §4.1 · non-colour cues in the markup: the viewer's semibold title, the checked checkbox */
+        .tbl tbody tr.doc-row.is-selected { background: var(--tint-row-1); }
         /* awaiting delete confirmation → struck-through title + aria-busy; the crit glyph before the title carries the tone.
-           no row opacity — a fade drops the empty pip on a checked row below 3:1 (default accent: 0.85 → 2.85; unfaded 3.38) */
+           no row opacity — a fade drops the empty pip on a checked row below 3:1 */
         .doc-row.is-pending-delete .doc-title-text { text-decoration: line-through; }
         /* margin-left = lead slot + title row gap → the snippet starts under the title */
         .doc-snippet { flex: 1 1 auto; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
@@ -916,10 +920,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-snippet mark { background: rgb(var(--accent) / 0.2); color: rgb(var(--ink)); padding: 0 2px; border-radius: 2px; }
         /* R6 본문 컨테이너 — iframe 자리 대체.
            스크롤 양도 — overflow:visible + height:auto → 문서가 자기 <body>{...} 룰을 .doc-body-isolation 으로 rescope 할 때 동일 selector·동일 specificity 후순위 승리로 overflow 를 visible 재설정해 wrap 의 overflow-y 를 무력화하던 회귀 차단(스크롤 컨테이너를 .doc-fs-body-wrap 으로 이관).
-           CARVE-OUT(rgb 9 9 11) — --surface(warm 12 10 9) 미사용은 의도적. 문서 자체 bg-zinc-950 과 hue·값을 정확히 일치시켜 cascade 비결정성 제거 (cool zinc reading palette). --surface 교체 시 hue 불일치 + 결정성 붕괴 → swap 금지.
+           --doc-canvas — 문서 자체 bg-zinc-950 과 같은 cool 캔버스, warm --surface 아님 → swap 금지.
            행간·자간 base default — 승리값은 specificity 높은 .doc-fs-body-inner > .doc-body-isolation 에 위치(아래) · 여기 base 는 문서 leading 부재 시 fallback.
            contain: layout — 문서의 fixed/absolute 요소가 이 상자를 기준으로 배치 → 넘침은 .doc-fs-body-wrap 스크롤 영역이 잘라냄, 뷰어 chrome 덮기 불가 (paint 는 넓게/전폭 breakout 까지 잘라내므로 미사용). */
-        .doc-body-isolation { width: 100%; height: auto; min-height: 0; flex: 1 1 auto; overflow: visible; contain: layout; background: rgb(9 9 11); border-radius: 0; box-shadow: none; box-sizing: border-box; line-height: 1.7; letter-spacing: 0.01em; }
+        .doc-body-isolation { width: 100%; height: auto; min-height: 0; flex: 1 1 auto; overflow: visible; contain: layout; background: rgb(var(--doc-canvas)); border-radius: 0; box-shadow: none; box-sizing: border-box; line-height: 1.7; letter-spacing: 0.01em; }
         /* 본문 다이어그램 폭 — 공유 설정(public/mermaid-config.js)이 채택 타입마다 useMaxWidth 를 껐으므로 SVG 가 고유폭을 유지함 → 넘침을 컨테이너가 스크롤로 받아 잘림을 막음.
            index.html 은 그 전역을 initialize 에 넘길 뿐 값을 갖지 않음 — 이 규칙이 서 있는 값의 출처는 설정 파일 한 곳임.
            svg max-width:none 은 문서가 자기 스타일시트에서 svg 폭을 묶는 경우의 방어 — 맵 캔버스(architecture.jsx)가 같은 이유로 두는 규칙과 같은 성격. */
@@ -939,57 +943,51 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: 8px; ry: 8px; }
         .doc-meta-row { grid-template-columns: 88px 1fr; }
         /* .doc-toast → shared SoT in base.css */
-        .doc-editor-input { width: 100%; padding: var(--space-1_5) var(--space-2); font-size: var(--fs-title); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); }
-        .doc-editor-input:focus { border-color: rgb(var(--accent)); }
-        .doc-editor-textarea { width: 100%; min-height: 320px; max-height: 60vh; padding: var(--space-2); font-size: var(--fs-meta); background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-badge); color: rgb(var(--ink)); font-family: 'JetBrains Mono', monospace; line-height: 1.55; resize: vertical; }
-        .doc-editor-textarea:focus { border-color: rgb(var(--accent)); }
+        /* the HTML body box — a .field grown to an editing area */
+        .doc-editor-textarea { min-height: 320px; max-height: 60vh; resize: vertical; }
         /* (retired) format('H')/audience/format-row/chain 표시 배지 — 전부 canonical window.UI.Badge 로 이전, screen-local CSS 미사용분 제거. */
         /* version-history — predecessor 전용 dim 룰.
            current=강조 / predecessor=.acked(opacity 0.5) 시각 구분. */
         .doc-revision-predecessor.acked { opacity: 0.5; }
-        /* code viewer (yaml/json/txt) — dark base (bg-zinc-900 + border-zinc-800).
+        /* code viewer (yaml/json/txt) — --doc-code 면 + --doc-line 테두리 + --doc-ink 글자.
            github-dark.min.css 가 .hljs span.hljs-* 토큰 색상 부여 — 본 컨테이너는 chrome (배경/테두리/패딩/폰트) 만 정의. */
-        .doc-code-pre { margin: 16px 0; padding: 16px; background: rgb(24 24 27); border: 1px solid rgb(39 39 42); border-radius: 6px; overflow-x: auto; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-size: 13px; line-height: 1.6; color: rgb(228 228 231); }
+        .doc-code-pre { margin: 16px 0; padding: 16px; background: rgb(var(--doc-code)); border: 1px solid rgb(var(--doc-line)); border-radius: 6px; overflow-x: auto; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-size: 13px; line-height: 1.6; color: rgb(var(--doc-ink)); }
         .doc-code-pre code { background: transparent; padding: 0; font-family: inherit; font-size: inherit; line-height: inherit; display: block; white-space: pre; }
         /* 전체화면 reading 면 — DetailSurface variant='fullscreen' bare panel 로 마운트 (overlay/backdrop/focus-trap/scroll-lock/Esc 닫기/z 계약은 공용 .detail-overlay).
            .detail-fullscreen 스코프로 specificity(0,2,0) 승격 → .detail-fullscreen .detail-panel(0,2,0) 의 max-width 980 / border / fade 애니메이션을 source-order 후순위로 제압, 불투명 zinc full-bleed 면 보존.
-           100vw × 100dvh (mobile dynamic viewport 정합) · border-radius 0 (fullscreen 자체가 viewer) · container fill cool zinc-950(rgb 9 9 11) → 3중 다크(--elev/zinc-950/--sunken) 불일치 제거. */
-        .detail-fullscreen .doc-fs-container { width: 100vw; max-width: 100vw; height: 100vh; height: 100dvh; background: rgb(9 9 11); border: none; border-radius: 0; box-shadow: none; display: flex; flex-direction: column; overflow: hidden; }
+           100vw × 100dvh (mobile dynamic viewport 정합) · border-radius 0 (fullscreen 자체가 viewer) · container fill --doc-canvas. */
+        .detail-fullscreen .doc-fs-container { width: 100vw; max-width: 100vw; height: 100vh; height: 100dvh; background: rgb(var(--doc-canvas)); border: none; border-radius: 0; box-shadow: none; display: flex; flex-direction: column; overflow: hidden; }
         /* bare body — .detail-body--bare(padding:0)에 full-height flex column 부여 → .doc-fs-split grid 가 panel 높이 채움 · 스크롤은 .doc-fs-body-wrap 셀이 소유(여기선 overflow:hidden, min-height:0 체인 유지). */
         .detail-fullscreen .doc-fs-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
         /* split grid: main(fluid) | meta(clamp 260-300). 가독성 본문 확폭 — meta col 소폭 축소(320→300)로 본문 여유 확보 + 모바일 collapse 분기. */
         .doc-fs-split { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 1fr clamp(260px, 20vw, 300px); overflow: hidden; }
         /* body wrap = 스크롤 컨테이너(구조 수정 핵심) — overflow:hidden → overflow-y:auto 전환 → 스크롤바가 body 셀 우측 끝(meta border 접점)에 안착("스크롤 우측 이동" 요청 충족) · grid 셀 높이 bound(상위 split flex:1+min-height:0) 가 scrollport 생성 → min-height:0 체인 유지 필수.
-           bg cool zinc-950(rgb 9 9 11) 정합 + 좌우 padding clamp(32-72) gutter 보존 (72 = 3 × --space-6).
+           bg --doc-canvas + 좌우 padding clamp(32-72) gutter (72 = 3 × --space-6).
            container-type — 본문 다이어그램 breakout 이 기준으로 삼는 상자(위 크기 프리셋의 cqi). */
-        .doc-fs-body-wrap { min-height: 0; container-type: inline-size; padding: var(--space-6) clamp(var(--space-8), 4vw, calc(3 * var(--space-6))) var(--space-8); background: rgb(9 9 11); overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgb(63 63 70 / 0.6) transparent; }
-        /* 얇은 다크 스크롤바 — tokens.css 글로벌 *::-webkit-scrollbar(10px·--line warm)를 .doc-fs-* 스코프 한정 override(specificity 0,1,1 > 0,0,1). 8px·zinc thumb. */
+        .doc-fs-body-wrap { min-height: 0; container-type: inline-size; padding: var(--space-6) clamp(var(--space-8), 4vw, calc(3 * var(--space-6))) var(--space-8); background: rgb(var(--doc-canvas)); overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgb(var(--doc-line)) transparent; }
+        /* 얇은 다크 스크롤바 — tokens.css 글로벌 *::-webkit-scrollbar(10px·--line warm)를 .doc-fs-* 스코프 한정 override(specificity 0,1,1 > 0,0,1). 8px · thumb rest --doc-line, hover --faint(전역 스크롤바 hover 와 같음). */
         .doc-fs-body-wrap::-webkit-scrollbar { width: 8px; }
         .doc-fs-body-wrap::-webkit-scrollbar-track { background: transparent; }
-        .doc-fs-body-wrap::-webkit-scrollbar-thumb { background: rgb(63 63 70 / 0.6); border-radius: 4px; border: none; }
-        .doc-fs-body-wrap::-webkit-scrollbar-thumb:hover { background: rgb(82 82 91); }
-        /* inner measure-aware — max-width min(90%,1280px)(화면 90% 비율 + 초광폭 ~95-105ch 캡) + margin-inline auto(중앙) → wrap 스크롤바는 외곽, 본문은 중앙. */
-        .doc-fs-body-inner { width: 100%; max-width: min(90%, 1280px); margin-inline: auto; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+        .doc-fs-body-wrap::-webkit-scrollbar-thumb { background: rgb(var(--doc-line)); border-radius: 4px; border: none; }
+        .doc-fs-body-wrap::-webkit-scrollbar-thumb:hover { background: rgb(var(--faint)); }
+        /* inner measure-aware — max-width min(90%,1280px)(화면 90% 비율 + 초광폭 ~95-105ch 캡) + markup mx-auto(중앙) → wrap 스크롤바는 외곽, 본문은 중앙. */
+        .doc-fs-body-inner { width: 100%; max-width: min(90%, 1280px); flex: 1 0 auto; display: flex; flex-direction: column; }
         /* R6 — iframe 제거 후 .doc-body-isolation 컨테이너가 본문 직접 보유. */
-        .doc-fs-body-inner > .doc-body-isolation { flex: 1 1 auto; min-height: 0; border-radius: 0; box-shadow: none; }
+        .doc-fs-body-inner > .doc-body-isolation { flex: 1 0 auto; border-radius: 0; box-shadow: none; }
         /* 정당화된 단일 !important — 문서가 authored 한 max-w-4xl utility(56rem 고정)를 override → 넓어진 inner(min 90%/1280px) 를 본문이 채우도록. third-party 클래스 override = 문서화된 예외. */
         .doc-fs-body-inner > .doc-body-isolation { max-width: 100% !important; }
         /* 행간·자간 승리값 — > + 더블클래스 specificity(0,2,1) 로 문서 rescoped body 룰(0,1,0) 제압 → !important 불필요.
            line-height 1.75 · letter-spacing 0.012em(light-on-dark halation 보정) · 상속 base → 코드블록/헤딩 등 per-element 로컬 override 유지. */
         .doc-fs-body-inner > .doc-body-isolation { line-height: 1.75; letter-spacing: 0.012em; }
-        /* meta sidebar — grid cell 풀높이 sticky · cool zinc(rgb 13 13 16 solid · 0.6 alpha 제거 → 본문 위 비침 제거) · border-left cool zinc(rgb 34 34 38 · --line warm 대체). */
-        .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(34 34 38); background: rgb(13 13 16); padding: var(--space-4) var(--space-6); }
-        /* 모바일 <768px — meta 하단 stack + border-top · wrap padding 축소 · bg 통일 반복(데스크톱 룰의 cool zinc 를 미디어 블록에서 재확인).
+        /* meta sidebar — grid cell 풀높이 sticky · 불투명 --doc-side(본문 비침 없음) · border-left --doc-line. */
+        .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); padding: var(--space-4) var(--space-6); }
+        /* 모바일 <768px — meta 하단 stack + border-top · wrap padding 축소 · bg 통일 반복(데스크톱 룰의 --doc-canvas · --doc-side 를 미디어 블록에서 재확인).
            max-width min(90%,1280px) 는 폰에서 90% 자동 승리(1280 캡 미발동) → px floor 없음 → overflow 무발생. 스크롤은 wrap 에서 동일 동작. */
         @media (max-width: 768px) {
           .doc-fs-split { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
-          .doc-fs-body-wrap { padding: var(--space-4); background: rgb(9 9 11); }
-          .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(34 34 38); background: rgb(13 13 16); max-height: 40vh; padding: var(--space-4); }
+          .doc-fs-body-wrap { padding: var(--space-4); background: rgb(var(--doc-canvas)); }
+          .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); max-height: 40vh; padding: var(--space-4); }
         }
-        /* Viewer thin header — the fullscreen CardHead keeps the shared .card-head geometry (4 / --card-pad, min 48);
-           only its type steps down here, so the reading area stays wide and the head reads as chrome. */
-        .doc-fs-container .card-head .card-title { font-size: var(--fs-control); }
-        .doc-fs-container .card-head .card-sub { font-size: var(--fs-meta); }
         /* WCAG 2.2 §2.5.8 Target Size (AA) — 24×24 px floor (본 화면 스코프 한정 · padding 보존). */
         .card button.btn.sm,
         .modal-head button.btn.sm,
@@ -1013,9 +1011,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
         @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum + LEDGER_CD.FLOOR.tags}px) { .doc-col-tags, .doc-ledger--tags thead th:nth-child(5) { display: none; } }
         /* a ledger under its column floors → the title floor narrows */
         @container doc-ledger (width < ${LEDGER_CD.FLOOR.sum}px) { .doc-ledger:not(.tbl--stacked) thead th:nth-child(4) { min-width: ${LEDGER_CD.FLOOR.titleNarrow}px; } }
-        /* 선택된 행 강조 — 기존 .is-selected (viewer focus) 와 색 구분: --accent 약한 채도. */
-        .tbl tbody tr.doc-row.is-multi-selected { background: rgb(var(--accent) / 0.07); }
-        .tbl tbody tr.doc-row.is-multi-selected.is-selected { background: rgb(var(--accent) / 0.11); }
+        /* checked and both — the next two steps of the ink ladder above (design.md §7.5) */
+        .tbl tbody tr.doc-row.is-multi-selected { background: var(--tint-row-2); }
+        .tbl tbody tr.doc-row.is-multi-selected.is-selected { background: var(--tint-row-3); }
         /* group action bar — filter bar 행 아래 sticky · zinc-900 코드블록 톤.
            height 고정 (44px min) 사유 — hint(텍스트 1줄) vs active(btn.sm 툴바) 두 모드의
            natural height 차이가 아래 목록을 (de)select 마다 점프시킴 → 상수 높이 + box-sizing
@@ -1025,7 +1023,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 버튼이 reserved 44px 를 넘기지 않도록 상한 — 초과 시 bar 자체가 늘어나 점프 재발. */
         .doc-group-action-bar .btn.sm { max-height: 30px; }
         /* group root row — chevron + member_count badge slot (folder icon 미사용). indent 시각 hint. */
-        .doc-group-toggle { width: 100%; justify-content: center; cursor: pointer; background: transparent; border: none; color: rgb(var(--dim)); border-radius: var(--radius-badge); }
+        .doc-group-toggle { width: 100%; justify-content: center; cursor: pointer; background: transparent; border: none; color: rgb(var(--dim)); border-radius: var(--radius-control); }
         .doc-group-toggle:hover { background: rgb(var(--line) / 0.5); color: rgb(var(--ink)); }
         .doc-group-toggle.is-expanded .chevron { transform: rotate(90deg); }
         /* member rows — indent + 좌측 가는 가이드 선 (group 소속 시각 hint). */
@@ -1037,7 +1035,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         tr.doc-row.is-group-root { border-top: 1px solid rgb(var(--line) / 0.4); }
         /* DnD 재정렬 affordance.
            drag handle ⠿ — leading slot 내 grab cursor + subtle hover. handle 만 grab (행 전체 draggable 이나 시각 hint 는 handle 한정). */
-        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; font-size: var(--fs-meta); line-height: 1; color: rgb(var(--faint)); cursor: grab; border-radius: var(--radius-badge); user-select: none; }
+        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; color: rgb(var(--faint)); cursor: grab; border-radius: var(--radius-control); user-select: none; }
         .doc-drag-handle:hover { color: rgb(var(--dim)); background: rgb(var(--line) / 0.5); }
         .doc-drag-handle:active { cursor: grabbing; }
         /* 끌고 있는 멤버 행 — dim + 점선 (drop target 시각 분리). dark base 정합. */
@@ -1045,21 +1043,16 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* held rows while a read is in flight — dimmed, still readable and selectable. */
         .tbl.doc-ledger-busy { opacity: 0.55; transition: opacity 120ms; }
         @media (prefers-reduced-motion: reduce) { .tbl.doc-ledger-busy { transition: none; } }
-        /* status and its menu share one line (the status track shrinks, the label ellipsizes) → the row keeps its 40 · the note takes a line of its own */
+        /* status and its menu share one line (the status track shrinks, the label ellipsizes) → the row keeps its 40 */
         .doc-stage-cell { grid-template-columns: minmax(0, auto) auto; }
-        .doc-stage-cell > .doc-stage-note { grid-column: 1 / -1; }
         /* a max-width caps the status's min-content → the auto-layout Status column never grows past its floor, whatever font renders the label */
         .doc-ledger .doc-stage-cell, .doc-ledger .doc-stage { max-width: ${LEDGER_CD.FLOOR.status - LEDGER_CD.PADDING.interior}px; min-width: 0; }
         /* the clip cuts at the label's line box → a control line box, so a tight line-height never clips a descender */
         .doc-ledger .doc-stage-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; line-height: var(--lh-ctl); }
-        /* numeric columns: ID and Created read right-aligned in tabular figures on one line — each keeps its own typeface */
-        .tbl :is(th, td).doc-col-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
         /* Retry's focus handoff scrolls the card up to reveal it → the margin keeps the page header in view */
         .doc-list-region { scroll-margin-top: 96px; border-radius: var(--radius-card); }
         /* clip trims an outside ring → the card ring drawn inset */
         .doc-list-region:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
-        /* the bar holds full-bleed strips (control row · whole-word note · bulk bar) that own their insets → the slot adds none, only the rule under it */
-        .doc-list-card > .card-bar { padding: 0; border-bottom: 1px solid rgb(var(--line)); }
         /* the reset's auto margin takes the bar's slack → a trigger value or the search note never resizes the field being typed in */
         .doc-bar-search { flex: 0 1 200px; min-width: 180px; }
         .doc-trigger-value { display: inline-grid; }
@@ -1160,6 +1153,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 						togglingIds={togglingIds}
 						optimisticStatusOverrides={optimisticStatusOverrides}
 						onNavigate={setSelectedId}
+						onRetry={() => loadViewerCD(selectedId)}
 						showToast={showToast}
 					/>
 				</DetailSurface>
@@ -1436,7 +1430,7 @@ function DocListCardCD({
 		// Card takes no id → the region wrapper holds the Retry focus target
 		<div id={DOC_LIST_CARD_ID_CD} className="doc-list-region flex flex-col flex-auto min-h-0 w-full">
 			{/* the list grows with the page → the page scrolls, never this body · x-overflow belongs to the table wrapper */}
-			<Card isFlush bar={bar} foot={foot} className="doc-list-card flex-auto min-h-0 [&>.card-body]:max-h-none [&>.card-body]:overflow-y-visible">
+			<Card isFlush bar={bar} foot={foot} className="doc-list-card card--bar-flush flex-auto min-h-0 [&>.card-body]:max-h-none [&>.card-body]:overflow-y-visible">
 				{getRegionView(state) === "loading" && <LoadingPlaceholder label="documents" minHeight={240} />}
 				{state.error != null && (
 					<div role="alert">
@@ -1489,8 +1483,7 @@ function DocListCardCD({
 									isGroupRoot && expandedFolderIds.has(row.folder_id);
 								const storedStage = rowStageCD(row);
 								const shownStage = optimisticStatusOverrides.get(row.id) ?? storedStage;
-								const age = getDocAgeCD(row.created_at, nowMs);
-								const isStaleRow = age?.isStale === true && getOpenStageEntryCD(row) != null;
+								const { age, isStale: isStaleRow } = getRowAgeCD(row, nowMs);
 								const snippetText =
 									isSearchMode && row.snippet ? getSnippetTextCD(row.snippet, row.title) : "";
 								const rowClass = [
@@ -1562,7 +1555,7 @@ function DocListCardCD({
 														note={row.group_stage_uniform === false ? "members differ" : null}
 													/>
 												</TableCell>
-											<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num text-dim">
+											<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta text-dim">
 													<MachineString>#{row.id}</MachineString>
 												</TableCell>
 											<TableCell view={view} className="title-cell">
@@ -1594,7 +1587,7 @@ function DocListCardCD({
 													</span>
 													<span className="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap gap-label-inline">
 														{isPending && <ToneGlyphCD tone="crit" />}
-														<span className="doc-title-text" title={row.title}>
+														<span className={isSelectedViewer ? "doc-title-text font-semibold" : "doc-title-text"} title={row.title}>
 															{row.title}
 														</span>
 														{/* lineage + collapsed revisions trail the title as pills → one row line */}
@@ -1762,7 +1755,7 @@ function DocAgeCellCD({ view, createdAt, age, isStale }) {
 			textRole="meta"
 			label="Created"
 			isNumeric
-			className="doc-age-cell fs-meta doc-col-num text-dim"
+			className="doc-age-cell fs-meta text-dim"
 			title={`Created ${formatDateCD(createdAt)}`}>
 			{/* age, then the stale glyph inline on one line, never stacked */}
 			<div className="doc-age-line flex justify-end items-center gap-label-inline">
@@ -2048,7 +2041,9 @@ function GroupMembersRowsCD({
 		</TableRow>
 	) : null;
 
+	const nowMs = Date.now();
 	const memberRows = members.map((member) => {
+		const { age, isStale } = getRowAgeCD(member, nowMs);
 		const isSelectedViewer = member.id === selectedId;
 		const isSelectedMulti = selectedIds.has(member.id);
 		const isPending = pendingDelete && pendingDelete.id === member.id;
@@ -2060,6 +2055,7 @@ function GroupMembersRowsCD({
 			isSelectedMulti && "is-multi-selected",
 			isPending && "is-pending-delete",
 			isDragging && "is-dragging",
+			isStale && "is-stale",
 		]
 			.filter(Boolean)
 			.join(" ");
@@ -2149,12 +2145,12 @@ function GroupMembersRowsCD({
 						</span>
 					)}
 				</TableCell>
-				<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta doc-col-num text-dim">
+				<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta text-dim">
 					<MachineString>#{member.id}</MachineString>
 				</TableCell>
 				<TableCell view={view} className="title-cell">
 					<div
-						className="doc-title-row font-medium fs-title text-ink"
+						className="doc-title-row font-medium fs-body text-ink"
 					>
 						{/* 멤버 행 leading slot — 재정렬 가능 시 drag handle(⠿), 아니면 빈칸 (제목 시작 x 통일). */}
 						<span className="doc-title-lead">
@@ -2171,7 +2167,7 @@ function GroupMembersRowsCD({
 						</span>
 						<span className="doc-title-main flex flex-auto min-w-0 items-center flex-nowrap gap-label-inline">
 							{isPending && <ToneGlyphCD tone="crit" />}
-							<span className="doc-title-text" title={member.title}>
+							<span className={isSelectedViewer ? "doc-title-text font-semibold" : "doc-title-text"} title={member.title}>
 								{member.title}
 							</span>
 						</span>
@@ -2188,9 +2184,7 @@ function GroupMembersRowsCD({
 					/>
 				)}
 				<DocAuthorCellCD view={view} author={member.author} />
-				<TableCell view={view} textRole="meta" label="Created" isNumeric className="fs-meta doc-col-num text-dim">
-					{formatDateCD(member.created_at)}
-				</TableCell>
+				<DocAgeCellCD view={view} createdAt={member.created_at} age={age} isStale={isStale} />
 			</TableRow>
 		);
 	});
@@ -2211,6 +2205,7 @@ function ViewerPanelCD({
 	togglingIds,
 	optimisticStatusOverrides,
 	onNavigate,
+	onRetry,
 	showToast,
 }) {
 	const { CardHead, AlertCard } = window.UI;
@@ -2218,22 +2213,15 @@ function ViewerPanelCD({
 	return (
 		<div className="h-full flex flex-col min-h-0">
 			<CardHead
-				title={
-					isReady
-						? state.data.title
-						: state.status === "idle"
-							? "Document viewer"
-							: "Loading…"
-				}
+				isCompact
+				title={isReady ? state.data.title : "Document viewer"}
 				sub={null}
 				right={
-					isReady ? (
-						<ViewerActionsCD
-							doc={state.data}
-							onClose={onClose}
-							showToast={showToast}
-						/>
-					) : null
+					<ViewerActionsCD
+						doc={isReady ? state.data : null}
+						onClose={onClose}
+						showToast={showToast}
+					/>
 				}
 			/>
 			{/* superseded 배너 — successor 존재 = 구 revision 열람 중 (superseded 행은 server contract 상 done 고정, F34). */}
@@ -2274,13 +2262,35 @@ function ViewerPanelCD({
 					</aside>
 				</div>
 			) : (
-				<ViewerBodyCD state={state} />
+				<ViewerBodyCD state={state} onRetry={onRetry} />
 			)}
 		</div>
 	);
 }
 
+// 닫기는 모든 상태 · 내려받기는 문서가 준비된 상태에서만 (doc null = loading / error).
 function ViewerActionsCD({ doc, onClose, showToast }) {
+	const { Icon } = window.UI;
+	// 아이콘 전용 바 — 각 버튼은 aria-label(스크린리더) + title(마우스 툴팁) 2채널로 이름을 운반.
+	return (
+		<div className="flex items-center gap-control flex-wrap">
+			{doc && <ViewerDownloadCD doc={doc} showToast={showToast} />}
+			{onClose && (
+				<button
+					type="button"
+					className="btn ghost sm icon"
+					onClick={onClose}
+					aria-label="Close viewer"
+					title="Close viewer"
+				>
+					<Icon name="x" size={14} />
+				</button>
+			)}
+		</div>
+	);
+}
+
+function ViewerDownloadCD({ doc, showToast }) {
 	const { Icon } = window.UI;
 	const [isExporting, setIsExporting] = useStateCD(false);
 	// 단일 문서 HTML 내려받기 — headless chromium 렌더 대기 구간이 있어 fetch→blob 흐름으로 in-flight 피드백 확보.
@@ -2322,38 +2332,23 @@ function ViewerActionsCD({ doc, onClose, showToast }) {
 		}
 	}, [doc.id, doc.title, isExporting, showToast]);
 
-	// HTML 내려받기 + 닫기 (삭제는 메타 레일). 닫기 = fullscreen 종료 (selectedId 해제) = 키보드 F 단축키 동일 동작.
-	//   · 아이콘 전용 바 — 각 버튼은 aria-label(스크린리더) + title(마우스 툴팁) 2채널로 이름을 운반.
 	return (
-		<div className="flex items-center gap-control flex-wrap">
-			<button
-				type="button"
-				className="btn ghost sm icon"
-				onClick={handleHtmlExport}
-				disabled={isExporting}
-				aria-busy={isExporting ? "true" : undefined}
-				aria-label={isExporting ? "Generating HTML file…" : "Download as HTML"}
-				title={isExporting ? "Generating HTML…" : "Download HTML"}
-				style={{ cursor: isExporting ? "wait" : "pointer", opacity: isExporting ? 0.65 : 1 }}
-			>
-				<Icon
-					name={isExporting ? "loader" : "download"}
-					size={14}
-					className={isExporting ? "doc-action-spinner" : ""}
-				/>
-			</button>
-			{onClose && (
-				<button
-					type="button"
-					className="btn ghost sm icon"
-					onClick={onClose}
-					aria-label="Close viewer"
-					title="Close viewer"
-				>
-					<Icon name="x" size={14} />
-				</button>
-			)}
-		</div>
+		<button
+			type="button"
+			className="btn ghost sm icon"
+			onClick={handleHtmlExport}
+			disabled={isExporting}
+			aria-busy={isExporting ? "true" : undefined}
+			aria-label={isExporting ? "Generating HTML file…" : "Download as HTML"}
+			title={isExporting ? "Generating HTML…" : "Download HTML"}
+			style={{ cursor: isExporting ? "wait" : "pointer", opacity: isExporting ? 0.65 : 1 }}
+		>
+			<Icon
+				name={isExporting ? "loader" : "download"}
+				size={14}
+				className={isExporting ? "doc-action-spinner" : ""}
+			/>
+		</button>
 	);
 }
 
@@ -2557,7 +2552,7 @@ function getDiagramMarkupCD(svg) {
 	});
 }
 
-function ViewerBodyCD({ state }) {
+function ViewerBodyCD({ state, onRetry }) {
 	// Mermaid post-render hook — htmlToReactCD 가 React 트리를 호스트 DOM 에 commit 한 직후 <pre class="mermaid"> 텍스트를 SVG 로 변환.
 	//   · 사유: htmlToReactCD 가 className 만 통과시킴 → <pre> 본문은 텍스트로 마운트 → JS 변환 필요
 	//   · scope: bodyContainerRef.current 한정 (architecture.jsx 의 .arch-mermaid-canvas 와 충돌 차단)
@@ -2640,7 +2635,7 @@ function ViewerBodyCD({ state }) {
 		return <window.UI.LoadingPlaceholder label="the document" minHeight={260} className="p-card-pad" />;
 	}
 	if (state.status === "error") {
-		return <window.UI.RegionUnavailable source="this document" error={state.error} className="p-card-pad" />;
+		return <window.UI.RegionUnavailable source="this document" error={state.error} onRetry={onRetry} className="p-card-pad" />;
 	}
 
 	// 본문 렌더 — 분기 (MD primary + 4-format code viewer):
@@ -2686,7 +2681,7 @@ function ViewerBodyCD({ state }) {
 		: DOC_BODY_SCOPE_CD;
 	return (
 		<div className="doc-fs-body-wrap">
-			<div className="doc-fs-body-inner">
+			<div className="doc-fs-body-inner mx-auto">
 				<div
 					ref={bodyContainerRef}
 					lang={DOC_BODY_LANG_CD}
@@ -2826,7 +2821,8 @@ function DocStageCD({
 		);
 	}
 
-	const rankText = `stage ${stageRankCD(entry.value)} of ${DOC_STAGES_CD.length}`;
+	// note → tooltip + sr-only only, never a second line, so the row keeps its 40
+	const rankText = [`stage ${stageRankCD(entry.value)} of ${DOC_STAGES_CD.length}`, note].filter(Boolean).join(", ");
 	const status = (
 		<span className="doc-stage inline-flex items-center gap-label-inline min-w-0 font-sans" title={`${entry.label} — ${rankText}`}>
 			<Icon name={entry.value === TERMINAL_STAGE_CD ? "check" : "circle"} size={12} className="doc-stage-glyph flex-none text-dim" />
@@ -2853,7 +2849,6 @@ function DocStageCD({
 					if (!isChanging) onPickStage(stage);
 				}}
 			/>
-			{note && <span className="doc-stage-note fs-meta text-dim">{note}</span>}
 		</span>
 	);
 }
@@ -3083,7 +3078,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 							</span>
 							<input
 								type="text"
-								className="doc-editor-input"
+								className="field"
 								value={title}
 								onChange={(e) => setTitle(e.target.value)}
 								required
@@ -3100,7 +3095,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 							{/* 편집 모드 — 작성자 immutable (감사 추적 보존). */}
 							<input
 								type="text"
-								className="doc-editor-input"
+								className="field"
 								value={author}
 								disabled
 								required
@@ -3116,7 +3111,7 @@ function EditorModalCD({ seed, onClose, onUpdate }) {
 							HTML body
 						</span>
 						<textarea
-							className="doc-editor-textarea"
+							className="field field--mono doc-editor-textarea"
 							value={htmlBody}
 							onChange={(e) => setHtmlBody(e.target.value)}
 							required

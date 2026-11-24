@@ -468,7 +468,7 @@
   - tone class (`.info` · `.ok` · `.warn` · `.crit`) 는 root 에서 `--toast-tone` 만 정하고, 그 색은 메시지 앞 `.doc-toast-glyph` (`TONE_GLYPH`, aria-hidden) 에만.
   - 명암 (불투명 shell → 어떤 면 위에서도 같다): 텍스트 16.74 · glyph ≥ 6.32.
 - **문서 viewer chrome** (`clauded-docs.jsx` fullscreen viewer):
-  - viewer 는 고정 캔버스 (`.doc-fs-container` `rgb(9 9 11)` · meta aside `rgb(13 13 16)`); chrome 은 root 토큰을 그대로 쓴다.
+  - viewer 는 고정 캔버스 (`.doc-fs-container` · 본문 `--doc-canvas` · meta aside `--doc-side` · 둘 사이 선 `--doc-line`); chrome 은 root 토큰을 그대로 쓴다.
   - chrome = head · superseded 알림 · meta aside · 비-ready 상태 (idle · loading · read 실패 · 렌더 불가). 렌더된 문서 본문은 토큰 체계 밖 carve-out.
   - 검증: `clauded-docs.load-more.e2e` — chrome 텍스트 ≥ 4.5.
 - **z stack** (`tokens.css` → `--z-overlay` 주석):

@@ -134,6 +134,18 @@ const overlays = [
   },
 ];
 
+// the viewer's frame: a 120px head, then a 680px body cell beside a 300px meta rail
+async function setViewerPage(page: Awaited<ReturnType<Browser["newPage"]>>, css: string, markup: string): Promise<void> {
+  await page.route("**/*", (route) => route.abort());
+  await page.setContent(
+    `<!doctype html><html><head><style>${css}</style></head><body style="margin:0">` +
+      '<div id="chrome" style="height:120px">Viewer header</div>' +
+      '<div style="display:flex;height:680px"><div class="doc-fs-body-wrap" style="flex:1"><div class="doc-fs-body-inner">' +
+      markup +
+      '</div></div><div id="rail" style="width:300px">Meta rail</div></div></body></html>',
+  );
+}
+
 describe("a document's styles paint only inside the viewer's body cell, never over the chrome around it", () => {
   for (const overlay of overlays) {
     test(overlay.name, async () => {
@@ -144,14 +156,7 @@ describe("a document's styles paint only inside the viewer's body cell, never ov
       const css = await getScreenCss();
       const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
       try {
-        await page.route("**/*", (route) => route.abort());
-        await page.setContent(
-          `<!doctype html><html><head><style>${css}</style></head><body style="margin:0">` +
-            '<div id="chrome" style="height:120px">Viewer header</div>' +
-            '<div style="display:flex;height:680px"><div class="doc-fs-body-wrap" style="flex:1"><div class="doc-fs-body-inner">' +
-            markup +
-            '</div></div><div id="rail" style="width:300px">Meta rail</div></div></body></html>',
-        );
+        await setViewerPage(page, css, markup);
         // string form → the page runs it as written (no transpiler helpers it lacks)
         const hits = await page.evaluate(`(() => {
           const hit = {};
@@ -167,5 +172,28 @@ describe("a document's styles paint only inside the viewer's body cell, never ov
         await page.close();
       }
     });
+  }
+});
+
+test("a document longer than the body cell scrolls its last line into view", async () => {
+  const viewer = await loadViewer(React as unknown as Record<string, unknown>);
+  const paragraphs = Array.from({ length: 120 }, (_, i) => `Paragraph ${i + 1} of the incident write-up.`).join("\n\n");
+  const rendered = viewer.renderMarkdownCD(`# Incident review\n\n${paragraphs}\n\nEnd of document.\n`, SCOPE, "Incident review");
+  assert.ok(rendered, "the body rendered");
+  const markup = renderToStaticMarkup(React.createElement("div", { className: `${SCOPE} ${rendered.className}` }, ...(rendered.children as React.ReactNode[])));
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  try {
+    await setViewerPage(page, await getScreenCss(), markup);
+    // string form → the page runs it as written (no transpiler helpers it lacks)
+    const reach = await page.evaluate(`(() => {
+      const wrap = document.querySelector(".doc-fs-body-wrap");
+      wrap.scrollTop = wrap.scrollHeight;
+      const last = Array.from(wrap.querySelectorAll("p")).at(-1).getBoundingClientRect();
+      const cell = wrap.getBoundingClientRect();
+      return { isLastInCell: last.top >= cell.top && last.bottom <= cell.bottom, text: document.elementFromPoint(last.left + 4, last.top + last.height / 2)?.textContent?.trim() };
+    })()`);
+    assert.deepEqual(reach, { isLastInCell: true, text: "End of document." });
+  } finally {
+    await page.close();
   }
 });

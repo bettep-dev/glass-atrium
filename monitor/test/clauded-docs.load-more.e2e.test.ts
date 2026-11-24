@@ -1185,7 +1185,7 @@ test("list card: a mouse click never rings the card, a keyboard-driven handoff r
 });
 
 // mirrors LEDGER_CD.FLOOR in screens/clauded-docs.jsx (browser JSX, outside the test import graph) → a floor change there moves every boundary row below
-const LEDGER_FLOOR = { sum: 938, title: 434, tags: 148, titleNarrow: 240 };
+const LEDGER_FLOOR = { sum: 966, title: 434, tags: 148, titleNarrow: 240 };
 const WIDTH = {
   // app shell beside the card: viewport − shell = the ledger container width (asserted per row)
   SHELL: {
@@ -1207,9 +1207,14 @@ describe("ledger columns: Tags and the title floor follow the ledger's width", (
   const mixedFormatTitle = makeTitle("ledger-md", 0);
   // formatActorCD passes an unknown id through raw → the longest stage actor a real row carries, in its Status cell tooltip
   const widestActor = "gpt_4o_mini_2024_07_18_preview";
+  // the longest agent name the ledger shows (prefix stripped → "qa-code-reviewer")
+  const longAuthor = "glass-atrium-qa-code-reviewer";
+  const longAuthorTitle = makeTitle("ledger-author", 0);
 
   before(async () => {
     seedIds.push(...(await seedManyDocs(29, "ledger")));
+    const longAuthorDoc = await postCreate({ title: longAuthorTitle, author: longAuthor, html_body: makeHtmlBody(`${longAuthorTitle}-body`) });
+    seedIds.push(longAuthorDoc.id);
     // newest row in a format other than the page majority → the Tags column is on, as with real mixed data
     const mixedFormatDoc = await postCreate({
       title: mixedFormatTitle,
@@ -1281,6 +1286,30 @@ describe("ledger columns: Tags and the title floor follow the ledger's width", (
         );
         assert.equal(layout.isTagsShown, row.isTagsShown, `Tags column shown at ${row.width}px (${layout.columns})`);
         assert.equal(layout.titleWidth >= LEDGER_FLOOR.title - 0.5, row.isTitleFloorHeld, `title column ≥ its ${LEDGER_FLOOR.title}px floor at ${row.width}px (${layout.columns})`);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+
+  const authorRows = [
+    { name: "at the column floors", width: THRESHOLD_VIEWPORT.titleFloor },
+    { name: "at room for Tags", width: THRESHOLD_VIEWPORT.tagsShown },
+  ] as const;
+  for (const row of authorRows) {
+    test(`${row.name} the Author column shows the longest agent name on one whole line`, async () => {
+      const { context, page } = await openLedger(row.width);
+      try {
+        const authorRow = await revealRowByTitle(page, longAuthorTitle);
+        const name = authorRow.locator(`.doc-cell-clamp[title="${longAuthor}"] [aria-hidden="true"]`);
+        await name.waitFor({ state: "visible" });
+        // a clamped name wraps onto a hidden second line box → one client rect = the whole name drawn
+        const lineCount = await name.evaluate((el) => {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          return range.getClientRects().length;
+        });
+        assert.equal(lineCount, 1, `"qa-code-reviewer" line boxes in the Author cell at ${row.width}px`);
       } finally {
         await context.close();
       }
