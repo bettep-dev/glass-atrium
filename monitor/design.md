@@ -94,6 +94,8 @@
   --data: 160 154 150;
   /* elevation primitives */
   --elev-2: 36 32 30;  --overlay-surface: 28 25 23;
+  /* document viewer grounds (§6) */
+  --doc-canvas: 9 9 11;  --doc-side: 13 13 16;  --doc-code: 24 24 27;  --doc-line: 39 39 42;  --doc-ink: 228 228 231;
 }
 ```
 
@@ -141,7 +143,6 @@
   --fs-micro: var(--fs-meta);   /* 은퇴한 step — floor 아래로 떨어지지 않게 alias 만 유지 */
   /* radius by role — inline < control < tile < card/overlay */
   --radius-inline: 4px;  --radius-control: 6px;  --radius-tile: 8px;  --radius-card: 12px;
-  --radius-badge: 6px;
   /* hit height · card anatomy */
   --ctl-min-h: 32px;
   --card-head-h: 48px;  --card-pad: var(--space-4);  --row-h: 40px;  --row-h-2: 56px;  --row-h-compact: 32px;
@@ -196,14 +197,14 @@
 - **`AgentName`**: `glass-atrium-` prefix 를 뗀 짧은 이름 + 전체 이름은 sr-only 텍스트 · `title`. agent 식별은 이 텍스트로만 (아바타 없음 — §4.3).
 - **`MiniBars`**: `Sparkline` 과 같은 60×22 SVG 막대 · `label` 있으면 `role="img"`, 없으면 aria-hidden.
 - **신선도**:
-  - `FreshnessStamp` = "as of HH:MM" · `--fs-meta` sans tnum `--faint` (§12.2) · nowrap. 선행 glyph 만 색 — Fresh ✓ `--ok` · Stale / Partial ⚠ `--warn` · Not read ✕ `--crit` · Loading / Refreshing `…` `--faint`. 단어 sr-only, 전체 시각 `title`. 새로고침 중엔 직전 stamp 유지 + `aria-busy`.
+  - `FreshnessStamp` = "as of HH:MM" · `--fs-meta` sans tnum `--faint` (§12.2) · nowrap. 선행 glyph 만 색 — Fresh ✓ `--ok` · Stale / Partial ⚠ `--warn` · Not read ✕ `--crit`. 단어 sr-only, 전체 시각 `title`. 첫 read 진행 중엔 stamp 없음 (Refresh 라벨 `Loading…` 이 유일한 busy cue) · 새로고침 중엔 직전 stamp 와 그 settled glyph 유지 + `aria-busy`. `Last known` 은 실패한 region 이 아직 data 를 들고 있을 때만 (아니면 `read just now · 1 of 7 failed`).
   - `RefreshButton` = `btn ghost sm` 고정 폭 `w-28` · 라벨 끝 정렬(`justify-end`) → 보이는 라벨 끝이 콘텐츠 열 오른쪽 가장자리에 맞음 · refresh icon `motion-safe:animate-spin` · 라벨 "Refreshing…"(직전 read 있음) / "Loading…"(첫 read).
 - **로딩**:
   - `LoadingPlaceholder` = `role="status"` · `--fs-meta` `--dim` · refresh icon `motion-safe:animate-spin` + "Loading <label>…" · `minHeight` 로 settled 높이 예약 → layout shift 0.
   - `SkeletonRows` = 실제 `tbody` 안 · 실제 header 아래 · 실제 row 높이의 aria-hidden 행. 셀마다 정적 bar (높이 10 · 폭 70% · `--radius-inline` · `--faint` 0.3), pulse 없음.
 - **오류 · region 상태**:
   - 실패한 region 은 `RegionFailure` 로만 — banner 나 sibling region 이 같은 source 를 말하면 `RegionCovered`, 아니면 `RegionUnavailable`. 둘 다 tile 없이 region 카드 body 에 놓이고 `minHeight` 로 grid slot 유지.
-    - `RegionUnavailable`: crit icon + 원인 문장 `--fs-body` · 다음 단계 `--fs-meta` `--dim` · 접힌 Details(raw 응답) · `RetryButton`.
+    - `RegionUnavailable`: `AlarmRow` geometry (`.alarm-row.region-unavailable`) — crit glyph 는 card column · 원인 문장 `--fs-body` + 다음 단계 `--fs-meta` `--dim` + 접힌 Details(raw 응답) 는 glyph 뒤 content column · `RetryButton` 은 row 끝 (오른쪽 card column) · 뒤에 내용이 이어지면 hairline 하나. inline padding 규칙은 `.placeholder` 와 같음 (§7.10).
     - `RegionCovered`: pointer 1줄 `--fs-meta` `--dim` — `Not loaded — see the notice above.` (page banner) · `Not loaded — see the <source> notice.` (sibling region). region 이름 · 문장 · Retry 없음 (카드 제목이 이미 이름을 말함). pointer 문구는 `getNoticePointer` 가 소유.
   - 2개 이상 region 이 같은 장애를 공유 → `PageErrorBanner` = `AlertCard tone="crit"` + `RetryButton` 1개 (§7.9). 복구 시 focus 는 첫 covered region 카드로.
   - `RetryButton` · `RefreshButton`: busy 중에도 native `disabled` 금지 — `aria-disabled` + `aria-busy` + click guard 로 키보드 focus 유지. 라벨 "Retrying…".
@@ -519,7 +520,7 @@
 
 ### 7.3 Badge — `Badge` · `Pill` (`.pill*`)
 
-- **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · no border · min-height 24 · padding 0 8px · `--radius-badge` 6 · `--fs-meta` · 500 · Pretendard · nowrap.
+- **neutral shell 하나** (모든 role · tone 공용): `--sunken` bg · `--dim` text · no border · min-height 24 · padding 0 8px · `--radius-inline` 4 · `--fs-meta` · 500 · Pretendard · nowrap.
 - tone 은 내부 glyph/Icon 에만 (§4.2), 라벨은 항상 `--dim`. `Pill` → `Badge` 위임 (neutral → metadata · tone 있음 → glyph 가 있는 status) · `title` · `className` 은 그대로 전달.
   - glyph 명암 (`--sunken` shell 위): warn 10.97 · info 10.13 · ok 9.52 · crit 6.62.
 - 변형: `.pill--absent` (투명 · `--faint` · no border) · `.pill--meta` (소문자) · `.pill--count` (sans tabular, §12.2, look → §12.3 Count; `Pill` leaves at S3 close) · `.pill--ctl-h` (deprecated — a badge never height-matches a control, §12.3) · `.pill--interactive` (`<button>` · min-height `--ctl-min-h` · min-width 24 · a transparent 1px edge no state resizes).
@@ -631,9 +632,9 @@
 
 ### 7.10 Empty state — `EmptyState` (`.placeholder`)
 
-- `.placeholder` (deprecated for `EmptyState`): borderless · no fill · padding `--card-pad` · `--ink` `--fs-control` · 좌측 정렬. Two empty states: §12.5.
+- `.placeholder` (deprecated for `EmptyState`): borderless · no fill · padding-block `--card-pad` · `--ink` `--fs-control` · 좌측 정렬. Two empty states: §12.5.
+  - inline: host 가 이미 card column 위 (padded card body · fold body) → 0 · flush card 의 직접 body (`.card-body.flush` · body 없이 content 를 담은 `.card`) → `--card-pad`. 어느 쪽이든 message x = card title x.
 - `EmptyState`: message 1줄 (원인) + 선택 hint (다음 단계) + 선택 action (재시도 버튼).
-  - `.placeholder--flush-inline` (`EmptyState` `className`): padding-inline 0 → inside a section already on the card inset, the message lines up with the section's own text.
 - 가짜 SVG 일러스트 · 더미 데이터 금지. 실 자산은 사용자에게 요청.
 
 ### 7.11 레이아웃 — `SplitRow` · `SplitColumn` · 간격 그리드
@@ -1071,11 +1072,12 @@
 ### 12.5 States — empty, loading, error
 
 - Every list, form and control specs empty, loading, error, invalid, disabled and in-progress.
-- Two empty states, both left-aligned at `--card-pad`, message 14 ink + hint 13 dim, no border or fill:
+- Two empty states, both left-aligned on the card column (the card title's x), message 14 ink + hint 13 dim, no border or fill:
   - **First use**: what is missing + when it fills or the action that creates it ("No runs yet — the wiki compiles nightly at 04:30").
   - **No results**: `No records match these filters.` + Reset filters (quiet).
 - Loading: skeleton rows at the real row height under the real header (loading marks: §8).
-- In-card error: icon + title (cause) + action (Retry) inline at `--card-pad` — no tinted background, no radius of its own.
+- In-card error: the alarm-row geometry (§7.9) — glyph on the card column, cause and next step on the content column after it, Retry at the row end on the right card column, one hairline under it when more follows in the card; no tint, no radius.
+- A card has one head in every state: title, sub and ⓘ do not change with the data — the ⓘ says what the card measures, which still holds at zero.
 - Peer lanes in one card are a CSS grid with `grid-template-rows: subgrid` (header · body · foot), so headers share height and empty bodies share height; a lane header holds one line, secondary breakdowns move into the body or behind ⓘ.
 - An empty card collapses to its head + one empty line; it never keeps a stretched blank body.
 
@@ -1083,6 +1085,7 @@
 
 - **Surfaces**: hairlines between rows only — no column rules, no boxed cells, no bordered sub-boxes inside a card body. Tables inside a rendered document body keep the author's markdown look.
 - `th`: sentence case, 13/500 dim.
+- **Group header** (`TableCell kind="group-header"`, a `role="heading"` cell): 600, 12 above and 4 below — one kind, one look on every screen.
 - **Sort**: the sorted column shows an up/down arrow + `aria-sort`; other sortable columns a two-way icon; a separate "Sort" trigger only where no column carries the key.
 - **Numbers**: right-aligned, sans `tnum`; a unit attaches to its number (`148,203 runs`, Korean `148,203회`).
 - **Cells**: a status column only where status varies; an empty cell reads `None` in faint ink, never blank.
@@ -1127,7 +1130,7 @@
   - A label holding its counting rule's ⓘ (`CardInfo`) stays one line tall: the trigger sits in a box one label line tall, its 24 target a hit area that adds no height, so every label's text shares one top.
   - Only signals that change the next action; source and as-of time sit once in the card sub-line when every stat shares them, else on the stat's context line.
   - A stat that opens a drill-down is a Link-styled value, not a button tile.
-  - Detail past a stat's context line goes to the card's one ⓘ, its body `StatNotes({ stats })`: one paragraph per stat with a note, its label in ink, then the note — a string, or a node such as `DayTokens` to keep a window token whole. Callers: Wiki Health (`wiki.jsx` → `WikiTileBand`) · Dashboard Status (`dashboard.jsx` → `StatusCard`).
+  - Detail past a stat's context line goes to the card's one ⓘ, its body `StatNotes({ stats })`: one paragraph per stat with a note, 8 apart (`--gap-list`), its label in ink, then the note — a string, or a node such as `DayTokens` to keep a window token whole. Callers: Wiki Health (`wiki.jsx` → `WikiTileBand`) · Dashboard Status (`dashboard.jsx` → `StatusCard`).
 - **`ToneGlyph({ tone, label, title })`** (`ui.jsx`): the alarm-size tone mark with its screen-reader word — the alarm row's glyph in `.one-line-box.tone-glyph`, a box one text line tall (`1lh`) so the glyph centres on that line; `aria-hidden`, its word (`label`, default the tone's severity word) read first as sr-only text. Callers: a firing stat's value (`dashboard.jsx` → `StatValue` · `cost.jsx` → `SpendStatValueC`) · `HeadStatus` · Learning's reject-rate headline and candidate rows (`improvement.jsx` → `RejectRateHeadlineI` · `CandidateRowI`); only on the value line (`.stat-value`) does it carry a trailing `--gap-label-inline`.
 - **`HeadStatus({ tone, className, children })`** (`ui.jsx`): status glyph + words at meta size — card-head sub, drawer field, row verdict — `ToneGlyph` then the words, `--fs-meta` dim, `data-role="head-status"`, top-aligned so the glyph never grows its line; `className` sets the glyph-to-words flex gap (default `gap-label-inline`). Consumers: System map `System parts` head and rows (`architecture.jsx` → `PartHealthBlockAR`) · Learning board heads (`improvement.jsx` → `HeadStatusI`, inside its mounted live region).
 - Rules:
