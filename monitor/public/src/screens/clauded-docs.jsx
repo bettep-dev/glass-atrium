@@ -47,10 +47,10 @@ const LEDGER_CD = {
 	FLOOR: {
 		select: 44, // 16px checkbox + edge 28 — .doc-checkbox-cell takes this width
 		status: 168, // widest face, "Implementing" + its row menu, 139.8px natural (glyph 12 · gap 4 · label 87.8 in the e2e's fallback face, wider than Pretendard's 81 · gap 4 · ⋯ 32) + 4.2 slack + interior 24 — the ledger caps the status at this floor minus interior and ellipsizes a wider label → font-independent
-		id: 86, // "#" + 6 digits in 13px mono, 54.6 (7 × 0.6em) + 7.4 slack = 62 + interior 24 — slack held there → floor sum 938 + rail 200 fits the 1440 layout's 1170, so the rail shows at 1440
+		id: 86, // "#" + 6 digits in 13px mono, 54.6 (7 × 0.6em) + 7.4 slack = 62 + interior 24
 		title: 434, // a title beside its trailing "rev of #N" link · the Documents title floor stays
 		tags: 148, // 124 content allowance + interior 24
-		author: 106, // 82 content allowance + interior 24
+		author: 134, // 110 content allowance: "qa-code-reviewer", the longest shown agent name, 108.4 in the e2e's fallback face (wider than Pretendard) + 1.6 slack · + interior 24
 		created: 100, // 72 content allowance (a 3-digit age, then the stale glyph inline: gap 4 · glyph 12 — the word rides the glyph's title and sr-only text) + edge 28
 		titleNarrow: 240,
 		// Tags drops first + the narrow title floor applies only below this sum → both left out
