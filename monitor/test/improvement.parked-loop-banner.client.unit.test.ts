@@ -41,11 +41,7 @@ interface BannerSandbox {
   window: { UI: Record<string, unknown> };
   ParkedLoopBannerI: (props: { applyCap: unknown }) => RecordedElement | null;
   AlarmLaneI: (props: { applyCap: unknown }) => RecordedElement | null;
-  LedgerFooterI: (props: {
-    total: number;
-    declined: number;
-    suppression: unknown;
-  }) => RecordedElement | null;
+  LedgerFooterI: (props: { total: number }) => RecordedElement | null;
   BucketRowI: (props: { state: unknown; buckets: unknown }) => RecordedElement | null;
   CycleDecompositionRowI: (props: { stats: unknown }) => RecordedElement | null;
   TrendCardI: (props: { state: unknown; aggregate: unknown }) => RecordedElement | null;
@@ -244,12 +240,8 @@ function tintedTextNodes(tree: unknown): string[] {
     .map((el) => String(el.props.className));
 }
 
-test("the ledger footer reports its worst figures with no hue on text", () => {
-  const footer = sandbox.LedgerFooterI({
-    total: 40,
-    declined: 9,
-    suppression: { pending_total: 12, pending_unpromptable: 7, off_registry_parked: 3 },
-  });
+test("the ledger footer reports its pattern count with no hue on text", () => {
+  const footer = sandbox.LedgerFooterI({ total: 40 });
   assert.deepEqual(
     tintedTextNodes(footer),
     [],

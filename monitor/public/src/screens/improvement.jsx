@@ -1897,14 +1897,14 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 	return <Table caption="Recurrence rates" isNested columns={RECURRENCE_COLUMNS_I} bodies={[{ key: "causes", className: "tbl-compact", rows }]} />;
 }
 
-// 원장 푸터 — 전체 기간 수치, 각 구역의 윈도우는 그 구역 헤더가 말한다.
-// rejected = status 가 rejected 인 모든 행 — Held 헤더(전이 사유가 있는 반려 행)보다 넓으므로 자기 이름을 갖는다.
-function LedgerFooterI({ total, rejected }) {
-	return <div className="card-foot">{`${formatIntI(total)} patterns · ${formatIntI(rejected)} rejected · all time`}</div>;
+// 원장 푸터 — 전체 기간 패턴 수, 각 구역의 윈도우는 그 구역 헤더가 말한다.
+function LedgerFooterI({ total }) {
+	return <div className="card-foot">{`${formatIntI(total)} patterns, all time`}</div>;
 }
 
-// "How this is counted" drawer — each recurring cause's remedy and the figures' gates.
-function LedgerNotesI({ suppression }) {
+// "How this is counted" drawer — each recurring cause's remedy, the declined count and the figures' gates.
+// declined = every rejected pattern row — wider than the Held head (rejected rows with a transition cause)
+function LedgerNotesI({ suppression, declined }) {
 	// every cause's remedy, held and recurring, printed once here — the server sentences exceed the face's 12-word bar
 	// keyed by cause and hint → a cause both held and recurring prints each distinct remedy once
 	const causes = new Map(
@@ -1920,6 +1920,10 @@ function LedgerNotesI({ suppression }) {
 					<span className="text-ink font-semibold">{b.label}</span> — {b.hint}
 				</p>
 			))}
+			<p>
+				<span className="text-ink font-semibold">Declined</span>
+				{` — ${formatIntI(declined)} ${declined === 1 ? "pattern" : "patterns"}, all time`}
+			</p>
 			{suppression ? (
 				<p>
 					{formatIntI(unpromptable)} of {formatIntI(pendingTotal)} pending rows can never propose —
@@ -2381,8 +2385,8 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 		? state.data.status_distribution
 		: [];
 	// 반려 수는 status_distribution(전체 기간) 에서 온다 — 아래 백로그 목록은 7일 윈도우라
-	// 길이를 그대로 쓰면 푸터의 게이트와 목록의 게이트가 어긋난다.
-	const rejectedAllTime = sumCountsI(
+	// 길이를 그대로 쓰면 드로어의 게이트와 목록의 게이트가 어긋난다.
+	const declinedAllTime = sumCountsI(
 		dist.filter((d) => d.status === "rejected"),
 	);
 	const total = Number(state.data.total_patterns ?? patterns.length);
@@ -2414,7 +2418,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 			<CardHead
 				title="Pattern ledger"
 				sub={<HeadStatusI count={heldNeedingHuman} words={heldNeedingHuman === 1 ? "needs a human" : "need a human"} />}
-				info={<LedgerNotesI suppression={suppression} />}
+				info={<LedgerNotesI suppression={suppression} declined={declinedAllTime} />}
 			/>
 			<div className="p-card-pad">
 				{hasProblems ? (
@@ -2429,7 +2433,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 					<window.UI.Stack gap="block">{candidates}</window.UI.Stack>
 				)}
 			</div>
-			<LedgerFooterI total={total} rejected={rejectedAllTime} />
+			<LedgerFooterI total={total} />
 		</section>
 	);
 }

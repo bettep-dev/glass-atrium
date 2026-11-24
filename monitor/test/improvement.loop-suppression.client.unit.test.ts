@@ -488,14 +488,16 @@ test("inert rows wait behind a folded disclosure, each label named once with its
   for (const agent of ["glass-atrium-dev-node", "glass-atrium-dev-db"]) assert.match(textOf(fold), new RegExp(agent));
 });
 
-test("the ledger's footer is one line of figures, each gate stated in the drawer", () => {
+test("the ledger's footer counts its patterns once; the declined rows are counted in the drawer", () => {
   const tree = sandbox.PatternLedgerCardI({ state: LEDGER_STATE, suppression: SUPPRESSION, onRowClick: () => {} });
   const footer = findByType(tree, sandbox.LedgerFooterI);
   assert.ok(footer, "the ledger renders its footer");
   const foot = faceTextOf(footer).replace(/\s+/g, " ").trim();
-  // 5 = every rejected row (status distribution) — more rows than the held head counts, so it keeps its own name
-  assert.equal(foot, "63 patterns · 5 rejected · all time", "each figure names its rows, the window stated once");
-  assert.match(ledgerNotes(SUPPRESSION), /agent-registry\.json/, "the held figures are registry-gated and must say so");
+  assert.equal(foot, "63 patterns, all time", "one figure, the window stated once");
+  const notes = ledgerNotes(SUPPRESSION).replace(/\s+/g, " ");
+  // 5 = every rejected row (status distribution), under the word the ledger shows for a rejected pattern
+  assert.match(notes, /Declined — 5 patterns, all time/);
+  assert.match(notes, /agent-registry\.json/, "the held figures are registry-gated and must say so");
 });
 
 test("registry-hidden parked patterns are called out only when they exist", () => {
