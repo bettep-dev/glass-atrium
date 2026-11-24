@@ -511,6 +511,23 @@ describe("healthy live fixture", () => {
 			assert.ok(swatch.line <= swatch.inner, `"${swatch.mark}" sets a ${swatch.line}px line in a ${swatch.inner}px swatch`);
 	});
 
+	// a swatch glyph is a mark, not a machine string → the body sans at 700, never the mono face
+	test("each legend swatch draws its mark in the body sans at weight 700", async () => {
+		await ctx.page.waitForSelector(".arch-legend-swatch", { timeout: 10_000 });
+		const probe = await ctx.page.evaluate(() => ({
+			body: getComputedStyle(document.body).fontFamily,
+			marks: [...document.querySelectorAll(".arch-legend-swatch")]
+				.filter((el) => (el.textContent || "").trim() !== "")
+				.map((el) => ({ mark: (el.textContent || "").trim(), face: getComputedStyle(el).fontFamily, weight: getComputedStyle(el).fontWeight })),
+		}));
+
+		assert.ok(probe.marks.length > 0, "no legend swatch carries a mark");
+		for (const mark of probe.marks) {
+			assert.equal(mark.face, probe.body, `"${mark.mark}" swatch face`);
+			assert.equal(mark.weight, "700", `"${mark.mark}" swatch weight`);
+		}
+	});
+
 	test("every text in the System parts card renders at 13px or larger, each row's meta line included", async () => {
 		await ctx.page.waitForSelector(".arch-part-health .arch-part-meta", { timeout: 10_000 });
 		const texts = await ctx.page.evaluate(() =>

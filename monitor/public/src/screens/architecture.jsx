@@ -786,7 +786,7 @@ function ScreenArchitecture(
 					".arch-legend-item { display: inline-flex; align-items: center; gap: 6px; } " +
 					// height = the meta line + both 2px borders, so the swatch's mark never spills over its ring
 					".arch-legend-swatch { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: calc(var(--fs-meta) + 4px); " +
-					'border: 2px solid rgb(var(--faint)); border-radius: 4px; font-family: "JetBrains Mono", monospace; font-size: var(--fs-meta); font-weight: 700; line-height: 1; } ' +
+					'border: 2px solid rgb(var(--faint)); border-radius: 4px; } ' +
 					".arch-legend-swatch-warn { border-color: rgb(var(--warn)); color: rgb(var(--warn)); } " +
 					".arch-legend-swatch-crit { border-color: rgb(var(--crit)); color: rgb(var(--crit)); } " +
 					".arch-legend-swatch-dashed { border-style: dashed; } " +
@@ -2428,7 +2428,7 @@ function MapCaptionAR() {
 					<li key={item.key} className="arch-legend-item">
 						<span
 							aria-hidden="true"
-							className={`arch-legend-swatch arch-legend-swatch-${item.kind === "ring" ? item.key : item.kind}`}
+							className={`arch-legend-swatch arch-legend-swatch-${item.kind === "ring" ? item.key : item.kind} font-bold leading-none`}
 							style={item.token ? { borderColor: `rgb(var(${item.token}))` } : undefined}>
 							{item.mark || ""}
 						</span>
