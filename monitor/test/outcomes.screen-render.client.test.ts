@@ -289,7 +289,7 @@ describe("a fold block's empty line starts on the block's text column, and every
       const tree = renderScreen(create(mod[row.component] as Component, { state: row.state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
       const [empty] = findNodes(tree, (n) => n.type === "EmptyState");
 
-      assert.match(String(empty.props.className), /\bplaceholder--flush-inline\b/);
+      assert.equal(empty.props.className, undefined, "the shared default form: the block already sits on the card column");
       assert.equal((getBlockHead(tree).props.style as { minHeight?: string } | undefined)?.minHeight, "var(--ctl-min-h)", "the head is the ⓘ box tall");
     });
   }

@@ -1372,7 +1372,7 @@ function AttributionHealthBody({ state, onRetry, shared }) {
 
   // 귀속 기록된 실행 0건 (빈 window) → 안내 indicator.
   if (totalAttributed === 0) {
-    return <window.UI.EmptyState message="No attributed runs in this period." className="placeholder--flush-inline"/>;
+    return <window.UI.EmptyState message="No attributed runs in this period."/>;
   }
 
   return (
@@ -1695,7 +1695,7 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
 
   const channels = Array.isArray(state.data?.channels) ? state.data.channels : [];
   if (channels.length === 0) {
-    return <window.UI.EmptyState message="No recording channel wrote in this window." className="placeholder--flush-inline"/>;
+    return <window.UI.EmptyState message="No recording channel wrote in this window."/>;
   }
 
   // 침묵한 채널을 먼저 — 조치가 필요한 행이 스크롤 아래로 밀리지 않게.
@@ -1781,7 +1781,7 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
 
   const breakdown = state.data?.overall?.grader_breakdown;
   if (!breakdown) {
-    return <window.UI.EmptyState message="No check data in this period." className="placeholder--flush-inline"/>;
+    return <window.UI.EmptyState message="No check data in this period."/>;
   }
 
   const gradedTotal = Number(breakdown.graded_total) || 0;
@@ -1954,7 +1954,7 @@ function CrosstabBody({ state, onRetry, shared }) {
 
   const crosstab = state.data?.crosstab;
   if (!crosstab || crosstab.total === 0) {
-    return <window.UI.EmptyState message="No confidence-vs-self-check records in this period." className="placeholder--flush-inline"/>;
+    return <window.UI.EmptyState message="No confidence-vs-self-check records in this period."/>;
   }
 
   // the page's own-face table class: the .tbl cell geometry and the ledger's column-header face, no clickable-row hover (these rows open nothing)
