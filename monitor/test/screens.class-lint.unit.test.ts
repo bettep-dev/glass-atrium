@@ -78,10 +78,6 @@ const BASELINE: Record<string, BaselineRow[]> = {
   "clauded-docs": [
     { rule: "style-spacing-type", count: 14, owner: "B6" },
   ],
-  dashboard: [
-    { rule: "numeric-spacing", count: 1, owner: "C1" },
-    { rule: "style-spacing-type", count: 2, owner: "C1" },
-  ],
   improvement: [
     { rule: "numeric-spacing", count: 40, owner: "C2" },
     { rule: "inline-spacing", count: 1, owner: "C2" },

@@ -154,7 +154,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
         /* tracks capped at the cell cap → capped cells keep even 2px gaps instead of floating in wider tracks */
         /* one fixed label track, sized to the widest label "Wed ×2" → a folded weekday never shifts the grid */
-        .dash-hour-grid { display: grid; grid-template-columns: 3rem repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; }
+        .dash-hour-grid { display: grid; grid-template-columns: 3rem repeat(24, minmax(0, 1.25rem)); justify-content: start; align-items: center; }
         /* neutral ink ramp (spec 44084 §4.1) → the lowest run hour clears 3:1 on the card; a zero hour is an outline, never a fill */
         .dash-hour-cell, .dash-hour-swatch { border-radius: 2px; }
         .dash-hour-cell { aspect-ratio: 1; }
@@ -164,7 +164,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="2"] { background: var(--heat-2); }
         :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="3"] { background: var(--heat-3); }
         :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="4"] { background: var(--heat-4); }
-        .dash-hour-steps { display: flex; gap: 2px; }
         .dash-hour-tick { white-space: nowrap; }
       `}</style>
 
@@ -535,7 +534,7 @@ function HourGrid({ grid }) {
   return (
     <>
       {subLine}
-      <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid fs-meta text-dim">
+      <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid gap-chart-cell fs-meta text-dim">
         {grid.rows.map((row) => (
           <React.Fragment key={row.day}>
             <span className="whitespace-nowrap leading-none" title={row.fold ?? undefined}>{row.fold ? `${row.day} ×2` : row.day}</span>
@@ -553,7 +552,7 @@ function HourGrid({ grid }) {
         <span>0</span>
         <span className="dash-hour-swatch" data-heat={0}/>
         <span>1</span>
-        <span className="dash-hour-steps">
+        <span className="flex gap-chart-cell">
           {HOUR.STEPS.map((step) => <span key={step} className="dash-hour-swatch" data-heat={step}/>)}
         </span>
         <span>{formatInt(grid.max)} runs per hour{grid.folds.length > 0 && ' · ×2 = two dates summed'}</span>
@@ -722,7 +721,7 @@ function UpdateBadge({ availabilityState, jobState, onRefetchJob }) {
     <span
       role={isAlert ? 'alert' : 'status'}
       aria-live={isAlert ? 'assertive' : 'polite'}
-      className="inline-flex items-center gap-1.5">
+      className="inline-flex items-center">
       {cluster}
     </span>
   );
