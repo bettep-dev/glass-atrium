@@ -11,7 +11,7 @@ const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const BASE_CSS = resolve(__dirname, "../public/styles/base.css");
 
 type Component = (props: Record<string, unknown>) => unknown;
-type RegionInput = { busy?: boolean; error?: string | null };
+type RegionInput = { busy?: boolean; error?: string | null; status?: string };
 type FreshnessInput = { at?: string | null; loading?: boolean; failed?: boolean; regions?: RegionInput[]; staleAfterMs?: number; now?: number };
 
 const ui = await loadScreenModule(UI_SRC);
@@ -55,7 +55,6 @@ test("state follows the read history: never read → loading or not read, read �
 
 test("every shown state carries a distinct decorative glyph and names its state word exactly once", () => {
   const inputs: Array<{ input: FreshnessInput; word: string }> = [
-    { input: { at: null, loading: true }, word: "Loading" },
     { input: { at: null }, word: "Not read" },
     { input: { at: isoAgo(STALE_MS + 60_000) }, word: "Stale" },
   ];
@@ -72,10 +71,10 @@ test("every shown state carries a distinct decorative glyph and names its state 
   assert.ok(![...glyphs].includes(""));
 });
 
-test("a first read in flight leaves the visible loading label to the paired Refresh control", () => {
-  const tree = renderStamp({ at: null, loading: true });
-  assert.equal(findNodes(tree, (n) => n.props["data-stamp-text"] === "true").length, 0);
-  assert.equal(collectText(findNodes(tree, (n) => String(n.props.className ?? "").includes("sr-only"))[0]).trim(), "Loading");
+test("a first read in flight renders no stamp — the paired Refresh label is the one busy cue", () => {
+  for (const input of [{ at: null, loading: true }, { at: null, regions: [{ busy: true }, { error: "down" }] }]) {
+    assert.equal(renderStamp(input).children.length, 0, JSON.stringify(input));
+  }
 });
 
 test("tone colours the glyph only — the stamp text stays in the neutral ink", () => {
@@ -87,7 +86,7 @@ test("tone colours the glyph only — the stamp text stays in the neutral ink", 
   }
 });
 
-test("the stamp renders exactly when the settled read is not fresh — a refresh over a fresh read stays hidden", () => {
+test("the stamp renders exactly when a settled read is not fresh — a refresh over a fresh read and a first read in flight stay hidden", () => {
   const rows: Array<{ name: string; input: FreshnessInput; isShown: boolean }> = [
     { name: "fresh, idle", input: { at: isoAgo(1_000) }, isShown: false },
     { name: "fresh at the window edge", input: { at: isoAgo(STALE_MS) }, isShown: false },
@@ -98,7 +97,7 @@ test("the stamp renders exactly when the settled read is not fresh — a refresh
     { name: "the last read failed", input: { at: isoAgo(1_000), failed: true }, isShown: true },
     { name: "some regions failed", input: { at: isoAgo(1_000), regions: [{ error: "down" }, {}] }, isShown: true },
     { name: "never read", input: { at: null }, isShown: true },
-    { name: "first read in flight", input: { at: null, loading: true }, isShown: true },
+    { name: "first read in flight", input: { at: null, loading: true }, isShown: false },
   ];
   // the component node always wraps its output → shown means it rendered a child
   for (const row of rows) assert.equal(renderStamp(row.input).children.length > 0, row.isShown, row.name);
@@ -136,12 +135,23 @@ test("a never-read stamp shows the unread note: never tried, a first read that f
   }
 });
 
-test("held data over a partly failed refresh reads last known, its age and the failed share", () => {
-  const tree = renderStamp({ at: isoAgo(3 * 60_000), regions: [{ error: "down" }, { error: "down" }, {}, {}, {}, {}, {}] });
-  const visible = findNodes(tree, (n) => n.props["data-stamp-text"] === "true");
-  const [glyph] = findNodes(tree, (n) => n.props["aria-hidden"] === "true");
-  assert.equal(collectText(visible[0]).trim(), "Last known · read 3m ago · 2 of 7 failed");
-  assert.equal(collectText(glyph).trim(), "⚠");
+test("a partly failed read says Last known only when a failed region still holds data, then its age and the failed share", () => {
+  const rows: Array<{ name: string; failedRegion: RegionInput; text: string }> = [
+    { name: "the failed regions hold their last data", failedRegion: { error: "down", status: "ready" }, text: "Last known · read 3m ago · 2 of 7 failed" },
+    { name: "the failed regions never held data", failedRegion: { error: "down", status: "error" }, text: "read 3m ago · 2 of 7 failed" },
+  ];
+  for (const row of rows) {
+    const tree = renderStamp({ at: isoAgo(3 * 60_000), regions: [row.failedRegion, row.failedRegion, {}, {}, {}, {}, {}] });
+    const visible = findNodes(tree, (n) => n.props["data-stamp-text"] === "true");
+    const [glyph] = findNodes(tree, (n) => n.props["aria-hidden"] === "true");
+    assert.equal(collectText(visible[0]).trim(), row.text, row.name);
+    assert.equal(collectText(glyph).trim(), "⚠", row.name);
+  }
+});
+
+test("a first-read failure beside a read under a minute old reads just now with no Last known", () => {
+  const tree = renderStamp({ at: isoAgo(0), regions: [{ error: "down", status: "error" }, {}, {}, {}, {}, {}, {}] });
+  assert.equal(collectText(findNodes(tree, (n) => n.props["data-stamp-text"] === "true")[0]).trim(), "read just now · 1 of 7 failed");
 });
 
 test("a partial failure names how many regions failed out of how many, in text and for AT", () => {
@@ -159,6 +169,7 @@ test("a busy region marks a shown stamp busy and keeps the last stamp, whichever
     assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 1, JSON.stringify(input));
     assert.match(collectText(tree), new RegExp(`Last known · read ${formatRelativeTime(at, NOW)}`));
     assert.match(collectText(findNodes(tree, (n) => String(n.props.className ?? "").includes("sr-only"))[0]), /Refreshing/);
+    assert.equal(collectText(findNodes(tree, (n) => n.props["aria-hidden"] === "true")[0]).trim(), "⚠", "the glyph of the state the refresh settles to");
   }
 });
 
@@ -211,11 +222,19 @@ test("the Refresh atom spins only while busy and only when motion is allowed", (
   assert.equal(findNodes(idle, (n) => /animate-spin/.test(String(n.props.className ?? ""))).length, 0);
 });
 
-test("getRegionSummary tallies busy and failed regions over any region list", () => {
-  const getRegionSummary = ui.getRegionSummary as (regions: unknown) => { isBusy: boolean; failedCount: number; regionCount: number };
+test("getRegionSummary tallies busy, failed and data-holding regions over any region list", () => {
+  type Summary = { isBusy: boolean; failedCount: number; regionCount: number; heldCount: number; heldFailedCount: number };
+  const getRegionSummary = ui.getRegionSummary as (regions: unknown) => Summary;
+  const regions = [
+    { busy: true, error: null, status: "loading" },
+    { busy: false, error: "x", status: "error" },
+    null,
+    { busy: false, error: "y", status: "ready" },
+    { busy: false, error: null, status: "ready" },
+  ];
   // spread → a plain object of this realm; the vm-loaded module returns objects with a foreign prototype
-  assert.deepEqual({ ...getRegionSummary(undefined) }, { isBusy: false, failedCount: 0, regionCount: 0 });
-  assert.deepEqual({ ...getRegionSummary([{ busy: true, error: null }, { busy: false, error: "x" }, null, { busy: false, error: null }]) }, { isBusy: true, failedCount: 1, regionCount: 3 });
+  assert.deepEqual({ ...getRegionSummary(undefined) }, { isBusy: false, failedCount: 0, regionCount: 0, heldCount: 0, heldFailedCount: 0 });
+  assert.deepEqual({ ...getRegionSummary(regions) }, { isBusy: true, failedCount: 2, regionCount: 4, heldCount: 2, heldFailedCount: 1 });
 });
 
 test("the PageHeader cluster wraps under the title instead of overflowing, Refresh right-most after freshness and range", () => {
@@ -336,8 +355,8 @@ describe("freshness-driven verdict", () => {
         const isRead = stampState !== "loading" && stampState !== "not-read";
 
         assert.equal(verdict.state, stampState, `${row.name}/${tone}: one state`);
-        // a fresh settled read hides the stamp → the stamp shows exactly the reads the verdict annotates
-        assert.equal(stampRoot !== undefined, verdict.note !== null, `${row.name}/${tone}: stamp shown exactly when the verdict carries a note`);
+        // a fresh settled read hides the stamp, and so does a first read in flight (the Refresh label carries it) → otherwise the stamp shows exactly the reads the verdict annotates
+        assert.equal(stampRoot !== undefined, verdict.note !== null && stampState !== "loading", `${row.name}/${tone}: stamp shown exactly when the verdict carries a note, a first read in flight aside`);
         assert.equal(stampRoot?.props["aria-busy"] === "true", stampRoot !== undefined && verdict.isBusy, `${row.name}/${tone}: busy agrees`);
         if (verdict.tone === "ok") assert.ok(stampState === "fresh" || stampState === "refreshing", `${row.name}: ok only over a fresh read`);
         if (tone !== "ok" && isRead) assert.equal(verdict.tone, tone, `${row.name}/${tone}: alarm kept`);
@@ -373,5 +392,11 @@ describe("freshness-driven verdict", () => {
       assert.equal(verdict.tone, "neutral", `${row.name}: no tone without a read`);
       assert.match(String(verdict.note), row.note, row.name);
     }
+  });
+
+  test("an unread page drops its note once any region holds data", () => {
+    const verdict = getFreshnessVerdict({ at: null, regions: [{ status: "ready" }, { error: "down", status: "error" }], now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+
+    assert.equal(verdict.note, null);
   });
 });

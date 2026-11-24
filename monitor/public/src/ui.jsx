@@ -2326,22 +2326,28 @@ const FRESHNESS_STALE_MS = 5 * 60_000;
 const FRESHNESS_TICK_MS = 30_000;
 
 // glyph carries the tone, text stays neutral → state survives without colour
+// a refresh borrows the tone of the state it settles to → its entry carries the word only
 const FRESHNESS_META = {
-  loading:    { tone: null, word: 'Loading' },
-  refreshing: { tone: null, word: 'Refreshing' },
+  refreshing: { word: 'Refreshing' },
   'not-read': { tone: 'crit', word: 'Not read' },
   partial:    { tone: 'warn', word: 'Partial' },
   stale:      { tone: 'warn', word: 'Stale' },
   fresh:      { tone: 'ok', word: 'Fresh' },
 };
 
-/** Busy and failed tallies over region states (INITIAL_REGION_STATE shape) — one input for the stamp and the Refresh atom. */
+/**
+ * Busy, failed and data-holding tallies over region states (INITIAL_REGION_STATE shape) — one input for the stamp, the verdict and the Refresh atom.
+ * A region holds data while its status is 'ready', a failed refresh over held data included.
+ */
 function getRegionSummary(regions) {
   const list = Array.isArray(regions) ? regions.filter(Boolean) : [];
+  const held = list.filter((region) => region.status === 'ready');
   return {
     isBusy: list.some((region) => region.busy === true),
     failedCount: list.filter((region) => region.error != null).length,
     regionCount: list.length,
+    heldCount: held.length,
+    heldFailedCount: held.filter((region) => region.error != null).length,
   };
 }
 
@@ -2380,10 +2386,11 @@ function getFreshnessVerdict({ tone = 'neutral', label, at, loading = false, fai
   const isBusy = state === 'loading' || state === 'refreshing';
   const pageLabel = label || VERDICT_TONE_LABEL[tone] || VERDICT_TONE_LABEL.neutral;
 
-  const { failedCount, regionCount } = getRegionSummary(settledRegions);
+  const { failedCount, regionCount, heldCount } = getRegionSummary(settledRegions);
 
   if (settled === 'not-read') {
-    const note = getUnreadNote({ isBusy, failed, failedCount, regionCount });
+    // a region already on screen makes a page-wide unread note false
+    const note = heldCount > 0 ? null : getUnreadNote({ isBusy, failed, failedCount, regionCount });
     return { state, tone: 'neutral', label: VERDICT_TONE_LABEL.neutral, note, isBusy };
   }
   if (settled === 'fresh') return { state, tone, label: pageLabel, note: null, isBusy };
@@ -2491,39 +2498,41 @@ function readRemoteSession() {
 }
 
 /**
- * Shared freshness stamp — hidden while the settled read is fresh; otherwise the unread note or "Last known" with the read's age.
- * A refresh in flight keeps the settled text and sets aria-busy; a read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
+ * Shared freshness stamp — hidden while the settled read is fresh or a first read is in flight (the paired Refresh label reads "Loading…");
+ * otherwise the unread note or the read's age, "Last known" only over data still held.
+ * A refresh in flight keeps the settled glyph and text and sets aria-busy; a read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
  */
 function FreshnessStamp({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
   const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
   const settled = getFreshnessState({ at, failed, regions: getSettledRegions(regions), staleAfterMs, now });
   useFreshnessTick(settled !== 'not-read' && now === undefined);
-  if (settled === 'fresh') return null;
+  if (state === 'loading' || settled === 'fresh') return null;
 
-  const meta = FRESHNESS_META[state];
-  const { failedCount, regionCount } = getRegionSummary(regions);
+  const { failedCount, regionCount, heldFailedCount } = getRegionSummary(regions);
   const failedNote = settled === 'partial' ? `${failedCount} of ${regionCount} failed` : '';
-  const word = state === 'partial' ? `${meta.word}, ${failedNote}` : meta.word;
-  const text = getStampText({ settled, at, now, failedNote, failed, failedCount, regionCount });
+  const word = state === 'partial' ? `${FRESHNESS_META.partial.word}, ${failedNote}` : FRESHNESS_META[state].word;
+  // no failed region → the read is held by definition (age-stale, or a failed flag over a read)
+  const isHeld = failedCount === 0 || heldFailedCount > 0;
+  const text = getStampText({ settled, at, now, failedNote, failed, failedCount, regionCount, isHeld });
   // a first read that failed, whole or in part, warns like a held read gone stale; a never-tried one keeps its own mark
-  const tone = state === 'not-read' && (failed || failedCount > 0) ? 'warn' : meta.tone;
+  const tone = settled === 'not-read' && (failed || failedCount > 0) ? 'warn' : FRESHNESS_META[settled].tone;
   const title = settled === 'not-read' ? word : `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at, now)})`;
 
   return (
     <span className="fs-meta text-faint tabular-nums whitespace-nowrap" title={title} aria-busy={state === 'loading' || state === 'refreshing' ? 'true' : undefined}>
-      <span aria-hidden="true" className={`mr-1 ${tone ? `text-${tone}` : 'text-faint'}`}>{tone ? TONE_GLYPH[tone] : '…'}</span>
+      <span aria-hidden="true" className={`mr-1 text-${tone}`}>{TONE_GLYPH[tone]}</span>
       <span className="sr-only">{word}</span>
-      {/* first read in flight → no text, the paired Refresh label already reads "Loading…" */}
-      {state !== 'loading' && <span data-stamp-text="true" className="whitespace-nowrap">{text}</span>}
+      <span data-stamp-text="true" className="whitespace-nowrap">{text}</span>
     </span>
   );
 }
 
-// visible stamp line for a settled state that is not fresh — the unread note, or "Last known" with the read's age
-function getStampText({ settled, at, now, failedNote, failed, failedCount, regionCount }) {
+// visible stamp line for a settled state that is not fresh — the unread note, or the read's age led by "Last known" only over held data
+function getStampText({ settled, at, now, failedNote, failed, failedCount, regionCount, isHeld }) {
   if (settled === 'not-read') return getUnreadNote({ isBusy: false, failed, failedCount, regionCount });
-  const readText = `${LAST_KNOWN_TEXT} · read ${getReadAge(at, now)}`;
-  return failedNote ? `${readText} · ${failedNote}` : readText;
+  const readText = `read ${getReadAge(at, now)}`;
+  const heldText = isHeld ? `${LAST_KNOWN_TEXT} · ${readText}` : readText;
+  return failedNote ? `${heldText} · ${failedNote}` : heldText;
 }
 
 /**
