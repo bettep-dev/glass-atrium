@@ -390,8 +390,6 @@ function ScreenImprovement({ onNav }) {
         /* ledger sections share the card's one inline edge · the body opens one step under the head rule */
         .i-ledger-body { padding-block:var(--space-1) var(--space-3); }
         .i-ledger-sec { padding:var(--space-2) var(--card-pad) 0; }
-        /* the section already holds the card's inline edge → its empty line takes no second inset */
-        .i-ledger-sec .placeholder { padding-inline:0; }
         /* held rows are what a human acts on → the house table's body step, never the card's smallest text */
         .i-held-table { font-size:var(--fs-control); }
         /* ledger columns stretch to one height → a column's later last section sits on the shared bottom edge · a lone section keeps the top */
@@ -436,9 +434,8 @@ function ScreenImprovement({ onNav }) {
 			{/* 다섯 표면의 순서 — 알람 레인 → 상태 밴드 → 제안 보드 → 패턴 원장 → 루프 산출.
           지목된 주체가 있는 알람이 밴드보다 위 · 유일한 쓰기 표면인 보드가 읽기 전용
           원장보다 위 · 루프 산출은 그 셋을 읽은 뒤에야 의미가 생기므로 마지막.
-          레인은 뷰 분기 밖 — 계측 뷰에서도 알람은 가려지면 안 된다.
-          .space-sections(24px) — 독립 통계 섹션을 16px 카드 채널보다 한 단 넓게 분리(W1-T3 · C-REGION). */}
-			<div className="space-sections flex-1 min-h-0">
+          레인은 뷰 분기 밖 — 계측 뷰에서도 알람은 가려지면 안 된다. */}
+			<div className="space-y-section flex-1 min-h-0">
 				<AlarmLaneI applyCap={applyCapState} />
 				{pageFailure ? (
 					<PageErrorBanner
@@ -449,7 +446,7 @@ function ScreenImprovement({ onNav }) {
 						onRetry={triggerRefresh}
 					/>
 				) : null}
-				<div className="space-sections" {...window.UI.getTabPanelProps(VIEW_TABS_ID_I, view)}>
+				<div className="space-y-section" {...window.UI.getTabPanelProps(VIEW_TABS_ID_I, view)}>
 				{view === "instrumentation" ? (
 					<InstrumentationViewI
 						listState={listState}
@@ -1157,7 +1154,7 @@ function AppliedHistoryRowI({ row, onClick }) {
 				</>
 			}
 			text={label}
-			trail={<span className="font-mono text-faint shrink-0">{`#${row.id}`}</span>}
+			trail={<window.UI.MachineString className="text-faint shrink-0">{`#${row.id}`}</window.UI.MachineString>}
 		/>
 	);
 }
@@ -1385,7 +1382,7 @@ function CompactProposalCardI({ row, onClick }) {
 			text={primary}
 			trail={
 				<>
-					<span className="font-mono text-faint shrink-0">#{row.id}</span>
+					<window.UI.MachineString className="text-faint shrink-0">#{row.id}</window.UI.MachineString>
 					{row.cycle_date && (
 						<span className="text-faint tnum shrink-0">
 							{formatDateI(row.cycle_date)}
@@ -1413,7 +1410,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 	const isSnoozed = status === "snoozed";
 
 	return (
-		<div className="sub-card i-tile-hover bg-elev p-0">
+		<div className="sub-card flush i-tile-hover bg-elev">
 			<button
 				type="button"
 				onClick={onClick}
@@ -1505,7 +1502,7 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 		if (!isPending) fn();
 	};
 	return (
-		<div className="px-3 pb-3 pt-0">
+		<div className="px-3 pb-3">
 			{isSafety && (
 				<div className="fs-meta text-dim mb-1.5 flex items-center gap-label-inline">
 					<SymI s="⚠" className="text-warn" size={11} /> Your call
@@ -1832,9 +1829,7 @@ function HeldCauseGroupI({ bucket, rows }) {
 function LedgerPlainRowsI({ rows }) {
 	if (rows.length === 0) {
 		return (
-			<div className="placeholder">
-				Counted, but no row came back within the read limit
-			</div>
+			<window.UI.EmptyState className="placeholder--flush-inline" message="Counted, but no row came back within the read limit" />
 		);
 	}
 	return (
@@ -2055,8 +2050,8 @@ function DetailBodyI({ fields, sections, preVerify }) {
 				{fields.filter(([, v]) => window.UI.hasFieldValue(v)).map(([k, v, mono]) => (
 					<React.Fragment key={k}>
 						<dt className={labelCls}>{k}</dt>
-						<dd className={`fs-body text-ink break-words${mono ? " font-mono" : ""}`}>
-							{typeof v === "object" ? v : String(v)}
+						<dd className="fs-body text-ink break-words">
+							{mono ? <window.UI.MachineString>{String(v)}</window.UI.MachineString> : typeof v === "object" ? v : String(v)}
 						</dd>
 					</React.Fragment>
 				))}
@@ -2067,9 +2062,7 @@ function DetailBodyI({ fields, sections, preVerify }) {
 					<div key={label}>
 						<div className={`${labelCls} mb-stack`}>{label}</div>
 						{mono ? (
-							<pre className="fs-meta font-mono text-dim bg-sunken px-3 py-2 rounded-md whitespace-pre-wrap break-words">
-								{value}
-							</pre>
+							<window.UI.MachineString isBlock className="text-dim">{value}</window.UI.MachineString>
 						) : (
 							<div className="fs-body text-ink whitespace-pre-wrap break-words">
 								{value}
@@ -2550,9 +2543,7 @@ function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 		return (
 			<div className="i-ledger-sec">
 				{head}
-				<div className="placeholder">
-					No candidate patterns in the last <window.UI.NoWrap>7 days</window.UI.NoWrap>
-				</div>
+				<window.UI.EmptyState className="placeholder--flush-inline" message="No candidate patterns in the last 7 days" />
 			</div>
 		);
 	}

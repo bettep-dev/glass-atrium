@@ -49,14 +49,14 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   .flex-1 { flex: 1 1 0%; } .shrink-0 { flex-shrink: 0; } .min-w-0 { min-width: 0; } .w-full { width: 100%; } .max-w-\\[10rem\\] { max-width: 10rem; }
   .gap-1\\.5 { gap: 0.375rem; } .gap-2 { gap: 0.5rem; } .gap-3 { gap: 0.75rem; } .gap-4 { gap: 1rem; }
   .ml-auto { margin-left: auto; } .mt-1 { margin-top: 0.25rem; } .mt-1\\.5 { margin-top: 0.375rem; }
-  .p-0 { padding: 0; } .p-3 { padding: 0.75rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
+  .p-3 { padding: 0.75rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
   .py-1\\.5 { padding-top: 0.375rem; padding-bottom: 0.375rem; } .px-4 { padding-left: 1rem; padding-right: 1rem; } .pb-4 { padding-bottom: 1rem; }
   .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.5rem; }
   .text-left { text-align: left; } .whitespace-nowrap { white-space: nowrap; } .overflow-hidden { overflow: hidden; }
   .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .line-clamp-1, .line-clamp-3 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; }
   .line-clamp-1 { -webkit-line-clamp: 1; } .line-clamp-3 { -webkit-line-clamp: 3; }
-  .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; } .font-medium { font-weight: 500; }
+  .font-medium { font-weight: 500; }
   .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; } .rounded-md { border-radius: 0.375rem; }`;
 
 const noop = () => undefined;
