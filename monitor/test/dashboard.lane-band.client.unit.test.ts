@@ -477,10 +477,11 @@ test("the outcome stat leads with the failed share, its counts on the context li
   assert.equal(stat.value, "2%", "the failed share is the headline, its .0 dropped");
   assert.equal(stat.context, "4 of 200 task results", "the context names the count and its denominator");
   const notes = stat.notes.join(" ");
-  assert.match(notes, /alarm at 5%/, "the failure alert line moves behind ⓘ");
+  // the drawer leads each stat's notes with its label → the failure line never restates it
+  assert.equal(stat.notes[0], "Alarm at 5%.", "the failure alert line moves behind ⓘ");
   assert.match(notes, /Open caveats 5% \(10\), alarm at 10%/, "the caveat share sits beside its own alert line");
-  assert.match(notes, /writer-emitted/, "and the counting rule");
-  assert.doesNotMatch(String(stat.context), /alarm|writer-emitted/, "the visible line carries neither");
+  assert.match(notes, /reported themselves/, "and the counting rule");
+  assert.doesNotMatch(String(stat.context), /alarm|reported/i, "the visible line carries neither");
 });
 
 // spec 44084 §9 (R8): a firing stat is value + tone glyph; its alarm row already states the count
@@ -542,6 +543,21 @@ test("the spend stat states no multiple of its own — its alarm rule and basis 
     const stat = statOf(dash.buildStats({ harness: HEALTHY, costState: kpi(row.today, row.avg, row.pace), agentsState: LOADING, outcomesState: LOADING }), "spend");
     assert.doesNotMatch(String(stat.context), /×/, `${row.name}: "${stat.context}"`);
     assert.ok(stat.notes.some((note) => /1\.25× the 7-day average \(\$10\.00\/day\)/.test(note)), `${row.name}: ${JSON.stringify(stat.notes)}`);
+  }
+});
+
+// owner rule: no sentence on a screen runs past 12 words, and none uses a recorder-internal word
+test("every sentence in the Status card's ⓘ stays within 12 plain words", () => {
+  const states = [
+    { outcomesState: ready({ total: 200, by_result: [{ result: "fail", count: 4 }, { result: "done", count: 196 }] }), costState: kpi(3, 10, 8) },
+    { outcomesState: ready({ total: 4, by_result: [{ result: "fail", count: 4 }] }), costState: kpi(0, 0) },
+  ];
+  for (const state of states) {
+    const notes = dash.buildStats({ harness: HEALTHY, agentsState: LOADING, ...state }).flatMap((stat) => stat.notes ?? []);
+    for (const sentence of notes.flatMap((note) => note.split(/(?<=\.)\s+/))) {
+      assert.ok(sentence.split(/\s+/).length <= 12, `${sentence.split(/\s+/).length} words: "${sentence}"`);
+      assert.doesNotMatch(sentence, /writer-emitted|synthesized|reconstructed|poisoned/, sentence);
+    }
   }
 });
 

@@ -149,11 +149,12 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-strip-bar { background: currentColor; border-radius: 2px; }
         /* today is still accruing → an outlined bar, never a filled one that reads as a closed day */
         .dash-strip-partial { background: transparent; border: 1px dashed currentColor; }
-        .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; }
+        /* last track = the breakage rows' arrow box → every count in the card ends on one edge */
+        .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem auto; align-items: center; }
         .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
         /* tracks capped at the cell cap → capped cells keep even 2px gaps instead of floating in wider tracks */
-        /* the label track grows to its widest label → a folded "Wed ×2" stays on one line instead of spilling into the first cell */
-        .dash-hour-grid { display: grid; grid-template-columns: minmax(2.5rem, max-content) repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; }
+        /* one fixed label track, sized to the widest label "Wed ×2" → a folded weekday never shifts the grid */
+        .dash-hour-grid { display: grid; grid-template-columns: 3rem repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; }
         /* neutral ink ramp (spec 44084 §4.1) → the lowest run hour clears 3:1 on the card; a zero hour is an outline, never a fill */
         .dash-hour-cell, .dash-hour-swatch { border-radius: 2px; }
         .dash-hour-cell { aspect-ratio: 1; }
@@ -435,13 +436,18 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
   return <AlertCard tone="crit" surface="inset" title={copy.sentence} body={copy.next} details={copy.detail} actions={retry}/>;
 }
 
+// a week panel's one sub-line: its span, then its count when it has one; the window itself sits in the stat labels
+function SpanLine({ span, children }) {
+  return <p className="fs-meta text-dim"><window.UI.DayTokens>{span}</window.UI.DayTokens>{children != null && <> · {children}</>}</p>;
+}
+
+// the server zero-fills each day → no points at all means no window to state
 function SpendStrip({ strip }) {
-  if (strip.bars.length === 0) return <p className="fs-meta text-dim">No spend recorded in the last <window.UI.NoWrap>7 days</window.UI.NoWrap>.</p>;
+  if (strip.bars.length === 0) return <p className="fs-meta text-dim">No spend recorded</p>;
   const max = Math.max(...strip.bars.map((bar) => bar.cost)) || 1;
-  const hasPartial = strip.bars.some((bar) => bar.isPartial);
   return (
     <>
-      <p className="fs-meta text-dim"><window.UI.DayTokens>{strip.span}</window.UI.DayTokens>{hasPartial ? ' · today is still accruing' : ''}</p>
+      <SpanLine span={strip.span}/>
       <ol className="grid grid-cols-7 gap-label-inline" aria-label={`Spend per day, ${strip.span}`}>
         {strip.bars.map((bar) => (
           <li key={bar.date} className="flex flex-col items-center gap-stack min-w-0">
@@ -460,27 +466,29 @@ function SpendStrip({ strip }) {
 }
 
 // a result's bar is a quantity → the data colour; the label word (ui.jsx RESULT_META) names the result
+// the breakage group under the result rows → a block gap marks the boundary
 function ResultPanel({ panel }) {
-  if (panel.writerTotal <= 0) return <p className="fs-meta text-dim">No task results, <window.UI.DayTokens>{panel.span}</window.UI.DayTokens>.</p>;
+  const { Stack } = window.UI;
+  const subLine = <SpanLine span={panel.span}>{formatInt(panel.writerTotal)} task results</SpanLine>;
+  if (panel.writerTotal <= 0) return subLine;
   return (
     <>
-      <p className="fs-meta text-dim">
-        <window.UI.DayTokens>{panel.span}</window.UI.DayTokens> · {formatInt(panel.writerTotal)} task results
-      </p>
-      <ul className="flex flex-col gap-list">
-        {panel.rows.map((row) => {
-          return (
+      {subLine}
+      <Stack gap="block">
+        <ul className="flex flex-col gap-list">
+          {panel.rows.map((row) => (
             <li key={row.result} className="dash-result-row gap-label-inline fs-body">
               <span>{window.UI.resolveResultMeta(row.result).label}</span>
               <div aria-hidden="true">
                 <div className="dash-result-fill text-data" style={{ width: `${(row.count / panel.writerTotal) * 100}%` }}/>
               </div>
               <span className="tabular-nums text-right">{formatInt(row.count)}</span>
+              <span aria-hidden="true" className="link-arrow invisible">→</span>
             </li>
-          );
-        })}
-      </ul>
-      <BreakageAgents agents={panel.agents}/>
+          ))}
+        </ul>
+        <BreakageAgents agents={panel.agents}/>
+      </Stack>
     </>
   );
 }
@@ -490,7 +498,7 @@ function BreakageAgents({ agents }) {
   const { Link } = window.UI;
   if (agents.length === 0) return <p className="fs-meta text-dim">No agent had a failed or blocked run.</p>;
   return (
-    <>
+    <window.UI.Stack gap="list">
       <h3 className="fs-meta text-dim">Most failed or blocked</h3>
       <ul className="flex flex-col gap-list">
         {agents.map((row) => (
@@ -504,7 +512,7 @@ function BreakageAgents({ agents }) {
           </li>
         ))}
       </ul>
-    </>
+    </window.UI.Stack>
   );
 }
 
@@ -517,15 +525,15 @@ const HOUR = {
   TICKS: new Set([0, 6, 12, 18]),
   STEPS: [1, 2, 3, 4],
   // the heatmap counts differently from the results panel beside it → it states its own basis
-  GRID_BASIS: 'All recorded runs — reconstructed included, poisoned excluded.',
+  GRID_BASIS: 'Counts every recorded run, including ones the harness rebuilt. Runs in a quarantined window are left out.',
 };
 
 function HourGrid({ grid }) {
-  const { NoWrap } = window.UI;
-  if (grid.total <= 0) return <p className="fs-meta text-dim">No runs recorded in the last <NoWrap>7 days</NoWrap>.</p>;
+  const subLine = <SpanLine span={grid.span}>{formatInt(grid.total)} runs</SpanLine>;
+  if (grid.total <= 0) return subLine;
   return (
     <>
-      <p className="fs-meta text-dim"><window.UI.DayTokens>{grid.span}</window.UI.DayTokens> · {formatInt(grid.total)} runs</p>
+      {subLine}
       <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid fs-meta text-dim">
         {grid.rows.map((row) => (
           <React.Fragment key={row.day}>
@@ -547,8 +555,7 @@ function HourGrid({ grid }) {
         <span className="dash-hour-steps">
           {HOUR.STEPS.map((step) => <span key={step} className="dash-hour-swatch" data-heat={step}/>)}
         </span>
-        <span>{formatInt(grid.max)} runs per hour</span>
-        {grid.folds.length > 0 && <span>· ×2 = two dates summed</span>}
+        <span>{formatInt(grid.max)} runs per hour{grid.folds.length > 0 && ' · ×2 = two dates summed'}</span>
       </div>
     </>
   );
@@ -562,9 +569,9 @@ function HourGridNote({ grid }) {
       <p className="fs-body">{HOUR.GRID_BASIS}{grid?.dateCount ? ` Covers ${grid.dateCount} calendar dates.` : ''}</p>
       {grid?.folds.length > 0 && (
         <p className="fs-body">
-          {grid.folds.map((row, at) => (
-            <React.Fragment key={row.day}>{at > 0 && ' · '}<NoWrap>{`${row.day} ×2`}</NoWrap>{` sums ${row.fold}`}</React.Fragment>
-          ))} — runs are counted by weekday, not by date.
+          {grid.folds.map((row) => (
+            <React.Fragment key={row.day}><NoWrap>{`${row.day} ×2`}</NoWrap>{` sums ${row.fold}. `}</React.Fragment>
+          ))}Runs are counted by weekday.
         </p>
       )}
     </>
@@ -1006,7 +1013,8 @@ function buildOutcomeStat(outcomesState) {
   const trend = describeOutcomeTrend(rate, outcomesState.data?.prior_window);
   return {
     ...base, status: OUTCOME.STAT_STATUS[rate.status], tone: rate.tone,
-    value: describeOutcomeValue(rate), absent: isOutcomeJudgeable(rate) ? undefined : 'none', context: describeOutcomeContext(rate),
+    value: describeOutcomeValue(rate), unit: rate.status === 'low-n' ? `of ${formatInt(rate.writerTotal)}` : undefined,
+    absent: isOutcomeJudgeable(rate) ? undefined : 'none', context: describeOutcomeContext(rate),
     isContextTripped: rate.tone === 'warn',
     notes: [...describeOutcomeLines(rate), ...(trend ? [`${trend}.`] : []), OUTCOME.COUNTING_NOTE],
   };
@@ -1018,26 +1026,27 @@ const OUTCOME = {
     unavailable: 'unavailable', empty: 'empty', 'low-n': 'unavailable', ok: 'ready', warn: 'ready', crit: 'ready',
   },
   JUDGED: new Set(['ok', 'warn', 'crit']),
-  COUNTING_NOTE: 'Counts only writer-emitted task results — records the agent reported itself; synthesized records are left out.',
+  COUNTING_NOTE: 'Counts only task results agents reported themselves.',
 };
 // the panel beside the stat counts every result → its ⓘ says how the stat's caveat figure differs
-const RESULTS_PANEL_NOTE = 'The Failed or blocked stat above counts the same task results; its caveat figure counts open caveats only.';
+const RESULTS_PANEL_NOTE = 'The Failed or blocked stat counts the same task results. Its caveat figure counts open caveats only.';
 
 // empty or no writer-reported outcome → known to hold nothing (absent 'none'), the share has no denominator
 function isOutcomeJudgeable(rate) {
   return rate.status === 'low-n' || OUTCOME.JUDGED.has(rate.status);
 }
 
+// low-n → the count the label names, its sample as the unit; too few for a share
 function describeOutcomeValue(rate) {
-  if (rate.status === 'low-n') return formatInt(rate.writerTotal);
+  if (rate.status === 'low-n') return formatInt(rate.breakage);
   if (!isOutcomeJudgeable(rate)) return null;
   return getSharePct(rate.breakage, rate.writerTotal);
 }
 
 function describeOutcomeContext(rate) {
   if (rate.status === 'unavailable') return 'No task results to judge.';
-  if (rate.status === 'empty') return 'No task results recorded in the last 7 days.';
-  if (rate.status === 'low-n') return 'task results, too few to judge';
+  if (rate.status === 'empty') return 'No task results recorded';
+  if (rate.status === 'low-n') return 'too few to judge';
   // the failed share tripped → the value carries the glyph, the alarm row the count; open caveats tripped → the line names them
   if (rate.tone === 'crit') return null;
   if (rate.tone === 'warn') return `${formatInt(rate.openCaveats)} of ${formatInt(rate.writerTotal)} with open caveats`;
@@ -1051,7 +1060,7 @@ function describeOutcomeLines(rate) {
   if (!OUTCOME.JUDGED.has(rate.status)) return [];
   const caveats = `Open caveats ${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)})`;
   return [
-    `Failed or blocked: alarm at ${formatAlertLine(OUTCOME_BREAKAGE_CRIT_SHARE)}.`,
+    `Alarm at ${formatAlertLine(OUTCOME_BREAKAGE_CRIT_SHARE)}.`,
     `${caveats}, alarm at ${formatAlertLine(OUTCOME_OPEN_CAVEAT_WARN_SHARE)}.`,
   ];
 }
@@ -1133,12 +1142,12 @@ function buildSpendStat(costState, harness) {
 
   const pace = resolveSpendPace(costState);
   const tone = { hot: 'warn', normal: 'ok' }[pace.status] ?? 'neutral';
-  const note = pace.status === 'no-basis'
-    ? 'No spend in the last 7 days — no baseline to judge the pace against.'
-    : `Alarms when today's spend so far, or the last 3 hours' rate held for a day, reaches ${SPEND_PACE_CUT}× the 7-day average (${formatUsdCompact(pace.basis)}/day).`;
+  const notes = pace.status === 'no-basis'
+    ? ['No spend in the last 7 days to judge the pace against.']
+    : [`Alarm at ${SPEND_PACE_CUT}× the 7-day average (${formatUsdCompact(pace.basis)}/day).`, 'Judged on spend so far and the 3-hour pace.'];
   // a hot day trips the value → the alarm row holds the one baseline
   const context = tone === 'warn' ? null : describeSpendTrend(harness);
-  return { ...base, status: 'ready', tone, value: formatUsdCompact(pace.today), context, notes: [note] };
+  return { ...base, status: 'ready', tone, value: formatUsdCompact(pace.today), context, notes };
 }
 
 // day-over-day from one payload (the shell's /api/dashboard/kpi) → today and its comparand never mix sources

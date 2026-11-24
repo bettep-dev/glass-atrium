@@ -310,6 +310,70 @@ describe("The results panel rows at 1440×900", () => {
   });
 });
 
+describe("The results panel counts at 1440×900", () => {
+  // the breakage rows' arrow takes its own column → both lists' counts end on one edge
+  test("every count in the card ends on one right edge", async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    try {
+      // anonymous callbacks only → tsx's keepNames helper does not exist inside the page
+      const edges = await page.evaluate(() => {
+        const [results, agents] = ["#dash-week-results .dash-result-row > .tabular-nums", "#dash-week-results li .link .tabular-nums"]
+          .map((selector) => Array.from(document.querySelectorAll(selector)).map((el) => el.getBoundingClientRect().right));
+        return { results, agents };
+      });
+      assert.ok(edges.results.length > 0 && edges.agents.length > 0, JSON.stringify(edges));
+      for (const right of edges.agents) assert.ok(Math.abs(right - edges.results[0]) < 0.5, JSON.stringify(edges));
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("the Most failed or blocked head opens a group one --gap-block below the result rows", async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    try {
+      const gap = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.style.rowGap = "var(--gap-block)";
+        document.body.append(probe);
+        const token = Number.parseFloat(getComputedStyle(probe).rowGap);
+        probe.remove();
+        const rows = document.querySelectorAll("#dash-week-results .dash-result-row");
+        const head = document.querySelector("#dash-week-results h3");
+        const above = rows[rows.length - 1]?.closest("ul")?.getBoundingClientRect().bottom ?? NaN;
+        return { token, measured: (head?.getBoundingClientRect().top ?? NaN) - above };
+      });
+      assert.ok(Math.abs(gap.measured - gap.token) < 0.5, JSON.stringify(gap));
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("Runs by hour day labels at 1440×900", () => {
+  const HEATMAP = "/api/outcomes/heatmap";
+  const heatmap = PAYLOADS[HEATMAP] as { meta: Record<string, unknown> };
+  const firstCellLeft = async (): Promise<number> => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    try {
+      return await page.evaluate(() => document.querySelector("#dash-week-hours .dash-hour-cell")?.getBoundingClientRect().left ?? NaN);
+    } finally {
+      await page.close();
+    }
+  };
+
+  // a folded "Wed ×2" never widens the label track → the grid starts at one x in every state
+  test("the first hour cell starts at one x with or without a folded weekday", async () => {
+    const atRest = await firstCellLeft();
+    overrides[HEATMAP] = { ...heatmap, meta: { ...heatmap.meta, bucket_dates: { first: "2026-08-12", last: "2026-08-19", count: 8 } } };
+    try {
+      const folded = await firstCellLeft();
+      assert.ok(Number.isFinite(atRest) && Math.abs(folded - atRest) < 0.5, `rest ${atRest}, folded ${folded}`);
+    } finally {
+      delete overrides[HEATMAP];
+    }
+  });
+});
+
 // Runs by hour reads as a grid of squares: no cell outgrows the cap, and the panel sits beside the results from xl
 const HOUR_CELL_MAX_PX = 20;
 
