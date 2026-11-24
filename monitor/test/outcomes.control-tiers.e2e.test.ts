@@ -214,13 +214,13 @@ describe("the ledger's pagination row is the card's 40 foot", () => {
 describe("a card head's own status reads as glyph and word, never a pill", () => {
   const STATUS = '.card-head [data-role="head-status"]';
 
-  test("Confident but failed: the mismatches status sits on the info button's centre line, unboxed", async () => {
-    const status = await readBox(`#crosstab ${STATUS}`);
-    const info = await readBox("#crosstab .card-head .btn.icon");
+  test("Confident but failed: the mismatches status sits in the head's sub slot on the title's line, unboxed", async () => {
+    const status = await readBox(`#crosstab .card-head-text > .card-sub ${STATUS.replace(".card-head ", "")}`);
+    const title = await readBox("#crosstab .card-title");
     assert.match((await page.$eval(`#crosstab ${STATUS}`, (el) => el.textContent)) ?? "", /4 mismatches/);
     assert.equal(await page.locator("#crosstab .card-head .pill").count(), 0, "a pill in the head");
     assert.ok(await page.$eval(`#crosstab ${STATUS}`, (el) => el.querySelector("svg") !== null), "the warn glyph leads the word");
-    assert.ok(Math.abs(status.top + status.height / 2 - (info.top + info.height / 2)) < 0.5, "one centre line");
+    assert.ok(status.top >= title.top && status.bottom <= title.bottom, `the status ${status.top}–${status.bottom} inside the title line ${title.top}–${title.bottom}`);
   });
 
   for (const card of ["attribution", "channels"]) {

@@ -184,6 +184,13 @@ test("the per-agent table spans the full width", async () => {
 // design.md copy caps → a longer header wraps the 48px card head; the long form belongs in the card's ⓘ drawer
 const COPY_CAP = { title: 24, meta: 32 };
 
+// the caps bound painted copy → a screen-reader-only word is no part of it
+function collectPaintedText(node: RenderedNode | string | null): string {
+  if (node === null || typeof node === "string") return collectText(node);
+  if (String(node.props.className ?? "").split(/\s+/).includes("sr-only")) return "";
+  return node.children.map(collectPaintedText).join(" ");
+}
+
 function getHeaderCopy(tree: RenderedNode): { kind: string; title: string; sub: unknown }[] {
   return findNodes(tree, (n) => n.type === "CardHead" || n.type === "Disclosure")
     .map((n) => ({ kind: String(n.type), title: String(n.props.title), sub: n.props.sub }));
@@ -202,7 +209,7 @@ test("every card and fold header on the screen fits the title and header-meta ca
   assert.ok(headers.length >= 8, `the screen's headers are all collected (${headers.length})`);
   for (const header of headers) {
     assert.ok(header.title.length <= COPY_CAP.title, `${header.kind} title "${header.title}" is ${header.title.length} chars`);
-    const meta = typeof header.sub === "string" ? header.sub : collectText(renderScreen(header.sub) as RenderedNode | null);
+    const meta = typeof header.sub === "string" ? header.sub : collectPaintedText(renderScreen(header.sub) as RenderedNode | null);
     assert.ok(meta.length <= COPY_CAP.meta, `${header.kind} "${header.title}" meta "${meta}" is ${meta.length} chars`);
   }
 });
@@ -224,15 +231,36 @@ describe("the cross-table header shows its share meta, count in the hover title,
       const [head] = findNodes(renderScreen(create(mod.CrosstabCard as Component, { state, onRetry: () => undefined })) as RenderedNode,
         (n) => n.type === "CardHead");
 
-      const metas = findNodes(head, (n) => n.props.className === "card-sub").map((meta) => ({
-        text: collectText(meta),
-        title: findNodes(meta, (n) => typeof n.props.title === "string")[0]?.props.title,
-      }));
+      const [sub] = findNodes(head, (n) => n.props.className === "card-sub");
+      const metas = findNodes(sub, (n) => typeof n.props.title === "string")
+        .map((meta) => ({ text: collectText(meta), title: meta.props.title }));
       assert.deepEqual(metas, row.metas);
-      const statuses = findNodes(head, (n) => n.type === "HeadStatusO");
-      assert.equal(statuses.length, 1);
+      const statuses = findNodes(sub, (n) => n.type === "HeadStatus");
+      assert.equal(statuses.length, 1, "the status sits in the head's sub slot");
       assert.equal(findNodes(head, (n) => n.type === "Badge").length, 0, "no badge in the head");
       assert.match(collectText(statuses[0]), new RegExp(`${row.crosstab.polarTotal.toLocaleString("en-US")}\\s+mismatches`));
+    });
+  }
+});
+
+describe("a card's own status is the shared head Status in the head's sub slot, never the right slot", () => {
+  const rows = [
+    { name: "Record attribution", component: "AttributionHealthCard", data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } } },
+    { name: "Recording channels", component: "ChannelLivenessCard", data: { channels: [], alerting: ["stop"], days: 7 } },
+    { name: "Confident but failed", component: "CrosstabCard", data: { crosstab: { total: 10, polarTotal: 4, byCell: {} } } },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+      const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+      const state = { status: "ready", busy: false, data: row.data, error: null };
+      const tree = renderScreen(create(mod[row.component] as Component, { state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
+      const [head] = findNodes(tree, (n) => n.type === "CardHead");
+      const [sub] = findNodes(head, (n) => n.props.className === "card-sub");
+
+      assert.equal(findNodes(head, (n) => n.props["data-role"] === "head-status").length, 1, "one head status");
+      assert.equal(findNodes(sub, (n) => n.type === "HeadStatus").length, 1, "the shared Status, in the sub slot");
+      assert.equal(head.props.right ?? null, null, "the right slot stays empty");
     });
   }
 });
@@ -540,11 +568,12 @@ test("a loading skeleton pulses through its gated class, never through an inline
 
 describe("the Record attribution head reads None only over a read window with no records, Not loaded with its cause after a failed read or a payload without its window summary, and nothing while the first read is in flight", () => {
   const rows = [
-    { name: "failed", state: { status: "error", busy: false, data: null, error: { message: SERVER_ERROR } }, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false, title: SERVER_ERROR },
-    { name: "read, no attributed records", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } }, error: null }, kinds: [], text: /None$/, hasGlyph: true, isBodyEmpty: true },
-    { name: "read, a payload without its window summary", state: { status: "ready", busy: false, data: { days_series: [] }, error: null }, kinds: ["not-loaded"], text: /Not loaded/, hasGlyph: false, title: "no window summary", isBodyEmpty: false },
-    { name: "read, a measured share", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } }, error: null }, kinds: [], text: /1\.2% /, hasGlyph: true, isBodyEmpty: false },
+    { name: "failed", state: { status: "error", busy: false, data: null, error: { message: SERVER_ERROR } }, kinds: ["not-loaded"], text: /Not loaded/, isRead: false, title: SERVER_ERROR },
+    { name: "read, no attributed records", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } }, error: null }, kinds: [], text: /None$/, isRead: true, isBodyEmpty: true },
+    { name: "read, a payload without its window summary", state: { status: "ready", busy: false, data: { days_series: [] }, error: null }, kinds: ["not-loaded"], text: /Not loaded/, isRead: false, title: "no window summary", isBodyEmpty: false },
+    { name: "read, a measured share", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } }, error: null }, kinds: [], text: /1\.2% /, isRead: true, isBodyEmpty: false },
   ];
+  const severityWord = (ui.UI as { ALERT_SEVERITY_WORD: Record<string, string> }).ALERT_SEVERITY_WORD;
   const renderCard = async (state: unknown) => {
     const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
     const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
@@ -574,10 +603,13 @@ describe("the Record attribution head reads None only over a read window with no
       const [status] = heads;
       const absent = findNodes(status, (n) => n.type === "AbsentValue");
       const elementChildren = status.children.filter((child) => typeof child !== "string");
+      const tone = String(status.props["data-tone"]);
       assert.deepEqual(absent.map((n) => n.props.kind), row.kinds);
       assert.match(collectText(status).trim(), row.text);
-      assert.doesNotMatch(collectText(status), row.hasGlyph ? /Not loaded/ : /None/);
-      assert.equal(elementChildren.length, row.hasGlyph ? 2 : 1, "the glyph, then the sentence as one inline element");
+      assert.doesNotMatch(collectText(status), row.isRead ? /Not loaded/ : /None/);
+      assert.equal(tone === "neutral", !row.isRead, "a tone only on a read window");
+      assert.ok(collectText(status).trimStart().startsWith(`${severityWord[tone]}: `), "the severity word is read first");
+      assert.equal(elementChildren.length, 2, "the glyph, then the sentence as one inline element");
       if (row.title) assert.ok(String(absent[0]?.props.title).includes(row.title), "the failed read's own cause is in the title");
       if (row.isBodyEmpty !== undefined) {
         const isBodyEmpty = /No attributed runs in this period/.test(collectText(tree));

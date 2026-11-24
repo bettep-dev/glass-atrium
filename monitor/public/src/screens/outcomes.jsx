@@ -173,7 +173,7 @@ function buildClosureState(state, action) {
   return state;
 }
 
-// colorVar(--ok/--warn/--crit/--info) → HeadStatusO glyph · BulletBar fill tone name · non-tone (--dim/--faint/--accent) → 'neutral'
+// colorVar(--ok/--warn/--crit/--info) → head Status tone · non-tone (--dim/--faint/--accent) → 'neutral'
 function toneFromColorVarO(colorVar) {
   const t = String(colorVar || '').replace(/^--/, '');
   return (t === 'ok' || t === 'warn' || t === 'crit' || t === 'info') ? t : 'neutral';
@@ -1302,32 +1302,19 @@ function OpenCaveatCellO({ count, view }) {
 // daily stacked bar (inline SVG, no Recharts) + window summary stat row + literal-omission severity head status (glyph + word)
 // NULL attribution_source rows excluded by the backend (rows older than attribution tracking) → every ratio denominator = total_attributed.
 
-// A card head's own status: glyph + word, tone on the glyph only, no container (design-spec §3 Status)
-const HEAD_STATUS_GLYPHS_O = Object.freeze({ ok: 'circle-check', warn: 'warn', crit: 'x', info: 'info' });
-
-function HeadStatusO({ tone, title, children }) {
-  const glyph = HEAD_STATUS_GLYPHS_O[tone];
-  return <span data-role="head-status" className="inline-flex items-center gap-label-inline fs-meta text-dim" title={title}>
-    {glyph && <span className={`text-${tone}`} aria-hidden="true"><GlyphO name={glyph}/></span>}
-    {/* one inline span → the flex gap sits after the glyph only, never between the sentence's own runs */}
-    <span>{children}</span>
-  </span>;
-}
-
 function AttributionHealthCard({ state, period, onRetry, shared }) {
-  const { Card } = window.UI;
+  const { Card, HeadStatus } = window.UI;
   const badge = getAttributionHeadBadgeO(state, period);
 
+  // one inline span → the flex gap sits after the glyph only, never between the sentence's own runs
   return (
     <div id={REGION_CARD_IDS.attribution} className="mb-section">
       <Card
         title="Record attribution"
-        right={badge && (
-          <HeadStatusO
-            tone={toneFromColorVarO(badge.colorVar)}
-            title={`Missing-report (literal_omission) rate, last ${period} days — hygiene signal over the full selected window`}>
-            Missing reports, <window.UI.NoWrap>{period} days</window.UI.NoWrap>: {badge.text}
-          </HeadStatusO>
+        sub={badge && (
+          <HeadStatus tone={toneFromColorVarO(badge.colorVar)}>
+            <span>Missing reports, <window.UI.NoWrap>{period} days</window.UI.NoWrap>: {badge.text}</span>
+          </HeadStatus>
         )}>
         <AttributionHealthBody state={state} onRetry={onRetry} shared={shared}/>
       </Card>
@@ -1649,7 +1636,7 @@ function AttributionLegend() {
 // 오며 카드는 어떤 수치도 재계산하지 않는다 — doctor §16 과 같은 정의 하나를 공유하기 위함.
 
 function ChannelLivenessCard({ state, onRetry, shared }) {
-  const { Card } = window.UI;
+  const { Card, HeadStatus } = window.UI;
 
   const badge = getChannelLivenessBadgeO(state);
 
@@ -1657,20 +1644,14 @@ function ChannelLivenessCard({ state, onRetry, shared }) {
     <div id={REGION_CARD_IDS.channels} className="mb-section">
       <Card
         title="Recording channels"
-        right={
-          <HeadStatusO
-            tone={badge.tone}
-            title="A high-volume recording channel that stops writing looks like a quality change on every other card here">
-            {badge.text}
-          </HeadStatusO>
-        }>
+        sub={<HeadStatus tone={badge.tone}>{badge.text}</HeadStatus>}>
         <ChannelLivenessBody state={state} onRetry={onRetry} shared={shared}/>
       </Card>
     </div>
   );
 }
 
-// 'All recording' from an unloaded or failed payload = an unverified all-clear → neutral HeadStatusO with no claim
+// 'All recording' from an unloaded or failed payload = an unverified all-clear → neutral head Status with no claim
 function getChannelLivenessBadgeO(state) {
   if (state.status !== 'ready') return { tone: 'neutral', text: getUnloadedSummaryO(state.status) };
 
@@ -1962,17 +1943,17 @@ function CrosstabCard({ state, onRetry, shared }) {
     <div id={REGION_CARD_IDS.crosstab} className="mb-section">
       <Card
         title="Confident but failed"
-        sub={confidentFailed && (
-          <span title={`${formatIntO(confidentFailed.count)} of ${formatIntO(crosstab.total)} records · ${formatRateO(confidentFailed.share)}`}>
-            {formatRateO(confidentFailed.share)}
+        sub={(confidentFailed || state.status === 'ready') && (
+          <span className="inline-flex items-center gap-label-inline">
+            {confidentFailed && (
+              <span title={`${formatIntO(confidentFailed.count)} of ${formatIntO(crosstab.total)} records · ${formatRateO(confidentFailed.share)}`}>
+                {formatRateO(confidentFailed.share)}
+              </span>
+            )}
+            {state.status === 'ready' && <window.UI.HeadStatus tone="warn">{formatIntO(polarTotal)} mismatches</window.UI.HeadStatus>}
           </span>
         )}
         info={<p className="fs-body">Records whose writer reported high confidence while the record's own check failed.</p>}
-        right={
-          state.status === 'ready' && (
-            <HeadStatusO tone="warn">{formatIntO(polarTotal)} mismatches</HeadStatusO>
-          )
-        }
         // flush only under the table → its edge cells take the card padding; loading, error and empty keep the padded body
         isFlush={hasTable}
         foot={hasTable && <CrosstabLegendO/>}>
