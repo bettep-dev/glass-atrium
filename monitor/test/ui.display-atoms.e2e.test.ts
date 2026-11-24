@@ -570,7 +570,11 @@ describe("a map-legend swatch", () => {
 // the card head's type steps come from TypeScaleStyle and the atom's utilities from the app's vendored Tailwind runtime → its own page, so the other fixtures keep their faces
 describe("a head status in a card head", () => {
   const head = renderToStaticMarkup(h("div", null, h(UI.TypeScaleStyle), h("div", { style: { width: 720 } },
-    h(UI.Card, { title: "No completion record", sub: h(UI.HeadStatus, { tone: "warn" }, h("span", { id: "head-words" }, "1,115 unfinished")) }, "rows"))));
+    h(UI.Card, { title: "No completion record", sub: h(UI.HeadStatus, { tone: "warn" }, h("span", { id: "head-words" }, "1,115 unfinished")) }, "rows")),
+    // a verdict beside a name on a baseline-aligned row line (System parts)
+    h("div", { className: "flex items-baseline gap-list fs-body leading-row", style: { width: 720 } },
+      h("span", { id: "row-name" }, "autoagent"),
+      h(UI.HeadStatus, { tone: "warn" }, h("span", { id: "row-words" }, "Needs attention")))));
   let headPage: Page;
 
   before(async () => {
@@ -593,6 +597,16 @@ describe("a head status in a card head", () => {
       return probe.getBoundingClientRect().bottom;
     }));
     assert.ok(Math.abs(baselines[0] - baselines[1]) <= 1, `title baseline ${baselines[0]}, status words ${baselines[1]}`);
+  });
+
+  test("sets its words on the baseline of a baseline-aligned row it joins", async () => {
+    const baselines = await headPage.$$eval("#row-name, #row-words", (els) => els.map((el) => {
+      const probe = document.createElement("span");
+      probe.style.cssText = "display: inline-block; width: 0; height: 0;";
+      el.append(probe);
+      return probe.getBoundingClientRect().bottom;
+    }));
+    assert.ok(Math.abs(baselines[0] - baselines[1]) <= 1, `name baseline ${baselines[0]}, status words ${baselines[1]}`);
   });
 });
 

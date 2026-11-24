@@ -658,11 +658,12 @@ function ToneGlyph({ tone, label = ALERT_SEVERITY_WORD[tone], title }) {
 /**
  * Status glyph + words at meta size — card-head sub, drawer field, row verdict (System map `System parts` head and rows).
  * Top-aligned → the glyph-borne baseline never grows the line it sits in.
+ * The words alone take part in baseline alignment → a baseline-aligned row reads the atom's baseline off the words, not the glyph's foot.
  * @param className - the spacing between glyph and words; defaults to the label gap
  */
 function HeadStatus({ tone, className = 'gap-label-inline', children }) {
   return <span data-role="head-status" data-tone={tone} className={`inline-flex items-center align-top fs-meta text-dim ${className}`}>
-    <ToneGlyph tone={tone}/>{children}
+    <ToneGlyph tone={tone}/><span className="self-baseline">{children}</span>
   </span>;
 }
 
