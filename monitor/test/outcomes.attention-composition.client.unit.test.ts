@@ -659,6 +659,22 @@ test("getChannelLivenessBadgeO: only a read with channels may carry a tone, and 
   assert.deepStrictEqual(sameRealm(silent), { tone: "crit", text: "Silent: stop" });
 });
 
+test("AgentFailureBodyO: loading and loaded tables size every column alike, the agent column alone taking the slack", () => {
+  const ready = helpers.AgentFailureBodyO({
+    state: {
+      status: "ready",
+      data: helpers.buildAnalyticsDataO({ by_agent_result: [{ agent: LEDGER_AGENT, result: "fail", count: 1 }], by_agent_top_10: [] }),
+    } as unknown as PayloadState<unknown>,
+    onRetry: () => {},
+  });
+  const loading = helpers.AgentFailureBodyO({ state: { status: "loading" }, onRetry: () => {} });
+  const widths = [ready, loading].map((body) => Array.from((body.props?.widths ?? []) as unknown[]));
+
+  assert.deepStrictEqual(widths[0], widths[1], "one set of widths in both states");
+  assert.strictEqual(widths[0].length, 6, "a width slot per column");
+  assert.deepStrictEqual(widths[0].map((width) => width === undefined), [true, false, false, false, false, false], "only Agent is unsized");
+});
+
 test("AgentFailureBodyO: loading draws the table's own skeleton rows, not a blank body", () => {
   const body = helpers.AgentFailureBodyO({ state: { status: "loading" }, onRetry: () => {} });
   // the body returns its skeleton element — render that one level to read the markup it draws
@@ -1419,9 +1435,10 @@ describe("sub-tables: every numeric value and its header are right-aligned, tabu
     const [, rateCell, ...countCells] = cells;
     countCells.forEach((td) => assertB5(td, `cell "${renderText(td).trim()}"`));
     const rateLine = expandNodes(rateCell).find((n) => n.type === "div")!;
-    const share = rateLine.children.filter((child) => child !== null && child !== false && child !== undefined).at(-1) as RenderNode;
-    assert.strictEqual(renderText(share).trim(), "9.1%", "the share ends the rate cell");
-    // the share inherits the right alignment of its num cell (.tbl td.num), and keeps its own figures tabular on one line
+    const isDrawn = (child: unknown) => child !== null && child !== false && child !== undefined;
+    const share = rateLine.children.filter(isDrawn).at(-1) as RenderNode;
+    assert.strictEqual(renderText(share.children.filter(isDrawn).at(-1) as RenderNode).trim(), "9.1%", "the share ends the rate cell");
+    // the share's slot inherits the right alignment of its num cell (.tbl td.num), and keeps its figures tabular on one line
     assert.ok(String(rateCell.props?.className ?? "").split(/\s+/).includes("num"), "the rate cell aligns right as a num cell");
     for (const cls of ["tabular-nums", "whitespace-nowrap"]) assert.match(String(share.props?.className), new RegExp(`\\b${cls}\\b`), `the share keeps ${cls}`);
     assert.doesNotMatch(String(share.props?.className), /\bfont-mono\b/, "the share reads in the sans face, its digits tabular");

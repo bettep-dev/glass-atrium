@@ -1197,6 +1197,8 @@ const AGENT_FAILURE_COLUMNS_O = Object.freeze([
   { key: 'caveats', label: 'Open caveats', isNumeric: true },
   { key: 'total', label: 'Total records', isNumeric: true },
 ]);
+// loading and loaded tables share these → no column moves when rows land; Agent takes the slack, the numbers shrink to their content
+const AGENT_FAILURE_WIDTHS_O = Object.freeze([undefined, '40%', '1%', '1%', '1%', '1%']);
 // six numeric columns stop fitting under this width → each agent stacks onto a two-line item, no column lost to the wrapper clip
 const AGENT_FAILURE_STACK_BELOW_PX = 560;
 // .tbl--own-face: the .tbl cell geometry under this page's meta-step body and dim one-line head, with no clickable-row hover.
@@ -1207,7 +1209,8 @@ function AgentFailureBodyO({ state, onRetry, shared }) {
   const view = window.UI.getRegionView(state);
   // the table keeps its shape while loading — an empty body would read as 'no agent failed'
   if (view === 'loading') {
-    return <window.UI.Table caption="Loading by-agent failures" columns={AGENT_FAILURE_COLUMNS_O} isHeadSticky className={OWN_FACE_TABLE_CLASS_O}
+    return <window.UI.Table caption="Loading by-agent failures" columns={AGENT_FAILURE_COLUMNS_O} widths={AGENT_FAILURE_WIDTHS_O}
+      isHeadSticky className={OWN_FACE_TABLE_CLASS_O}
       bodies={[{ key: 'skeleton', rows: <window.UI.SkeletonRows rows={3} columns={AGENT_FAILURE_COLUMNS_O.length}/>, isBusy: true, className: 'tbl-compact' }]}/>;
   }
   if (view === 'error') {
@@ -1220,11 +1223,17 @@ function AgentFailureBodyO({ state, onRetry, shared }) {
   }
 
   // the table's .tbl-wrap clips sideways and never scrolls → the sticky head reaches the 70vh card body, the scroller that does
-  const maxRate = Math.max(...rows.map((row) => row.rate));
+  const maxRate = getFailureRateMaxO(rows);
   const getRows = (tableView) => rows.map((row) => <AgentFailureRowO key={row.agent} row={row} maxRate={maxRate} view={tableView}/>);
-  return <window.UI.Table caption="Failure rate by registry agent, worst first" columns={AGENT_FAILURE_COLUMNS_O} isHeadSticky
+  return <window.UI.Table caption="Failure rate by registry agent, worst first" columns={AGENT_FAILURE_COLUMNS_O} widths={AGENT_FAILURE_WIDTHS_O} isHeadSticky
     stackBelowPx={AGENT_FAILURE_STACK_BELOW_PX} className={OWN_FACE_TABLE_CLASS_O}
     bodies={[{ key: 'agents', rows: getRows, className: 'tbl-compact' }]}/>;
+}
+
+// the worst sampled rate scales the bars → a low-sample row never shrinks the others; it fills at most its whole track
+function getFailureRateMaxO(rows) {
+  const sampled = rows.filter((row) => !row.isLowSample);
+  return Math.max(...(sampled.length > 0 ? sampled : rows).map((row) => row.rate));
 }
 
 function AgentFailureRowO({ row, maxRate, view }) {
@@ -1241,6 +1250,9 @@ function AgentFailureRowO({ row, maxRate, view }) {
   );
 }
 
+// the widest slot: a low-sample mark under the low-n floor beside a full share, "(n=29) 100.0%"
+const FAILURE_RATE_SLOT_WIDTH_O = '14ch';
+
 // bar = a neutral quantity against the column's worst rate · severity = a crit word over the breakage share · low-sample rows claim none
 function AgentFailureRateCellO({ row, maxRate, view }) {
   const { Bar, StatusDot, LowSampleMark, TableCell, outcomeShareTone, OUTCOME_BREAKAGE_CRIT_SHARE } = window.UI;
@@ -1248,12 +1260,14 @@ function AgentFailureRateCellO({ row, maxRate, view }) {
   const runsNote = `${formatIntO(row.failed + row.blocked)} of ${formatIntO(row.total)} runs failed or blocked`;
   return (
     <TableCell view={view} textRole="meta" label="Failure rate" isNumeric title={runsNote}>
-      {/* the share ends the cell → every rate shares one right edge under its right-aligned header; the bar and the marks lead it */}
+      {/* the share ends the cell → every rate shares one right edge; the marks and the share sit in one fixed slot → one track length per row */}
       <div className="flex items-center gap-control">
         <div className="flex-1" style={{ minWidth: 40 }}><Bar value={row.rate} max={maxRate} ariaLabel={runsNote}/></div>
-        {isHigh && <StatusDot status="crit" word="High failure rate"/>}
-        {row.isLowSample && <LowSampleMark n={row.total}/>}
-        <span className={`tabular-nums whitespace-nowrap ${row.isLowSample ? 'text-faint' : 'text-ink'}`}>{formatRateO(row.rate, 1)}</span>
+        <span className="inline-flex items-center justify-end gap-label-inline tabular-nums whitespace-nowrap" style={{ width: FAILURE_RATE_SLOT_WIDTH_O, flexShrink: 0 }}>
+          {isHigh && <StatusDot status="crit" word="High failure rate"/>}
+          {row.isLowSample && <LowSampleMark n={row.total}/>}
+          <span className={row.isLowSample ? 'text-faint' : 'text-ink'}>{formatRateO(row.rate, 1)}</span>
+        </span>
       </div>
     </TableCell>
   );
@@ -1688,7 +1702,7 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
   const columns = getChannelColumnsO(state.data?.days, state.data?.thresholds?.eligibility_recency_days);
 
   return (
-    <window.UI.Table caption="Recording channels by state" columns={columns} className={OWN_FACE_TABLE_CLASS_O}
+    <window.UI.Table caption="Recording channels by state" columns={columns} widths={CHANNEL_WIDTHS_O} className={OWN_FACE_TABLE_CLASS_O}
       stackBelowPx={CHANNEL_STACK_BELOW_PX}
       bodies={[{ key: 'body', rows: (view) => ordered.map((channel) => (
         <ChannelRowO key={channel.attribution_source} channel={channel} view={view}/>
@@ -1697,6 +1711,8 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
 }
 
 const CHANNEL_STACK_BELOW_PX = 480;
+// Status and Quiet shrink to their content → the channel name keeps one line
+const CHANNEL_WIDTHS_O = Object.freeze([undefined, '1%', undefined, undefined, '1%']);
 
 // window peak over the read window · busiest day over the eligibility recency window — both come with the payload
 function getChannelColumnsO(days, recencyDays) {
@@ -1716,7 +1732,7 @@ function ChannelRowO({ channel, view }) {
   // the dot's sr-only word names the state → the painted word is for sight only
   return (
     <TableRow view={view}>
-      <TableCell view={view} kind="row-header"><MachineString>{channel.attribution_source}</MachineString></TableCell>
+      <TableCell view={view} kind="row-header" className="whitespace-nowrap font-normal"><MachineString>{channel.attribution_source}</MachineString></TableCell>
       <TableCell view={view} label="Status">
         <span className="inline-flex items-center gap-label-inline whitespace-nowrap">
           <StatusDot status={toneFromColorVarO(meta.colorVar)} word={meta.label} isInText/>
@@ -2363,8 +2379,8 @@ const LEDGER_PLAIN_COLUMNS_O = Object.freeze([
   { key: 'summary', label: 'Summary' },
   { key: 'actions', label: <span className="sr-only">Actions</span> },
 ]);
-// Time and Agent keep their one-line minimum; the summary takes the width left
-const LEDGER_WIDTHS_O = Object.freeze(['120px', '110px', undefined, undefined, undefined, undefined, undefined]);
+// the skeleton and the rows share these → no column moves when rows land; Summary takes the width left, Actions shrinks to its button
+const LEDGER_WIDTHS_O = Object.freeze(['120px', '110px', '130px', '150px', '165px', undefined, '1%']);
 // the columns stop fitting under this width → each record stacks onto a two-line item, its summary first
 const LEDGER_STACK_BELOW_PX = 640;
 

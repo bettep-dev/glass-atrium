@@ -579,6 +579,7 @@ interface RecordedElementO {
 interface RenderSandboxO {
   React: { createElement: unknown };
   AgentFailureRateCellO: (props: { row: Record<string, unknown>; maxRate: number }) => RecordedElementO;
+  getFailureRateMaxO: (rows: Array<{ rate: number; isLowSample: boolean }>) => number;
   AttributionBreakdownO: (props: { state: Record<string, unknown> }) => RecordedElementO | null;
   window: { UI: { EmptyState: unknown } };
 }
@@ -623,6 +624,36 @@ describe("AgentFailureRateCellO: a neutral bar against the column's worst rate, 
       assert.equal(nodes.some((el) => el.type === LowSampleMark), row.isLowSample);
       const figure = nodes.find((el) => el.props.children === `${(rate * 100).toFixed(1)}%`);
       assert.match(String(figure?.props.className), row.isLowSample ? /\btext-faint\b/ : /\btext-ink\b/);
+    });
+  }
+
+  // the bar's track ends where a fixed-width slot starts → every row's track has one length, whatever marks the row carries
+  test("the figure and its marks share one fixed-width slot beside the track on every row", () => {
+    const slots = rows.map((row) => {
+      const rate = (row.failed + row.blocked) / row.total;
+      const nodes = flattenO(rendered.AgentFailureRateCellO({ row: { ...row, rate }, maxRate }));
+      const slot = nodes.find((el) => flattenO(el.props.children).some((child) => child.props.children === `${(rate * 100).toFixed(1)}%`)
+        && (el.props.style as { width?: unknown } | undefined)?.width !== undefined);
+      assert.ok(slot, `${row.name}: the figure sits in a sized slot`);
+      const inSlot = flattenO(slot.props.children);
+      assert.equal(inSlot.some((el) => el.type === Bar), false, `${row.name}: the bar sits outside the slot`);
+      assert.equal(inSlot.some((el) => el.type === LowSampleMark), row.isLowSample, `${row.name}: the low-sample mark sits in the slot`);
+      assert.equal(inSlot.filter((el) => el.type === StatusDot).length, row.word ? 1 : 0, `${row.name}: the crit word sits in the slot`);
+      return (slot.props.style as { width: unknown }).width;
+    });
+    assert.equal(new Set(slots).size, 1, `one slot width across rows: ${slots.join(", ")}`);
+  });
+});
+
+describe("getFailureRateMaxO: the bar scale is the worst sampled rate, so a low-sample row never sets it", () => {
+  const rows = [
+    { name: "a low-sample row past every sampled rate is left out", rows: [{ rate: 0.188, isLowSample: true }, { rate: 0.074, isLowSample: false }, { rate: 0.02, isLowSample: false }], expected: 0.074 },
+    { name: "every row sampled takes the worst rate", rows: [{ rate: 0.1, isLowSample: false }, { rate: 0.3, isLowSample: false }], expected: 0.3 },
+    { name: "no sampled row falls back to the worst low-sample rate", rows: [{ rate: 0.5, isLowSample: true }, { rate: 0.2, isLowSample: true }], expected: 0.5 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(rendered.getFailureRateMaxO(row.rows), row.expected);
     });
   }
 });

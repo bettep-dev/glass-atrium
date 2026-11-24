@@ -259,6 +259,20 @@ describe("the cross-table head shows its share meta, count in the hover title, o
   }
 });
 
+test("a recording channel's name stays on one line in regular weight, and Status and Quiet shrink to their content", async () => {
+  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+  const channel = { attribution_source: "structuredoutput-completion", alerting: false, eligible: true, peak_daily_count: 120, recent_peak_daily_count: 90, silent_hours: 2 };
+  const state = { status: "ready", busy: false, data: { channels: [channel], alerting: [], days: 7 }, error: null };
+  const tree = renderScreen(create(mod.ChannelLivenessBlock as Component, { state, onRetry: () => undefined, shared: {} })) as RenderedNode;
+  const [table] = findNodes(tree, (n) => n.type === "Table");
+  const [name] = findNodes(table, (n) => n.type === "th" && n.props.scope === "row");
+  const cellClass = String(name.props.className).split(/\s+/);
+
+  assert.ok(cellClass.includes("whitespace-nowrap") && cellClass.includes("font-normal"), String(name.props.className));
+  assert.deepEqual(Array.from(table.props.widths as unknown[]), [undefined, "1%", undefined, undefined, "1%"]);
+});
+
 describe("the Recording channels head that read no channel shows faint None or Not loaded, with no status mark", () => {
   const failed = { status: "error", busy: false, data: null, error: SERVER_ERROR };
   const rows = [
@@ -641,6 +655,9 @@ test("while the first read is in flight, the ledger and Failures by agent draw s
     "Agent, Failure rate, Failed, Blocked, Open caveats, Total records",
     "Time, Agent, Task type, Result, Why, Summary, Actions",
   ]);
+  const ledgerWidths = findNodes(tree, (n) => n.type === "Table" && n.props.caption === "Loading outcome records")
+    .map((table) => Array.from(table.props.widths as unknown[], (width) => width === undefined));
+  assert.deepEqual(ledgerWidths, [[false, false, false, false, false, true, false]], "the skeleton sizes every ledger column but Summary");
   assert.equal(animated.length, 0, "a skeleton is still; only the shared loading status turns");
 });
 
