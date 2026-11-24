@@ -351,6 +351,8 @@ function ScreenArchitecture(
 	const [hookState, setHookState] = useStateAR(INITIAL_REGION_STATE);
 	const [pgState, setPgState] = useStateAR(INITIAL_REGION_STATE);
 	const [payloadState, setPayloadState] = useStateAR(INITIAL_REGION_STATE);
+	// each daemon's last ready run rows — its run leg outlives a drawer opened on another daemon
+	const [runRowsByDaemon, setRunRowsByDaemon] = useStateAR({});
 	const [hookFailState, setHookFailState] = useStateAR(INITIAL_REGION_STATE);
 	// pricing advisory — rides the health poll, never a headline fact (no part verdict, no stamp)
 	const [unpricedModelState, setUnpricedModelState] = useStateAR(INITIAL_REGION_STATE);
@@ -463,6 +465,12 @@ function ScreenArchitecture(
 		return () => ctrl.abort();
 	}, [refreshTick, healthTick, payloadDaemon]);
 
+	useEffectAR(() => {
+		const daemonName = payloadState.data?.daemon;
+		const runRows = getDaemonRunRows(payloadState, daemonName);
+		if (runRows) setRunRowsByDaemon((byDaemon) => ({ ...byDaemon, [daemonName]: runRows }));
+	}, [payloadState]);
+
 	// 60s 자동 새로고침 — health 는 장애 대응 표면이라 수동 Refresh 만으로는 늦음.
 	useEffectAR(() => {
 		const intervalId = setInterval(() => setHealthTick((t) => t + 1), HEALTH_POLL_MS);
@@ -505,30 +513,6 @@ function ScreenArchitecture(
 		return buildLiveDaemonsByNodeId(liveState.data?.daemons);
 	}, [liveState.status, liveState.data]);
 
-	// 링 근거원 — 데몬 판정 ∪ 부품 판정.
-	// 데몬은 /live 의 node_ids 로, 부품은 같은 응답의 part_bindings 로 노드를 찾음.
-	// 판정 자체는 부품 쪽만 health 응답에서 옴.
-	// 두 원천을 한 Map 으로 접는 이유 — autoagent_d 처럼 양쪽이 같은 노드를 짚는 자리가 있고 테두리는 한 겹뿐임.
-	// health 응답 넷이 deps 에 있어야 폴링 한 틱이 새 Map 이 됨.
-	// 캔버스 효과는 이 참조가 바뀔 때만 다시 칠함 — 빼면 첫 렌더만 맞고 이후 조용히 낡음.
-	const ringToneByNodeId = useMemoAR(
-		() =>
-			buildRingToneByNodeId(liveDaemonsByNodeId, liveState.data?.part_bindings, {
-				daemonState: daemonHealthState,
-				pgState,
-				hookState,
-				hookFailState,
-			}),
-		[
-			liveDaemonsByNodeId,
-			liveState.data,
-			daemonHealthState,
-			pgState,
-			hookState,
-			hookFailState,
-		],
-	);
-
 	// 존 대표 계획 — 헬스 노드를 하나만 담은 존의 목록. 소스의 subgraph 멤버십과 part_bindings 로만 짜임.
 	// 판정 자체는 안 들어옴(폴링마다 바뀌는 값) — 여기 들어오면 존과 노드 사이에서 링이 깜빡임.
 	const zoneRingPlan = useMemoAR(
@@ -555,8 +539,33 @@ function ScreenArchitecture(
 				headlineHealthStates,
 				liveState.data?.part_bindings,
 				liveState.data?.daemons,
-			).map((row) => getDaemonVerdictAR(row, getDaemonRunRows(payloadState, row.daemonName))),
-		[daemonHealthState, pgState, hookState, hookFailState, liveState.data, payloadState],
+			).map((row) => getDaemonVerdictAR(row, runRowsByDaemon[row.daemonName] ?? null)),
+		[daemonHealthState, pgState, hookState, hookFailState, liveState.data, runRowsByDaemon],
+	);
+
+	// 링 근거원 — 데몬 판정 ∪ 부품 판정.
+	// 데몬은 /live 의 node_ids 로, 부품은 같은 응답의 part_bindings 로 노드를 찾음.
+	// 판정 자체는 부품 쪽만 health 응답에서 옴. 마지막으로 부품 행의 판정(실행 다리 포함)이 같은 순위로 겹침.
+	// 두 원천을 한 Map 으로 접는 이유 — autoagent_d 처럼 양쪽이 같은 노드를 짚는 자리가 있고 테두리는 한 겹뿐임.
+	// health 응답 넷이 deps 에 있어야 폴링 한 틱이 새 Map 이 됨.
+	// 캔버스 효과는 이 참조가 바뀔 때만 다시 칠함 — 빼면 첫 렌더만 맞고 이후 조용히 낡음.
+	const ringToneByNodeId = useMemoAR(
+		() =>
+			buildRingToneByNodeId(liveDaemonsByNodeId, liveState.data?.part_bindings, {
+				daemonState: daemonHealthState,
+				pgState,
+				hookState,
+				hookFailState,
+			}, healthPartRows),
+		[
+			liveDaemonsByNodeId,
+			liveState.data,
+			daemonHealthState,
+			pgState,
+			hookState,
+			hookFailState,
+			healthPartRows,
+		],
 	);
 
 	// 끊긴 응답을 이름으로 부름 — 빈 판정 칸만으로는 '아직 안 옴' 과 '못 읽음' 이 같은 문장임.
@@ -3191,7 +3200,7 @@ function getPartStatusLabel(def, facts) {
 //   어느 쪽도 여기서 다시 재지 않음 — 같은 입력에 답이 둘이 되면 링과 카드 격자가 갈라짐.
 //   판정을 못 받은 부품(status !== 'ready')은 항목을 만들지 않음.
 //   미도착과 정상은 다른 사실임.
-function buildRingToneByNodeId(daemonsByNodeId, partBindings, cardStates) {
+function buildRingToneByNodeId(daemonsByNodeId, partBindings, cardStates, healthPartRows) {
 	const byNodeId = new Map();
 
 	const putTone = (nodeId, tone) => {
@@ -3217,6 +3226,9 @@ function buildRingToneByNodeId(daemonsByNodeId, partBindings, cardStates) {
 
 		for (const nodeId of partBindings?.[def.id] || []) putTone(nodeId, facts.tone);
 	}
+
+	// the row's one verdict, run leg included — the worse leg wins on the ring as it does on the row
+	for (const row of healthPartRows || []) for (const nodeId of row.nodeIds || []) putTone(nodeId, row.tone);
 
 	return byNodeId;
 }

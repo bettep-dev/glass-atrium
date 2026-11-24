@@ -722,6 +722,7 @@ test("AC-T18(c) the governance banner survives beside the writer alert", async (
  */
 const RING_CRIT_CLASS = "arch-node-live-crit";
 const RING_OK_CLASS = "arch-node-live-ok";
+const RING_WARN_CLASS = "arch-node-live-warn";
 const OK_DAEMON = "wiki";
 
 // 데몬 원천과 부품 원천이 같은 노드에서 만나는 자리 — HEALTH_CARD_DEFS 의 autoagent 카드 id.
@@ -2740,6 +2741,27 @@ test("a daemon on schedule with a failed run reads one verdict in the drawer and
 			text.includes("Needs attention") && text.includes(runLine) && !text.includes("Healthy"),
 			`the ${where} row reads Needs attention with the run line as its reason — read "${text}"`,
 		);
+});
+
+// the ring and the row carry the same one verdict, and a daemon's run leg outlives another daemon's drawer
+test("a daemon on schedule with a failed run keeps its warn ring and row after another daemon's drawer opens", async () => {
+	await openMap(
+		getLiveFixture({ daemons: [getDaemon(BOUND_DAEMON, "ok"), getDaemon(DRILLDOWN_DAEMON, "ok")] }),
+		getQueueFixture(),
+		getHealthFixture({ payload: getFailingPayload() }),
+	);
+	await openDaemonHealth(BOUND_DAEMON);
+	await waitForRegionText(BOUND_DAEMON, "runs clean");
+	const readRow = () => page.$eval(`#arch-part-${DAEMON_PART_ID}`, (el) => el.textContent || "");
+	assertPartRing(await waitForPartRing(DAEMON_PART_ID, RING_WARN_CLASS), DAEMON_PART_ID, RING_WARN_CLASS);
+	assert.ok((await readRow()).includes("Needs attention"), "precondition: the failed run reads on the row");
+
+	await openDaemonHealth(DRILLDOWN_DAEMON);
+	await waitForRegionText(DRILLDOWN_DAEMON, "runs clean");
+
+	assertPartRing(await getRingProbe(), DAEMON_PART_ID, RING_WARN_CLASS);
+	const row = await readRow();
+	assert.ok(row.includes("Needs attention") && !row.includes("Healthy"), `the row keeps its verdict — read "${row}"`);
 });
 
 // 드릴다운이 연 노드를 따라가는지 재는 반증 케이스 — 고정 리터럴 구현은 여기서 붉어짐.
