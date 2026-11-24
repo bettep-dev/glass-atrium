@@ -3397,10 +3397,6 @@ function getP95SecsAg(agents) {
     .sort((x, y) => x - y);
 }
 
-function getP95CutSecAg(agents) {
-  return getFleetCutAg(getP95SecsAg(agents), P95_AGENT);
-}
-
 function isTooSlowAg(agent, p95Scale) {
   return agent.p95_ms != null && Number(agent.p95_ms) / 1000 > p95Scale.cutSec;
 }
@@ -3408,7 +3404,7 @@ function isTooSlowAg(agent, p95Scale) {
 // cut + slowest → one scale every ledger row reads, so the mark and bar follow the selected range
 function getP95ScaleAg(agents) {
   const secs = getP95SecsAg(agents);
-  return { cutSec: getP95CutSecAg(agents), maxSec: secs.length > 0 ? secs[secs.length - 1] : null };
+  return { cutSec: getFleetCutAg(secs, P95_AGENT), maxSec: secs.length > 0 ? secs[secs.length - 1] : null };
 }
 
 // Failed-or-blocked share → tone KEY for its glyph and bar — the one Agents rate scale over the agent's outcomes (population = count ÷ rate).

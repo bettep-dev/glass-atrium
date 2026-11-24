@@ -1857,7 +1857,7 @@ describe("the P95 too-slow cut", () => {
     test(row.name, async () => {
       const mod = await loadAgentsScreen({ formatDuration: REAL_UI.formatDuration });
       const agents = [...toP95Agents(row.secs), { agent_id: "unmeasured", agent_name: "unmeasured", status: "active", runs: 40, success_pct: 100, p95_ms: null }];
-      assert.equal((mod.getP95CutSecAg as (a: unknown[]) => number)(agents), row.cut, "cut");
+      assert.equal((mod.getP95ScaleAg as (a: unknown[]) => { cutSec: number })(agents).cutSec, row.cut, "cut");
       const marked = getP95Cells(renderP95Table(mod, agents)).filter((cell) => findNodes(cell, isTooSlowWords).length > 0);
       assert.equal(marked.length, row.marked, "rows over the cut");
     });
