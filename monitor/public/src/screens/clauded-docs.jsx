@@ -216,6 +216,9 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	// server rows consumed so far → next Load More offset (deduped loadedRows runs short of the server position)
 	const [consumedCount, setConsumedCount] = useStateCD(0);
 	const [selectedId, setSelectedId] = useStateCD(getHashDocIdCD);
+	// the row the ladder marks as opened → outlives the viewer until another row opens or the list re-queries
+	const [openedId, setOpenedId] = useStateCD(getHashDocIdCD);
+	if (selectedId != null && openedId !== selectedId) setOpenedId(selectedId);
 	const [viewerState, setViewerState] = useStateCD({
 		status: "idle",
 		data: null,
@@ -327,6 +330,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 	if (offsetListKey !== listKey) {
 		setOffsetListKey(listKey);
 		setCurrentOffset(0);
+		if (selectedId == null) setOpenedId(null);
 	}
 
 	// filter / refresh 변경 시 multi-select clear — Show 필터 변경 = "다른 목록 보기" → 이전 선택 의미 소멸.
@@ -1022,7 +1026,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 					state={listState}
 					rows={visibleRows}
 					isSearchMode={isSearchMode}
-					selectedId={selectedId}
+					selectedId={openedId}
 					pendingDelete={pendingDelete}
 					hiddenCount={hiddenCount}
 					total={total}

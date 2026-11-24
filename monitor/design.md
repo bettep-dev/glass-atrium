@@ -553,6 +553,7 @@
 - row: cursor pointer · hover `--sunken` · 마지막 행 border 없음. **row blur 금지.**
 - **행 상태 fill** (clauded-docs ledger, stripe 없음): selector `.tbl tbody tr.doc-row` 로 공용 hover 를 이기고 hover 중에도 유지.
   - viewer 행 (`.is-selected`): `--tint-row-1` + 제목 600 + `aria-current="true"`.
+    - viewer 를 닫아도 마지막으로 연 행에 남는다 — 다른 행을 열거나 목록을 다시 읽을 때까지.
   - checked (`.is-multi-selected`): `--tint-row-2` · 비-색 cue = checkbox. viewer + checked = `--tint-row-3`.
   - 삭제 대기 (`.is-pending-delete`): 행 opacity 없음 — 제목 line-through + `aria-busy` + 제목 앞 crit glyph.
   - the row-state ladder takes no stripe, border or accent; its fills, the text and glyph pairs on each and the `--tint-row-3` ceiling: §4.1 table.

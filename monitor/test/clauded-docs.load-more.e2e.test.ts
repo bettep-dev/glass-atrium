@@ -1140,6 +1140,55 @@ test("list rows: a row with a lineage, a stage actor or both is one row-height l
   }
 });
 
+// the last-opened row stays marked once the viewer closes → "where was I" survives the full-screen viewer
+test("list rows: the row last opened keeps its viewer fill, 600 title and aria-current after the viewer closes, until another row opens", async () => {
+  const ids = await seedManyDocs(2, "opened");
+  try {
+    const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page: Page = await context.newPage();
+    try {
+      await page.goto(`${serverUrl}/#clauded-docs`, { waitUntil: "networkidle" });
+      const first = await revealRowByTitle(page, `${SUITE_MARKER}-opened-000`);
+      const second = await revealRowByTitle(page, `${SUITE_MARKER}-opened-001`);
+      // the hover fill fades out → read once the row's transitions settle
+      const readMark = (row: Locator) => row.evaluate(async (tr) => {
+        await Promise.all(tr.getAnimations().map((animation) => animation.finished));
+        const title = tr.querySelector(".doc-title-text");
+        return {
+          current: tr.getAttribute("aria-current"),
+          fill: getComputedStyle(tr).backgroundColor,
+          weight: title ? getComputedStyle(title).fontWeight : "",
+        };
+      });
+      const viewerFill = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.style.background = "var(--tint-row-1)";
+        document.body.append(probe);
+        const fill = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return fill;
+      });
+
+      await first.locator(".doc-title-text").click();
+      await page.getByRole("button", { name: "Close viewer" }).click();
+      await page.getByRole("button", { name: "Close viewer" }).waitFor({ state: "detached" });
+      await page.mouse.move(0, 0);
+      assert.deepEqual(await readMark(first), { current: "true", fill: viewerFill, weight: "600" }, "closed: the opened row keeps its mark");
+
+      await second.locator(".doc-title-text").click();
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Close viewer" }).waitFor({ state: "detached" });
+      await page.mouse.move(0, 0);
+      assert.equal((await readMark(first)).current, null, "another row opening moves the mark off the first row");
+      assert.equal((await readMark(second)).current, "true", "the row opened next carries the mark");
+    } finally {
+      await context.close();
+    }
+  } finally {
+    for (const id of ids) await deleteDoc(id);
+  }
+});
+
 // the list card keeps tabindex=-1 after a Retry handoff → :focus-visible alone draws its ring
 test("list card: a mouse click never rings the card, a keyboard-driven handoff rings it inside the clipped edge", async () => {
   const ids = await seedManyDocs(3, "ring");
