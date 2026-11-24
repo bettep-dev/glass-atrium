@@ -287,9 +287,9 @@ describe("DetailSurface scroll lock", async () => {
   }
 
   const rows = [
-    { name: "a drawer closed before the confirm opened over it", opens: [true, true], releaseOrder: [0, 1], whileMounted: "hidden" },
-    { name: "the confirm closed before the drawer under it", opens: [true, true], releaseOrder: [1, 0], whileMounted: "hidden" },
-    { name: "two surfaces mounted closed, as a page at rest holds them", opens: [false, false], releaseOrder: [0, 1], whileMounted: "auto" },
+    { name: "a drawer closed before the confirm opened over it", opens: [true, true], releaseOrder: [0, 1], whileMounted: "hidden", afterFirstRelease: "hidden" },
+    { name: "the confirm closed before the drawer under it", opens: [true, true], releaseOrder: [1, 0], whileMounted: "hidden", afterFirstRelease: "hidden" },
+    { name: "two surfaces mounted closed, as a page at rest holds them", opens: [false, false], releaseOrder: [0, 1], whileMounted: "auto", afterFirstRelease: "auto" },
   ];
 
   for (const row of rows) {
@@ -297,9 +297,15 @@ describe("DetailSurface scroll lock", async () => {
       doc.reset();
       const surfaces = row.opens.map(mountSurface);
       const whileMounted = doc.body.style.overflow;
-      for (const index of row.releaseOrder) surfaces[index].unmount();
+      const [firstIndex, secondIndex] = row.releaseOrder;
+      surfaces[firstIndex].unmount();
+      const afterFirstRelease = doc.body.style.overflow;
+      surfaces[secondIndex].unmount();
 
-      assert.deepEqual({ whileMounted, afterRelease: doc.body.style.overflow }, { whileMounted: row.whileMounted, afterRelease: "auto" });
+      assert.deepEqual(
+        { whileMounted, afterFirstRelease, afterRelease: doc.body.style.overflow },
+        { whileMounted: row.whileMounted, afterFirstRelease: row.afterFirstRelease, afterRelease: "auto" },
+      );
     });
   }
 });
