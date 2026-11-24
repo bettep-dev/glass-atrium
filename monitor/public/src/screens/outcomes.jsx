@@ -1768,7 +1768,7 @@ function GraderBreakdownBlock({ state, onRetry, shared }) {
 
   return (
     <FoldBlockO id={REGION_CARD_IDS.checks} title="Automatic check results"
-      info={segments.length > 0 && <DowngradeSourcesO segments={segments}/>}>
+      info={<CheckNotesO segments={segments}/>}>
       <GraderBreakdownBody state={state} onRetry={onRetry} shared={shared}/>
     </FoldBlockO>
   );
@@ -1816,6 +1816,18 @@ function getDowngradeSegmentsO(breakdown) {
   return DOWNGRADE_BREAKDOWN_ORDER
     .map((key) => ({ key, count: Number(breakdown[key]) || 0 }))
     .filter((s) => s.count > 0);
+}
+
+const CHECK_COUNTING_NOTE_O = 'Shares count graded records only. Legacy records sit outside them.';
+
+// the counting rule in every state; the source table joins it only under a drawn breakdown
+function CheckNotesO({ segments }) {
+  return (
+    <window.UI.Stack gap="block">
+      <p>{CHECK_COUNTING_NOTE_O}</p>
+      {segments.length > 0 && <DowngradeSourcesO segments={segments}/>}
+    </window.UI.Stack>
+  );
 }
 
 function DowngradeSourcesO({ segments }) {

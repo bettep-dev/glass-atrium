@@ -741,6 +741,8 @@ test("ResultTableCard: the head counts the records the filter matched, and nothi
 interface DensitySandboxO {
   GraderBreakdownBody: (props: { state: Record<string, unknown> }) => RecordedElementO;
   GraderBreakdownBlock: (props: { state: Record<string, unknown> }) => RecordedElementO;
+  CheckNotesO: (props: { segments: unknown[] }) => RecordedElementO;
+  DowngradeSourcesO: unknown;
   buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string }>;
 }
 const density = rendered as unknown as DensitySandboxO;
@@ -764,26 +766,28 @@ describe("Task results density: the columns beside a taller card carry their own
   });
 });
 
-describe("Automatic check results: where each verdict came from sits behind the block's ⓘ, only under a drawn breakdown, never as a foot", () => {
+// one head in every state: the ⓘ states the counting rule whatever the read holds
+describe("Automatic check results: the block's ⓘ states how shares count in every state, and lists verdict sources only under a drawn breakdown", () => {
   const overall = { grader_breakdown: { verified_pass: 5, unverified: 3, verified_fail: 2, graded_total: 10 }, downgrade_breakdown: { writer_true_downgraded: 2, writer_false: 7 } };
   const rows = [
-    { name: "a landed breakdown carries the sources in its ⓘ", state: { status: "ready", data: { overall } }, hasInfo: true },
-    { name: "a loading block carries no sources", state: { status: "loading" }, hasInfo: false },
-    { name: "a landed payload with no breakdown carries no sources", state: { status: "ready", data: { overall: { downgrade_breakdown: overall.downgrade_breakdown } } }, hasInfo: false },
+    { name: "a landed breakdown lists its sources", state: { status: "ready", data: { overall } }, sources: [["writer_false", 7]] },
+    { name: "a loading block lists none", state: { status: "loading" }, sources: [] },
+    { name: "a failed block lists none", state: { status: "error", error: "HTTP 503" }, sources: [] },
+    { name: "a landed payload with no breakdown lists none", state: { status: "ready", data: { overall: { downgrade_breakdown: overall.downgrade_breakdown } } }, sources: [] },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const block = density.GraderBreakdownBlock({ state: row.state });
-      assert.equal(Boolean(block.props.info), row.hasInfo);
+      const info = block.props.info as RecordedElementO;
+      const notes = flattenO(density.CheckNotesO(info.props as { segments: unknown[] }));
+      const segments = info.props.segments as Array<{ key: string; count: number }>;
+
+      assert.ok(notes.some((el) => /^Shares count graded records only\./.test(String(el.props.children))), "the counting note");
+      assert.equal(notes.some((el) => el.type === density.DowngradeSourcesO), row.sources.length > 0, "the sources table");
+      assert.deepEqual(Array.from(segments, (segment) => [segment.key, segment.count]), row.sources, "the agent-claimed-pass count stays with the Check failed stat");
       assert.equal(Boolean(block.props.foot), false, "no foot line");
     });
   }
-
-  test("the sources leave out the agent-claimed-pass count the Check failed stat already shows", () => {
-    const block = density.GraderBreakdownBlock({ state: rows[0].state });
-    const segments = (block.props.info as RecordedElementO).props.segments as Array<{ key: string; count: number }>;
-    assert.deepEqual(Array.from(segments, (segment) => [segment.key, segment.count]), [["writer_false", 7]]);
-  });
 });
 
 describe("getClampedPageO: a held page never runs past the last page of the current total", () => {
