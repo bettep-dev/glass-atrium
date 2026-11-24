@@ -482,7 +482,7 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * 라벨 여유: `main_session` 의 `Plans the work, then assigns it` 이 최장 라벨로 31자, faithful 라벨 상한은 50 임.
 	 * 라벨은 30px 지도 글꼴에서 한 줄로 그려지는 짧은 표시명임 — 긴 설명은 NODE_DESCRIPTIONS 가 실음.
 	 * 라벨이 존 제목으로 시작하지 않으므로 존 제목은 모두 보임 (제목 숨김은 단일 멤버가 제목을 되풀이할 때만).
-	 * 라벨의 `daemon` · `Chromium` 은 flow-extractor NODE_TYPE_RULES 가 노드 type 을 읽는 낱말이라 지우면 드로어 Pill 이 거짓이 됨.
+	 * 라벨의 `daemon` · `Chromium` 은 flow-extractor NODE_TYPE_RULES 가 노드 type 을 읽는 낱말이라 지우면 FlowNode.type 이 거짓이 됨.
 	 * 노드 9/14 · 엣지 7/18 도 같은 방향으로 느슨함 — 그래서 볼륨을 지키는 것은 밴드가 아니라
 	 * `architecture.budget.test.ts` 의 회귀 잠금 ①(실측값 정확 고정)②(상한 두 행 고정)③(drawn ⊆ source)임.
 	 * 이 주석을 mermaid 문자열 안으로 옮기지 말 것 — drawn 은 계수 대상이라 주석이 콘텐츠로 세어짐.
