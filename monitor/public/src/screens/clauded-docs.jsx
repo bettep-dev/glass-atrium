@@ -1029,7 +1029,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
         tr.doc-row.is-group-root { border-top: 1px solid rgb(var(--line) / 0.4); }
         /* DnD 재정렬 affordance.
            drag handle ⠿ — leading slot 내 grab cursor + subtle hover. handle 만 grab (행 전체 draggable 이나 시각 hint 는 handle 한정). */
-        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; font-size: var(--fs-meta); line-height: 1; color: rgb(var(--faint)); cursor: grab; border-radius: var(--radius-control); user-select: none; }
+        .doc-drag-handle { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 20px; color: rgb(var(--faint)); cursor: grab; border-radius: var(--radius-control); user-select: none; }
         .doc-drag-handle:hover { color: rgb(var(--dim)); background: rgb(var(--line) / 0.5); }
         .doc-drag-handle:active { cursor: grabbing; }
         /* 끌고 있는 멤버 행 — dim + 점선 (drop target 시각 분리). dark base 정합. */
