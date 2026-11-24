@@ -1369,9 +1369,12 @@ const TREND_WITH_GAP = ready({
   ],
 });
 
-const CACHE_ROWS = ["2026-01-08", "2026-01-09", "2026-01-10"].map((event_date, i) => ({
-  event_date, cache_hit_rate: [0.97, 0.99, 0.985][i], total_cache_read: 900, total_input: 20,
-}));
+// each day's rate is its own read share → the pooled figure is the series' weighted mean
+const CACHE_ROWS = ["2026-01-08", "2026-01-09", "2026-01-10"].map((event_date, i) => {
+  const read = 900;
+  const input = [28, 9, 14][i]!;
+  return { event_date, cache_hit_rate: read / (read + input), total_cache_read: read, total_input: input };
+});
 
 // Prior cost far above the shown cost → a delta reading cost instead of tokens would read down.
 function getTokenTrend(tokens: readonly number[], priorTokens: number | null): PanelState {
@@ -1683,7 +1686,7 @@ test("the trend card names its band in plain words and keeps its live echo off s
 
 test("a flat hit-rate strip collapses to one line instead of an empty chart", async () => {
   const mod = await loadCostRender();
-  const flat = CACHE_ROWS.map((r) => ({ ...r, cache_hit_rate: 1 }));
+  const flat = CACHE_ROWS.map((r) => ({ ...r, cache_hit_rate: 1, total_input: 0 }));
   const tree = renderIn(mod, "CacheHitBody", { state: ready({ rows: flat }), days: 30, onRetry: () => {} });
   assert.equal(findNodes(tree, isChart).length, 0);
   assert.match(collectText(tree), /Flat at 100% every day/);
@@ -1956,6 +1959,12 @@ describe("a Cost series mark carries the data colour; a tone marks only a bar ov
     assert.deepEqual([byKey.rollingMean.stroke, byKey.rollingMean.strokeWidth, Boolean(byKey.rollingMean.strokeDasharray)], ["rgb(var(--faint))", 1, true]);
     assert.deepEqual((byKey.completeCost.activeDot as Record<string, unknown>).fill, "rgb(var(--ink))", "the hovered day takes ink");
     assert.deepEqual(getPaints(tree).filter((paint) => /--(?:accent|info)\b/.test(paint)), [], "the accent paints no chart mark");
+  });
+
+  test("the cache hit rate, one quantity, is a --data line with no dots", async () => {
+    const tree = renderIn(await loadCostRender(), "CacheHitChart", { rows: [], yDomain: [90, 100] });
+    const lines = findNodes(tree, (n) => n.type === "recharts-Line");
+    assert.deepEqual(lines.map((line) => [line.props.type, line.props.stroke, line.props.dot]), [["linear", "rgb(var(--data))", false]]);
   });
 
   test("the session histogram paints its bands --data and only the outlier bands, over their stated floor, warn", async () => {

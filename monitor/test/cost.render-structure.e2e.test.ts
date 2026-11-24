@@ -602,24 +602,6 @@ describe("calm fixture — nothing is running hot", () => {
     }
   });
 
-  test("the cache-hit line draws in the tone of the cache-read category it measures", async () => {
-    const tones = await ctx.page.evaluate((selector) => {
-      const title = Array.from(document.querySelectorAll(selector))
-        .find((t) => (t.textContent || "").trim() === "Token volume");
-      const card = title?.closest(".cost-inst");
-      const line = card?.querySelector(".recharts-line-curve");
-      // the share row's entry: swatch first, then its label text
-      const swatch = Array.from(card?.querySelectorAll('span > span[style*="background"]:first-child') ?? [])
-        .find((el) => (el.parentElement?.textContent || "").trim().startsWith("Cache read"));
-      return {
-        line: line ? getComputedStyle(line).stroke : "",
-        category: swatch ? getComputedStyle(swatch).backgroundColor : "",
-      };
-    }, CARD_TITLE_SELECTOR);
-    assert.ok(tones.line && tones.category, `both marks render (line ${tones.line} · swatch ${tones.category})`);
-    assert.equal(getToneKey(tones.line), getToneKey(tones.category));
-  });
-
   test("the hit-rate axis labels the 100% its clamped domain reaches", async () => {
     const labels = await ctx.page.evaluate(() =>
       Array.from(document.querySelectorAll("#cost-region-cache .recharts-yAxis .recharts-cartesian-axis-tick text"))

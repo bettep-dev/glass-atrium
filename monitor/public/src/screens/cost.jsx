@@ -1558,9 +1558,6 @@ function mergeUnattributedRowsC(modelRows) {
 // C2 결정(차트→테이블 전환 KEEP)으로 ModelCostChart / ModelCostTooltipC 제거 — 모델별 비용은
 // ModelCostBody 테이블이 담당(share 막대 스캔 가능). Recharts 는 다른 차트에서 계속 사용.
 
-// the hit rate measures cache reads → drawn in the Cache read category tone, no extra hue in the card
-const CACHE_HIT_LINE_COLOR = `rgb(var(${TOKEN_CATEGORIES.find((c) => c.key === 'cache_read_tokens').colorVar}))`;
-
 function CacheHitBody({ state, days, failures, onRetry }) {
   const { getRegionView, LoadingPlaceholder, RegionFailure, Stack } = window.UI;
 
@@ -1694,9 +1691,9 @@ function CacheHitChart({ rows, yDomain = [0, 100] }) {
         <Line
           type="linear"
           dataKey="rate_pct"
-          stroke={CACHE_HIT_LINE_COLOR}
+          stroke="rgb(var(--data))"
           strokeWidth={2}
-          dot={{ r: 2.5, fill: CACHE_HIT_LINE_COLOR, stroke: 'none' }}
+          dot={false}
           activeDot={{ r: 4 }}
           connectNulls={false}
           isAnimationActive={false}
