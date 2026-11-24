@@ -476,7 +476,7 @@ function WikiTileBand({ summaryState, indexState, backlogState, at, shared, onRe
 
 	return (
 		<div id={WIKI_REGION_IDS.tiles}>
-			<Card title="Health" info={details.length > 0 && <StatNotes stats={details} />} infoLabel="How these figures are read">
+			<Card title="Health" info={<StatNotes stats={details} />} infoLabel="How these figures are read">
 				<window.UI.Stack gap="block">
 					{shown.length > 0 && (
 						<WikiRegionFailureW
@@ -682,7 +682,13 @@ function buildIndexTileW(state) {
 	};
 }
 
+// the counting note rides every form of the tile → the Health ⓘ never leaves with the data
 function buildLibraryTileW(indexState, summaryState, backlogState) {
+	const tile = buildLibraryFiguresTileW(indexState, summaryState, backlogState);
+	return { ...tile, info: [LIBRARY_COUNTING_NOTE_W, tile.info].filter(Boolean).join(" ") };
+}
+
+function buildLibraryFiguresTileW(indexState, summaryState, backlogState) {
 	const label = "Library notes";
 	const pending = tileFetchStateW(indexState) || tileFetchStateW(summaryState);
 	if (pending) {
@@ -705,15 +711,14 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 
 	const figures = `${describeOriginalsW(payload.true_backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}`;
 	const age = describeSnapshotAgeW(payload.run_date);
-	const info = [LIBRARY_COUNTING_NOTE_W, age && `${age}.`].filter(Boolean).join(" ");
-	if (!age) return { ...tile, sub: figures, info };
+	if (!age) return { ...tile, sub: figures };
 
 	// a stale snapshot's context names the warn glyph's cause; the figures ride the tooltip
 	return {
 		...tile,
 		sub: payload.run_date ? `Stale snapshot ${window.UI.formatKstDay(payload.run_date)}` : figures,
 		hint: `${figures} · ${age}`,
-		info,
+		info: `${age}.`,
 		tone: "warn",
 		toneLabel: payload.run_date ? "Stale snapshot" : "Undated snapshot",
 	};

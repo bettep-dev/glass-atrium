@@ -1009,17 +1009,26 @@ test("detail moved off the stat captions opens from the card's one info trigger 
   assert.match(stats[0].info, /13 saved originals are waiting and the last cycle compiled none/);
 });
 
-test("a steady band carries no info trigger, since no stat has detail past its caption", async () => {
-  const mod = await loadWikiScreen();
+// one head in every state: the Health ⓘ opens the library counting note whatever the reads hold
+describe("the Health card keeps its ⓘ and the library counting note in every read state", () => {
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
-  const band = renderScreen(
-    mod.React.createElement(mod.WikiTileBand as Component, {
-      summaryState: ready({ last_cycle_started_at: new Date().toISOString(), latest_compiled_count: 4, last_status: "ok" }),
-      indexState: ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 }), backlogState: ready({ backlog: null }), onRetry: () => {},
-    }),
-  );
-  const [card] = findNodes(band, (n) => n.props.atom === "Card");
-  assert.ok(!card.props.info, "a steady band has nothing behind an ⓘ");
+  const rows = [
+    { name: "a steady band", summaryState: ready({ last_cycle_started_at: new Date().toISOString(), latest_compiled_count: 4, last_status: "ok" }), indexState: ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 }), backlogState: ready({ backlog: null }) },
+    { name: "a never-run wiki", summaryState: ready({}), indexState: ready({}), backlogState: ready({ backlog: null }) },
+    { name: "an open read", summaryState: LOADING, indexState: LOADING, backlogState: LOADING },
+    { name: "a failed read", summaryState: ERRORED, indexState: ERRORED, backlogState: ERRORED },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadWikiScreen();
+      const band = renderScreen(mod.React.createElement(mod.WikiTileBand as Component, { ...row, onRetry: () => {} }));
+      const [card] = findNodes(band, (n) => n.props.atom === "Card" && n.props.title === "Health");
+      const [notes] = findNodes(renderScreen(card.props.info), (n) => n.props.atom === "StatNotes");
+      const stats = (notes?.props.stats ?? []) as Array<{ label: string; info: string }>;
+      const library = Array.from(stats).find((stat) => stat.label === "Library notes");
+      assert.match(library?.info ?? "", /^Waiting: originals not yet compiled\. Broken links: last dry run\./);
+    });
+  }
 });
 
 test("a feeder the alarm list could not read is named in plain words", async () => {
