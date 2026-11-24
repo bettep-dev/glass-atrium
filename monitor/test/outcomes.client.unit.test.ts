@@ -551,8 +551,8 @@ describe("getStackedDayReadoutO: the chart readout names the day's total and eve
   test("each non-zero category appears with its count, and zero categories are left out", () => {
     const readout = outcomes.getStackedDayReadoutO({ day: "2026-09-20", total: 12, healthy: 9, attribution_loss: 0, literal_omission: 1, synthesized: 2 });
     assert.match(readout, /12 records/);
-    assert.match(readout, /Recorded properly 9/);
-    assert.match(readout, /Missing report 1/);
+    assert.match(readout, /Recorded 9/);
+    assert.match(readout, /Missing 1/);
     assert.match(readout, /Reconstructed 2/);
     assert.doesNotMatch(readout, /Untraceable/);
   });

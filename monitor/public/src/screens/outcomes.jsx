@@ -186,45 +186,31 @@ const ANALYTICS_KPI_ORDER = ['done', 'done_with_concerns', 'blocked', 'fail'];
 // 의미: literal_omission = actionable 위생 신호 · attribution_loss = 잔존 버그 신호(감소 모니터) · synthesized = 복구 산물(실패 아님).
 const ATTRIBUTION_CATEGORY_ORDER = ['healthy', 'attribution_loss', 'literal_omission', 'synthesized'];
 const ATTRIBUTION_CATEGORY_META = {
-  healthy:          { label: 'Recorded properly', symbol: '✓', icon: 'check', colorVar: '--ok'   },
-  attribution_loss: { label: 'Untraceable',       symbol: 'ℹ', icon: 'info',  colorVar: '--info' },
-  literal_omission: { label: 'Missing report',    symbol: '✕', icon: 'x',     colorVar: '--crit' },
-  synthesized:      { label: 'Reconstructed',     symbol: '⚠', icon: 'warn',  colorVar: '--warn' },
+  healthy:          { label: 'Recorded',      symbol: '✓', icon: 'check', colorVar: '--ok'   },
+  attribution_loss: { label: 'Untraceable',   symbol: 'ℹ', icon: 'info',  colorVar: '--info' },
+  literal_omission: { label: 'Missing',       symbol: '✕', icon: 'x',     colorVar: '--crit' },
+  synthesized:      { label: 'Reconstructed', symbol: '⚠', icon: 'warn',  colorVar: '--warn' },
 };
 
 // literal_omission 선택 기간 비율 → 심각도 밴드 (분모 = 선택 기간 전체 창).
 const ATTRIBUTION_OMISSION_BANDS = [
-  { max: 0.03,     colorVar: '--ok',   label: 'OK'          },
-  { max: 0.08,     colorVar: '--warn', label: 'Watch'       },
-  { max: Infinity, colorVar: '--crit', label: 'Investigate' },
+  { max: 0.03,     colorVar: '--ok',   label: 'normal'   },
+  { max: 0.08,     colorVar: '--warn', label: 'high'     },
+  { max: Infinity, colorVar: '--crit', label: 'critical' },
 ];
-
-// attribution_loss 노트 컨텍스트 (정적 문구 — 건수·비율은 window_summary 에서 라이브 산출).
-const ATTRIBUTION_LOSS_CONTEXT = 'remaining';
 
 // Channel liveness 표시 메타 — 3-상태 듀얼인코딩(기호+텍스트, 색 단독 의존 금지).
 // 판정(alerting/eligible)은 서버가 내리고 카드는 그 값만 읽는다 → 임계값이 프런트에 재등장하지 않음.
 const CHANNEL_LIVENESS_META = {
-  alerting: { label: 'Silent',      symbol: '✕', icon: 'x',     colorVar: '--crit' },
-  live:     { label: 'Recording',   symbol: '✓', icon: 'check', colorVar: '--ok'   },
-  low:      { label: 'Below floor', symbol: 'ℹ', icon: 'info',  colorVar: '--info' },
+  alerting: { label: 'Silent',      colorVar: '--crit' },
+  live:     { label: 'Recording',   colorVar: '--ok'   },
+  low:      { label: 'Below floor', colorVar: '--info' },
 };
 
 // 채널 1건 → 표시 메타. eligible 하지 않은 채널의 침묵은 뉴스가 아니므로 'low' 로 내린다.
 function channelLivenessMetaO(channel) {
   if (channel.alerting) return CHANNEL_LIVENESS_META.alerting;
   return channel.eligible ? CHANNEL_LIVENESS_META.live : CHANNEL_LIVENESS_META.low;
-}
-
-// window_summary.attribution_loss_rate × total_attributed → '{count} (~{rate}%) {context}' 라이브 노트.
-// rate null(분모 0) → 컨텍스트만 표기 (수치 fabrication 회피).
-function buildAttributionLossNoteO(lossRate, totalAttributed) {
-  if (lossRate === null || lossRate === undefined || Number.isNaN(Number(lossRate))) {
-    return ATTRIBUTION_LOSS_CONTEXT;
-  }
-  const rate  = Number(lossRate);
-  const count = Math.round(rate * (Number(totalAttributed) || 0));
-  return `${formatIntO(count)} (~${formatPctO(rate * 100)}) ${ATTRIBUTION_LOSS_CONTEXT}`;
 }
 
 // literal_omission_breakdown → 'Missing report' 세부 3-분해 (budget-kill / truncated / missing).
@@ -1330,7 +1316,7 @@ function AttributionHealthBlock({ state, period, onRetry, shared }) {
       title="Record attribution"
       status={badge && (
         <window.UI.HeadStatus tone={toneFromColorVarO(badge.colorVar)}>
-          <span>Missing reports, <window.UI.NoWrap>{period} days</window.UI.NoWrap>: {badge.text}</span>
+          <span>Missing reports {badge.text}</span>
         </window.UI.HeadStatus>
       )}>
       <AttributionHealthBody state={state} onRetry={onRetry} shared={shared}/>
@@ -1379,14 +1365,6 @@ function AttributionHealthBody({ state, onRetry, shared }) {
   return (
     <window.UI.Stack>
       <AttributionSummaryRow summary={summary} totalAttributed={totalAttributed}/>
-      <div className="fs-meta text-faint leading-relaxed">
-        <span className="inline-flex items-center gap-label-inline">
-          <span style={{ color: `rgb(var(${ATTRIBUTION_CATEGORY_META.attribution_loss.colorVar}))` }} aria-hidden="true">
-            <GlyphO name={ATTRIBUTION_CATEGORY_META.attribution_loss.icon}/>
-          </span>
-          Untraceable: {buildAttributionLossNoteO(summary?.attribution_loss_rate, totalAttributed)}
-        </span>
-      </div>
       <AttributionDevScopeO devScope={summary?.dev_scope}/>
     </window.UI.Stack>
   );
@@ -1653,15 +1631,25 @@ function AttributionLegend() {
 
 function ChannelLivenessBlock({ state, onRetry, shared }) {
   const badge = getChannelLivenessBadgeO(state);
+  const watchNote = getChannelWatchNoteO(state.data?.thresholds);
+  const hasTable = state.status === 'ready' && Array.isArray(state.data?.channels) && state.data.channels.length > 0;
 
   return (
     <FoldBlockO
       id={REGION_CARD_IDS.channels}
       title="Recording channels"
-      status={<window.UI.HeadStatus tone={badge.tone}>{badge.text}</window.UI.HeadStatus>}>
+      status={<window.UI.HeadStatus tone={badge.tone}>{badge.text}</window.UI.HeadStatus>}
+      info={watchNote && <p className="fs-body">{watchNote}</p>}
+      isFlush={hasTable}>
       <ChannelLivenessBody state={state} onRetry={onRetry} shared={shared}/>
     </FoldBlockO>
   );
+}
+
+function getChannelWatchNoteO(threshold) {
+  if (!threshold) return null;
+  return `Alerts once a channel that exceeded ${formatIntO(threshold.eligibility_daily_floor)} rows/day `
+    + `within the last ${threshold.eligibility_recency_days}d has recorded nothing for ${threshold.silence_hours}h.`;
 }
 
 // 'All recording' from an unloaded or failed payload = an unverified all-clear → neutral head Status with no claim
@@ -1684,84 +1672,55 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
     return <RegionErrorO source="recording channels" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.channels}/>;
   }
 
-  const channels  = Array.isArray(state.data?.channels) ? state.data.channels : [];
-  const threshold = state.data?.thresholds || null;
-  const days      = state.data?.days;
-
+  const channels = Array.isArray(state.data?.channels) ? state.data.channels : [];
   if (channels.length === 0) {
     return <EmptyStateO message="No recording channel wrote in this window."/>;
   }
 
   // 침묵한 채널을 먼저 — 조치가 필요한 행이 스크롤 아래로 밀리지 않게.
   const ordered = [...channels].sort((a, b) => Number(b.alerting) - Number(a.alerting));
+  const columns = getChannelColumnsO(state.data?.days, state.data?.thresholds?.eligibility_recency_days);
 
   return (
-    <div>
-      <div className="flex flex-col gap-list">
-        {ordered.map((channel) => (
-          <ChannelLivenessRow key={channel.attribution_source} channel={channel} days={days}/>
-        ))}
-      </div>
-      <ChannelPeakBarsO channels={ordered} threshold={threshold}/>
-      {threshold ? (
-        <div className="fs-meta text-faint mt-block leading-relaxed">
-          Alerts once a channel that exceeded {formatIntO(threshold.eligibility_daily_floor)} rows/day
-          within the last {threshold.eligibility_recency_days}d has recorded nothing
-          for {threshold.silence_hours}h.
-        </div>
-      ) : null}
-    </div>
+    <window.UI.Table caption="Recording channels by state" columns={columns} className={OWN_FACE_TABLE_CLASS_O}
+      stackBelowPx={CHANNEL_STACK_BELOW_PX}
+      bodies={[{ key: 'body', rows: (view) => ordered.map((channel) => (
+        <ChannelRowO key={channel.attribution_source} channel={channel} view={view}/>
+      )) }]}/>
   );
 }
 
-// busiest recent day per channel against the watch floor → which channels the silence alert covers, at a glance
-function ChannelPeakBarsO({ channels, threshold }) {
-  const { BulletBar } = window.UI;
-  const floor = Number(threshold?.eligibility_daily_floor) || null;
-  const recencyDays = threshold?.eligibility_recency_days;
-  const peaks = channels.map((channel) => Number(channel.recent_peak_daily_count) || 0);
-  const scale = Math.max(floor || 0, 1, ...peaks);
+const CHANNEL_STACK_BELOW_PX = 480;
 
-  return (
-    <div className="mt-block" role="group" aria-label="Busiest recent day per channel">
-      <div className="fs-meta text-dim mb-label">
-        Busiest day{recencyDays ? `, last ${recencyDays}d` : ''}{floor ? ` · watched from ${formatIntO(floor)}/day` : ''}
-      </div>
-      <div className="flex flex-col gap-list">
-        {channels.map((channel, index) => {
-          const peak = peaks[index];
-          const label = `${channel.attribution_source}: ${formatIntO(peak)}/day${floor ? `, floor ${formatIntO(floor)}/day` : ''}`;
-          return (
-            <div key={channel.attribution_source} className="grid items-center gap-label fs-meta"
-              style={{ gridTemplateColumns: 'minmax(0, 11rem) minmax(0, 1fr) 4.5rem' }}>
-              <span className="text-dim truncate" title={channel.attribution_source}><window.UI.MachineString>{channel.attribution_source}</window.UI.MachineString></span>
-              <BulletBar value={peak / scale} target={floor ? floor / scale : null} ariaLabel={label} tone="data"/>
-              <span className="text-ink tabular-nums text-right">{formatIntO(peak)}/day</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+// window peak over the read window · busiest day over the eligibility recency window — both come with the payload
+function getChannelColumnsO(days, recencyDays) {
+  return [
+    { key: 'channel', label: 'Channel' },
+    { key: 'status', label: 'Status' },
+    { key: 'peak', label: days ? `Peak, ${days}d` : 'Peak', isNumeric: true },
+    { key: 'busiest', label: recencyDays ? `Busiest, ${recencyDays}d` : 'Busiest', isNumeric: true },
+    { key: 'quiet', label: 'Quiet', isNumeric: true },
+  ];
 }
 
-// the recent peak that decides eligibility is drawn in ChannelPeakBarsO, so the row keeps only the window peak + quiet time
-function ChannelLivenessRow({ channel, days }) {
+function ChannelRowO({ channel, view }) {
+  const { TableRow, TableCell, StatusDot, MachineString } = window.UI;
   const meta = channelLivenessMetaO(channel);
-  const silentHours = Math.floor(Number(channel.silent_hours) || 0);
-  const windowPeak = formatIntO(channel.peak_daily_count);
-  const detail = `${windowPeak}/day peak${days ? ` over ${days}d` : ''} · quiet ${formatIntO(silentHours)}h`;
 
-  // two fixed single lines (status + source, then detail) → a narrow column truncates instead of wrapping to 4–6 lines
+  // the dot's sr-only word names the state → the painted word is for sight only
   return (
-    <div className="fs-meta min-w-0 grid items-center gap-x-label" style={{ gridTemplateColumns: 'auto minmax(0, 1fr)' }}>
-      <span style={{ color: `rgb(var(${meta.colorVar}))` }} aria-hidden="true"><GlyphO name={meta.icon}/></span>
-      <div className="flex items-center gap-label whitespace-nowrap min-w-0">
-        <span className="text-ink w-[6.5rem] flex-shrink-0">{meta.label}</span>
-        <span className="text-ink truncate min-w-0" title={channel.attribution_source}><window.UI.MachineString>{channel.attribution_source}</window.UI.MachineString></span>
-      </div>
-      <div className="col-start-2 text-dim tabular-nums truncate" title={detail}>{detail}</div>
-    </div>
+    <TableRow view={view}>
+      <TableCell view={view} kind="row-header"><MachineString>{channel.attribution_source}</MachineString></TableCell>
+      <TableCell view={view} label="Status">
+        <span className="inline-flex items-center gap-label-inline whitespace-nowrap">
+          <StatusDot status={toneFromColorVarO(meta.colorVar)} word={meta.label} isInText/>
+          <span aria-hidden="true">{meta.label}</span>
+        </span>
+      </TableCell>
+      <TableCell view={view} label="Peak" isNumeric>{formatIntO(channel.peak_daily_count)}/day</TableCell>
+      <TableCell view={view} label="Busiest" isNumeric>{formatIntO(channel.recent_peak_daily_count)}/day</TableCell>
+      <TableCell view={view} label="Quiet" isNumeric>{formatIntO(Math.floor(Number(channel.silent_hours) || 0))}h</TableCell>
+    </TableRow>
   );
 }
 
@@ -3169,7 +3128,7 @@ function attributionOmissionBadgeO(rate) {
   }
   const value = Number(rate);
   const band = ATTRIBUTION_OMISSION_BANDS.find((b) => value < b.max) || ATTRIBUTION_OMISSION_BANDS[ATTRIBUTION_OMISSION_BANDS.length - 1];
-  return { colorVar: band.colorVar, text: `${formatPctO(value * 100)} ${band.label}` };
+  return { colorVar: band.colorVar, text: band.label };
 }
 
 // 활동일만 담긴 days_series ('YYYY-MM-DD' ASC) → 최근 N 일 0-fill 그리드.

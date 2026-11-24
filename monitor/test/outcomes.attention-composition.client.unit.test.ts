@@ -1236,7 +1236,7 @@ const getTileText = (band: unknown, key: string): string => {
 const BAND_KEYS = ["attention", "broken", "recorded", "done"];
 const getBandText = (band: unknown): string => BAND_KEYS.map((key) => getTileText(band, key)).join(" | ");
 
-test("Recorded properly: one label, one population — the band never reuses the attribution category's name", () => {
+test("Recorded: one label, one population — the band never reuses the attribution category's name", () => {
   const row = helpers.AttributionSummaryRow({ summary: { healthy_rate: 0.9 }, totalAttributed: 200 });
   const stats = flattenNodes(row).find((n) => n.type === helpers.window.UI.StatRow)!.props!.stats as { key: string; label: unknown }[];
   const healthyLabel = renderText(stats.find((stat) => stat.key === "healthy")!.label).trim();
@@ -1489,11 +1489,6 @@ test("a rate over no records reads None, a measured one at most one decimal unle
     { name: "a column keeps its one decimal", args: [1, 1], text: "100.0%" },
   ];
   for (const row of rows) assert.strictEqual(forms.formatRateO(...row.args), row.text, row.name);
-});
-
-test("the missing-report head status reads None over no attributed records and a one-decimal share otherwise", () => {
-  assert.strictEqual((forms.attributionOmissionBadgeO(null) as { text: string }).text, "None");
-  assert.match((forms.attributionOmissionBadgeO(0.0123) as { text: string }).text, /^1\.2% /);
 });
 
 test("attribution day labels and ledger times use the dash day form", () => {

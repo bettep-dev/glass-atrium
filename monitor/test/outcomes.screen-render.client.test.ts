@@ -484,27 +484,50 @@ describe("the task ledger takes the .tbl cell geometry under its own header and 
   });
 });
 
-test("a channel row keeps to two single lines, the detail line carrying its full text as a tooltip", async () => {
-  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
-  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
-  const channel = {
-    attribution_source: "structuredoutput-completion", alerting: false, eligible: true,
-    silent_hours: 3.4, recent_peak_daily_count: 171, peak_daily_count: 1204,
+describe("Recording channels is one table, silent channels first, each by its full name with its units attached", () => {
+  const channels = [
+    { attribution_source: "structuredoutput-completion", alerting: false, eligible: true, silent_hours: 3.4, recent_peak_daily_count: 171, peak_daily_count: 1204 },
+    { attribution_source: "transcript-synthesis", alerting: false, eligible: false, silent_hours: 50, recent_peak_daily_count: 4, peak_daily_count: 12 },
+    { attribution_source: "subagent-stop", alerting: true, eligible: true, silent_hours: 30.8, recent_peak_daily_count: 0, peak_daily_count: 640 },
+  ];
+  const data = { channels, alerting: ["subagent-stop"], days: 7, thresholds: { eligibility_daily_floor: 100, eligibility_recency_days: 2, silence_hours: 24 } };
+  const renderBody = async () => {
+    const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+    const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+    return renderScreen(create(mod.ChannelLivenessBody as Component, { state: { status: "ready", busy: false, data, error: null }, onRetry: () => undefined, shared: {} })) as RenderedNode;
   };
-  const tree = renderScreen(create(mod.ChannelLivenessRow as Component, { channel, days: 30, recencyDays: 7 })) as RenderedNode;
+  // what a screen reader reads: aria-hidden marks dropped, sr-only words kept → a state word read twice shows here
+  const getSpokenText = (node: RenderedNode | string | null): string => {
+    if (node === null || typeof node === "string") return collectText(node);
+    return node.props["aria-hidden"] === "true" ? "" : node.children.map(getSpokenText).join("");
+  };
+  const getRows = (tree: RenderedNode) => findNodes(tree, (n) => n.type === "tr" && findNodes(n, (c) => c.type === "td").length > 0)
+    .map((tr) => findNodes(tr, (c) => c.type === "td" || c.type === "th").map((cell) => getSpokenText(cell).replace(/\s+/g, " ").trim()));
 
-  // the glyph owns the first grid column → the two text lines share the second, so the detail aligns under the label
-  const lines = getRootHost(tree).children
-    .filter((child): child is RenderedNode => typeof child !== "string" && child.props["aria-hidden"] !== "true");
-  assert.equal(lines.length, 2, "status line + detail line");
-  for (const line of lines) {
-    assert.match(String(line.props.className ?? ""), /whitespace-nowrap|truncate/, `"${collectText(line)}" cannot wrap`);
-  }
-  const detail = lines[1];
-  assert.match(String(detail.props.className), /truncate/);
-  assert.match(String(detail.props.className), /\bcol-start-2\b/, "the detail sits in the text column, under the label");
-  assert.doesNotMatch(String(detail.props.className), /\bp[lxs]?-\d/, "no indent padding stands in for the column");
-  assert.equal(detail.props.title, collectText(detail).trim());
+  test("the columns read Channel, Status, the window peak, the busiest recent day and the quiet time, with no bar", async () => {
+    const tree = await renderBody();
+    const [table] = findNodes(tree, (n) => n.type === "Table");
+
+    assert.deepEqual(Array.from(table.props.columns as { label: string }[], (col) => col.label), ["Channel", "Status", "Peak, 7d", "Busiest, 2d", "Quiet"]);
+    assert.equal(findNodes(tree, (n) => n.type === "BulletBar").length, 0);
+  });
+
+  test("silent rows lead, and each row reads its name, state word and figures with units", async () => {
+    assert.deepEqual(getRows(await renderBody()), [
+      ["subagent-stop", "Silent", "640/day", "0/day", "30h"],
+      ["structuredoutput-completion", "Recording", "1,204/day", "171/day", "3h"],
+      ["transcript-synthesis", "Below floor", "12/day", "4/day", "50h"],
+    ]);
+  });
+
+  test("each channel name appears once, never cut short", async () => {
+    const tree = await renderBody();
+    for (const channel of channels) {
+      const names = findNodes(tree, (n) => n.type === "MachineString" && collectText(n) === channel.attribution_source);
+      assert.equal(names.length, 1, channel.attribution_source);
+      assert.equal(findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("truncate")).length, 0);
+    }
+  });
 });
 
 test("the task ledger scrolls with the page, never inside a box of its own", async () => {
@@ -518,39 +541,6 @@ test("the task ledger scrolls with the page, never inside a box of its own", asy
   const classes = String(card.props.className).split(" ");
   assert.ok(classes.includes("[&>.card-body]:max-h-none"), "no height cap on its body");
   assert.ok(classes.includes("[&>.card-body]:overflow-y-visible"), "no inner vertical scroll");
-});
-
-test("each recording channel's busiest recent day is drawn against the watch floor", async () => {
-  const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
-  const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
-  const floor = 100;
-  const rows = [
-    { name: "a channel above the floor", source: "structuredoutput-completion", peak: 678 },
-    { name: "a channel just under the floor", source: "hook-input", peak: 99 },
-    { name: "a channel exactly at the floor", source: "completion-synthesized", peak: 100 },
-    { name: "a channel that wrote nothing recently", source: "budget-truncation", peak: 0 },
-  ];
-  const channels = rows.map((row) => ({
-    attribution_source: row.source, recent_peak_daily_count: row.peak, peak_daily_count: row.peak + 40,
-    silent_hours: 2, eligible: row.peak >= floor, alerting: false,
-  }));
-  const data = { days: 30, channels, alerting: [], thresholds: { eligibility_daily_floor: floor, eligibility_recency_days: 2, silence_hours: 24 } };
-  const state = { status: "ready", busy: false, data, error: null };
-  const tree = renderScreen(create(mod.ChannelLivenessBody as Component, { state, onRetry: () => undefined })) as RenderedNode;
-
-  const text = collectText(tree);
-  assert.match(text, /last 2d/, "the block names its window");
-  assert.match(text, /100\/day/, "the block names the floor");
-  const bars = findNodes(tree, (n) => n.type === "BulletBar");
-  assert.equal(bars.length, rows.length, "one bar per channel");
-  for (const row of rows) {
-    const bar = bars.find((b) => String(b.props.ariaLabel ?? "").includes(row.source));
-    assert.ok(bar, `${row.name}: has a bar`);
-    const { value, target } = bar.props as { value: number; target: number };
-    assert.ok(value >= 0 && value <= 1 && target > 0 && target <= 1, `${row.name}: bar stays on its track`);
-    assert.equal(value >= target, row.peak >= floor, `${row.name}: fill reaches the floor marker only at or above the floor`);
-    assert.equal(bar.props.tone, "data", `${row.name}: the busiest day is a quantity → the data colour; liveness rides the row's glyph and word`);
-  }
 });
 
 function getDecl(body: string, prop: string): string | undefined {
@@ -604,12 +594,14 @@ test("a loading skeleton pulses through its gated class, never through an inline
   assert.equal(inline.length, 0, "no element animates through its own style");
 });
 
-describe("the Record attribution head reads None only over a read window with no records, Not loaded with its cause after a failed read or a payload without its window summary, and nothing while the first read is in flight", () => {
+describe("the Record attribution head names the missing-report level with no rate or window: None only over a read window with no records, Not loaded with its cause after a failed read or a payload without its window summary, and nothing while the first read is in flight", () => {
   const rows = [
     { name: "failed", state: { status: "error", busy: false, data: null, error: { message: SERVER_ERROR } }, kinds: ["not-loaded"], text: /Not loaded/, isRead: false, title: SERVER_ERROR },
     { name: "read, no attributed records", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } }, error: null }, kinds: [], text: /None$/, isRead: true, isBodyEmpty: true },
     { name: "read, a payload without its window summary", state: { status: "ready", busy: false, data: { days_series: [] }, error: null }, kinds: ["not-loaded"], text: /Not loaded/, isRead: false, title: "no window summary", isBodyEmpty: false },
-    { name: "read, a measured share", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } }, error: null }, kinds: [], text: /1\.2% /, isRead: true, isBodyEmpty: false },
+    { name: "read, a share under the watch band", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } }, error: null }, kinds: [], text: /Missing reports\s+normal$/, isRead: true, isBodyEmpty: false },
+    { name: "read, a share in the watch band", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.05, total_attributed: 81 } }, error: null }, kinds: [], text: /Missing reports\s+high$/, isRead: true, isBodyEmpty: false },
+    { name: "read, a share past the watch band", state: { status: "ready", busy: false, data: { days_series: [], window_summary: { literal_omission_rate: 0.2, total_attributed: 81 } }, error: null }, kinds: [], text: /Missing reports\s+critical$/, isRead: true, isBodyEmpty: false },
   ];
   const severityWord = (ui.UI as { ALERT_SEVERITY_WORD: Record<string, string> }).ALERT_SEVERITY_WORD;
   const renderCard = async (state: unknown) => {
@@ -644,6 +636,8 @@ describe("the Record attribution head reads None only over a read window with no
       const tone = String(status.props["data-tone"]);
       assert.deepEqual(absent.map((n) => n.props.kind), row.kinds);
       assert.match(collectText(status).trim(), row.text);
+      assert.doesNotMatch(collectText(status), /%|days/, "no rate and no window in the head");
+      assert.doesNotMatch(collectText(tree), /remaining/, "no Untraceable sentence beside its stat");
       assert.doesNotMatch(collectText(status), row.isRead ? /Not loaded/ : /None/);
       assert.equal(tone === "neutral", !row.isRead, "a tone only on a read window");
       assert.ok(collectText(status).trimStart().startsWith(`${severityWord[tone]}: `), "the severity word is read first");
