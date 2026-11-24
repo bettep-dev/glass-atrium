@@ -441,7 +441,7 @@
 
 - 단일 규칙: **product surfaces carry no blur** — the overlay scrim is solid; the dev-only tweaks panel is the one carve-out.
 - **허용**:
-  - overlay scrim: `.detail-overlay` · `.modal-backdrop` = solid `rgb(0 0 0 / 0.42)`, no blur (§12.9).
+  - overlay scrim: `.detail-overlay` = solid `rgb(0 0 0 / 0.42)`, no blur (§12.9).
   - 떠 있는 chrome 1개 (dev-only `.twk-panel`, §3.5).
   - 사이드바는 본문과 겹치지 않는 별도 grid 컬럼 → blur 불필요, 불투명.
 - **금지**:
@@ -480,7 +480,7 @@
 | 1 | sticky `th` (`STICKY_TH_STYLE`) |
 | 10 | `.save-banner` |
 | 99 (`--z-overlay` − 1) | `.popover-panel` |
-| 100 `--z-overlay` | `.detail-overlay` · `.modal-backdrop` · `.skip-link` |
+| 100 `--z-overlay` | `.detail-overlay` · `.skip-link` |
 | 150 `--z-confirm` | drawer/fullscreen 위 confirm (`.detail-overlay.detail-confirm`) |
 | 200 `--z-toast` | `.doc-toast` |
 | 2147483646 | `.twk-panel` (dev-only, 스택 밖) |
@@ -596,7 +596,7 @@
 - body 16px 24px · foot 12px 24px `--sunken`.
 - **상호작용 계약**: 닫기 X · Esc · backdrop · focus trap (진입 포커스 + Tab 순환 + 닫힐 때 트리거 복귀) · 배경 `inert` + body scroll-lock · 가장 나중에 열린 surface 가 키보드 소유 (drawer 위 confirm) · `nav` 제공 시 foot 에 "Previous / Next" (`btn ghost sm`) + Arrow 키.
 - **scrim**: 솔리드 `rgba(0,0,0,0.42)`, no blur (§6.3 · §9.3 · §12.9). z: §6.5.
-- `.modal` / `.modal-backdrop` class 는 `clauded-docs.jsx` 다이얼로그 1곳에만 남아 있다. 새 다이얼로그는 `DetailSurface`.
+- No `.modal` class remains; every dialog is `DetailSurface`.
 
 ### 7.9 Alarm row · Alert card — `.alarm-row` · `AlertCard` (`.alert-card`)
 
@@ -868,7 +868,7 @@
 - Product overlays are solid only; a glass declaration (dev-only `.twk-panel`) keeps a solid reduced-transparency fallback.
 
 ```css
-.modal-backdrop, .detail-overlay { background: rgba(0,0,0,0.42); }   /* solid — no glass layer on product overlays */
+.detail-overlay { background: rgba(0,0,0,0.42); }   /* solid — no glass layer on product overlays */
 ```
 
 ---

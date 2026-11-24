@@ -133,7 +133,7 @@
   --doc-ink:    228 228 231;  /* code-block text — ≥4.5:1 on --doc-code */
 
   /* ── Z-index stacking SoT — 3-tier 단일 출처 (각 tier 실제 소비) ──────────
-     overlay(100) = drawer/fullscreen 오버레이 + backdrop (.detail-overlay·.modal-backdrop)
+     overlay(100) = drawer/fullscreen 오버레이 + backdrop (.detail-overlay)
      confirm(150) = drawer/fullscreen 위로 재차 스택되는 confirm-variant 다이얼로그
                     (.detail-overlay.detail-confirm) — overlay 위 레이어 확보
      toast(200)   = 최상위 알림 (.doc-toast) — 모든 오버레이 위 */

@@ -2973,52 +2973,12 @@ a.prose-link:hover {
 	background: rgb(var(--ink));
 }
 
-.modal-backdrop {
-	position: fixed;
-	inset: 0;
-	background: rgba(0, 0, 0, 0.42); /* 솔리드 scrim 기본 (§9.3 fallback-first) */
-	z-index: var(--z-overlay);
-	display: grid;
-	place-items: center;
-}
-.modal {
-	background: rgb(var(--surface-overlay)); /* 오버레이 불투명 면 (텍스트 4.5:1 보장, §7.8) */
-	border-radius: var(--radius-card);
-	width: min(560px, 92vw);
-	max-height: 86vh;
-	box-shadow: var(--shadow-overlay);
-	overflow: hidden;
-	display: flex;
-	flex-direction: column;
-}
-.modal-head {
-	min-height: var(--card-head-h);
-	padding: var(--space-1) var(--space-6);
-	border-bottom: 1px solid rgb(var(--line));
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-}
-.modal-body {
-	padding: var(--space-4) var(--space-6);
-	overflow-y: auto;
-}
-.modal-foot {
-	padding: var(--space-3) var(--space-6);
-	border-top: 1px solid rgb(var(--line));
-	display: flex;
-	justify-content: flex-end;
-	gap: 8px;
-	background: rgb(var(--sunken));
-}
-
 /* ── DetailSurface — 공용 오버레이 (variant: drawer/fullscreen/confirm) ──────
-   backdrop 는 .modal-backdrop 재사용 (별도 색 미발명). overlay 는 fixed 전면
-   스크림 + variant 별 배치/모션. 면 색상·그림자·라인은 tokens.css 재참조. */
+   overlay 는 fixed 전면 스크림 + variant 별 배치/모션. 면 색상·그림자·라인은 tokens.css 재참조. */
 .detail-overlay {
 	position: fixed;
 	inset: 0;
-	background: rgba(0, 0, 0, 0.42); /* .modal-backdrop 와 동일 scrim (단일 색) */
+	background: rgba(0, 0, 0, 0.42); /* 솔리드 scrim (§9.3 fallback-first) */
 	z-index: var(--z-overlay);
 	display: flex;
 }
