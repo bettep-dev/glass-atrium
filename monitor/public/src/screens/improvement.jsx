@@ -1378,7 +1378,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 						tone={toneKeyI(preVerify.tone)}
 						icon
 						className="shrink-0"
-						title={`Pre-check (dry-run before applying): ${preVerify.label} · ${preVerify.titleHint}`}
+						title={`Pre-check (dry-run before applying): ${[preVerify.label, preVerify.titleHint].filter(Boolean).join(" · ")}`}
 					>
 						Pre-check
 					</Badge>
@@ -1523,29 +1523,29 @@ function isConfidenceMeasuredI(value) {
 // pre_verify_status → canonical 4-badge dual-encoded mapping.
 // Inputs: status (string|null) · passed (boolean|null) — fail-safe to ℹ pending.
 // `kind` = 안정 식별자 (로직 분기용 — 표시 문자열 변경이 로직을 깨뜨리지 않도록)
-//   · `label` = 사용자 노출 라벨 · `titleHint` = 원본 status (진단값 verbatim).
+//   · `label` = 사용자 노출 라벨 · `titleHint` = 원본 status (진단값 verbatim) — label 이 이미 말하는 단어면 null.
 function preVerifyBadgeI(status, passed) {
 	const { TONE_GLYPH, TONE_ICON } = window.UI;
 	// tone → symbol/icon 은 registry(TONE_GLYPH/TONE_ICON) 단일 출처 — 로컬 symbol 맵 + 하드코딩 Tailwind fill 제거
 	// (confidenceBadgeMetaI/learningStatusBadgeI 형제와 동일 fold). kind/label/titleHint 만 로컬 매핑.
-	const build = (kind, tone, label, titleHint) => ({
+	const build = (kind, tone, label, status) => ({
 		kind,
 		tone: `text-${tone}`,
 		symbol: TONE_GLYPH[tone],
 		icon: TONE_ICON[tone],
 		label,
-		titleHint,
+		titleHint: status && !label.toLowerCase().includes(status.toLowerCase()) ? status : null,
 	});
 	if (passed === true) {
-		return build("passed", "ok", "Pre-check passed", status || "passed");
+		return build("passed", "ok", "Pre-check passed", status);
 	}
 	if (typeof status === "string" && status.startsWith("error:")) {
 		return build("budget-wall", "warn", "Budget hit", status);
 	}
 	if (passed === false || status === "failed") {
-		return build("failed", "crit", "Pre-check failed", status || "failed");
+		return build("failed", "crit", "Pre-check failed", status);
 	}
-	return build("pending", "info", "Pending", status || "pending");
+	return build("pending", "info", "Pending", status);
 }
 
 // ----- Bucket row (Read-bridge) — CTM/EPM + outcome_summary + join_meta 시각화. ---
@@ -2004,16 +2004,16 @@ function DetailBodyI({ fields, sections, preVerify }) {
 }
 
 // Pre-verify drawer 블록 — badge 헤더 + rationale + keyed axis 행 (P10 · 원시 JSON 대체).
-// axis value boolean → Passed/Failed 배지 · 그 외 → 문자열.
+// axis value boolean → Passed/Failed 상태 (glyph + 단어) · 그 외 → 문자열.
 function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
-	const { Badge, Stack } = window.UI;
+	const { HeadStatus, Stack } = window.UI;
 	return (
 		<Stack gap="list">
 			<div className={labelCls}>Pre-verify</div>
 				<div className="flex items-center gap-label-inline fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
 					<span className="text-dim">{badge.label}</span>
-					{badge.titleHint && badge.titleHint !== badge.label && (
+					{badge.titleHint && (
 						<span className="text-faint">· {badge.titleHint}</span>
 					)}
 				</div>
@@ -2031,13 +2031,9 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 								<dt className="fs-meta text-dim">{label}</dt>
 								<dd className="justify-self-end">
 									{typeof value === "boolean" ? (
-										<Badge
-											role="status"
-											tone={value ? "ok" : "crit"}
-											icon
-											title={`${label}: ${value ? "Passed" : "Failed"}`}>
+										<HeadStatus tone={value ? "ok" : "crit"}>
 											{value ? "Passed" : "Failed"}
-										</Badge>
+										</HeadStatus>
 									) : (
 										<span className="fs-meta text-ink">
 											{String(value)}
@@ -2133,7 +2129,10 @@ function buildKstDateTimeI(iso) {
 }
 
 function getTierWordsI(tier) {
-	return tier === "auto" ? "✓ Applies automatically" : `⚠ Needs your approval (${tier})`;
+	const { HeadStatus } = window.UI;
+	return tier === "auto"
+		? <HeadStatus tone="ok">Applies automatically</HeadStatus>
+		: <HeadStatus tone="warn">{`Needs your approval (${tier})`}</HeadStatus>;
 }
 
 // stored machine keys → drawer words (cost guard: daemon_cycle.derive_cost_guard_state)

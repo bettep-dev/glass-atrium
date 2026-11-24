@@ -55,6 +55,8 @@ interface Sandbox {
   buildDetailPropsI: (row: Record<string, unknown>) => Record<string, unknown>;
   confidenceBadgeMetaI: (value: unknown) => { label: string };
   ConfidenceBadgeI: Component;
+  PreVerifyDetailI: Component;
+  preVerifyBadgeI: (status: string | null, passed: boolean | null) => unknown;
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -640,6 +642,40 @@ test("the drawer names the approval tier in words, never echoing the raw tier ke
   const text = visibleText(sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 1, approval_tier: "auto" })));
 
   assert.ok(!text.includes("auto (auto)"), text);
+});
+
+describe("the drawer's verdicts read as a tone glyph and a word, never a tinted pill or an untinted sign", () => {
+  const ui = () => sandbox.window.UI as Record<string, unknown>;
+  const statusesOf = (tree: unknown) =>
+    findAll(tree, (el) => el.type === ui().HeadStatus).map((el) => ({ tone: el.props.tone, words: visibleText(el.props.children) }));
+  const renderPreVerify = (status: string | null, axes: unknown[] = []) =>
+    sandbox.PreVerifyDetailI({ badge: sandbox.preVerifyBadgeI(status, true), rationale: null, axes, labelCls: "fs-meta" });
+
+  for (const status of ["passed", null]) {
+    test(`a passed pre-check says passed once (stored status ${status})`, () => {
+      assert.equal(visibleText(renderPreVerify(status)).match(/passed/gi)?.length, 1);
+    });
+  }
+
+  test("each pre-check axis is a bare status, never a filled badge", () => {
+    const tree = renderPreVerify("passed", [{ key: "C1", label: "C1", value: true }, { key: "C4", label: "C4", value: false }]);
+    assert.equal(findAll(tree, (el) => el.type === ui().Badge).length, 0, "no pill on any axis");
+    assert.deepEqual(statusesOf(tree), [{ tone: "ok", words: "Passed" }, { tone: "crit", words: "Failed" }]);
+  });
+
+  const tiers = [
+    { name: "a tier needing approval is a warn status", tier: "user", status: { tone: "warn", words: "Needs your approval (user)" } },
+    { name: "the automatic tier is an ok status", tier: "auto", status: { tone: "ok", words: "Applies automatically" } },
+  ];
+  for (const row of tiers) {
+    test(row.name, () => {
+      const facts = getDrawerFacts(sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 1, approval_tier: row.tier })));
+      const terms = findAll(facts, (el) => el.type === "dt");
+      const value = findAll(facts, (el) => el.type === "dd")[terms.findIndex((el) => visibleText(el) === "Approval tier")];
+      assert.deepEqual(statusesOf(value), [row.status]);
+      assert.doesNotMatch(visibleText(value), /[⚠✓]/, "no text sign beside the glyph");
+    });
+  }
 });
 
 // the drawer's fields, each drawn through the shared DetailField → its dt / dd pair
