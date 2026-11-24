@@ -519,7 +519,7 @@ function computeCacheShare(modelState) {
 const KPI_SOURCE_C = 'cost KPIs';
 
 function SpendCardC({ kpiState, hot, alarmRows = [], trendState, modelState, days, failures, onRetry }) {
-  const { getRegionView, RegionFailure, Card, StatRow } = window.UI;
+  const { getRegionView, RegionFailure, Card, StatRow, StatNotes } = window.UI;
   const stats = buildSpendStatsC({ kpiState, hot, trendState, modelState, days });
   const notes = stats.filter((stat) => stat.info);
   const bannerSources = failures?.banner?.sources ?? [];
@@ -532,7 +532,7 @@ function SpendCardC({ kpiState, hot, alarmRows = [], trendState, modelState, day
           focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
       )}
       {/* flush body → the alarm rows span the card under its head; the stat row keeps the card padding */}
-      <Card title="Spend" info={notes.length > 0 && <SpendStatNotesC stats={notes}/>} infoLabel="How these figures are read" isFlush>
+      <Card title="Spend" info={notes.length > 0 && <StatNotes stats={notes}/>} infoLabel="How these figures are read" isFlush>
         <SpendAlarmRowsC rows={alarmRows}/>
         <div className="p-card-pad" aria-busy={stats.some((stat) => stat.status === 'loading') ? 'true' : undefined}>
           <StatRow stats={stats.map((stat) => buildStatC(stat, bannerSources))}/>
@@ -621,20 +621,6 @@ function getCacheTotalNoteC({ listTotal, recordedTotal, days }) {
 function getShownDays(state, requestedDays) {
   const match = /[?&]days=(\d+)/.exec(state?.key ?? '');
   return match ? Number(match[1]) : requestedDays;
-}
-
-// counting rules and windows → the card's one ⓘ, each note led by its stat label
-function SpendStatNotesC({ stats }) {
-  return (
-    <>
-      {stats.map((stat) => (
-        <p key={stat.key} className="m-0">
-          <strong className="font-medium text-ink">{stat.label}</strong>
-          {' — '}{stat.info}
-        </p>
-      ))}
-    </>
-  );
 }
 
 // stat model → one StatRow stat; a non-ready stat says why on its context line, under its None or Not loaded word
@@ -819,7 +805,7 @@ function CostTrendChart({ rows, bandOn }) {
   };
 
   return (
-    <figure style={{ margin: 0, minWidth: 0 }}>
+    <figure style={{ minWidth: 0 }}>
       <div
         {...getChartImageProps(getGapNameC('Daily cost', points), points, formatUsdC)}
         style={{ width: '100%', height: 260, cursor: 'crosshair' }}

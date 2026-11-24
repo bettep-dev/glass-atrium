@@ -1029,7 +1029,7 @@ interface RenderModule {
 // the spend stats and the ledgers are models over shared atoms → the real stat row, loading row, Stack and table atoms render, other atoms stay stubs
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
-const REAL_ATOMS = new Set(["StatRow", "AlarmRow", "AbsentValue", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
+const REAL_ATOMS = new Set(["StatRow", "StatNotes", "AlarmRow", "AbsentValue", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
 
 // real ui.jsx helpers, with every rendered atom a host element carrying its props (the stat row anatomy itself real)
 function getAtomUi(overrides: Record<string, unknown> = {}): unknown {
