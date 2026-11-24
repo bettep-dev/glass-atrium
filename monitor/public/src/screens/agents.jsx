@@ -491,15 +491,14 @@ function HealthMarkAg({ agents, failureByAgent, revisionState, reviewByAgentStat
 
 // one mark per ledger row through getAgentMarkAg; an unread rework or flag source judges no health
 function getAgentMarksAg(agents, failureByAgent, revisionState, reviewByAgentState) {
-  const list = Array.isArray(agents) ? agents : [];
   const isHealthRead = revisionState?.status === 'ready' && reviewByAgentState?.status === 'ready';
   const ranking = isHealthRead
     ? buildQualityHealthRanking(readyData(revisionState)?.rows ?? [], readyData(reviewByAgentState)?.rows ?? [], Number.MAX_SAFE_INTEGER)
     : [];
   const healthByAgent = new Map(ranking.map((entry) => [entry.agent, entry]));
-  const p95Scale = getP95ScaleAg(list);
+  const p95Scale = getP95ScaleAg(agents);
   const watchCut = getWatchCutAg(ranking);
-  return list.map((agent) => ({
+  return agents.map((agent) => ({
     agent: agent.agent_id,
     mark: getAgentMarkAg({ agent, failure: failureByAgent?.get(agent.agent_id) ?? null, p95Scale, health: healthByAgent.get(agent.agent_id) ?? null, watchCut }),
   }));
