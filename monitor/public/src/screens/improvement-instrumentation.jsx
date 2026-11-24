@@ -810,7 +810,7 @@ function formatRateI(rate) {
 // + revision_count delta. orphan 테이블(미배포/빈 데이터)은 정직한 빈 상태로 노출 —
 // 가짜 0 금지. error(503/테이블 부재) → 뷰가 카드 대신 재시도 가능한 오류 배너를 렌더.
 function CorrectionSignalsCardI({ state }) {
-	const { Card, Cluster, formatKstDate, LoadingPlaceholder, Stack, StatRow } = window.UI;
+	const { Card, Cluster, formatKstDay, LoadingPlaceholder, Stack, StatRow } = window.UI;
 	const head = CARD_HEAD_I.correctionSignals;
 
 	if (state.status === "error") return null;
@@ -832,7 +832,7 @@ function CorrectionSignalsCardI({ state }) {
 	const total = agr.total || 0;
 	// stage1·stage2 가 concur 한 비율(both OR neither) — 검출기 합의도.
 	const agreePct = total > 0 ? ((agr.agreement_count / total) * 100).toFixed(1) : "0.0";
-	const latest = d.latest_event_ts ? formatKstDate(d.latest_event_ts) : null;
+	const latest = d.latest_event_ts ? formatKstDay(d.latest_event_ts) : null;
 
 	return (
 		<Card {...getCardHeadPropsI(head)}>
@@ -880,7 +880,7 @@ function isCorrectionSignalsEmptyI(data) {
 // 코퍼스 성장 카드 — core.autoagent_corpus_audits 시리즈(cycle_date 당 1행).
 // null 은 "판독 불가", 0 은 "측정된 0" 으로 서로 다른 판독 → null 을 0 으로 접지 않는다.
 function CorpusGrowthCardI({ state }) {
-	const { Card, Cluster, Sparkline, LoadingPlaceholder, Stack, StatRow } = window.UI;
+	const { Card, Cluster, formatKstDay, Sparkline, LoadingPlaceholder, Stack, StatRow } = window.UI;
 	const head = CARD_HEAD_I.corpusGrowth;
 
 	if (state.status === "error") return null;
@@ -944,7 +944,7 @@ function CorpusGrowthCardI({ state }) {
 				<CorpusFactsI latest={latest} />
 				{/* cycle_date is already a display-zone day key in the YYYY-MM-DD form formatKstDate prints → no zone shift */}
 				<div className="fs-meta text-faint tnum">
-					{formatIntI(Number(state.data.total_audits ?? 0))} audits · latest {latest.cycle_date}
+					{formatIntI(Number(state.data.total_audits ?? 0))} audits · latest {formatKstDay(latest.cycle_date)}
 				</div>
 			</Stack>
 		</Card>
