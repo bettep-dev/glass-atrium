@@ -660,14 +660,29 @@ test("stage and audience filters are two filter triggers on one labelled bar, ea
   assert.deepEqual(picked, ["done"]);
 });
 
-test("the Show menu counts each stage it has a count for, and the caption counts documents, naming revisions as their own unit", async () => {
+// a count of 0 repeats the empty state's own words → the caption shows only a count above 0
+test("the list caption renders exactly when its count is above 0, in list and search mode", async () => {
+  const screen = await loadDocsScreen();
+  const rows = [
+    { name: "list, 0 documents", props: { rows: [], total: 0, docTotal: 0, visibleCount: 0 }, isShown: false },
+    { name: "list, 2 documents", props: {}, isShown: true },
+    { name: "search, 0 matched", props: { rows: [], isSearchMode: true, total: 0, docTotal: null, visibleCount: 0 }, isShown: false },
+    { name: "search, 2 matched", props: { isSearchMode: true, docTotal: null }, isShown: true },
+  ];
+  for (const row of rows) {
+    const counts = findNodes(renderListCard(screen, row.props), (n) => String(n.props?.className ?? "").includes("doc-list-count"));
+    assert.equal(counts.length, row.isShown ? 1 : 0, row.name);
+  }
+});
+
+test("the Show menu counts each stage it has a count for, and the caption counts documents, naming versions as their own unit", async () => {
   const screen = await loadDocsScreen();
   const optionTexts = (tree: ReturnType<typeof renderScreen>) =>
     Array.from(findTriggers(tree)[0].props.options as Array<{ label: unknown }>, (o) => collectText(renderScreen(o.label as never)).replace(/\s+/g, " ").trim()); // Array.from → a test-realm array for strict deep-equal
 
   const counted = renderListCard(screen, { total: 3, docTotal: 5, groupCounts: { total: 3, open: 2, done: 1 } });
   assert.deepEqual(optionTexts(counted), ["Open 2", "Done 1", "All 3"]);
-  assert.match(collectText(counted), /\b3 documents · 5 with revisions\b/);
+  assert.match(collectText(counted), /\b3 documents · 5 versions\b/);
   assert.doesNotMatch(collectText(counted), /\bgroups\b/, "no internal grouping unit in the caption");
 
   assert.deepEqual(optionTexts(renderListCard(screen, {})), ["Open", "Done", "All"], "a count the payload lacks renders as nothing, never 0");
@@ -1133,13 +1148,13 @@ describe("a ledger head count and a group toggle space their content on the labe
 describe("the filter bar and its count line take their layout and tone from utilities, not the screen style block", () => {
   const rows = [
     { name: "the count line", find: (n: RenderedNode) => hasClass(n, "doc-list-meta"), hook: ".doc-list-meta",
-      utilities: ["basis-full", "flex", "flex-wrap", "justify-end", "items-center", "gap-x-list"] },
+      utilities: ["ml-auto", "flex", "flex-wrap", "justify-end", "items-center", "gap-x-list"] },
     { name: "the document count", find: (n: RenderedNode) => hasClass(n, "doc-list-count"), hook: ".doc-list-count",
       utilities: ["whitespace-nowrap", "text-dim", "fs-meta", "tabular-nums"] },
     { name: "the search note", find: (n: RenderedNode) => hasClass(n, "doc-show-note"), hook: ".doc-show-note",
       utilities: ["text-dim", "whitespace-nowrap", "fs-meta"] },
     { name: "the filter bar", find: (n: RenderedNode) => n.props?.atom === "FilterBar", hook: ".doc-filter-bar",
-      utilities: ["flex-auto", "min-w-0"] },
+      utilities: ["min-w-0"] },
   ];
   const hasClass = (n: RenderedNode, name: string) => String(n.props?.className ?? "").split(/\s+/).includes(name);
   for (const row of rows) {

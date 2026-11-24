@@ -1002,9 +1002,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-list-region { scroll-margin-top: var(--gap-page); border-radius: var(--radius-card); }
         /* clip trims an outside ring → the card ring drawn inset */
         .doc-list-region:focus-visible { outline-offset: calc(-1 * var(--focus-ring-width)); }
-        /* the reset's auto margin takes the bar's slack → a trigger value or the search note never resizes the field being typed in */
-        .doc-bar-search { flex: 0 1 200px; min-width: 180px; }
-        .doc-trigger-value { display: inline-grid; }
+        /* fixed basis + content-wide bar → a trigger value, the search note or the count never resizes the field being typed in · width = the basis → the bar's max-content counts the field at 200, so the reset never wraps */
+        .doc-bar-search { flex: 0 1 200px; width: 200px; min-width: 180px; }
+        /* slot = widest option · start-aligned → the button's centred text never opens a gap after the axis label */
+        .doc-trigger-value { display: inline-grid; justify-items: start; }
         .doc-trigger-value > * { grid-area: 1 / 1; }
         .doc-trigger-value > .is-idle { visibility: hidden; }
       `}</style>
@@ -1230,14 +1231,16 @@ function DocListCardCD({
 	// search total = uncollapsed server hits · visible/hidden = collapsed chain rows → the fraction stays in rows, hits get their own unit
 	const rowCount = visibleCount + hiddenCount;
 	const hitsLabel = isSearchMode && total !== rowCount ? ` · ${formatIntCD(total)} hits` : "";
+	const countedTotal = isSearchMode ? rowCount : total;
+	// a count of 0 repeats the empty state's words → no caption
 	const totalLabel =
-		state.status !== "ready"
+		state.status !== "ready" || countedTotal === 0
 			? null
 			: !isSearchMode && docTotal != null
-				? `${formatIntCD(total)} documents${docTotal !== total ? ` · ${formatIntCD(docTotal)} with revisions` : ""}${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
+				? `${formatIntCD(total)} documents${docTotal !== total ? ` · ${formatIntCD(docTotal)} versions` : ""}${hiddenCount > 0 ? ` · ${formatIntCD(hiddenCount)} hidden` : ""}`
 				: hiddenCount > 0
-					? `${formatIntCD(visibleCount)} of ${formatIntCD(isSearchMode ? rowCount : total)} shown${hitsLabel}`
-					: `${formatIntCD(isSearchMode ? rowCount : total)} matched${hitsLabel}`;
+					? `${formatIntCD(visibleCount)} of ${formatIntCD(countedTotal)} shown${hitsLabel}`
+					: `${formatIntCD(countedTotal)} matched${hitsLabel}`;
 
 	// multi-select 파생값. server contract 정합 (group ≥ 2, ungroup ≥ 1).
 	const selectionSize = selectedIds.size;
@@ -1295,11 +1298,11 @@ function DocListCardCD({
 
 	const bar = (
 		<>
-			{/* one control row — the filter bar (search · Show · Audience · reset) · the count meta on its own right-aligned line */}
+			{/* one control row — the filter bar (search · Show · Audience · reset) · the count meta at the row's right end */}
 			<div className="control-row">
 				<DocFilterBarCD isSearchMode={isSearchMode} groupCounts={groupCounts} inlineFilterProps={inlineFilterProps} />
 				{(busyText || totalLabel) && (
-					<div className="doc-list-meta basis-full flex flex-wrap justify-end items-center gap-x-list">
+					<div className="doc-list-meta ml-auto flex flex-wrap justify-end items-center gap-x-list">
 						{busyText && (
 							<span className="doc-list-busy fs-meta text-dim" role="status">
 								{busyText}
@@ -1635,7 +1638,7 @@ function DocFilterBarCD({ isSearchMode, groupCounts, inlineFilterProps }) {
 	const { FilterBar, FilterTrigger, BarSearch } = window.UI;
 	const { keyword, docStatusFilter, audienceFilter } = inlineFilterProps;
 	return (
-		<FilterBar label="Document filters" isApplied={isFilterAppliedCD(inlineFilterProps)} onReset={() => setDefaultFiltersCD(inlineFilterProps)} className="flex-auto min-w-0">
+		<FilterBar label="Document filters" isApplied={isFilterAppliedCD(inlineFilterProps)} onReset={() => setDefaultFiltersCD(inlineFilterProps)} className="min-w-0">
 			<BarSearch label="Search documents" value={keyword} onChange={inlineFilterProps.onKeywordChange} placeholder="Search…" className="doc-bar-search" />
 			<FilterTrigger axis="Show" value={<DocTriggerValueCD options={DOC_STATUS_OPTIONS_CD} chosenKey={docStatusFilter} />} options={getStageOptionsCD(groupCounts)}
 				chosenKeys={[docStatusFilter]} onPick={inlineFilterProps.onDocStatusChange} />

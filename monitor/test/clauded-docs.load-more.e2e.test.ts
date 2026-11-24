@@ -1066,6 +1066,9 @@ test("search mode: the snippet line and the Title header label start at the titl
 
 test("search mode: entering and leaving it moves neither the focused search field nor the Show and Audience triggers", async () => {
   // a search response carries no group counts → this pins that the Show trigger keeps its width, and the note lands after the triggers
+  // one open document → list mode has a count to print
+  const title = makeTitle("modepin-listed", 0);
+  const doc = await postCreate({ title, author: "load-more-tester", html_body: makeHtmlBody(title) });
   const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page: Page = await context.newPage();
   try {
@@ -1082,8 +1085,9 @@ test("search mode: entering and leaving it moves neither the focused search fiel
     });
     const listed = await readBoxes();
 
+    // a query no document matches → 0 matched, which the caption never prints
     await clickAndWaitForListResponse(page, () => search.fill(`modepin${randomUUID().slice(0, 8)}`), (url) => url.includes("/search?"));
-    await count.filter({ hasText: /matched|shown/ }).waitFor();
+    await count.waitFor({ state: "detached" });
     const searching = await readBoxes();
 
     await clickAndWaitForListResponse(page, () => search.fill(""), (url) => url.includes("/groups?"));
@@ -1100,6 +1104,7 @@ test("search mode: entering and leaving it moves neither the focused search fiel
     }
   } finally {
     await context.close();
+    await deleteDoc(doc.id);
   }
 });
 
