@@ -515,30 +515,30 @@ function computeCacheShare(modelState) {
   };
 }
 
-// the payload behind the Today and per-task stats — its failure notice sits right above the Spend card
+// the read behind the Today and per-task stats — its failure notice leads the Spend card body
 const KPI_SOURCE_C = 'cost KPIs';
 
 function SpendCardC({ kpiState, hot, alarmRows = [], trendState, modelState, days, failures, onRetry }) {
-  const { getRegionView, RegionFailure, Card, StatRow, StatNotes } = window.UI;
+  const { getRegionView, RegionFailure, Card, Stack, StatRow, StatNotes } = window.UI;
   const stats = buildSpendStatsC({ kpiState, hot, trendState, modelState, days });
   const notes = stats.filter((stat) => stat.info);
   const bannerSources = failures?.banner?.sources ?? [];
 
+  // flush body → the alarm rows span the card under its head; the stat row keeps the card padding
   return (
-    <>
-      {/* Payload failure is reported at the owning group — the /api/cost/kpi payload feeds stats 1 and 3. */}
-      {getRegionView(kpiState) === 'error' && (
-        <RegionFailure source={KPI_SOURCE_C} error={kpiState.error} isBusy={kpiState.busy}
-          focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
-      )}
-      {/* flush body → the alarm rows span the card under its head; the stat row keeps the card padding */}
-      <Card title="Spend" info={notes.length > 0 && <StatNotes stats={notes}/>} infoLabel="How these figures are read" isFlush>
-        <SpendAlarmRowsC rows={alarmRows}/>
-        <div className="p-card-pad" aria-busy={stats.some((stat) => stat.status === 'loading') ? 'true' : undefined}>
+    <Card title="Spend" info={notes.length > 0 && <StatNotes stats={notes}/>} infoLabel="How these figures are read" isFlush>
+      <SpendAlarmRowsC rows={alarmRows}/>
+      <div className="p-card-pad" aria-busy={stats.some((stat) => stat.status === 'loading') ? 'true' : undefined}>
+        <Stack>
+          {/* the /api/cost/kpi read feeds stats 1 and 3 → its cause leads the card it blanks */}
+          {getRegionView(kpiState) === 'error' && (
+            <RegionFailure source={KPI_SOURCE_C} error={kpiState.error} isBusy={kpiState.busy}
+              focusTargetId={COST_REGION_IDS.kpis} onRetry={onRetry} failures={failures}/>
+          )}
           <StatRow stats={stats.map((stat) => buildStatC(stat, bannerSources))}/>
-        </div>
-      </Card>
-    </>
+        </Stack>
+      </div>
+    </Card>
   );
 }
 

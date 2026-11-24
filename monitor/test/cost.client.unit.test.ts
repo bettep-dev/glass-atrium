@@ -1102,6 +1102,21 @@ test("a cold-failed KPI payload retrying reads as failed on its stats, never a s
   assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 0, "no stat reads as loading beside the card");
 });
 
+test("a failed KPI read states its cause as the Spend card's first body row, above the stats it blanks, never on the page ground", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const kpiState: PanelState = { status: "error", data: null, error: "HTTP 500 Internal Server Error", busy: false };
+  const settled = ready({ points: [{ day: "2026-01-09", cost_usd: 2 }], rows: [] });
+  const tree = renderIn(mod, "SpendCardC", {
+    kpiState, hot: cost.computeHotVerdict({}), trendState: settled, modelState: settled, days: 30, onRetry: () => {},
+  });
+
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card" && n.props.title === "Spend");
+  assert.ok(card, "the Spend card renders");
+  const inCard = findNodes(card, (n) => n.props.atom === "RegionFailure" || isStat(n));
+  assert.equal(findNodes(tree, (n) => n.props.atom === "RegionFailure").length, 1, "one notice for the KPI read");
+  assert.equal(inCard[0]?.props.atom, "RegionFailure", "the notice sits inside the card, before every stat");
+});
+
 test("a spend stat that read nothing says so in faint words — Not loaded for a failed read, None for an empty one — never a dash", async () => {
   const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
   const rows = [
@@ -2109,7 +2124,9 @@ test("the stop-reason table paints no colour mark on any row", async () => {
   const tree = renderIn(mod, "TurnStatsBody", { state: ready(data), days: 30, onRetry: () => {} });
   const [table] = findNodes(tree, (n) => n.type === "table");
   assert.ok(table, "the stop-reason table renders");
-  assert.equal(findNodes(table, (n) => n.props.style?.background !== undefined).length, 0);
+  // a rendered style prop is a plain object of CSS properties
+  const hasBackground = (n: RenderedNode) => (n.props.style as Record<string, unknown> | undefined)?.background !== undefined;
+  assert.equal(findNodes(table, hasBackground).length, 0);
 });
 
 // pre-compose A16: the band toggle is the quiet pressed toggle — ink text and the ✓ slot, no edge
