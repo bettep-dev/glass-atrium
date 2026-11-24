@@ -1654,7 +1654,7 @@ function AttributionLegend() {
 function ChannelLivenessBlock({ state, onRetry, shared }) {
   const badge = getChannelLivenessBadgeO(state);
   const watchNote = getChannelWatchNoteO(state.data?.thresholds);
-  const hasTable = state.status === 'ready' && Array.isArray(state.data?.channels) && state.data.channels.length > 0;
+  const hasTable = state.status === 'ready' && getChannelsO(state).length > 0;
 
   return (
     <FoldBlockO
@@ -1666,6 +1666,10 @@ function ChannelLivenessBlock({ state, onRetry, shared }) {
       <ChannelLivenessBody state={state} onRetry={onRetry} shared={shared}/>
     </FoldBlockO>
   );
+}
+
+function getChannelsO(state) {
+  return Array.isArray(state.data?.channels) ? state.data.channels : [];
 }
 
 function getChannelWatchNoteO(threshold) {
@@ -1680,7 +1684,7 @@ function getChannelLivenessBadgeO(state) {
   const view = getRegionView(state);
   if (view === 'loading') return null;
   if (view === 'error') return { tone: null, text: <AbsentValue kind="not-loaded"/> };
-  const channels = Array.isArray(state.data?.channels) ? state.data.channels : [];
+  const channels = getChannelsO(state);
   if (channels.length === 0) return { tone: null, text: <AbsentValue kind="none"/> };
 
   const alerting = state.data?.alerting || [];
@@ -1697,7 +1701,7 @@ function ChannelLivenessBody({ state, onRetry, shared }) {
     return <RegionErrorO source="recording channels" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.channels}/>;
   }
 
-  const channels = Array.isArray(state.data?.channels) ? state.data.channels : [];
+  const channels = getChannelsO(state);
   if (channels.length === 0) {
     return <window.UI.EmptyState message="No recording channel wrote in this window."/>;
   }
