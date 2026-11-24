@@ -65,10 +65,12 @@ function getLearningLog(live: number, inert: number, held: number) {
 interface ColumnReading {
   sections: string[];
   topGap: number;
+  sectionGaps: number[];
+  rowGap: number;
   bottomGap: number;
 }
 
-// every ledger column: its sections by the first word of their head, the gap above the first section and below the last
+// every ledger column: its sections by the first word of their head, the gap above the first section, between sections and below the last
 async function getColumnReadings(learningLog: unknown): Promise<ColumnReading[]> {
   const app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
@@ -89,6 +91,8 @@ async function getColumnReadings(learningLog: unknown): Promise<ColumnReading[]>
         return {
           sections: [...column.children].map((section) => (section.textContent ?? "").trim().split(/\s/)[0]!),
           topGap: sections[0]!.top - box.top,
+          sectionGaps: sections.slice(1).map((section, i) => section.top - sections[i]!.bottom),
+          rowGap: parseFloat(getComputedStyle(column).rowGap) || 0,
           bottomGap: box.bottom - sections[sections.length - 1]!.bottom,
         };
       }), COLUMNS);
@@ -99,21 +103,19 @@ async function getColumnReadings(learningLog: unknown): Promise<ColumnReading[]>
 }
 
 // held leads the first column, live then inert the second · the named column is the shorter one:
-// a lone section keeps its free space below, a later section pins to the bottom
+// every section follows the one above it at the column's gap and the free space stays below the last
 const rows = [
   {
     name: "the held section alone in the first column stays at its top beside a long live list",
     learningLog: getLearningLog(10, 1, 1),
     column: 0,
     sections: ["Held"],
-    isBottomPinned: false,
   },
   {
-    name: "live then inert in the second column start at its top and end on the shared bottom edge beside a taller held table",
-    learningLog: getLearningLog(1, 1, 3),
+    name: "inert follows the live list in the second column beside a taller held table",
+    learningLog: getLearningLog(1, 1, 6),
     column: 1,
     sections: ["Live", "Inert"],
-    isBottomPinned: true,
   },
 ];
 
@@ -125,11 +127,10 @@ for (const row of rows) {
     assert.deepEqual(reading.sections, row.sections, "the column holds the intended sections, in order");
 
     assert.ok(reading.topGap <= EDGE_TOLERANCE_PX, `the first section starts ${Math.round(reading.topGap)}px below the column top`);
-    assert.equal(
-      reading.bottomGap <= EDGE_TOLERANCE_PX,
-      row.isBottomPinned,
-      `the last section ends ${Math.round(reading.bottomGap)}px above the column bottom`,
-    );
+    for (const [i, gap] of reading.sectionGaps.entries()) {
+      assert.ok(Math.abs(gap - reading.rowGap) <= EDGE_TOLERANCE_PX, `section ${i + 2} starts ${Math.round(gap)}px under the one above it, not ${reading.rowGap}px`);
+    }
+    assert.ok(reading.bottomGap > EDGE_TOLERANCE_PX, "the free space stays under the last section");
   });
 }
 
@@ -168,7 +169,7 @@ test(`inert rows line their agent and date up in columns whatever the pattern an
     // the disclosure whose summary names the inert rows, opened, then its row list
     const rows = await page.evaluate(() => {
       const fold = [...document.querySelectorAll<HTMLDetailsElement>("#improvement-pattern-ledger details")]
-        .find((el) => (el.querySelector("summary")?.textContent ?? "").includes("Inert —"))!;
+        .find((el) => (el.querySelector("summary")?.textContent ?? "").includes("Inert ·"))!;
       fold.open = true;
       return [...fold.querySelector("ul")!.children].map((item) => {
         const [name, agent, date] = [...item.children].map((cell) => cell.getBoundingClientRect());
@@ -301,7 +302,7 @@ test(`held table body cells set their text at the --fs-control step at ${SIDE_BY
   const reading = await getPageReading(routes, "#improvement-pattern-ledger table", () => {
     // the ledger table headed by a Held column — found by its head, not by the class the fix added
     const table = [...document.querySelectorAll("#improvement-pattern-ledger table")]
-      .find((el) => [...el.querySelectorAll("thead th")].some((th) => th.textContent?.trim() === "Held"));
+      .find((el) => [...el.querySelectorAll("th")].some((th) => th.textContent?.trim() === "Held"));
     const probe = document.body.appendChild(Object.assign(document.createElement("div"), { style: "font-size: var(--fs-control)" }));
     return {
       sizes: table ? [...table.querySelectorAll("tbody td")].map((td) => getComputedStyle(td).fontSize) : [],
@@ -332,4 +333,60 @@ test(`each awaiting suggestion's ring sits inside the list's scroll box at ${SID
     assert.ok(inset.ring > 0, "an awaiting card draws its ring");
     assert.ok(inset.room >= inset.ring - 0.01, `the ring needs ${inset.ring}px but the card sits ${inset.room}px from the scroll edge`);
   }
+});
+
+test(`a held cause's name opens its rows under it, inside its table row, at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
+  const learningLog = getLearningLog(1, 0, 2);
+  learningLog.loop_suppression_state.parked_patterns = [
+    { id: 701, pattern_signature: "held signature", agent: "glass-atrium-dev-react", discovered_date: "2026-09-20", cause: "cause-2" },
+  ] as never[];
+  const reading = await getPageReading({ "/api/improvement/learning-log": learningLog }, "#improvement-pattern-ledger table button[aria-expanded]", () => {
+    const toggle = [...document.querySelectorAll<HTMLButtonElement>("#improvement-pattern-ledger table button[aria-expanded]")]
+      .find((el) => el.textContent?.trim() === "Held cause 2")!;
+    const list = document.getElementById(toggle.getAttribute("aria-controls") ?? "")!;
+    const isShownBefore = list.getBoundingClientRect().height > 0;
+    toggle.click();
+    return new Promise<{ isShownBefore: boolean; isShownAfter: boolean; expanded: string | null; text: string; isUnderCause: boolean }>((done) =>
+      requestAnimationFrame(() => {
+        const row = toggle.closest("tr")!;
+        done({
+          isShownBefore,
+          isShownAfter: list.getBoundingClientRect().height > 0,
+          expanded: toggle.getAttribute("aria-expanded"),
+          text: list.textContent ?? "",
+          isUnderCause: row.contains(list) && list.getBoundingClientRect().top >= toggle.getBoundingClientRect().bottom,
+        });
+      }),
+    );
+  });
+
+  assert.equal(reading.isShownBefore, false, "a cause's rows start folded");
+  assert.equal(reading.isShownAfter, true, "the name opens them");
+  assert.equal(reading.expanded, "true");
+  assert.match(reading.text, /Held signature/);
+  assert.ok(reading.isUnderCause, "the rows open under their cause, in its row");
+});
+
+// one lead track (glyph slot, then chevron) → names in both groups and an opened row list share one start
+test(`held cause names and their opened rows start on one column in both groups at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
+  const learningLog = getLearningLog(1, 0, 1);
+  learningLog.loop_suppression_state.parked.push({ cause: "non-promptable", label: "Non-promptable signal", count: 3, agents: 1, hint: "remedy text" });
+  learningLog.loop_suppression_state.parked_patterns = [
+    { id: 702, pattern_signature: "set aside signature", agent: "glass-atrium-dev-react", discovered_date: "2026-09-20", cause: "non-promptable" },
+  ] as never[];
+  const reading = await getPageReading({ "/api/improvement/learning-log": learningLog }, "#improvement-pattern-ledger table button[aria-expanded]", () => {
+    const toggles = [...document.querySelectorAll<HTMLButtonElement>("#improvement-pattern-ledger table button[aria-expanded]")];
+    const setAside = toggles.find((el) => el.textContent?.trim() === "Non-promptable signal")!;
+    setAside.click();
+    return new Promise<{ names: number[]; listStart: number }>((done) =>
+      requestAnimationFrame(() => {
+        const item = document.getElementById(setAside.getAttribute("aria-controls") ?? "")!.querySelector("li > span")!;
+        done({ names: toggles.map((toggle) => toggle.querySelector("span:last-child")!.getBoundingClientRect().left), listStart: item.getBoundingClientRect().left });
+      }),
+    );
+  });
+
+  assert.equal(reading.names.length, 2, "one cause in each group");
+  assert.ok(Math.abs(reading.names[0] - reading.names[1]) <= EDGE_TOLERANCE_PX, `names start at ${reading.names.join(" and ")}`);
+  assert.ok(Math.abs(reading.listStart - reading.names[1]) <= EDGE_TOLERANCE_PX, `the opened rows start at ${reading.listStart}, the name at ${reading.names[1]}`);
 });

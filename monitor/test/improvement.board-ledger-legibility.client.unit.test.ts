@@ -43,7 +43,7 @@ interface Sandbox {
   LoopOutputGroupI: Component;
   AppliedHeroHeaderI: Component;
   LedgerSectionHeadI: Component;
-  HeldCauseGroupI: Component;
+  HeldCauseRowsI: Component;
   LedgerRecurrenceSectionI: Component;
   LedgerLiveSectionI: Component;
   ParkedLoopBannerI: Component;
@@ -52,7 +52,6 @@ interface Sandbox {
   StatusBandI: Component;
   RejectedHeaderI: Component;
   BoardRowI: Component;
-  HeldCauseTableI: Component;
   buildDetailPropsI: (row: Record<string, unknown>) => Record<string, unknown>;
   confidenceBadgeMetaI: (value: unknown) => { label: string };
   ConfidenceBadgeI: Component;
@@ -279,6 +278,11 @@ function classOf(el: RecordedElement): string {
   return String(el.props.className ?? "");
 }
 
+// mono is drawn only through the shared machine-string atom → the text of every one in a tree
+function machineTexts(tree: unknown): string[] {
+  return findAll(tree, (el) => el.type === sandbox.window.UI.MachineString).map(visibleText);
+}
+
 test("the view switch is the shared tab row with the open view alone selected, never the range control", () => {
   for (const view of ["operator", "instrumentation"]) {
     const tree = sandbox.ViewTabsI({ view, onChange: () => {} });
@@ -302,7 +306,7 @@ test("applied and declined rows render through one row atom with the prose set i
   for (const button of rows) {
     const prose = findAll(button, (el) => /\bflex-1\b/.test(classOf(el)));
     assert.equal(prose.length, 1, "one flexible prose cell per row");
-    assert.doesNotMatch(classOf(prose[0]), /font-mono/);
+    assert.deepEqual(machineTexts(prose[0]), [], "the prose cell holds no machine string");
     assert.match(classOf(prose[0]), /\bmin-w-0\b/);
   }
 });
@@ -316,7 +320,7 @@ test("board rows print a cycle date in the day form and sans figures, and a miss
     const day = `09-${20 + i}`;
     const [stamp] = findAll(expand(tree), (el) => el.type === "span" && visibleText(el) === day);
     assert.ok(stamp, `row ${i}: the date reads ${day}`);
-    assert.doesNotMatch(classOf(stamp), /\bfont-mono\b/, `row ${i}: a date is set in sans`);
+    assert.ok(!machineTexts(expand(tree)).includes(day), `row ${i}: a date is set in sans`);
   }
 
   const undated = expand(sandbox.AppliedHistoryRowI({ row: { id: 9, target_agent: AGENT }, onClick: () => {} }));
@@ -366,7 +370,7 @@ test("the applied count sits below the status band's figure size", () => {
   const [count] = findAll(tree, (el) => el.props.children === "9");
   assert.ok(count, "count cell missing");
   assert.doesNotMatch(classOf(count), /\bfs-display\b/);
-  assert.doesNotMatch(classOf(count), /\bfont-mono\b/, "a count is set in sans figures");
+  assert.ok(!machineTexts(tree).includes("9"), "a count is set in sans figures");
 });
 
 test("loop output cards reflow instead of squeezing three abreast", () => {
@@ -430,13 +434,13 @@ describe("each board lane shows eight rows and pins a show-all foot below its li
   }
 });
 
-test("a ledger row sets its pattern label in sans and keeps mono for the date", () => {
+test("a ledger row sets its pattern label in sans", () => {
   const rows = [{ id: 1, pattern_signature: SIGNATURE, agent: AGENT, discovered_date: "2026-09-10" }];
   const tree = sandbox.LedgerPlainRowsI({ rows });
   const [item] = findAll(tree, (el) => el.type === "li");
-  assert.doesNotMatch(classOf(item), /font-mono/);
   const [label] = findAll(item, (el) => el.props.title !== undefined);
-  assert.doesNotMatch(classOf(label), /font-mono/);
+  assert.ok(label, "the pattern label carries its full text as a title");
+  assert.deepEqual(machineTexts(item), [], "no part of the row is a machine string");
 });
 
 const RAW_PATTERN = "editable-region-arbiter-resolved";
@@ -498,9 +502,9 @@ describe("prose on the ledger, banner and drawer is set in sans; mono stays for 
       tree: () => sandbox.LedgerSectionHeadI({ label: "Inert rows", basis: "last 7 days", count: 2 }),
     },
     {
-      name: "held-cause summary",
+      name: "held-cause row",
       prose: "Missing approval",
-      tree: () => sandbox.HeldCauseGroupI({ bucket: { cause: "x", label: "Missing approval", count: 1, agents: 1, hint: "h" }, rows: [] }),
+      tree: () => sandbox.HeldCauseRowsI({ bucket: { cause: "x", label: "Missing approval", count: 1, agents: 1, hint: "h" }, rows: [], isHumanCause: true }),
     },
     {
       name: "recurrence section head",
@@ -521,11 +525,6 @@ describe("prose on the ledger, banner and drawer is set in sans; mono stays for 
       tree: () => sandbox.ParkedLoopBannerI({ applyCap: { capped_patterns: 2, capped_agents: 1, rearm_hint: "warn" } }),
     },
     {
-      name: "drawer footnote",
-      prose: "Scores come from the grader",
-      tree: () => sandbox.DetailBodyI({ fields: [], sections: [], footnote: "Scores come from the grader" }),
-    },
-    {
       name: "pre-verify verdict and axis label",
       prose: "Scope fidelity",
       tree: () =>
@@ -540,7 +539,7 @@ describe("prose on the ledger, banner and drawer is set in sans; mono stays for 
     test(row.name, () => {
       const tree = row.tree();
       assert.ok(visibleText(tree).includes(row.prose), visibleText(tree));
-      const monoProse = findAll(tree, (el) => /\bfont-mono\b/.test(classOf(el)) && visibleText(el).includes(row.prose));
+      const monoProse = machineTexts(tree).filter((text) => text.includes(row.prose));
       assert.equal(monoProse.length, 0, `${row.name}: mono element carries prose`);
     });
   }
@@ -572,7 +571,7 @@ test("ledger rows set their label at the body size, leaving the meta size to the
   const [stamp] = findAll(item, (el) => visibleText(el) === "2026-09-10" && el.type === "span");
   assert.ok(stamp, "the first-seen date reads YYYY-MM-DD");
   assert.match(classOf(stamp), /\bfs-meta\b/);
-  assert.doesNotMatch(classOf(stamp), /\bfont-mono\b/, "a date is set in sans");
+  assert.ok(!machineTexts(item).includes("2026-09-10"), "a date is set in sans");
 });
 
 test("a live candidate group heads its rows at the body size", () => {
@@ -589,16 +588,6 @@ test("a suggestion board row sets its title at the body size, leaving ids and da
   assert.ok(title, "the board row prints its title");
   assert.match(classOf(title), /\bfs-body\b/);
   assert.doesNotMatch(classOf(title), /\bfs-meta\b/);
-});
-
-test("a held cause reads as one table row of cause, held count and agents, its remedy kept for the ledger's drawer", () => {
-  const hint = "Raise the cap after a human reads the rows";
-  const tree = sandbox.HeldCauseTableI({ buckets: [{ cause: "repeat-apply-cap", label: "Repeat-apply cap", count: 2, agents: 1, hint }] });
-  const [row] = findAll(tree, (el) => el.type === "tr" && visibleText(el).includes("Repeat-apply cap"));
-
-  assert.ok(row, visibleText(tree));
-  assert.deepEqual(findAll(row, (el) => el.type === "td").map((cell) => visibleText(cell).trim()), ["Repeat-apply cap", "2", "1"]);
-  assert.doesNotMatch(visibleText(tree), /Raise the cap/, "remedy prose in the table");
 });
 
 test("the rejected column header never wraps its label, count or basis", () => {
@@ -667,14 +656,39 @@ describe("the drawer prints each field in words, never the stored machine key", 
 
       assert.ok(value, `${item.label} is printed`);
       assert.equal(visibleText(value), item.printed);
-      assert.equal(/\bfont-mono\b/.test(classOf(value)), item.mono, `${item.label} mono`);
+      assert.equal(machineTexts(value).includes(item.printed), item.mono, `${item.label} mono`);
     });
   }
 });
 
-test("the run breakdown names its window in the short form the band's Applied, 7d uses", () => {
+// a date is never mono: the face prints the short form, the full stamp rides the hover title
+describe("the pattern drawer prints its dates in sans, the full stamp on hover only", () => {
+  const row = { kind: "pattern", id: 7, agent: AGENT, discovered_date: "2026-11-22", last_updated: "2026-11-22T09:30:00.123Z" };
+  const tree = sandbox.DetailBodyI(sandbox.buildDetailPropsI(row));
+  const terms = findAll(tree, (el) => el.type === "dt");
+  const values = findAll(tree, (el) => el.type === "dd");
+  const valueOf = (label: string) => values[terms.findIndex((el) => visibleText(el) === label)];
+  const rows = [
+    { name: "first-seen day", label: "First seen", printed: "2026-11-22", title: undefined },
+    { name: "last update in the Day + time form", label: "Last updated", printed: "11-22 18:30", title: "2026-11-22 18:30:00 KST" },
+  ];
+  for (const item of rows) {
+    test(item.name, () => {
+      const value = valueOf(item.label);
+
+      assert.ok(value, `${item.label} is printed`);
+      assert.equal(visibleText(value), item.printed);
+      assert.deepEqual(machineTexts(value), [], `${item.label} drawn in mono`);
+      const titled = findAll(value, (el) => typeof el.props.title === "string").map((el) => el.props.title);
+      assert.deepEqual(titled, item.title ? [item.title] : []);
+      assert.ok(findAll(value, (el) => /\btnum\b/.test(classOf(el))).length > 0, `${item.label} digits tabular`);
+    });
+  }
+});
+
+test("the cycle breakdown names its window in the short form the band's Applied, 7d uses", () => {
   const screen = sandbox as unknown as Record<string, Component>;
-  assert.match(visibleText(screen.CycleDecompositionRowI({ stats: {} })), /Run breakdown \(7d\)/);
+  assert.match(visibleText(screen.CycleDecompositionRowI({ stats: {} })), /^Cycles, 7d /);
 });
 
 describe("Learning labels read in sentence case, never letter-spaced capitals", () => {
@@ -690,7 +704,7 @@ describe("Learning labels read in sentence case, never letter-spaced capitals", 
       tree: () => sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 9, approval_tier: "auto", pattern_label: "Scope note", rationale: "Repeated overrun", pre_verify_status: "failed", pre_verify_passed: false, pre_verify_rationale: "One axis failed", pre_verify_axes: { C1: true, C4: false } })),
       label: /Pattern label[\s\S]*Rationale[\s\S]*Pre-verify/,
     },
-    { name: "run breakdown", tree: () => screen.CycleDecompositionRowI({ stats: {} }), label: /Run breakdown/ },
+    { name: "cycle breakdown", tree: () => screen.CycleDecompositionRowI({ stats: {} }), label: /Cycles, 7d/ },
     { name: "not-judged rejected row", tree: () => screen.RejectedCompactListI({ rows: [{ id: 3, summary: "s", status: "unadjudicated", cycle_date: "2026-09-10" }], onRowClick: () => {} }), label: /Not judged/ },
   ];
   for (const row of rows) {

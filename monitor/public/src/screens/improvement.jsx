@@ -384,25 +384,21 @@ function ScreenImprovement({ onNav }) {
         /* one loop-card anatomy — metric and visual slots start at the same offsets in all three cards */
         /* subgrid rows → a metric that wraps in one card moves the visual slot of all three together */
         .i-loop-grid > .card { display:grid; grid-row:span 4; grid-template-rows:subgrid; row-gap:0; }
-        .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; padding:8px var(--card-pad) 0; }
+        .i-loop-metric { flex:none; min-height:var(--i-loop-metric-h); display:flex; flex-wrap:wrap; align-items:center; padding:8px var(--card-pad) 0; }
         .i-loop-visual { flex:none; padding:8px var(--card-pad) 0; overflow:hidden; }
         .i-loop-visual:empty { padding:0; }
         /* ledger sections share the card's one inline edge · the body opens one step under the head rule */
         .i-ledger-body { padding-block:var(--space-1) var(--space-3); }
         .i-ledger-sec { padding:var(--space-2) var(--card-pad) 0; }
-        /* the section already holds the card's inline edge → its empty line takes no second inset */
-        .i-ledger-sec .placeholder { padding-inline:0; }
         /* held rows are what a human acts on → the house table's body step, never the card's smallest text */
         .i-held-table { font-size:var(--fs-control); }
-        /* ledger columns stretch to one height → a column's later last section sits on the shared bottom edge · a lone section keeps the top */
-        .i-ledger-cols > .split-col > :not(:first-child):last-child { margin-top:auto; }
         /* plain ledger rows — one pattern | agent | date grid, each row a subgrid, so agent and date line up down the list */
-        .i-plain-rows { display:grid; grid-template-columns:minmax(0,1fr) auto auto; column-gap:var(--space-2); row-gap:var(--space-1); }
+        .i-plain-rows { display:grid; grid-template-columns:minmax(0,1fr) auto auto; }
         .i-plain-rows > li { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; }
         .board-terminal-grid { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
         @media (max-width:640px) { .board-terminal-grid { grid-template-columns:1fr; } }
         /* 1px inset → the sub-card ring (an outside box-shadow) draws inside the scroll box, never clipped by it */
-        .i-await-body { display:flex; flex-direction:column; gap:8px; max-height:40vh; overflow-y:auto; padding:1px; }
+        .i-await-body { display:flex; flex-direction:column; max-height:40vh; overflow-y:auto; padding:1px; }
         /* T6 — APPLIED/REJECTED 종결-컬럼 헤더 공용 밴드. 두 헤더 동일 min-height + 세로중앙 정렬 →
            헤더 아래 리스트 시작 Y 일치(컬럼 간 top/height 동기화). */
         .i-col-header { min-height:26px; display:flex; align-items:center; }
@@ -436,9 +432,8 @@ function ScreenImprovement({ onNav }) {
 			{/* 다섯 표면의 순서 — 알람 레인 → 상태 밴드 → 제안 보드 → 패턴 원장 → 루프 산출.
           지목된 주체가 있는 알람이 밴드보다 위 · 유일한 쓰기 표면인 보드가 읽기 전용
           원장보다 위 · 루프 산출은 그 셋을 읽은 뒤에야 의미가 생기므로 마지막.
-          레인은 뷰 분기 밖 — 계측 뷰에서도 알람은 가려지면 안 된다.
-          .space-sections(24px) — 독립 통계 섹션을 16px 카드 채널보다 한 단 넓게 분리(W1-T3 · C-REGION). */}
-			<div className="space-sections flex-1 min-h-0">
+          레인은 뷰 분기 밖 — 계측 뷰에서도 알람은 가려지면 안 된다. */}
+			<div className="space-y-section flex-1 min-h-0">
 				<AlarmLaneI applyCap={applyCapState} />
 				{pageFailure ? (
 					<PageErrorBanner
@@ -449,7 +444,7 @@ function ScreenImprovement({ onNav }) {
 						onRetry={triggerRefresh}
 					/>
 				) : null}
-				<div className="space-sections" {...window.UI.getTabPanelProps(VIEW_TABS_ID_I, view)}>
+				<div className="space-y-section" {...window.UI.getTabPanelProps(VIEW_TABS_ID_I, view)}>
 				{view === "instrumentation" ? (
 					<InstrumentationViewI
 						listState={listState}
@@ -483,6 +478,7 @@ function ScreenImprovement({ onNav }) {
 							<KanbanCardI
 								state={listState}
 								columnRows={columnRows}
+								stats={statsState.data}
 								loopAggregate={loopAggregate}
 								onRowClick={setDrawerRow}
 								onAction={runAction}
@@ -539,17 +535,12 @@ const sumCountsI = (list) =>
 // Loop status — only the counts that change the next action, one stat row; the alarm itself lives in the card that owns the rows (spec 44084 §3.1).
 function StatusBandI({ asOf, statsState, listState, learningLogState, suppression, awaiting, failures, styleRef, corpusAuditState, onOpenInstrumentation }) {
 	const { Card, StatRow } = window.UI;
+	const chips = getDeviationChipsI({ styleRef, corpusAuditState, at: asOf });
 	return (
-		<section id={ANCHOR_ID_I.status} className="flex flex-col gap-2" aria-label="Loop status">
-			<Card>
+		<section id={ANCHOR_ID_I.status} className="flex flex-col gap-list" aria-label="Loop status">
+			<Card foot={chips.length > 0 ? <InstrumentationStripI chips={chips} onOpen={onOpenInstrumentation} /> : null}>
 				<StatRow stats={getBandStatsI({ asOf, statsState, listState, learningLogState, suppression, awaiting, failures })} />
 			</Card>
-			<InstrumentationStripI
-				styleRef={styleRef}
-				corpusAuditState={corpusAuditState}
-				at={asOf}
-				onOpen={onOpenInstrumentation}
-			/>
 		</section>
 	);
 }
@@ -570,14 +561,19 @@ function getBandStatsI({ asOf, statsState, listState, learningLogState, suppress
 			context: getAppliedContextI(appliedHeld, s) }),
 		buildBandStatI({ key: "held", label: "Held, needs a human", owner: "pattern ledger", isCovered: noticeSources.includes("pattern ledger"), status: getBandStatStatusI(learningLogState, suppression),
 			value: heldNeedingHuman > 0 ? <JumpLinkI targetId={ANCHOR_ID_I.heldPatterns}>{formatIntI(heldNeedingHuman)}</JumpLinkI> : formatIntI(0),
-			context: `of ${formatIntI(sumCountsI(heldBuckets))} held patterns` }),
+			context: `of ${formatIntI(sumCountsI(heldBuckets))} held` }),
 	];
+}
+
+// a read stats payload with no cycle in the week and none on record → the loop has never run
+function hasNoCycleI(stats) {
+	return Boolean(stats) && Number(stats.cycle_total_7d ?? 0) === 0 && !stats.latest_cycle_started_at;
 }
 
 // no cycle on record → one phrase, never "last None" inside a sentence (spec 44084 §2.2)
 function getAppliedContextI(held, stats) {
 	const total = Number(stats.cycle_total_7d ?? 0);
-	if (total === 0 && !stats.latest_cycle_started_at) return getHeldTextI(held, "No cycles yet");
+	if (hasNoCycleI(stats)) return getHeldTextI(held, "No cycles yet");
 	return (
 		<>
 			{getHeldTextI(held, `of ${getCycleCountTextI(total)} · last `)}
@@ -654,35 +650,42 @@ function getHeldChipI(chip, state, at) {
 
 	return verdict.tone === "neutral"
 		? { ...chip, symbol: "ℹ", tone: "text-faint", label: verdict.label }
-		: { ...chip, label: verdict.label };
+		: { ...chip, label: verdict.label, isLastKnown: true };
 }
 
 const DEVIATION_TONES_I = new Set(["warn", "crit"]);
 
-// Operations-view instrumentation line — a gauge that deviates, visible without switching tabs; silent when every gauge reads fine.
-function InstrumentationStripI({ styleRef, corpusAuditState, at, onOpen }) {
+// gauge key → tone → what the deviation holds up, said once on the Operator view
+const DEVIATION_SENTENCE_I = {
+	style: {
+		warn: "Style check graduation held: too many unconfirmed claims",
+		crit: "Style check graduation held: too few runs name a style source",
+	},
+	corpus: { warn: "Agent prompts grew past their word line" },
+};
+
+// the gauges that deviate, empty while the verdict rules have not loaded
+function getDeviationChipsI({ styleRef, corpusAuditState, at }) {
 	const verdicts = window.ImprovementInstrumentationVerdicts;
-	if (!verdicts) return null;
-	const chips = getInstrumentationChipsI(verdicts, styleRef, corpusAuditState, at).filter((chip) =>
+	if (!verdicts) return [];
+	return getInstrumentationChipsI(verdicts, styleRef, corpusAuditState, at).filter((chip) =>
 		DEVIATION_TONES_I.has(toneKeyI(chip.tone)),
 	);
-	if (chips.length === 0) return null;
+}
+
+// stat card foot — one sentence per deviating gauge, on the card's text column, then the way to its view
+function InstrumentationStripI({ chips, onOpen }) {
 	return (
-		<div
-			className="flex flex-wrap items-center gap-x-3 gap-y-1 fs-meta"
-			data-testid="instrumentation-strip"
-		>
-			{chips.map((chip) => (
-				<span
-					key={chip.key}
-					className="inline-flex items-center gap-1"
-					title={chip.hint}
-				>
-					<SymI s={chip.symbol} className={chip.tone} size={11} />
-					<span className="text-ink">{chip.name}</span>
-					<span className="text-dim">{chip.label}</span>
-				</span>
-			))}
+		<div className="flex flex-wrap items-center gap-x-block gap-y-stack" data-testid="instrumentation-strip">
+			{chips.map((chip) => {
+				const tone = toneKeyI(chip.tone);
+				const sentence = DEVIATION_SENTENCE_I[chip.key]?.[tone] ?? `${chip.name} ${chip.label}`;
+				return (
+					<span key={chip.key} title={chip.hint}>
+						<window.UI.HeadStatus tone={tone}>{chip.isLastKnown ? `Last known: ${sentence}` : sentence}</window.UI.HeadStatus>
+					</span>
+				);
+			})}
 			<button type="button" className="btn ghost sm" onClick={onOpen}>
 				Instrumentation →
 			</button>
@@ -722,7 +725,7 @@ function ViewTabsI({ view, onChange }) {
 		{ key: "operator", label: "Operator" },
 		{ key: "instrumentation", label: "Instrumentation" },
 	];
-	return <window.UI.Tabs id={VIEW_TABS_ID_I} label="Learning view" tabs={tabs} value={view} onChange={onChange} className="mt-3 mb-4" />;
+	return <window.UI.Tabs id={VIEW_TABS_ID_I} label="Learning view" tabs={tabs} value={view} onChange={onChange} className="mt-3 mb-section" />;
 }
 
 // ----- Rolling trend card (T-IMP-4) ------------------------------------------
@@ -738,7 +741,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="px-4 pb-4">
+				<div className="px-card-pad pb-card-pad">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.trend}
 						source="loop events"
@@ -803,21 +806,20 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 
 // counts, never a percentage · each half names its cycle days so neither reads as the all-days total
 function getRejectRatePhraseI(before, after) {
-	if (!after || !after.total) return "No scored cycles yet";
-	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected in the latest ${formatIntI(after.days)} ${after.days === 1 ? "cycle day" : "cycle days"}`;
-	if (!before || !before.total) return recent;
-	return `${recent} (${formatIntI(before.count)} of ${formatIntI(before.total)} in the ${formatIntI(before.days)} before)`;
+	if (!after || !after.total) return { recent: "No scored cycles yet", earlier: null };
+	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected, last ${formatIntI(after.days)} ${after.days === 1 ? "cycle day" : "cycle days"}`;
+	if (!before || !before.total) return { recent, earlier: null };
+	return { recent, earlier: `${formatIntI(before.count)} of ${formatIntI(before.total)} in the ${formatIntI(before.days)} before` };
 }
 
+// the recent count leads, the earlier half on a dim line under it
 function RejectRateHeadlineI({ before, after }) {
-	const { LowSampleMark, isLowSample } = window.UI;
-	const trend = failTrendMetaI(before, after);
-	const isMuted = isLowSample(after?.total);
+	const { recent, earlier } = getRejectRatePhraseI(before, after);
+	const isMuted = window.UI.isLowSample(after?.total);
 	return (
-		<span className="inline-flex items-center gap-1.5 fs-meta" title={window.UI.titleOf(trend.hint)}>
-			<window.UI.ToneGlyph tone={trend.tone} label={trend.hint} />
-			<span className={isMuted ? "text-faint" : "text-ink"}>{getRejectRatePhraseI(before, after)}</span>
-			<LowSampleMark n={after?.total} />
+		<span className="flex flex-col fs-meta" title={window.UI.titleOf(getTrendHintI(before, after))}>
+			<span className={isMuted ? "text-faint" : "text-ink"}>{recent}</span>
+			{earlier ? <span className="text-dim">{earlier}</span> : null}
 		</span>
 	);
 }
@@ -837,7 +839,6 @@ function LoopOutputGroupI({
 		<section className="space-y-3 i-loop-output" aria-label="Loop output" id={ANCHOR_ID_I.loopOutput}>
 			<CardHead
 				title="Loop output"
-				sub="7-day cycles unless a card says"
 				right={
 					<button
 						className="btn ghost sm"
@@ -852,6 +853,7 @@ function LoopOutputGroupI({
 			/>
 			{getRegionView(statsState) === "error" ? (
 				<ErrorBannerI
+					className="px-card-pad"
 					focusTargetId={ANCHOR_ID_I.loopOutput}
 					source="loop stats"
 					error={statsState.error}
@@ -880,39 +882,23 @@ function LoopOutputGroupI({
 }
 
 // 사이클 3-분해 chip stat row — 생성+적용 / 생성-미적용 / 무생성 (≤3 카테고리 → 차트 대신 칩).
-// 세 카운트는 cycle_total_7d 를 정확히 분할 (서버 partition 보장) → 합계 병기.
+// 세 카운트는 cycle_total_7d 를 정확히 분할 (서버 partition 보장).
 function CycleDecompositionRowI({ stats }) {
 	const { Badge } = window.UI;
 	const chips = [
-		[
-			"✓",
-			"text-ok",
-			"Created & applied",
-			Number(stats.cycles_generated_applied_7d ?? 0),
-		],
-		[
-			"⚠",
-			"text-warn",
-			"Created, not applied",
-			Number(stats.cycles_generated_not_applied_7d ?? 0),
-		],
-		[
-			"ℹ",
-			"text-info",
-			"Nothing created",
-			Number(stats.cycles_nothing_generated_7d ?? 0),
-		],
+		["Suggested and applied", Number(stats.cycles_generated_applied_7d ?? 0)],
+		["Suggested, not applied", Number(stats.cycles_generated_not_applied_7d ?? 0)],
+		["No suggestion", Number(stats.cycles_nothing_generated_7d ?? 0)],
 	];
 
-	// 카테고리 = symbol+tone+label 로 dual-encode(색 단독 아님), 수량 = neutral count Badge(color≠count 규칙).
+	// no chip states a line to judge against → no tone glyph; the words name each category, the neutral Badge its count
 	return (
-		<div className="flex items-center gap-2 mt-2 px-4 flex-wrap">
+		<div className="flex items-center gap-list mt-label px-card-pad flex-wrap">
 			<span className="fs-meta text-dim font-medium">
-				Run breakdown (7d)
+				Cycles, 7d
 			</span>
-			{chips.map(([sym, tone, label, count]) => (
+			{chips.map(([label, count]) => (
 				<span key={label} className="fs-meta inline-flex items-center gap-1.5">
-					{count > 0 ? <SymI s={sym} className={tone} size={12} /> : null}
 					<span>{label}</span>
 					<Badge role="count">{formatIntI(count)}</Badge>
 				</span>
@@ -926,6 +912,7 @@ function CycleDecompositionRowI({ stats }) {
 function KanbanCardI({
 	state,
 	columnRows = {},
+	stats,
 	loopAggregate,
 	onRowClick,
 	onAction,
@@ -956,7 +943,7 @@ function KanbanCardI({
 				/>
 			</div>
 			{isError ? (
-				<div className="p-4">
+				<div className="p-card-pad">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.suggestionBoard}
 						source="suggestions"
@@ -972,7 +959,7 @@ function KanbanCardI({
 					<LoadingPlaceholder label="suggestions" className="flex-1" />
 				</div>
 			) : isBoardEmpty ? (
-				<window.UI.EmptyState message="No suggestions yet" />
+				<window.UI.EmptyState message={hasNoCycleI(stats) ? "No suggestions yet" : "No suggestions waiting"} />
 			) : (
 				<div className="flex flex-col gap-3 p-3 flex-1 min-h-0 overflow-hidden">
 					{awaitingRows.length > 0 ? (
@@ -1015,7 +1002,7 @@ function HeadStatusI({ count, words }) {
 // Awaiting suggestions — the only lane asking for an action, so it leads the board · list scrolls past 40vh
 function AwaitingListI({ rows, onRowClick, onAction, pendingActionId }) {
 	return (
-		<div className="i-await-body flex-shrink-0">
+		<div className="i-await-body gap-list flex-shrink-0">
 			{rows.map((row) => (
 				<ProposalCardI
 					key={row.id}
@@ -1053,9 +1040,9 @@ function KanbanColumnI({
 			: "Suggestions turned down, or closed without a verdict, show up here.";
 	// 헤더 sticky + --elev 배경 — 카드 본문 톤과 통일 · row scroll 시 헤더 비침 차단.
 	return (
-		<div className="flex flex-col min-h-0 min-w-0 gap-2">
+		<div className="flex flex-col min-h-0 min-w-0 gap-list">
 			<div
-				className="flex flex-col gap-1 flex-shrink-0"
+				className="flex flex-col gap-stack flex-shrink-0"
 				style={{
 					position: "sticky",
 					top: 0,
@@ -1082,13 +1069,13 @@ function KanbanColumnI({
 					</React.Fragment>
 				)}
 			</div>
-			<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2">
+			<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-list">
 				{rows.length === 0 ? (
 					<EmptyState message={emptyMessage} hint={emptyHint} />
 				) : isCompact ? (
 					<RejectedCompactListI rows={shown} onRowClick={onRowClick} />
 				) : (
-					<ul className="flex flex-col gap-1">
+					<ul className="flex flex-col gap-stack">
 						{shown.map((row) => (
 							<li key={row.id}>
 								<AppliedHistoryRowI row={row} onClick={() => onRowClick(row)} />
@@ -1157,7 +1144,7 @@ function AppliedHistoryRowI({ row, onClick }) {
 				</>
 			}
 			text={label}
-			trail={<span className="font-mono text-faint shrink-0">{`#${row.id}`}</span>}
+			trail={<window.UI.MachineString className="text-faint shrink-0">{`#${row.id}`}</window.UI.MachineString>}
 		/>
 	);
 }
@@ -1168,7 +1155,7 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="i-row-card i-board-row i-tile-hover bg-elev rounded-md w-full min-w-0 text-left px-2 flex items-center gap-2 fs-meta"
+			className="i-row-card i-board-row i-tile-hover bg-elev rounded-md w-full min-w-0 text-left px-2 flex items-center gap-label fs-meta"
 			title={title}
 			aria-label={ariaLabel}
 		>
@@ -1249,14 +1236,14 @@ function RejectBucketSplitI({ summary, trend }) {
 				...cells.map(([label, count, hint]) => (
 				<span
 					key={label}
-					className="inline-flex items-baseline gap-1"
+					className="inline-flex items-baseline gap-label-inline"
 					title={hint}>
 					<span className="text-dim font-medium">{label}</span>
 					<span className="text-ink tnum">{formatIntI(Number(count ?? 0))}</span>
 				</span>
 			)),
 				hasSpark ? (
-					<span key="spark" className="ml-auto flex items-center gap-1">
+					<span key="spark" className="ml-auto flex items-center gap-label-inline">
 						<RejectSparkI trend={trend} />
 						<span className="text-faint">rejections per day</span>
 					</span>
@@ -1329,7 +1316,7 @@ function RejectedCompactListI({ rows, onRowClick }) {
 // Shared pattern label printed once as the group head, not on every row.
 function RejectedGroupI({ label, rows, onRowClick }) {
 	return (
-		<div className="flex flex-col gap-1">
+		<div className="flex flex-col gap-stack">
 			<div className="fs-meta text-faint truncate" title={label}>
 				{label}
 			</div>
@@ -1385,7 +1372,7 @@ function CompactProposalCardI({ row, onClick }) {
 			text={primary}
 			trail={
 				<>
-					<span className="font-mono text-faint shrink-0">#{row.id}</span>
+					<window.UI.MachineString className="text-faint shrink-0">#{row.id}</window.UI.MachineString>
 					{row.cycle_date && (
 						<span className="text-faint tnum shrink-0">
 							{formatDateI(row.cycle_date)}
@@ -1413,7 +1400,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 	const isSnoozed = status === "snoozed";
 
 	return (
-		<div className="sub-card i-tile-hover bg-elev p-0">
+		<div className="sub-card flush i-tile-hover bg-elev">
 			<button
 				type="button"
 				onClick={onClick}
@@ -1477,7 +1464,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 				)}
 				{/* pattern_label = 반복성 높은 2차 카테고리 라벨 → rationale 아래 tiny/faint 태그로 후퇴(USER: de-emphasized, 경쟁 금지). */}
 				<div
-					className="fs-meta text-faint mt-1 line-clamp-1"
+					className="fs-meta text-faint mt-stack line-clamp-1"
 					title={String(title)}
 				>
 					{title}
@@ -1505,9 +1492,9 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 		if (!isPending) fn();
 	};
 	return (
-		<div className="px-3 pb-3 pt-0">
+		<div className="px-3 pb-3">
 			{isSafety && (
-				<div className="fs-meta text-dim mb-1.5 flex items-center gap-1">
+				<div className="fs-meta text-dim mb-1.5 flex items-center gap-label-inline">
 					<SymI s="⚠" className="text-warn" size={11} /> Your call
 				</div>
 			)}
@@ -1655,21 +1642,18 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 	if (state.status === "loading" || !buckets) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
-				<CardHead
-					title="Learning memory"
-					sub="All time"
-				/>
+				<CardHead title="Learning memory" sub="All time" />
 				{getLoopLoadingSlotI("learning memory")}
 			</div>
 		);
 	}
 
 	const { ctm, epm } = buckets;
-	// 보고 표면 — 크롬은 중립, 톤은 SymI 글리프에만.
+	// tallies with no stated line → no tone glyph
 	const cards = [
 		// CTM 실제 유도식 = confidence high + metric_pass + done — 학습 패턴 카드(learning_log)와 산출 기준이 다름.
-		["✓", "text-ok", "Confirmed wins", ctm, "Confidence high · check passed · done"],
-		["⚠", "text-warn", "Mistake patterns (EPM)", epm, "Cases that failed or needed repeated rework"],
+		["Confirmed wins", ctm, "Confidence high · check passed · done"],
+		["Mistake patterns", epm, "Cases that failed or needed repeated rework"],
 	];
 	return (
 		<div className="card" id={ANCHOR_ID_I.learningMemory}>
@@ -1678,7 +1662,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 				sub="All time"
 				info={
 					<div className="flex flex-col gap-3 fs-body">
-						{cards.map(([, , label, , hint]) => (
+						{cards.map(([label, , hint]) => (
 							<p key={label}>
 								<span className="text-ink font-semibold">{label}</span> — {hint}
 							</p>
@@ -1687,15 +1671,14 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 				}
 			/>
 			{getLoopSlotsI({
-				metric: cards.map(([sym, tone, label, value]) => (
-					<span key={label} className="inline-flex items-baseline gap-1">
-						{Number(value) > 0 ? <SymI s={sym} className={tone} size={13} /> : null}
+				metric: cards.map(([label, value]) => (
+					<span key={label} className="inline-flex items-baseline gap-label-inline">
 						<span className="fs-stat font-semibold text-ink tnum">{formatIntI(value)}</span>
 						<span className="fs-meta text-dim">{label}</span>
 					</span>
 				)),
 				visual: null,
-				foot: "All agents over all time, not the group's 7-day window",
+				foot: "All agents",
 			})}
 		</div>
 	);
@@ -1708,7 +1691,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 function AlarmLaneI({ applyCap }) {
 	if (Number(applyCap?.capped_patterns ?? 0) <= 0) return null;
 	return (
-		<div className="flex flex-col gap-2" role="region" aria-label="Alarms">
+		<div className="flex flex-col gap-list" role="region" aria-label="Alarms">
 			<ParkedLoopBannerI applyCap={applyCap} />
 		</div>
 	);
@@ -1742,9 +1725,14 @@ function ParkedLoopBannerI({ applyCap }) {
 // 있으면 둘 중 하나만 읽힌다. 두 population(parked / per-cycle) 은 분리해 렌더하고 절대
 // 더하지 않는다: 종결 row 와 재발 횟수라 합계는 둘 중 어느 것도 아니다.
 
-// 펼쳐 두는 그룹 = 사람이 오늘 풀 수 있는 원인. 닫아 두는 그룹 = 그렇게 두기로 한 설계
-// 결정 — 매번 펼치면 행동 가능한 그룹이 그 아래로 묻힌다.
+// 보류 원인의 두 그룹 — 사람이 오늘 풀 수 있는 원인 / 그렇게 두기로 한 설계 결정.
 const HELD_DESIGN_DECISION_CAUSES = new Set(["non-promptable", "other"]);
+
+// held-cause groups in reading order — the first group's sum is the status band's held figure
+const HELD_GROUPS_I = [
+	{ label: "Needs a human", isHumanCause: true },
+	{ label: "Set aside by design", isHumanCause: false },
+];
 
 // suppression list field → [] when the read is absent or malformed
 function getSuppressionListI(suppression, key) {
@@ -1753,7 +1741,11 @@ function getSuppressionListI(suppression, key) {
 
 // held rows a human can clear today — the status band and the ledger head read this one count
 function getHeldNeedingHumanI(suppression) {
-	return sumCountsI(getSuppressionListI(suppression, "parked").filter((b) => !HELD_DESIGN_DECISION_CAUSES.has(b.cause)));
+	return sumCountsI(getSuppressionListI(suppression, "parked").filter(isHumanCauseI));
+}
+
+function isHumanCauseI(bucket) {
+	return !HELD_DESIGN_DECISION_CAUSES.has(bucket.cause);
 }
 
 // 보류(held) 구역 — 윈도우가 없다. 몇 주 전에 정지된 행이 오늘도 정지 상태이므로,
@@ -1762,69 +1754,93 @@ function getHeldNeedingHumanI(suppression) {
 function LedgerHeldSectionI({ suppression }) {
 	const buckets = getSuppressionListI(suppression, "parked");
 	if (buckets.length === 0) return null;
-	const rows = getSuppressionListI(suppression, "parked_patterns");
 	return (
 		<div id={ANCHOR_ID_I.heldPatterns} className="i-ledger-sec">
-			<LedgerSectionHeadI
-				label="Held — terminal rows"
-				basis="all time"
-				count={sumCountsI(buckets)}
-			/>
-			<HeldCauseTableI buckets={buckets} />
-			{buckets.map((b) => (
-				<HeldCauseGroupI
-					key={b.cause}
-					bucket={b}
-					rows={rows.filter((r) => r.cause === b.cause)}
-				/>
-			))}
+			<LedgerSectionHeadI label="Held" basis="all time" count={sumCountsI(buckets)} />
+			<HeldCauseTableI buckets={buckets} rows={getSuppressionListI(suppression, "parked_patterns")} />
 		</div>
 	);
 }
 
-// One row per cause — held count · agents, readable without opening a row list · the remedy lives in the drawer
-function HeldCauseTableI({ buckets }) {
+// One body per group, led by its sum · the first lead row also heads the Held and Agents columns
+function HeldCauseTableI({ buckets, rows }) {
+	const groups = HELD_GROUPS_I.map((group) => ({
+		...group,
+		buckets: buckets.filter((b) => isHumanCauseI(b) === group.isHumanCause),
+	})).filter((group) => group.buckets.length > 0);
 	return (
-		<table className="w-full i-held-table mb-1">
-			<thead className="tbl-head">
-				<tr className="fs-meta text-dim">
-					<th className="text-left font-medium">Cause</th>
-					<th className="text-right font-medium pl-4">Held</th>
-					<th className="text-right font-medium pl-4">Agents</th>
-				</tr>
-			</thead>
-			<tbody className="tbl-compact">
-				{buckets.map((b) => {
-					const isHumanCause = !HELD_DESIGN_DECISION_CAUSES.has(b.cause);
-					return (
-						<tr key={b.cause} className="border-t border-line/50">
-							<td className="text-left text-ink">
-								<span title={isHumanCause ? "Needs a human" : "Held by design decision"}>
-									<SymI s={isHumanCause ? "⚠" : "ℹ"} className={isHumanCause ? "text-warn" : "text-faint"} size={13} />
-								</span>{" "}
-								{b.label}
-							</td>
-							<td className="text-right pl-4 text-ink tnum">{formatIntI(Number(b.count ?? 0))}</td>
-							<td className="text-right pl-4 text-dim tnum">{formatIntI(Number(b.agents ?? 0))}</td>
-						</tr>
-					);
-				})}
-			</tbody>
+		<table className="w-full i-held-table mb-stack">
+			{groups.map((group, i) => (
+				<tbody key={group.label} className="tbl-compact">
+					<tr className={`fs-meta text-dim ${i > 0 ? "border-t border-line/50" : ""}`.trim()}>
+						<th scope="rowgroup" colSpan={i === 0 ? 1 : 3} className="text-left font-medium">
+							{`${group.label} (${formatIntI(sumCountsI(group.buckets))})`}
+						</th>
+						{i === 0 ? (
+							<>
+								<th scope="col" className="text-right font-medium pl-4">Held</th>
+								<th scope="col" className="text-right font-medium pl-4">Agents</th>
+							</>
+						) : null}
+					</tr>
+					{group.buckets.map((b) => (
+						<HeldCauseRowsI
+							key={b.cause}
+							bucket={b}
+							rows={rows.filter((r) => r.cause === b.cause)}
+							isHumanCause={group.isHumanCause}
+						/>
+					))}
+				</tbody>
+			))}
 		</table>
 	);
 }
 
-// Per-cause row list — every group folds the same way; the cause table above already states the counts.
-function HeldCauseGroupI({ bucket, rows }) {
+// One cause: its name opens its rows (the house ledger expander) · its remedy lives in the ledger drawer
+function HeldCauseRowsI({ bucket, rows, isHumanCause }) {
+	const [isOpen, setOpen] = useSI(false);
+	const { DisclosureChevron } = window.UI;
+	const listId = `${ANCHOR_ID_I.heldPatterns}-${bucket.cause}`;
 	return (
-		<details className="mt-1.5">
-			<summary className="group disclosure fs-meta select-none">
-				<window.UI.DisclosureChevron />
-				<span>{bucket.label} rows</span>
-			</summary>
-			<LedgerPlainRowsI rows={rows} />
-		</details>
+		<tr className="border-t border-line/50">
+			<td className="text-left text-ink">
+				<span className="inline-flex items-center gap-label-inline">
+					<HeldGlyphSlotI isShown={isHumanCause} />
+					<button
+						type="button"
+						className="group inline-target gap-label-inline text-left"
+						aria-expanded={isOpen}
+						aria-controls={listId}
+						onClick={() => setOpen((v) => !v)}
+					>
+						<DisclosureChevron isOpen={isOpen} />
+						<span>{bucket.label}</span>
+					</button>
+				</span>
+				<div id={listId} hidden={!isOpen}>
+					<div className="flex items-start gap-label-inline">
+						{/* the name's lead track, unseen → the rows start on the name column */}
+						<span className="invisible inline-flex items-center gap-label-inline" aria-hidden="true">
+							<HeldGlyphSlotI isShown={false} />
+							<DisclosureChevron isOpen={false} />
+						</span>
+						<div className="min-w-0 flex-1">
+							<LedgerPlainRowsI rows={rows} />
+						</div>
+					</div>
+				</div>
+			</td>
+			<td className="text-right align-top pl-4 text-ink tnum">{formatIntI(Number(bucket.count ?? 0))}</td>
+			<td className="text-right align-top pl-4 text-dim tnum">{formatIntI(Number(bucket.agents ?? 0))}</td>
+		</tr>
 	);
+}
+
+// the warn glyph's own box in every group, unseen where the cause needs no human → every name starts on one column
+function HeldGlyphSlotI({ isShown }) {
+	const glyph = <window.UI.ToneGlyph tone="warn" label="Needs a human" />;
+	return isShown ? glyph : <span className="invisible inline-flex" aria-hidden="true">{glyph}</span>;
 }
 
 // 원장 안의 비활성 행 목록 — 클릭 대상이 아니다(활성 후보만 드로어를 연다).
@@ -1832,13 +1848,11 @@ function HeldCauseGroupI({ bucket, rows }) {
 function LedgerPlainRowsI({ rows }) {
 	if (rows.length === 0) {
 		return (
-			<div className="placeholder">
-				Counted, but no row came back within the read limit
-			</div>
+			<window.UI.EmptyState className="placeholder--flush-inline" message="Counted, but no row came back within the read limit" />
 		);
 	}
 	return (
-		<ul className="mt-1.5 i-plain-rows">
+		<ul className="mt-1.5 i-plain-rows gap-x-label gap-y-stack">
 			{rows.map((r) => (
 				<li key={r.id} className="fs-body">
 					<span
@@ -1857,13 +1871,19 @@ function LedgerPlainRowsI({ rows }) {
 	);
 }
 
-// 원장 구역 헤더 — 어떤 수도 자기 모집단(기간) 없이 서지 않는다.
-function LedgerSectionHeadI({ label, basis, count }) {
+// 원장 구역 헤더 — <Name> · <window> (<count>), 어떤 수도 자기 모집단(기간) 없이 서지 않는다.
+function LedgerSectionHeadI({ label, basis, count, title }) {
 	return (
-		<div className="fs-meta text-dim mb-1">
-			{label} · <window.UI.DayTokens>{basis}</window.UI.DayTokens> <span className="tnum">({formatIntI(count)})</span>
+		<div className="fs-meta text-dim mb-stack" title={title}>
+			{label} · <window.UI.DayTokens>{basis}</window.UI.DayTokens>
+			{count === undefined ? null : <span className="tnum">{` (${formatIntI(count)})`}</span>}
 		</div>
 	);
+}
+
+// one dim line under a section head — what the head no longer explains
+function LedgerHeadLineI({ children }) {
+	return <p className="fs-meta text-dim mb-stack">{children}</p>;
 }
 
 // 비활성(inert) 구역 — status 는 pending 인데 intake 가 라벨로 매번 건너뛴다. 활성 목록에
@@ -1874,12 +1894,9 @@ function LedgerInertSectionI({ rows }) {
 		<details className="i-ledger-sec">
 			<summary className="group disclosure select-none">
 				<window.UI.DisclosureChevron />
-				<LedgerSectionHeadI
-					label="Inert — the intake skips this label every cycle"
-					basis="discovered in the last 7 days"
-					count={rows.length}
-				/>
+				<LedgerSectionHeadI label="Inert" basis="last 7 days" count={rows.length} />
 			</summary>
+			<LedgerHeadLineI>The loop skips these at intake every cycle.</LedgerHeadLineI>
 			<InertLabelRowsI groups={getPatternGroupsI(rows)} />
 		</details>
 	);
@@ -1888,7 +1905,7 @@ function LedgerInertSectionI({ rows }) {
 // one line per label — row count past one · its agent, or how many · latest first-seen date
 function InertLabelRowsI({ groups }) {
 	return (
-		<ul className="mt-1.5 i-plain-rows">
+		<ul className="mt-1.5 i-plain-rows gap-x-label gap-y-stack">
 			{groups.map(({ title, entries }) => {
 				const agents = [...new Set(entries.map(({ pattern }) => pattern.agent))];
 				const latest = entries.map(({ pattern }) => String(pattern.discovered_date ?? "")).sort().at(-1);
@@ -1919,13 +1936,14 @@ function LedgerRecurrenceSectionI({ suppression }) {
 	const windowCycles = Number(suppression.per_cycle_window_cycles ?? 0);
 	return (
 		<div className="i-ledger-sec">
-			<div
-				className="fs-meta text-dim mb-1"
+			<LedgerSectionHeadI
+				label="Recurrence rates"
+				basis={`last ${formatIntI(windowDays)} days`}
 				title="Recurrences, not distinct patterns — these mechanisms write no lifecycle transition, so the same row is re-suppressed on every cycle."
-			>
-				Recurrence rates — last <window.UI.NoWrap>{formatIntI(windowDays)} days</window.UI.NoWrap> ·{" "}
-				<window.UI.NoWrap>{formatIntI(windowCycles)} cycle days</window.UI.NoWrap>
-			</div>
+			/>
+			{windowCycles < windowDays ? (
+				<LedgerHeadLineI>{`Cycles ran on ${formatIntI(windowCycles)} of the ${formatIntI(windowDays)} days.`}</LedgerHeadLineI>
+			) : null}
 			<RecurrenceRowsI buckets={buckets} windowCycles={windowCycles} />
 		</div>
 	);
@@ -1965,31 +1983,26 @@ function RecurrenceRowsI({ buckets, windowCycles }) {
 	);
 }
 
-// 원장 푸터 — 모든 수치가 자기 게이트를 데리고 다닌다. 이웃한 숫자가 서로 다른 윈도우와
-// 모집단을 가질 때, 게이트 없는 숫자는 조용히 비교당한다. 폐지된 Learned-patterns 카드에서
-// 살아남은 사실(전체 패턴 수 · 반려 수)도 여기에 있다.
-function LedgerFooterI({ total, declined }) {
-	return (
-		<div className="card-foot">
-			<window.UI.DayTokens>{`${formatIntI(total)} patterns · ${formatIntI(declined)} declined, all time · rows above: last 7 days`}</window.UI.DayTokens>
-		</div>
-	);
+// 원장 푸터 — 전체 기간 수치, 각 구역의 윈도우는 그 구역 헤더가 말한다.
+// rejected = status 가 rejected 인 모든 행 — Held 헤더(전이 사유가 있는 반려 행)보다 넓으므로 자기 이름을 갖는다.
+function LedgerFooterI({ total, rejected }) {
+	return <div className="card-foot">{`${formatIntI(total)} patterns · ${formatIntI(rejected)} rejected · all time`}</div>;
 }
 
-// "How this is counted" drawer — each cause's remedy and the figures' gates, kept off the card face.
+// "How this is counted" drawer — each recurring cause's remedy and the figures' gates.
 function LedgerNotesI({ suppression }) {
-	const causes = new Map();
-	for (const key of ["parked", "per_cycle"]) {
-		for (const b of getSuppressionListI(suppression, key)) causes.set(`${b.cause}:${b.hint}`, b);
-	}
+	// every cause's remedy, held and recurring, printed once here — the server sentences exceed the face's 12-word bar
+	// keyed by cause and hint → a cause both held and recurring prints each distinct remedy once
+	const causes = new Map(
+		["parked", "per_cycle"].flatMap((key) => getSuppressionListI(suppression, key)).map((b) => [`${b.cause}:${b.hint}`, b]),
+	);
 	const unpromptable = Number(suppression?.pending_unpromptable ?? 0);
 	const pendingTotal = Number(suppression?.pending_total ?? 0);
 	const offRegistry = Number(suppression?.off_registry_parked ?? 0);
 	return (
 		<div className="flex flex-col gap-3 fs-body">
-			<p>The live and inert rows are the last <window.UI.NoWrap>7 days</window.UI.NoWrap> of discovery; totals and declines are all time.</p>
-			{[...causes.values()].map((b) => (
-				<p key={`${b.cause}:${b.hint}`}>
+			{[...causes.entries()].map(([key, b]) => (
+				<p key={key}>
 					<span className="text-ink font-semibold">{b.label}</span> — {b.hint}
 				</p>
 			))}
@@ -2047,7 +2060,7 @@ function DetailDrawerI({ row, onClose }) {
 }
 
 // Detail body — fields grid + 0..N text sections + pre-verify keyed block (pattern / proposal 공용).
-function DetailBodyI({ fields, sections, footnote, preVerify }) {
+function DetailBodyI({ fields, sections, preVerify }) {
 	const labelCls = "fs-meta text-dim font-medium";
 	return (
 		<div className="flex flex-col gap-3">
@@ -2055,8 +2068,8 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 				{fields.filter(([, v]) => window.UI.hasFieldValue(v)).map(([k, v, mono]) => (
 					<React.Fragment key={k}>
 						<dt className={labelCls}>{k}</dt>
-						<dd className={`fs-body text-ink break-words${mono ? " font-mono" : ""}`}>
-							{typeof v === "object" ? v : String(v)}
+						<dd className="fs-body text-ink break-words">
+							{mono ? <window.UI.MachineString>{String(v)}</window.UI.MachineString> : typeof v === "object" ? v : String(v)}
 						</dd>
 					</React.Fragment>
 				))}
@@ -2065,11 +2078,9 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 				.filter(([, v]) => v)
 				.map(([label, value, mono]) => (
 					<div key={label}>
-						<div className={`${labelCls} mb-1`}>{label}</div>
+						<div className={`${labelCls} mb-stack`}>{label}</div>
 						{mono ? (
-							<pre className="fs-meta font-mono text-dim bg-sunken px-3 py-2 rounded-md whitespace-pre-wrap break-words">
-								{value}
-							</pre>
+							<window.UI.MachineString isBlock className="text-dim">{value}</window.UI.MachineString>
 						) : (
 							<div className="fs-body text-ink whitespace-pre-wrap break-words">
 								{value}
@@ -2078,9 +2089,6 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 					</div>
 				))}
 			{preVerify && <PreVerifyDetailI {...preVerify} labelCls={labelCls} />}
-			{footnote && (
-				<div className="fs-meta text-faint mt-2">{footnote}</div>
-			)}
 		</div>
 	);
 }
@@ -2091,8 +2099,8 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 	const { Badge } = window.UI;
 	return (
 		<div>
-			<div className={`${labelCls} mb-1`}>Pre-verify</div>
-			<div className="bg-sunken p-3 rounded-md flex flex-col gap-2">
+			<div className={`${labelCls} mb-stack`}>Pre-verify</div>
+			<div className="bg-sunken p-3 rounded-md flex flex-col gap-list">
 				<div className="flex items-center gap-1.5 fs-meta">
 					<SymI s={badge.symbol} className={badge.tone} size={13} />
 					<span className="text-dim">{badge.label}</span>
@@ -2107,7 +2115,7 @@ function PreVerifyDetailI({ badge, rationale, axes, labelCls }) {
 				)}
 				{axes.length > 0 && (
 					<dl
-						className="grid gap-1 items-center"
+						className="grid gap-stack items-center"
 						style={{ gridTemplateColumns: "1fr auto" }}>
 						{axes.map(({ key, label, value }) => (
 							<React.Fragment key={key}>
@@ -2155,20 +2163,14 @@ function buildDetailPropsI(row) {
 					row?.approval_tier ? getTierWordsI(row.approval_tier) : row?.bucket,
 				],
 				["Frequency", row?.frequency],
+				// discovered_date = a display-zone day key → printed as stored, never zone-shifted
 				[
 					"First seen",
-					row?.discovered_date ? formatDateFullI(row.discovered_date) : null,
-					true,
+					row?.discovered_date ? <span className="tnum">{formatDateFullI(row.discovered_date)}</span> : null,
 				],
-				// last_updated = real-UTC ISO instant → formatKstFull (KST 상세 표기). last_seen fallback 동일.
 				[
 					"Last updated",
-					row?.last_updated
-						? window.UI.formatKstFull(row.last_updated)
-						: row?.last_seen
-							? window.UI.formatKstFull(row.last_seen)
-							: null,
-					true,
+					row?.last_updated || row?.last_seen ? buildKstDateTimeI(row.last_updated || row.last_seen) : null,
 				],
 			],
 			sections: [
@@ -2199,18 +2201,11 @@ function buildDetailPropsI(row) {
 			["Classification", getDetailWordsI("classification", row?.classification)],
 			["Target agent", row?.target_agent],
 			["Target file", row?.target_file, true],
-			// cycle_date = date-only string → tz-safe formatDateFullI · reviewed_at = UTC instant → formatKstFull
+			// cycle_date = date-only string → tz-safe formatDateFullI
 			["Cycle date", row?.cycle_date ? formatDateFullI(row.cycle_date) : null],
 			["Model check", getModelCheckWordsI(row?.haiku_status)],
 			["Cost guard", getDetailWordsI("costGuard", row?.cost_guard_state)],
-			[
-				"Reviewed at",
-				row?.reviewed_at ? (
-					<span title={window.UI.formatKstFull(row.reviewed_at)}>
-						{window.UI.formatKstDateTime(row.reviewed_at)}
-					</span>
-				) : null,
-			],
+			["Reviewed at", row?.reviewed_at ? buildKstDateTimeI(row.reviewed_at) : null],
 		],
 		sections: [
 			["Pattern label", row?.pattern_label, false],
@@ -2218,6 +2213,15 @@ function buildDetailPropsI(row) {
 		],
 		preVerify: preVerifyDetail,
 	};
+}
+
+// a UTC instant in a drawer → Day + time on the face, the full stamp on hover
+function buildKstDateTimeI(iso) {
+	return (
+		<span className="tnum" title={window.UI.formatKstFull(iso)}>
+			{window.UI.formatKstDateTime(iso)}
+		</span>
+	);
 }
 
 function getTierWordsI(tier) {
@@ -2306,7 +2310,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.changeSummary}>
 				<CardHead title="Applied changes" />
-				<div className="px-4 pb-4">
+				<div className="px-card-pad pb-card-pad">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.changeSummary}
 						source="loop events"
@@ -2355,7 +2359,7 @@ function ChangeSummaryCardI({ state, aggregate, onRetry, failures }) {
 						<div className="fs-meta text-dim font-medium">
 							Lines changed
 						</div>
-						<div className="mt-1 flex items-baseline gap-x-4 gap-y-1 flex-wrap">
+						<div className="mt-stack flex items-baseline gap-x-block gap-y-stack flex-wrap">
 							<LineCountI
 								symbol="＋"
 								tone="text-ok"
@@ -2385,7 +2389,7 @@ function getLoopSlotsI({ metric, visual, foot, isPlotted = false }) {
 	const { CARD_SLOTS } = window.UI;
 	return (
 		<>
-			<div className="i-loop-metric">{metric}</div>
+			<div className="i-loop-metric gap-y-stack gap-x-block">{metric}</div>
 			<div className="i-loop-visual" style={isPlotted ? { height: CARD_SLOTS.S.plotPx } : undefined}>
 				{visual}
 			</div>
@@ -2399,7 +2403,7 @@ function getLoopSlotsI({ metric, visual, foot, isPlotted = false }) {
 // a loading loop card → its line in the metric slot, so sibling cards draw it at one height
 function getLoopLoadingSlotI(label) {
 	return (
-		<div className="i-loop-metric">
+		<div className="i-loop-metric gap-y-stack gap-x-block">
 			<window.UI.LoadingPlaceholder label={label} />
 		</div>
 	);
@@ -2408,7 +2412,7 @@ function getLoopLoadingSlotI(label) {
 function LineCountI({ symbol, tone, count, word, title }) {
 	return (
 		// numeral and word share a baseline; the sign glyph centres on the numeral's line box (an svg would sit on the baseline by its bottom edge)
-		<span className="inline-flex items-baseline gap-1" title={title}>
+		<span className="inline-flex items-baseline gap-label-inline" title={title}>
 			<SymI s={symbol} className={`${tone} self-center`} size={13} />
 			<span className="fs-display font-semibold text-ink">{formatIntI(count)}</span>
 			<span className="fs-meta text-dim">{word}</span>
@@ -2416,31 +2420,14 @@ function LineCountI({ symbol, tone, count, word, title }) {
 	);
 }
 
-// before→after reject 비율 추이 → 톤 마크 + hint 문구 (낮을수록 좋음 = inverse).
-// 분모 부족(둘 중 하나라도 0) → ℹ 중립 ('—' 비교 불가). 하락=✓ ok · 상승=⚠ warn · 동률=ℹ.
-function failTrendMetaI(before, after) {
-	if (!before.total || !after.total) {
-		return {
-			tone: "info",
-			hint: "Rejected ÷ scored cycles (newer half) — not enough to compare",
-		};
-	}
+// before→after reject share direction, for the headline's hover (lower is better)
+function getTrendHintI(before, after) {
+	if (!before.total || !after.total) return "Rejected ÷ scored cycles (newer half) — not enough to compare";
 	const bRate = before.count / before.total;
 	const aRate = after.count / after.total;
-	if (aRate < bRate)
-		return {
-			tone: "ok",
-			hint: "Rejected ÷ scored cycles (newer half) — reject rate fell",
-		};
-	if (aRate > bRate)
-		return {
-			tone: "warn",
-			hint: "Rejected ÷ scored cycles (newer half) — reject rate rose",
-		};
-	return {
-		tone: "info",
-		hint: "Rejected ÷ scored cycles (newer half) — unchanged",
-	};
+	if (aRate < bRate) return "Rejected ÷ scored cycles (newer half) — reject rate fell";
+	if (aRate > bRate) return "Rejected ÷ scored cycles (newer half) — reject rate rose";
+	return "Rejected ÷ scored cycles (newer half) — unchanged";
 }
 
 // ----- Ranked candidate list (T-IMP-3 · T-IMP-5) -----------------------------
@@ -2458,7 +2445,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 		return (
 			<section className="card" aria-label="Pattern ledger" id={ANCHOR_ID_I.patternLedger}>
 				<CardHead title="Pattern ledger" />
-				<div className="p-4">
+				<div className="p-card-pad">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.patternLedger}
 						source="pattern ledger"
@@ -2488,7 +2475,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 		: [];
 	// 반려 수는 status_distribution(전체 기간) 에서 온다 — 아래 백로그 목록은 7일 윈도우라
 	// 길이를 그대로 쓰면 푸터의 게이트와 목록의 게이트가 어긋난다.
-	const declinedAllTime = sumCountsI(
+	const rejectedAllTime = sumCountsI(
 		dist.filter((d) => d.status === "rejected"),
 	);
 	const total = Number(state.data.total_patterns ?? patterns.length);
@@ -2535,7 +2522,7 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 					candidates
 				)}
 			</div>
-			<LedgerFooterI total={total} declined={declinedAllTime} />
+			<LedgerFooterI total={total} rejected={rejectedAllTime} />
 		</section>
 	);
 }
@@ -2543,27 +2530,25 @@ function PatternLedgerCardI({ state, suppression, onRowClick, onRetry, failures 
 // Live zone — proposal-eligible rows only, card kept when empty (held still reads) · same-title rows grouped, each led by its agent.
 function LedgerLiveSectionI({ rows, maxFreq, onRowClick }) {
 	const head = (
-		<LedgerSectionHeadI
-			label="Live — can propose"
-			basis="discovered in the last 7 days · ×N = times seen, all time"
-			count={rows.length}
-		/>
+		<>
+			<LedgerSectionHeadI label="Live" basis="last 7 days" count={rows.length} />
+			<LedgerHeadLineI>Patterns the loop can still propose a fix for.</LedgerHeadLineI>
+		</>
 	);
 	if (rows.length === 0) {
 		return (
 			<div className="i-ledger-sec">
 				{head}
-				<div className="placeholder">
-					No candidate patterns in the last <window.UI.NoWrap>7 days</window.UI.NoWrap>
-				</div>
+				<window.UI.EmptyState className="placeholder--flush-inline" message="No candidate patterns in the last 7 days" />
 			</div>
 		);
 	}
 	return (
 		<div className="i-ledger-sec flex flex-col gap-1.5">
 			{head}
+			<LedgerHeadLineI>×N = times seen, all time</LedgerHeadLineI>
 			{getPatternGroupsI(rows).map((group) => (
-				<div key={group.title} className="flex flex-col gap-1">
+				<div key={group.title} className="flex flex-col gap-stack">
 					<div className="fs-body text-ink truncate" title={group.title}>
 						{truncateI(group.title, 120)}
 					</div>
@@ -2603,7 +2588,7 @@ function CandidateRowI({ rank, pattern, maxFreq, onClick }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="sub-card i-row-card i-tile-hover bg-elev text-left p-3 w-full flex items-center gap-2"
+			className="sub-card i-row-card i-tile-hover bg-elev text-left p-3 w-full flex items-center gap-label"
 			aria-label={`Candidate ${rank}: ${label}${pattern.agent ? ` — ${pattern.agent}` : ""} — seen ${freq} times`}
 		>
 			<span
@@ -2663,10 +2648,11 @@ function ToastI({ tone, message }) {
 }
 
 // per-region failure: covered note when the page banner or an earlier slot speaks for this source, else its own card + Retry
-function ErrorBannerI({ source, region, error, onRetry, isBusy, failures, focusTargetId }) {
+function ErrorBannerI({ source, region, error, onRetry, isBusy, failures, focusTargetId, className }) {
 	const { RegionFailure } = window.UI;
 	return (
 		<RegionFailure
+			className={className}
 			source={source}
 			region={region}
 			error={error}

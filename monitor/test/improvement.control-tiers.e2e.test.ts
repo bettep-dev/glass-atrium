@@ -1,5 +1,5 @@
 // Learning controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the screen's
-// own style block, rendered from the shipped components: the view toggle, the suggestion board rows and the held-cause fold —
+// own style block, rendered from the shipped components: the view toggle, the suggestion board rows and the held-cause toggle —
 // each keeps one box in every state (§7.16) — the Instrumentation corpus-growth value row on one baseline, and the Learning memory
 // headline counts on the ladder's 4 value step.
 // Runner: npx tsx --test test/improvement.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
@@ -13,6 +13,7 @@ import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { createControlProbe, isSameBox } from "./lib/control-probe.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -46,16 +47,16 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   .flex { display: flex; } .inline-flex { display: inline-flex; } .block { display: block; } .flex-wrap { flex-wrap: wrap; }
   .items-center { align-items: center; } .items-baseline { align-items: baseline; } .self-center { align-self: center; }
   .flex-1 { flex: 1 1 0%; } .shrink-0 { flex-shrink: 0; } .min-w-0 { min-width: 0; } .w-full { width: 100%; } .max-w-\\[10rem\\] { max-width: 10rem; }
-  .gap-1 { gap: 0.25rem; } .gap-1\\.5 { gap: 0.375rem; } .gap-2 { gap: 0.5rem; } .gap-3 { gap: 0.75rem; } .gap-4 { gap: 1rem; }
+  .gap-1\\.5 { gap: 0.375rem; } .gap-2 { gap: 0.5rem; } .gap-3 { gap: 0.75rem; } .gap-4 { gap: 1rem; }
   .ml-auto { margin-left: auto; } .mt-1 { margin-top: 0.25rem; } .mt-1\\.5 { margin-top: 0.375rem; }
-  .p-0 { padding: 0; } .p-3 { padding: 0.75rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
+  .p-3 { padding: 0.75rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
   .py-1\\.5 { padding-top: 0.375rem; padding-bottom: 0.375rem; } .px-4 { padding-left: 1rem; padding-right: 1rem; } .pb-4 { padding-bottom: 1rem; }
   .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.5rem; }
   .text-left { text-align: left; } .whitespace-nowrap { white-space: nowrap; } .overflow-hidden { overflow: hidden; }
   .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .line-clamp-1, .line-clamp-3 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; }
   .line-clamp-1 { -webkit-line-clamp: 1; } .line-clamp-3 { -webkit-line-clamp: 3; }
-  .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; } .font-medium { font-weight: 500; }
+  .font-medium { font-weight: 500; }
   .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; } .rounded-md { border-radius: 0.375rem; }`;
 
 const noop = () => undefined;
@@ -73,7 +74,10 @@ const getLane = () =>
     getMarkup("CompactProposalCardI", { row: { id: 43, rationale: LONG, status: "unadjudicated" }, onClick: noop }),
     getMarkup("ProposalCardI", { row: { id: 44, pattern_label: LONG, rationale: LONG, status: "applied" }, onClick: noop }),
   ].join("");
-const HELD_CAUSE = getMarkup("HeldCauseGroupI", { bucket: { cause: "missing-approval", label: "Missing approval" }, rows: [] });
+const HELD_CAUSE = getMarkup("HeldCauseTableI", {
+  buckets: [{ cause: "missing-approval", label: "Missing approval", count: 2, agents: 1, hint: "Approve the pending row to let it through." }],
+  rows: [],
+});
 const CORPUS_GROWTH = getMarkup(
   "CorpusGrowthCardI",
   {
@@ -108,12 +112,12 @@ const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body
 </body></html>`;
 
 const TOGGLE_OPTIONS = ["Operator", "Instrumentation"] as const;
-const SUMMARY = "#held details > summary";
+const HELD_TOGGLE = "#held button.inline-target";
 
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
-const { readBox, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
+const { readBox, assertBoxHeldAcrossStates } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -122,7 +126,8 @@ before(async () => {
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
   await page.addStyleTag({ content: SCREEN_CSS });
-  cdp = await page.context().newCDPSession(page);
+  await page.addStyleTag({ content: getRoleKeyCss() });
+  cdp =await page.context().newCDPSession(page);
   await cdp.send("DOM.enable");
   await cdp.send("CSS.enable");
 });
@@ -171,10 +176,12 @@ describe("a proposal card keeps its clamped text under hover and focus", () => {
   }
 });
 
-describe("the held-cause fold opens on the disclosure atom", () => {
-  test("its summary is a 32 disclosure with the chevron as the one open-state cue, turned 90 once open", () => assertFoldOnOneBox("#held details", SUMMARY));
+describe("a held cause's name opens its rows on the ledger expander's inline target", () => {
+  test("the toggle is one 24 inline target", async () => {
+    assert.equal((await readBox(HELD_TOGGLE)).height, 24);
+  });
 
-  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(SUMMARY));
+  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(HELD_TOGGLE));
 });
 
 // the corpus-growth headline stat: the figure with its attached unit, the delta on the stat's context line
@@ -226,20 +233,20 @@ describe("the flagged-results head leads to Task results on the Link atom", () =
 });
 
 describe("the Learning memory headline sets each count on the ladder's value step", () => {
-  // per count: its glyph, figure and label in order — each 4 from the one before
+  // per count: its figure then its label, 4 apart, no tone glyph before the figure
   const readMetricSteps = () =>
     page.$$eval("#learning-memory .i-loop-metric > span", (counts) =>
       counts.map((count) => {
-        const [glyph, figure, label] = [...count.children].map((el) => el.getBoundingClientRect());
-        return { text: count.textContent ?? "", glyphToFigure: figure.left - glyph.right, figureToLabel: label.left - figure.right };
+        const [figure, label] = [...count.children].map((el) => el.getBoundingClientRect());
+        return { text: count.textContent ?? "", parts: count.children.length, figureToLabel: label.left - figure.right };
       }),
     );
 
-  test("glyph to figure and figure to label are 4 apart in both counts", async () => {
+  test("figure to label are 4 apart in both counts, with no glyph before the figure", async () => {
     const counts = await readMetricSteps();
     assert.equal(counts.length, 2, "Confirmed wins and Mistake patterns");
-    for (const { text, glyphToFigure, figureToLabel } of counts) {
-      assert.ok(Math.abs(glyphToFigure - 4) < 0.01, `${text}: glyph ↔ figure ${glyphToFigure}`);
+    for (const { text, parts, figureToLabel } of counts) {
+      assert.equal(parts, 2, `${text}: figure and label only`);
       assert.ok(Math.abs(figureToLabel - 4) < 0.01, `${text}: figure ↔ label ${figureToLabel}`);
     }
   });

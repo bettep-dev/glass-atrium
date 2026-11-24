@@ -22,6 +22,7 @@ import { dirname, resolve } from "node:path";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
 import { loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { getRoleKeys } from "./lib/role-keys.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const IMPROVEMENT_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
@@ -156,7 +157,8 @@ test("the alarm lane stacks alert cards and paints nothing of its own", () => {
   });
   assert.ok(isElement(lane), "a populated cap must render the lane");
   const laneClasses = String(lane.props.className ?? "").split(/\s+/).filter(Boolean);
-  const paintClasses = laneClasses.filter((name) => !/^(flex|flex-col|gap-\d+)$/.test(name));
+  const layoutClasses = new Set(["flex", "flex-col", ...Object.keys(getRoleKeys().gap).map((key) => `gap-${key}`)]);
+  const paintClasses = laneClasses.filter((name) => !layoutClasses.has(name));
   assert.deepEqual(paintClasses, [], "the lane carries layout only — a tint or border on it frames the alarms twice");
   const alarms = ([] as unknown[]).concat(lane.props.children).filter(isElement);
   assert.ok(alarms.length > 0, "the lane renders its alarms");
@@ -267,15 +269,13 @@ test("the CTM/EPM row leaves its tone on the glyph", () => {
   );
 });
 
-// an empty page shows no alarm: a count's tone glyph appears only once there is something to count
-describe("a zero count carries no tone glyph, a non-zero count keeps its one glyph", () => {
+// a tone glyph marks a figure over a stated line, and no run-breakdown chip has one → the chip words name each category
+describe("the run breakdown chips carry no tone glyph at any count", () => {
   const rows = [
     { name: "run breakdown at zero", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 0, cycles_generated_not_applied_7d: 0, cycles_nothing_generated_7d: 0 } }), glyphs: 0 },
-    { name: "run breakdown with counts", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 3, cycles_generated_not_applied_7d: 4, cycles_nothing_generated_7d: 5 } }), glyphs: 1 },
-    { name: "learning memory at zero", tree: () => sandbox.BucketRowI({ state: { status: "ready" }, buckets: { ctm: 0, epm: 0 } }), glyphs: 0 },
-    { name: "learning memory with counts", tree: () => sandbox.BucketRowI({ state: { status: "ready" }, buckets: { ctm: 4, epm: 2 } }), glyphs: 1 },
+    { name: "run breakdown with counts", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 3, cycles_generated_not_applied_7d: 4, cycles_nothing_generated_7d: 5 } }), glyphs: 0 },
   ];
-  const labels = ["Created & applied", "Created, not applied", "Nothing created", "Confirmed wins", "Mistake patterns (EPM)"];
+  const labels = ["Suggested and applied", "Suggested, not applied", "No suggestion"];
   for (const row of rows) {
     test(row.name, () => {
       const counts = collect(row.tree(), (el) => Array.isArray(el.props.children) && el.props.children.some((c: unknown) => isElement(c) && labels.includes(c.props.children as string)), [sandbox.SymI]);
@@ -284,6 +284,16 @@ describe("a zero count carries no tone glyph, a non-zero count keeps its one gly
         const glyphs = (count.props.children as unknown[]).filter((c) => isElement(c) && c.type === sandbox.SymI);
         assert.equal(glyphs.length, row.glyphs, String(count.props.key ?? count.props.children));
       }
+    });
+  }
+});
+
+// a tone glyph marks a figure over a stated line, and neither tally has one
+describe("the learning memory tallies carry no tone glyph at any count", () => {
+  for (const ctm of [0, 4]) {
+    test(`${ctm} confirmed wins`, () => {
+      const tallies = collect(sandbox.BucketRowI({ state: { status: "ready" }, buckets: { ctm, epm: 2 } }), (el) => el.type === sandbox.SymI, [sandbox.SymI]);
+      assert.equal(tallies.length, 0);
     });
   }
 });
@@ -346,7 +356,10 @@ test("every held row renders under exactly one cause group", () => {
       : isElement(node)
         ? [node, ...walk(node.props.children)]
         : [];
-  const groups = walk(section).filter((el) => el.props.bucket !== undefined);
+  // the section hands its rows to the held table, which splits them per cause row
+  const table = walk(section).find((el) => el.type === (sandbox as unknown as Record<string, unknown>).HeldCauseTableI)!;
+  const render = table.type as (props: Record<string, unknown>) => unknown;
+  const groups = walk(render(table.props)).filter((el) => el.props.bucket !== undefined);
   const ids = groups.flatMap((g) => (g.props.rows as { id: number }[]).map((r) => r.id));
   assert.deepEqual(ids, [7], "a rejected row is counted under its cause and again under a second group");
 });
@@ -500,11 +513,11 @@ describe("board and action surfaces leave their tone on the glyph", () => {
           styleRefGradeBadgeI: () => ({ symbol: "⚠", tone: "text-warn", label: "warn", hint: "emission below the gate" }),
           getCorpusGrowthVerdictI: () => ({ symbol: "✕", tone: "text-crit", label: "Growth alert", hint: "corpus grew past the cap" }),
         };
-        return component("InstrumentationStripI")({
+        const chips = component("getDeviationChipsI")({
           styleRef: { overall_emission_rate: 0.3, overall_uncorroborated_rate: 0.2 },
           corpusAuditState: { status: "ready", data: { audits: [{}] } },
-          onOpen: () => {},
         });
+        return component("InstrumentationStripI")({ chips, onOpen: () => {} });
       },
     },
     {

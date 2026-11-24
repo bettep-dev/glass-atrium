@@ -39,12 +39,15 @@ interface LoopSandbox {
   ChangeSummaryCardI: (props: Record<string, unknown>) => RecordedElement;
   TrendCardI: (props: Record<string, unknown>) => RecordedElement;
   BucketRowI: (props: Record<string, unknown>) => RecordedElement;
+  LoopOutputGroupI: (props: Record<string, unknown>) => RecordedElement;
   RejectRateHeadlineI: (props: Record<string, unknown>) => RecordedElement;
   LineCountI: (props: Record<string, unknown>) => RecordedElement;
   getRejectRatePhraseI: (
     before: { count: number; total: number },
     after: { count: number; total: number },
-  ) => string;
+  ) => { recent: string; earlier: string | null };
+  ErrorBannerI: unknown;
+  CycleDecompositionRowI: (props: Record<string, unknown>) => RecordedElement;
 }
 
 function isElement(value: unknown): value is RecordedElement {
@@ -126,25 +129,25 @@ const ROWS = {
       name: "both halves scored → recent count leads over its days, earlier count names its own",
       before: { count: 4, total: 5, days: 2 },
       after: { count: 3, total: 5, days: 3 },
-      expected: "3 of 5 rejected in the latest 3 cycle days (4 of 5 in the 2 before)",
+      expected: { recent: "3 of 5 rejected, last 3 cycle days", earlier: "4 of 5 in the 2 before" },
     },
     {
       name: "no earlier scored cycle → recent count alone, still over its days",
       before: { count: 0, total: 0, days: 1 },
       after: { count: 2, total: 7, days: 2 },
-      expected: "2 of 7 rejected in the latest 2 cycle days",
+      expected: { recent: "2 of 7 rejected, last 2 cycle days", earlier: null },
     },
     {
       name: "a single recent cycle day reads in the singular",
       before: { count: 0, total: 0, days: 1 },
       after: { count: 1, total: 4, days: 1 },
-      expected: "1 of 4 rejected in the latest 1 cycle day",
+      expected: { recent: "1 of 4 rejected, last 1 cycle day", earlier: null },
     },
     {
       name: "no recent scored cycle → no count to state",
       before: { count: 1, total: 4, days: 2 },
       after: { count: 0, total: 0, days: 2 },
-      expected: "No scored cycles yet",
+      expected: { recent: "No scored cycles yet", earlier: null },
     },
   ],
 };
@@ -218,27 +221,34 @@ test("the trend plots one chart of the daily reject share, ticked by MM-DD and t
 describe("the reject rate reads as counts, never a percentage", () => {
   for (const row of ROWS.PHRASE) {
     test(row.name, () => {
-      assert.equal(sandbox.getRejectRatePhraseI(row.before, row.after), row.expected);
+      assert.deepEqual({ ...sandbox.getRejectRatePhraseI(row.before, row.after) }, row.expected);
     });
   }
 });
 
-// the headline's glyph stands with no tone word beside it → the shared alarm-size tone mark
-describe("the reject-rate headline draws its trend glyph as the shared tone mark", () => {
+// the counts are the reading: no glyph leads them, and the sample size is already the "of N"
+describe("the reject-rate headline states its counts with no tone glyph and no sample mark", () => {
   const rows = [
-    { name: "a rate that fell", before: { count: 4, total: 8, days: 2 }, after: { count: 1, total: 8, days: 2 }, tone: "ok" },
-    { name: "a rate that rose", before: { count: 1, total: 8, days: 2 }, after: { count: 4, total: 8, days: 2 }, tone: "warn" },
-    { name: "no half to compare", before: { count: 0, total: 0, days: 2 }, after: { count: 1, total: 8, days: 2 }, tone: "info" },
+    { name: "a rate that fell", before: { count: 4, total: 8, days: 2 }, after: { count: 1, total: 8, days: 2 } },
+    { name: "a rate that rose", before: { count: 1, total: 8, days: 2 }, after: { count: 4, total: 8, days: 2 } },
+    { name: "a low sample", before: { count: 1, total: 3, days: 2 }, after: { count: 2, total: 3, days: 2 } },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const marks = collectElements(sandbox.RejectRateHeadlineI({ before: row.before, after: row.after }), []).filter(
-        (el) => el.type === sandbox.window.UI.ToneGlyph,
+        (el) => el.type === sandbox.window.UI.ToneGlyph || el.type === sandbox.window.UI.LowSampleMark,
       );
-      assert.equal(marks.length, 1);
-      assert.equal(marks[0].props.tone, row.tone);
+      assert.deepEqual(marks, []);
     });
   }
+});
+
+test("the earlier half sits on its own dim line under the recent count", () => {
+  const tree = collectElements(sandbox.RejectRateHeadlineI({ before: { count: 6, total: 16, days: 4 }, after: { count: 6, total: 16, days: 4 } }), []);
+  const lineOf = (text: string) => tree.find((el) => el.props.children === text);
+
+  assert.ok(lineOf("6 of 16 rejected, last 4 cycle days"), "the recent count leads");
+  assert.match(String(lineOf("6 of 16 in the 4 before")?.props.className), /\btext-dim\b/);
 });
 
 // the phrase itself is pinned by the table above; this guards that the card is fed both halves
@@ -449,11 +459,20 @@ describe("a loop card's visual slot takes the plot height only when the card dra
   }
 });
 
+// the three cards sit on different windows → each names its own, the group head names none
+test("the all-time learning memory card names its window in its own head, the group head none", () => {
+  const head = collectElements(sandbox.BucketRowI({ state: READY, buckets: { ctm: 1, epm: 1 } }), []).find((el) => el.type === CardHead);
+  const group = collectElements(sandbox.LoopOutputGroupI({ statsState: { status: "loading" }, loopEventsState: READY, listState: READY }), []).find((el) => el.type === CardHead);
+
+  assert.deepEqual({ title: head?.props.title, sub: head?.props.sub }, { title: "Learning memory", sub: "All time" });
+  assert.equal(group?.props.sub, undefined);
+});
+
 // R-c: a loop-card foot hands its sentence to the shared DayTokens atom, so "28 cycle days" and "7-day" never break
 test("every loop-card foot rides DayTokens, so its cycle-day and 7-day tokens stay whole", () => {
   const expected: Record<string, RegExp> = {
     trend: /^\d+ verified and \d+ rejected across all 2 cycle days$/,
-    "learning memory": /^All agents over all time, not the group's 7-day window$/,
+    "learning memory": /^All agents$/,
   };
   for (const { name, card } of getLoopCards()) {
     const [foot] = getSlotOf(card, "card-foot");
@@ -498,4 +517,18 @@ test("a line count centres its sign glyph on the numeral and keeps the numeral a
   const [glyph] = count.props.children as RecordedElement[];
   assert.match(String(glyph.props.className), /\bself-center\b/, String(glyph.props.className));
   assert.match(String(glyph.props.className), /\btext-ok\b/, "the tone stays on the glyph");
+});
+
+// a failed stats read stands where the chip row stands → on the same inline text column
+test("a failed loop stats read sits on the chip row's text column", () => {
+  const failed = collectElements(
+    sandbox.LoopOutputGroupI({ statsState: { status: "error", error: new Error("stats down") }, loopEventsState: READY, listState: READY }),
+    [],
+  ).find((el) => el.type === sandbox.ErrorBannerI);
+  const chipRow = sandbox.CycleDecompositionRowI({ stats: {} });
+  const padOf = (el: RecordedElement | undefined) => String(el?.props.className ?? "").split(/\s+/).filter((word) => /^px-/.test(word));
+
+  assert.ok(failed, "the failure renders");
+  assert.deepEqual(padOf(failed), padOf(chipRow));
+  assert.notDeepEqual(padOf(chipRow), [], "the chip row holds an inline pad");
 });
