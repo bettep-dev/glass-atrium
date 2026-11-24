@@ -803,7 +803,7 @@ function ScreenArchitecture(
 					pageFailure={pageFailure}
 					isBusy={isRefreshBusy}
 					onRetry={triggerRefresh}
-					isEmpty={diagState.data != null && getMapEmptyMessageAR(activeDiagram) != null}>
+					isEmpty={getMapEmptyMessageAR(activeDiagram) != null}>
 					<DiagramBody
 						diagState={diagState}
 						activeDiagram={activeDiagram}
@@ -859,7 +859,7 @@ function ScreenArchitecture(
 /**
  * The map slot — the drawn map's card, or the read's state in its place.
  * Undrawn (in flight, failed, nothing to draw) → the slot lets go of the page-tall floor and ends at its content.
- * @param isEmpty - the read answered with nothing to draw
+ * @param isEmpty - nothing to draw; read only once the map read answered
  * @param children - the map body drawn inside the card
  */
 function MapRegionAR({ diagState, pageFailure, isBusy, onRetry, isEmpty, children }) {
