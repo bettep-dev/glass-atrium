@@ -2393,7 +2393,8 @@ function buildLiveDaemonsByNodeId(daemons) {
 	return m;
 }
 
-// legend — ring marks and the dashed ring from the canvas's own vocabulary, then the role borders.
+// legend — ring marks and the dashed ring from the canvas's own vocabulary, then the role borders;
+// each line reads the meaning, since its swatch already shows the mark
 function getMapLegendItemsAR() {
 	const rings = ["warn", "crit"].map((tone) => ({
 		key: tone,
@@ -2404,7 +2405,11 @@ function getMapLegendItemsAR() {
 	const count = { key: "count", kind: "count", mark: `${getCornerGlyphTextAR("crit", 1)}×N`, text: "N parts in this box need attention" };
 	const dashed = { key: "unverified", kind: "dashed", label: UNVERIFIED_WORD_AR };
 	const borders = MAP_BORDER_KEY_AR.map((item) => ({ ...item, kind: "border" }));
-	return [...rings, count, dashed, ...borders];
+	return [...rings, count, dashed, ...borders].map((item) => ({ ...item, text: item.text ?? getSentenceCaseAR(item.label) }));
+}
+
+function getSentenceCaseAR(words) {
+	return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 // role node borders painted with their legend swatch token
@@ -2427,7 +2432,7 @@ function MapCaptionAR() {
 							style={item.token ? { borderColor: `rgb(var(${item.token}))` } : undefined}>
 							{item.mark || ""}
 						</span>
-						{item.text || (item.kind === "border" ? `${item.label} border` : `Ring ${item.label}`)}
+						{item.text}
 					</li>
 				))}
 			</ul>

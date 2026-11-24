@@ -486,8 +486,9 @@ describe("healthy live fixture", () => {
 			assert.notEqual(line.transform, "uppercase", `"${line.text}" renders uppercase`);
 			assert.ok(line.px >= 13, `"${line.text}" renders at ${line.px}px`);
 		}
-		for (const word of ["needs attention", "critical", "not verified", "Orchestrator border", "Safety checks border"])
+		for (const word of ["Needs attention", "Critical", "Not verified", "Orchestrator", "Safety checks"])
 			assert.ok(probe.legend.some((line) => line.text.includes(word)), `legend lacks "${word}" — read: ${JSON.stringify(probe.legend)}`);
+		assert.ok(probe.legend.every((line) => !/\b(Ring|border)\b/.test(line.text)), `a legend line names the mark — read: ${JSON.stringify(probe.legend)}`);
 	});
 
 	test("each legend swatch holds its mark's line inside its border", async () => {

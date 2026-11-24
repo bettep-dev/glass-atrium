@@ -723,6 +723,7 @@
   - canvas = map card 의 body, hairline 에 flush (`card-body flush`) — 안쪽 band 없음 · canvas 자체 radius 0, 모서리는 card 가 clip (`architecture.map-fit.e2e`).
 - **Tab 순서**: sources 컬럼 위→아래, 그다음 spine 위→아래 (`data-arch-rank`).
 - **상태 링**: warn · crit 노드/zone = tone 링 + 모서리 `!` / `!!` badge + accessible name health word, caption 범례가 key — §4.2 허용 예외.
+  - 범례 줄 = 뜻만, mark 는 swatch 가 보여 줌 (`getMapLegendItemsAR`): `Needs attention` · `Critical` · `N parts in this box need attention` · `Not verified` · `Orchestrator` · `Safety checks`.
   - badge 는 위 테두리에 반쯤 걸침: 노드는 오른쪽 모서리, zone 은 왼쪽 모서리 — 들어오는 edge 라벨이 spine 오른쪽에서 zone 위 테두리에 끝남 (`getCornerBadgeGeometryAR`, `architecture.render-structure.e2e`).
 - **h1 아래**: 범례 한 줄뿐 — verdict 줄 · chip 없음. 상태는 System parts card head 의 `card-sub` 한 번: 가장 나쁜 tone glyph + 개수 + 범례의 tone 낱말 (`1 critical · 1 needs attention` — 셈한 모든 행에 참인 낱말, Down · Overdue 둘 다 critical), glyph 간격과 가운데 정렬은 행 status atom 과 같음, 잡아 둔 읽기면 뒤에 `Last known`, 걸린 부품이 없으면 없음 (`getPartHealthStatusAR`).
 - **System parts 목록** (`PartHealthBlockAR`): 카드 이름 = Dashboard stat 의 명사 `System parts`. 목록 하나 — flagged 먼저 (worst first), 그다음 not loaded · idle. 걸린 부품이 없으면 맨 위에 all-clear 한 줄.
