@@ -228,20 +228,20 @@ describe("the flagged-results head leads to Task results on the Link atom", () =
 });
 
 describe("the Learning memory headline sets each count on the ladder's value step", () => {
-  // per count: its glyph, figure and label in order — each 4 from the one before
+  // per count: its figure then its label, 4 apart, no tone glyph before the figure
   const readMetricSteps = () =>
     page.$$eval("#learning-memory .i-loop-metric > span", (counts) =>
       counts.map((count) => {
-        const [glyph, figure, label] = [...count.children].map((el) => el.getBoundingClientRect());
-        return { text: count.textContent ?? "", glyphToFigure: figure.left - glyph.right, figureToLabel: label.left - figure.right };
+        const [figure, label] = [...count.children].map((el) => el.getBoundingClientRect());
+        return { text: count.textContent ?? "", parts: count.children.length, figureToLabel: label.left - figure.right };
       }),
     );
 
-  test("glyph to figure and figure to label are 4 apart in both counts", async () => {
+  test("figure to label are 4 apart in both counts, with no glyph before the figure", async () => {
     const counts = await readMetricSteps();
     assert.equal(counts.length, 2, "Confirmed wins and Mistake patterns");
-    for (const { text, glyphToFigure, figureToLabel } of counts) {
-      assert.ok(Math.abs(glyphToFigure - 4) < 0.01, `${text}: glyph ↔ figure ${glyphToFigure}`);
+    for (const { text, parts, figureToLabel } of counts) {
+      assert.equal(parts, 2, `${text}: figure and label only`);
       assert.ok(Math.abs(figureToLabel - 4) < 0.01, `${text}: figure ↔ label ${figureToLabel}`);
     }
   });

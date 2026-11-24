@@ -672,9 +672,9 @@ describe("the drawer prints each field in words, never the stored machine key", 
   }
 });
 
-test("the run breakdown names its window in the short form the band's Applied, 7d uses", () => {
+test("the cycle breakdown names its window in the short form the band's Applied, 7d uses", () => {
   const screen = sandbox as unknown as Record<string, Component>;
-  assert.match(visibleText(screen.CycleDecompositionRowI({ stats: {} })), /Run breakdown \(7d\)/);
+  assert.match(visibleText(screen.CycleDecompositionRowI({ stats: {} })), /^Cycles, 7d /);
 });
 
 describe("Learning labels read in sentence case, never letter-spaced capitals", () => {
@@ -690,7 +690,7 @@ describe("Learning labels read in sentence case, never letter-spaced capitals", 
       tree: () => sandbox.DetailBodyI(sandbox.buildDetailPropsI({ id: 9, approval_tier: "auto", pattern_label: "Scope note", rationale: "Repeated overrun", pre_verify_status: "failed", pre_verify_passed: false, pre_verify_rationale: "One axis failed", pre_verify_axes: { C1: true, C4: false } })),
       label: /Pattern label[\s\S]*Rationale[\s\S]*Pre-verify/,
     },
-    { name: "run breakdown", tree: () => screen.CycleDecompositionRowI({ stats: {} }), label: /Run breakdown/ },
+    { name: "cycle breakdown", tree: () => screen.CycleDecompositionRowI({ stats: {} }), label: /Cycles, 7d/ },
     { name: "not-judged rejected row", tree: () => screen.RejectedCompactListI({ rows: [{ id: 3, summary: "s", status: "unadjudicated", cycle_date: "2026-09-10" }], onRowClick: () => {} }), label: /Not judged/ },
   ];
   for (const row of rows) {

@@ -842,7 +842,7 @@ function LoopOutputGroupI({
 		<section className="space-y-3 i-loop-output" aria-label="Loop output" id={ANCHOR_ID_I.loopOutput}>
 			<CardHead
 				title="Loop output"
-				sub="7-day cycles unless a card says"
+				sub="Last 7 days"
 				right={
 					<button
 						className="btn ghost sm"
@@ -892,19 +892,19 @@ function CycleDecompositionRowI({ stats }) {
 		[
 			"✓",
 			"text-ok",
-			"Created & applied",
+			"Suggested and applied",
 			Number(stats.cycles_generated_applied_7d ?? 0),
 		],
 		[
 			"⚠",
 			"text-warn",
-			"Created, not applied",
+			"Suggested, not applied",
 			Number(stats.cycles_generated_not_applied_7d ?? 0),
 		],
 		[
 			"ℹ",
 			"text-info",
-			"Nothing created",
+			"No suggestion",
 			Number(stats.cycles_nothing_generated_7d ?? 0),
 		],
 	];
@@ -913,7 +913,7 @@ function CycleDecompositionRowI({ stats }) {
 	return (
 		<div className="flex items-center gap-list mt-label px-card-pad flex-wrap">
 			<span className="fs-meta text-dim font-medium">
-				Run breakdown (7d)
+				Cycles, 7d
 			</span>
 			{chips.map(([sym, tone, label, count]) => (
 				<span key={label} className="fs-meta inline-flex items-center gap-1.5">
@@ -1661,21 +1661,18 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 	if (state.status === "loading" || !buckets) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.learningMemory}>
-				<CardHead
-					title="Learning memory"
-					sub="All time"
-				/>
+				<CardHead title="Learning memory" sub="All time" />
 				{getLoopLoadingSlotI("learning memory")}
 			</div>
 		);
 	}
 
 	const { ctm, epm } = buckets;
-	// 보고 표면 — 크롬은 중립, 톤은 SymI 글리프에만.
+	// tallies with no stated line → no tone glyph
 	const cards = [
 		// CTM 실제 유도식 = confidence high + metric_pass + done — 학습 패턴 카드(learning_log)와 산출 기준이 다름.
-		["✓", "text-ok", "Confirmed wins", ctm, "Confidence high · check passed · done"],
-		["⚠", "text-warn", "Mistake patterns (EPM)", epm, "Cases that failed or needed repeated rework"],
+		["Confirmed wins", ctm, "Confidence high · check passed · done"],
+		["Mistake patterns", epm, "Cases that failed or needed repeated rework"],
 	];
 	return (
 		<div className="card" id={ANCHOR_ID_I.learningMemory}>
@@ -1684,7 +1681,7 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 				sub="All time"
 				info={
 					<div className="flex flex-col gap-3 fs-body">
-						{cards.map(([, , label, , hint]) => (
+						{cards.map(([label, , hint]) => (
 							<p key={label}>
 								<span className="text-ink font-semibold">{label}</span> — {hint}
 							</p>
@@ -1693,15 +1690,14 @@ function BucketRowI({ state, buckets, failures, onRetry }) {
 				}
 			/>
 			{getLoopSlotsI({
-				metric: cards.map(([sym, tone, label, value]) => (
+				metric: cards.map(([label, value]) => (
 					<span key={label} className="inline-flex items-baseline gap-label-inline">
-						{Number(value) > 0 ? <SymI s={sym} className={tone} size={13} /> : null}
 						<span className="fs-stat font-semibold text-ink tnum">{formatIntI(value)}</span>
 						<span className="fs-meta text-dim">{label}</span>
 					</span>
 				)),
 				visual: null,
-				foot: "All agents over all time, not the group's 7-day window",
+				foot: "All agents",
 			})}
 		</div>
 	);

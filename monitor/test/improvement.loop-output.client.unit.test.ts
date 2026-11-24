@@ -39,6 +39,7 @@ interface LoopSandbox {
   ChangeSummaryCardI: (props: Record<string, unknown>) => RecordedElement;
   TrendCardI: (props: Record<string, unknown>) => RecordedElement;
   BucketRowI: (props: Record<string, unknown>) => RecordedElement;
+  LoopOutputGroupI: (props: Record<string, unknown>) => RecordedElement;
   RejectRateHeadlineI: (props: Record<string, unknown>) => RecordedElement;
   LineCountI: (props: Record<string, unknown>) => RecordedElement;
   getRejectRatePhraseI: (
@@ -449,11 +450,20 @@ describe("a loop card's visual slot takes the plot height only when the card dra
   }
 });
 
+// the group head states the 7-day window once; a card on another window names it in its own head
+test("the all-time learning memory card names its window in its own head, the group head the shared one", () => {
+  const head = collectElements(sandbox.BucketRowI({ state: READY, buckets: { ctm: 1, epm: 1 } }), []).find((el) => el.type === CardHead);
+  const group = collectElements(sandbox.LoopOutputGroupI({ statsState: { status: "loading" }, loopEventsState: READY, listState: READY }), []).find((el) => el.type === CardHead);
+
+  assert.deepEqual({ title: head?.props.title, sub: head?.props.sub }, { title: "Learning memory", sub: "All time" });
+  assert.equal(group?.props.sub, "Last 7 days");
+});
+
 // R-c: a loop-card foot hands its sentence to the shared DayTokens atom, so "28 cycle days" and "7-day" never break
 test("every loop-card foot rides DayTokens, so its cycle-day and 7-day tokens stay whole", () => {
   const expected: Record<string, RegExp> = {
     trend: /^\d+ verified and \d+ rejected across all 2 cycle days$/,
-    "learning memory": /^All agents over all time, not the group's 7-day window$/,
+    "learning memory": /^All agents$/,
   };
   for (const { name, card } of getLoopCards()) {
     const [foot] = getSlotOf(card, "card-foot");

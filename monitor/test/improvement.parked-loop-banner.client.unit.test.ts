@@ -274,10 +274,8 @@ describe("a zero count carries no tone glyph, a non-zero count keeps its one gly
   const rows = [
     { name: "run breakdown at zero", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 0, cycles_generated_not_applied_7d: 0, cycles_nothing_generated_7d: 0 } }), glyphs: 0 },
     { name: "run breakdown with counts", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 3, cycles_generated_not_applied_7d: 4, cycles_nothing_generated_7d: 5 } }), glyphs: 1 },
-    { name: "learning memory at zero", tree: () => sandbox.BucketRowI({ state: { status: "ready" }, buckets: { ctm: 0, epm: 0 } }), glyphs: 0 },
-    { name: "learning memory with counts", tree: () => sandbox.BucketRowI({ state: { status: "ready" }, buckets: { ctm: 4, epm: 2 } }), glyphs: 1 },
   ];
-  const labels = ["Created & applied", "Created, not applied", "Nothing created", "Confirmed wins", "Mistake patterns (EPM)"];
+  const labels = ["Suggested and applied", "Suggested, not applied", "No suggestion"];
   for (const row of rows) {
     test(row.name, () => {
       const counts = collect(row.tree(), (el) => Array.isArray(el.props.children) && el.props.children.some((c: unknown) => isElement(c) && labels.includes(c.props.children as string)), [sandbox.SymI]);
@@ -286,6 +284,16 @@ describe("a zero count carries no tone glyph, a non-zero count keeps its one gly
         const glyphs = (count.props.children as unknown[]).filter((c) => isElement(c) && c.type === sandbox.SymI);
         assert.equal(glyphs.length, row.glyphs, String(count.props.key ?? count.props.children));
       }
+    });
+  }
+});
+
+// a tone glyph marks a figure over a stated line, and neither tally has one
+describe("the learning memory tallies carry no tone glyph at any count", () => {
+  for (const ctm of [0, 4]) {
+    test(`${ctm} confirmed wins`, () => {
+      const tallies = collect(sandbox.BucketRowI({ state: { status: "ready" }, buckets: { ctm, epm: 2 } }), (el) => el.type === sandbox.SymI, [sandbox.SymI]);
+      assert.equal(tallies.length, 0);
     });
   }
 });
