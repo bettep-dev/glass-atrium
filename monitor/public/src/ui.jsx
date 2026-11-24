@@ -2379,7 +2379,7 @@ function getFreshnessVerdict({ tone = 'neutral', label, at, loading = false, fai
 }
 
 // a tried-and-failed first read must never read as one that was never tried; some sources failed → the failed share, no age
-function getUnreadNote({ isBusy, failed = false, failedCount = 0, regionCount = 0 }) {
+function getUnreadNote({ isBusy, failed, failedCount, regionCount }) {
   if (isBusy) return 'Checking the first read…';
   if (!failed && failedCount > 0 && failedCount < regionCount) return `${failedCount} of ${regionCount} failed`;
   return failed || failedCount > 0 ? 'First read failed' : 'Nothing has been read yet.';
