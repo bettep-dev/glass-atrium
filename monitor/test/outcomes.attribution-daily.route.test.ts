@@ -1,5 +1,5 @@
 // Regression tests for GET /api/outcomes/attribution-daily (Outcome 분석 ·
-// AttributionHealthCard backing endpoint).
+// AttributionHealthBlock backing endpoint).
 //
 // Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/outcomes.attribution-daily.route.test.ts
 //

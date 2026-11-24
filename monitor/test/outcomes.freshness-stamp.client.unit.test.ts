@@ -7,12 +7,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { readFileSync } from "node:fs";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
-import { getRootBlock, getTripletOrFail } from "./lib/css-source.js";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
-import { contrastRatio } from "./lib/wcag-contrast.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTCOMES_SRC = resolve(__dirname, "../public/src/screens/outcomes.jsx");
@@ -108,20 +105,3 @@ test("each reporting-health category is one stat whose name, share and run count
     assert.ok(stats.some((text) => text.includes(label) && text.includes(share) && text.includes(runs)), `no stat ${label} ${share} ${runs}: ${stats.join(" | ")}`);
   }
 });
-
-const ROOT_TOKENS = getRootBlock(readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8"));
-
-for (const isPolar of [false, true]) {
-  test(`the busiest ${isPolar ? "polar" : "plain"} crosstab cell keeps its count at 4.5:1 and its fill at 3:1`, () => {
-    const tree = render("CrosstabCell", { cell: { count: 8623, isPolar }, max: 8623, rowLabel: "high", colLabel: "pass" });
-    const td = findNodes(tree, (n) => n.type === "td")[0];
-    assert.strictEqual((td.props.style as { background?: string } | undefined)?.background, undefined, "the count sits on the plain card");
-    const fill = findNodes(tree, (n) => /^rgb\(var\(--[a-z]+\)\)$/.test(String((n.props.style as { background?: string } | undefined)?.background)))[0];
-    assert.ok(fill, "solid fill not found");
-    const fillVar = /--([a-z]+)/.exec(String((fill.props.style as { background: string }).background))![1];
-    const elev = getTripletOrFail(ROOT_TOKENS, "--elev");
-    assert.ok(contrastRatio(getTripletOrFail(ROOT_TOKENS, "--ink"), elev) >= 4.5, "count contrast");
-    const fillContrast = contrastRatio(getTripletOrFail(ROOT_TOKENS, `--${fillVar}`), elev);
-    assert.ok(fillContrast >= 3, `fill contrast ${fillContrast.toFixed(2)}`);
-  });
-}

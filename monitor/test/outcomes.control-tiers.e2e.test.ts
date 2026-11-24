@@ -69,16 +69,16 @@ const DRAWER = getMarkup("DetailModal", {
   detailRow: RECORDS[1], detailState: { status: "loading", data: null, error: null }, rows: RECORDS, onClose: noop, onNav: noop,
 });
 
-// a card head whose right slot holds its own status: beside the info button (Confident but failed) or alone
-const CROSSTAB = getMarkup("CrosstabCard", {
+// a block head holding its own status: beside the info button (Confident but failed) or alone
+const CROSSTAB = getMarkup("CrosstabBlock", {
   state: { status: "ready", data: { crosstab: { polarTotal: 4, total: 40, byCell: { "high|false": { count: 3 } }, cells: [] } }, error: null },
   onRetry: noop, shared: {},
 });
 const LOADING = { status: "loading", data: null, error: null };
 // a read window → the head carries its status (a first read in flight leaves the head empty)
 const ATTRIBUTION_READ = { ...READY, data: { days_series: [], window_summary: { literal_omission_rate: null, total_attributed: 0 } } };
-const ATTRIBUTION = getMarkup("AttributionHealthCard", { state: ATTRIBUTION_READ, period: 30, onRetry: noop, shared: {} });
-const CHANNELS = getMarkup("ChannelLivenessCard", { state: LOADING, onRetry: noop, shared: {} });
+const ATTRIBUTION = getMarkup("AttributionHealthBlock", { state: ATTRIBUTION_READ, period: 30, onRetry: noop, shared: {} });
+const CHANNELS = getMarkup("ChannelLivenessBlock", { state: LOADING, onRetry: noop, shared: {} });
 
 const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="first-page" style="width: 1170px; padding: 24px;">${getLedger(0)}</div>
@@ -211,21 +211,22 @@ describe("the ledger's pagination row is the card's 40 foot", () => {
   });
 });
 
-describe("a card head's own status reads as glyph and word, never a pill", () => {
-  const STATUS = '.card-head [data-role="head-status"]';
+describe("a block head's own status reads as glyph and word on the title's line, never a pill", () => {
+  const STATUS = '[data-role="head-status"]';
 
-  test("Confident but failed: the mismatches status sits in the head's sub slot on the title's line, unboxed", async () => {
-    const status = await readBox(`#crosstab .card-head-text > .card-sub ${STATUS.replace(".card-head ", "")}`);
-    const title = await readBox("#crosstab .card-title");
+  test("Confident but failed: the mismatches status sits on the title's line, unboxed", async () => {
+    const status = await readBox(`#crosstab ${STATUS}`);
+    const title = await readBox("#crosstab h3");
     assert.match((await page.$eval(`#crosstab ${STATUS}`, (el) => el.textContent)) ?? "", /4 mismatches/);
-    assert.equal(await page.locator("#crosstab .card-head .pill").count(), 0, "a pill in the head");
+    assert.equal(await page.locator("#crosstab .pill").count(), 0, "a pill in the head");
     assert.ok(await page.$eval(`#crosstab ${STATUS}`, (el) => el.querySelector("svg") !== null), "the warn glyph leads the word");
-    assert.ok(status.top >= title.top && status.bottom <= title.bottom, `the status ${status.top}–${status.bottom} inside the title line ${title.top}–${title.bottom}`);
+    const [statusCentre, titleCentre] = [(status.top + status.bottom) / 2, (title.top + title.bottom) / 2];
+    assert.ok(Math.abs(statusCentre - titleCentre) < 4, `the status centre ${statusCentre} on the title line ${titleCentre}`);
   });
 
   for (const card of ["attribution", "channels"]) {
     test(`${card}: the head's lone status is glyph and word, no pill`, async () => {
-      assert.equal(await page.locator(`#${card} .card-head .pill`).count(), 0, "a pill in the head");
+      assert.equal(await page.locator(`#${card} .pill`).count(), 0, "a pill in the head");
       assert.ok(((await page.$eval(`#${card} ${STATUS}`, (el) => el.textContent)) ?? "").trim().length > 0, "the status word");
     });
   }

@@ -74,7 +74,6 @@ interface OutcomesHelpers {
     agentStack: unknown,
     byAgentTop?: unknown,
   ) => { agent: string; failed: number; blocked: number; openCaveats: number | null; total: number; rate: number; isLowSample: boolean }[];
-  getGraderSentenceO: (breakdown: Record<string, unknown> | null | undefined) => string | null;
   getConfidentFailedO: (crosstab: { total: number; byCell: Record<string, { count: number }> } | null) => { count: number; share: number } | null;
   getCrosstabVisibleRowsO: (byCell: Record<string, { count: number }>) => string[];
   buildNeedsYouReasonsO: (data: unknown, attention: unknown) => { key: string; label: string; count: number | null; tone: string }[];
@@ -1150,18 +1149,6 @@ describe("the Why words: the first reason that applies, in sentence case, with e
       assert.strictEqual(helpers.getNeedsYouReasonO(row.row, row.row.closed_at), null);
     });
   }
-});
-
-describe("getGraderSentenceO: automatic checks read as one sentence over the checkable records", () => {
-  test("checked = passed + failed, out of every graded record", () => {
-    assert.strictEqual(
-      helpers.getGraderSentenceO({ verified_pass: 47, unverified: 8312, verified_fail: 14, not_measured: 5, graded_total: 8373 }),
-      "Checked 61 of 8,373 records: 47 passed, 14 failed",
-    );
-  });
-  test("no breakdown → no sentence, never a sentence of zeros", () => {
-    assert.strictEqual(helpers.getGraderSentenceO(null), null);
-  });
 });
 
 describe("Confidence vs. reality: the headline counts confident failures and empty rows are hidden", () => {

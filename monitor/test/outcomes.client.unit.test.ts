@@ -702,7 +702,7 @@ test("ResultTableCard: the head counts the records the filter matched, and nothi
 
 interface DensitySandboxO {
   GraderBreakdownBody: (props: { state: Record<string, unknown> }) => RecordedElementO;
-  GraderBreakdownCard: (props: { state: Record<string, unknown> }) => RecordedElementO;
+  GraderBreakdownBlock: (props: { state: Record<string, unknown> }) => RecordedElementO;
   buildStatusBandTilesO: (data: Record<string, unknown>, attentionCount: number | null) => Array<{ key: string }>;
 }
 const density = rendered as unknown as DensitySandboxO;
@@ -718,17 +718,16 @@ describe("Task results density: the columns beside a taller card carry their own
   });
 });
 
-describe("Automatic check results: where each verdict came from is the card's foot, drawn only under a drawn breakdown", () => {
+describe("Automatic check results: where each verdict came from is the block's foot, drawn only under a drawn breakdown", () => {
   const overall = { grader_breakdown: { verified_pass: 5, unverified: 3, verified_fail: 2, graded_total: 10 }, downgrade_breakdown: { writer_true_downgraded: 2 } };
   const rows = [
-    { name: "a landed breakdown ends the card with the foot", state: { status: "ready", data: { overall } }, hasFoot: true },
-    { name: "a loading card draws no foot", state: { status: "loading" }, hasFoot: false },
+    { name: "a landed breakdown ends the block with the foot", state: { status: "ready", data: { overall } }, hasFoot: true },
+    { name: "a loading block draws no foot", state: { status: "loading" }, hasFoot: false },
     { name: "a landed payload with no breakdown draws no foot", state: { status: "ready", data: { overall: { downgrade_breakdown: overall.downgrade_breakdown } } }, hasFoot: false },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const card = (density.GraderBreakdownCard({ state: row.state }).props.children) as RecordedElementO;
-      assert.equal(Boolean(card.props.foot), row.hasFoot);
+      assert.equal(Boolean(density.GraderBreakdownBlock({ state: row.state }).props.foot), row.hasFoot);
     });
   }
 });
@@ -750,31 +749,27 @@ describe("getClampedPageO: a held page never runs past the last page of the curr
 });
 
 interface ChartSandboxO {
-  getCrosstabBarO: (cell: { count: number; isPolar: boolean }, max: number) => { colorVar: string; widthPct: number } | null;
-  CrosstabCell: (props: { cell: { count: number; isPolar: boolean }; max: number; rowLabel: string; colLabel: string }) => RecordedElementO;
+  CrosstabCell: (props: { cell: { count: number; isPolar: boolean }; rowLabel: string; colLabel: string }) => RecordedElementO;
   getStackedYTicksO: (barAreaH: number) => Array<{ label: string; y: number }>;
 }
 const chart = rendered as unknown as ChartSandboxO;
 
-describe("getCrosstabBarO: a cell's fill is a solid bar sized by its share of the busiest cell", () => {
+describe("a crosstab cell is its count alone, never a bar under it", () => {
   const rows = [
-    { name: "the busiest cell fills the whole width", cell: { count: 40, isPolar: false }, max: 40, bar: { colorVar: "--accent", widthPct: 100 } },
-    { name: "a polar cell at half the busiest keeps the warn hue at half width", cell: { count: 20, isPolar: true }, max: 40, bar: { colorVar: "--warn", widthPct: 50 } },
-    { name: "an empty cell draws no bar", cell: { count: 0, isPolar: true }, max: 40, bar: null },
+    { name: "a busy cell", cell: { count: 40, isPolar: false }, tone: "text-ink" },
+    { name: "a polar cell", cell: { count: 20, isPolar: true }, tone: "text-ink" },
+    { name: "an empty cell reads 0 in faint ink", cell: { count: 0, isPolar: true }, tone: "text-faint" },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      // vm-realm object → compare by value, not prototype
-      assert.deepEqual(JSON.parse(JSON.stringify(chart.getCrosstabBarO(row.cell, row.max))), row.bar);
+      const elements = flattenO(chart.CrosstabCell({ cell: row.cell, rowLabel: "high", colLabel: "fail" }));
+      const backgrounds = elements.map((el) => (el.props.style as { background?: string } | undefined)?.background).filter(Boolean);
+      const count = elements.find((el) => String(el.props.className ?? "").split(" ").includes(row.tone));
+
+      assert.deepEqual(backgrounds, [], "no fill in the cell");
+      assert.equal(count?.props.children, String(row.cell.count));
     });
   }
-
-  test("the cell paints no translucent tint under its count", () => {
-    const cell = chart.CrosstabCell({ cell: { count: 10, isPolar: true }, max: 40, rowLabel: "high", colLabel: "fail" });
-    const backgrounds = flattenO(cell).map((el) => (el.props.style as { background?: string } | undefined)?.background).filter(Boolean);
-    assert.ok(backgrounds.length > 0, "the bar is painted");
-    for (const background of backgrounds) assert.doesNotMatch(String(background), /\//, "an alpha fill drops below 3:1");
-  });
 });
 
 describe("getStackedYTicksO: each share tick sits its share up the bar area", () => {

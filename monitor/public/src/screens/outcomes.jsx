@@ -740,24 +740,28 @@ function ScreenOutcomes({ onNav }) {
         <AgentFailureTableO state={analyticsState} {...regionRetry}/>
       </div>
       <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState)} className="mt-section">
-        <window.UI.SplitRow ratio="1:1" layout="equal">
-          <AttributionHealthCard state={attributionState} period={analyticsPeriod} {...regionRetry}/>
-          <ChannelLivenessCard state={channelLivenessState} {...regionRetry}/>
-        </window.UI.SplitRow>
-        <window.UI.Disclosure kind="detail" level={3} title="Daily breakdown" sub="Budget-killed subagents">
-          <AttributionBreakdownO state={attributionState}/>
-        </window.UI.Disclosure>
+        <window.UI.Stack>
+          <window.UI.SplitRow ratio="1:1" layout="divided">
+            <AttributionHealthBlock state={attributionState} period={analyticsPeriod} {...regionRetry}/>
+            <ChannelLivenessBlock state={channelLivenessState} {...regionRetry}/>
+          </window.UI.SplitRow>
+          <window.UI.Disclosure kind="detail" level={3} isInline title="Daily breakdown" sub="Budget-killed subagents">
+            <AttributionBreakdownO state={attributionState}/>
+          </window.UI.Disclosure>
+        </window.UI.Stack>
       </window.UI.Disclosure>
 
       <window.UI.Disclosure kind="status" title="Self-report quality" sub={selfReportSummaryO(analyticsState)} className="mt-section">
-        <window.UI.SplitRow ratio="1:1" layout="content">
-          <GraderBreakdownCard state={analyticsState} {...regionRetry}/>
-          <CrosstabCard state={analyticsState} {...regionRetry}/>
-        </window.UI.SplitRow>
-        <window.UI.Disclosure kind="detail" level={3} title="By task type"
-          tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
-          <TaskTypeGraderCrosstabO rows={analyticsState.data?.overall?.task_type_grader_breakdown}/>
-        </window.UI.Disclosure>
+        <window.UI.Stack>
+          <window.UI.SplitRow ratio="1:1" layout="divided">
+            <GraderBreakdownBlock state={analyticsState} {...regionRetry}/>
+            <CrosstabBlock state={analyticsState} {...regionRetry}/>
+          </window.UI.SplitRow>
+          <window.UI.Disclosure kind="detail" level={3} isInline title="By task type"
+            tone={getTaskTypeFoldToneO(analyticsState.data?.overall?.task_type_grader_breakdown)}>
+            <TaskTypeGraderCrosstabO rows={analyticsState.data?.overall?.task_type_grader_breakdown}/>
+          </window.UI.Disclosure>
+        </window.UI.Stack>
       </window.UI.Disclosure>
 
       {/* Learning 에서 이관된 raw 데몬 사이클 이벤트 로그 — operational data (집계 신호 아님 · W3-T3/T7). */}
@@ -1292,23 +1296,45 @@ function OpenCaveatCellO({ count, view }) {
 // daily stacked bar (inline SVG, no Recharts) + window summary stat row + literal-omission severity head status (glyph + word)
 // NULL attribution_source rows excluded by the backend (rows older than attribution tracking) → every ratio denominator = total_attributed.
 
-function AttributionHealthCard({ state, period, onRetry, shared }) {
-  const { Card, HeadStatus } = window.UI;
+/**
+ * One block of a status fold's body, with no card box of its own: a level-3 title, its status and ⓘ on the title's line.
+ * @param isFlush - a table body whose edge cells carry the card padding → the head and foot take the same inset
+ */
+function FoldBlockO({ id, title, status, info, isFlush = false, foot, children }) {
+  const { Stack, SectionLabel, CardInfo } = window.UI;
+  const titleId = `${id}-title`;
+  const inset = isFlush ? 'px-card-pad' : '';
+
+  return (
+    <section id={id} aria-labelledby={titleId} className="min-w-0">
+      <Stack>
+        <div className={`flex flex-wrap items-center gap-label ${inset}`.trim()}>
+          <SectionLabel level={3} id={titleId}>{title}</SectionLabel>
+          {info && <CardInfo label="How this is counted" describedBy={titleId}>{info}</CardInfo>}
+          {status}
+        </div>
+        {children}
+        {foot && <div className={inset || undefined}>{foot}</div>}
+      </Stack>
+    </section>
+  );
+}
+
+function AttributionHealthBlock({ state, period, onRetry, shared }) {
   const badge = getAttributionHeadBadgeO(state, period);
 
   // one inline span → the flex gap sits after the glyph only, never between the sentence's own runs
   return (
-    <div id={REGION_CARD_IDS.attribution} className="mb-section">
-      <Card
-        title="Record attribution"
-        sub={badge && (
-          <HeadStatus tone={toneFromColorVarO(badge.colorVar)}>
-            <span>Missing reports, <window.UI.NoWrap>{period} days</window.UI.NoWrap>: {badge.text}</span>
-          </HeadStatus>
-        )}>
-        <AttributionHealthBody state={state} onRetry={onRetry} shared={shared}/>
-      </Card>
-    </div>
+    <FoldBlockO
+      id={REGION_CARD_IDS.attribution}
+      title="Record attribution"
+      status={badge && (
+        <window.UI.HeadStatus tone={toneFromColorVarO(badge.colorVar)}>
+          <span>Missing reports, <window.UI.NoWrap>{period} days</window.UI.NoWrap>: {badge.text}</span>
+        </window.UI.HeadStatus>
+      )}>
+      <AttributionHealthBody state={state} onRetry={onRetry} shared={shared}/>
+    </FoldBlockO>
   );
 }
 
@@ -1625,19 +1651,16 @@ function AttributionLegend() {
 // 대시보드에서는 품질 저하처럼 읽혔다. 판정(eligible/alerting)과 임계값은 전부 서버 응답에서
 // 오며 카드는 어떤 수치도 재계산하지 않는다 — doctor §16 과 같은 정의 하나를 공유하기 위함.
 
-function ChannelLivenessCard({ state, onRetry, shared }) {
-  const { Card, HeadStatus } = window.UI;
-
+function ChannelLivenessBlock({ state, onRetry, shared }) {
   const badge = getChannelLivenessBadgeO(state);
 
   return (
-    <div id={REGION_CARD_IDS.channels} className="mb-section">
-      <Card
-        title="Recording channels"
-        sub={<HeadStatus tone={badge.tone}>{badge.text}</HeadStatus>}>
-        <ChannelLivenessBody state={state} onRetry={onRetry} shared={shared}/>
-      </Card>
-    </div>
+    <FoldBlockO
+      id={REGION_CARD_IDS.channels}
+      title="Recording channels"
+      status={<window.UI.HeadStatus tone={badge.tone}>{badge.text}</window.UI.HeadStatus>}>
+      <ChannelLivenessBody state={state} onRetry={onRetry} shared={shared}/>
+    </FoldBlockO>
   );
 }
 
@@ -1747,18 +1770,16 @@ function ChannelLivenessRow({ channel, days }) {
 //   verified_pass/unverified/verified_fail = graded_total 분모 · not_measured(레거시 NULL) 은 비율 분모 제외.
 //   목적: 측정 산물(unverified/legacy)을 품질 실패로 오독하지 않게 측정 신호를 명시 노출.
 
-function GraderBreakdownCard({ state, onRetry, shared }) {
-  const { Card, getRegionView } = window.UI;
+function GraderBreakdownBlock({ state, onRetry, shared }) {
   // the foot footnotes the drawn breakdown → absent while the body shows loading, error or empty
-  const isReady = getRegionView(state) === 'ready' && Boolean(state.data?.overall?.grader_breakdown);
+  const isReady = window.UI.getRegionView(state) === 'ready' && Boolean(state.data?.overall?.grader_breakdown);
   const segments = isReady ? getDowngradeSegmentsO(state.data.overall.downgrade_breakdown) : [];
 
   return (
-    <div id={REGION_CARD_IDS.checks} className="mb-section">
-      <Card title="Automatic check results" foot={segments.length > 0 && <DowngradeBreakdownRowO segments={segments}/>}>
-        <GraderBreakdownBody state={state} onRetry={onRetry} shared={shared}/>
-      </Card>
-    </div>
+    <FoldBlockO id={REGION_CARD_IDS.checks} title="Automatic check results"
+      foot={segments.length > 0 && <DowngradeBreakdownRowO segments={segments}/>}>
+      <GraderBreakdownBody state={state} onRetry={onRetry} shared={shared}/>
+    </FoldBlockO>
   );
 }
 
@@ -1790,22 +1811,7 @@ function GraderBreakdownBody({ state, onRetry, shared }) {
     return { key, label: <StatGlyphLabelO meta={meta}/>, value: formatIntO(count), context: pct != null ? formatPctO(pct) : 'not in share denominator' };
   });
 
-  return (
-    <window.UI.Stack gap="label">
-      {/* open, not folded → the column matches the cross table beside it instead of leaving one sentence over a blank card */}
-      <p className="fs-body text-ink">{getGraderSentenceO(breakdown)}</p>
-      <window.UI.StatRow stats={stats}/>
-    </window.UI.Stack>
-  );
-}
-
-// checked = a definite verdict (pass or fail) — Auto-check N/A records were graded but not checkable
-function getGraderSentenceO(breakdown) {
-  if (!breakdown) return null;
-  const passed = Number(breakdown.verified_pass) || 0;
-  const failed = Number(breakdown.verified_fail) || 0;
-  const graded = Number(breakdown.graded_total) || 0;
-  return `Checked ${formatIntO(passed + failed)} of ${formatIntO(graded)} records: ${formatIntO(passed)} passed, ${formatIntO(failed)} failed`;
+  return <window.UI.StatRow stats={stats}/>;
 }
 
 // downgrade_origin 분포 서브라인 — grader_verdict 카드에 종속. writer_true_downgraded(작성자 pass
@@ -1920,9 +1926,7 @@ function TaskTypeGraderBarO({ row, maxTotal, isMuted }) {
 // 행 4 (confidence) × 열 3 (metric_pass) = 12 셀 + 합계 행/열 → 5열 이내(라벨+pass+fail+null+합계).
 // polar mismatch(overconfidence high+fail · underconfidence low+pass) → ⚠ 기호 + warn 색조 (dual-encoding).
 
-function CrosstabCard({ state, onRetry, shared }) {
-  const { Card } = window.UI;
-
+function CrosstabBlock({ state, onRetry, shared }) {
   const crosstab   = state.status === 'ready' ? state.data?.crosstab : null;
   const polarTotal = crosstab ? crosstab.polarTotal : 0;
   const confidentFailed = getConfidentFailedO(crosstab);
@@ -1930,26 +1934,25 @@ function CrosstabCard({ state, onRetry, shared }) {
 
   // the meta keeps the share (width capped at "100.0%"; a count widens with the install) → the count rides the hover title
   return (
-    <div id={REGION_CARD_IDS.crosstab} className="mb-section">
-      <Card
-        title="Confident but failed"
-        sub={(confidentFailed || state.status === 'ready') && (
-          <span className="inline-flex items-center gap-label-inline">
-            {confidentFailed && (
-              <span title={`${formatIntO(confidentFailed.count)} of ${formatIntO(crosstab.total)} records · ${formatRateO(confidentFailed.share)}`}>
-                {formatRateO(confidentFailed.share)}
-              </span>
-            )}
-            {state.status === 'ready' && <window.UI.HeadStatus tone="warn">{formatIntO(polarTotal)} mismatches</window.UI.HeadStatus>}
-          </span>
-        )}
-        info={<p className="fs-body">Records whose writer reported high confidence while the record's own check failed.</p>}
-        // flush only under the table → its edge cells take the card padding; loading, error and empty keep the padded body
-        isFlush={hasTable}
-        foot={hasTable && <CrosstabLegendO/>}>
-        <CrosstabBody state={state} onRetry={onRetry} shared={shared}/>
-      </Card>
-    </div>
+    <FoldBlockO
+      id={REGION_CARD_IDS.crosstab}
+      title="Confident but failed"
+      status={(confidentFailed || state.status === 'ready') && (
+        <span className="inline-flex items-center gap-label-inline fs-meta text-dim">
+          {confidentFailed && (
+            <span title={`${formatIntO(confidentFailed.count)} of ${formatIntO(crosstab.total)} records · ${formatRateO(confidentFailed.share)}`}>
+              {formatRateO(confidentFailed.share)}
+            </span>
+          )}
+          {state.status === 'ready' && <window.UI.HeadStatus tone="warn">{formatIntO(polarTotal)} mismatches</window.UI.HeadStatus>}
+        </span>
+      )}
+      info={<p className="fs-body">Records whose writer reported high confidence while the record's own check failed.</p>}
+      // the table's edge cells carry the card padding → head and foot take the same inset; loading, error and empty keep none
+      isFlush={hasTable}
+      foot={hasTable && <CrosstabLegendO/>}>
+      <CrosstabBody state={state} onRetry={onRetry} shared={shared}/>
+    </FoldBlockO>
   );
 }
 
@@ -1967,14 +1970,12 @@ function CrosstabBody({ state, onRetry, shared }) {
     return <EmptyStateO message="No confidence-vs-self-check records in this period."/>;
   }
 
-  const max = crosstabMaxCountO(crosstab.byCell);
-
   // the page's own-face table class: the .tbl cell geometry and the ledger's column-header face, no clickable-row hover (these rows open nothing)
   return (
     <window.UI.Table caption="Records by writer confidence and self-check result" columns={CROSSTAB_COLUMNS_O}
       className={OWN_FACE_TABLE_CLASS_O}
       bodies={[{ key: 'body', rows: (view) => getCrosstabVisibleRowsO(crosstab.byCell).map((rowKey) => (
-        <CrosstabRow key={rowKey} view={view} rowKey={rowKey} byCell={crosstab.byCell} max={max}/>
+        <CrosstabRow key={rowKey} view={view} rowKey={rowKey} byCell={crosstab.byCell}/>
       )) }]}
       foot={(view) => <CrosstabTotalRow view={view} byCell={crosstab.byCell} total={crosstab.total}/>}/>
   );
@@ -1998,7 +1999,7 @@ function CrosstabLegendO() {
   );
 }
 
-function CrosstabRow({ view, rowKey, byCell, max }) {
+function CrosstabRow({ view, rowKey, byCell }) {
   const { TableRow, TableCell } = window.UI;
   let rowTotal = 0;
   for (const col of CROSSTAB_METRIC_COLS) {
@@ -2010,43 +2011,29 @@ function CrosstabRow({ view, rowKey, byCell, max }) {
       <TableCell view={view} kind="row-header" className="font-medium">{rowKey === 'null' ? 'None' : rowKey}</TableCell>
       {CROSSTAB_METRIC_COLS.map((col) => {
         const cell = byCell[`${rowKey}|${col.key}`] || { count: 0, isPolar: false };
-        return <CrosstabCell key={col.key} view={view} cell={cell} max={max} rowLabel={rowKey} colLabel={col.label}/>;
+        return <CrosstabCell key={col.key} view={view} cell={cell} rowLabel={rowKey} colLabel={col.label}/>;
       })}
       <TableCell view={view} textRole="meta" label="Total" isNumeric className="text-dim">{formatIntO(rowTotal)}</TableCell>
     </TableRow>
   );
 }
 
-function CrosstabCell({ view, cell, max, rowLabel, colLabel }) {
+function CrosstabCell({ view, cell, rowLabel, colLabel }) {
   const { TableCell } = window.UI;
   const count = cell.count || 0;
-  const bar = getCrosstabBarO(cell, max);
 
   return (
     <TableCell
       view={view}
       isNumeric
-      className="tbl-bar-cell"
       title={`${rowLabel} × ${colLabel}: ${formatIntO(count)}${cell.isPolar ? ' · polar mismatch' : ''}`}
       aria-label={`confidence ${rowLabel} metric ${colLabel} ${count}${cell.isPolar ? ' polar mismatch' : ''}`}>
       <span className="inline-flex items-center gap-label-inline justify-end">
         {cell.isPolar && count > 0 && <span aria-hidden="true" style={{ color: 'rgb(var(--warn))' }}><GlyphO name="warn"/></span>}
         <span className={count > 0 ? 'text-ink' : 'text-faint'}>{formatIntO(count)}</span>
       </span>
-      <span className="block mt-stack" aria-hidden="true" style={{ height: 3 }}>
-        {/* anchored to the right edge → the bar ends under its right-aligned count */}
-        {bar && <span className="block ml-auto" style={{ height: '100%', width: `${bar.widthPct}%`, background: `rgb(var(${bar.colorVar}))`, borderRadius: 1 }}/>}
-      </span>
     </TableCell>
   );
-}
-
-// solid bar, never a translucent tint → the fill holds 3:1 on the card while the count stays on the plain card
-function getCrosstabBarO(cell, max) {
-  const count = cell.count || 0;
-  if (!(count > 0) || !(max > 0)) return null;
-  // floor 4% → a lone record stays visible beside a busy cell
-  return { colorVar: cell.isPolar ? '--warn' : '--accent', widthPct: Math.max(4, (count / max) * 100) };
 }
 
 function CrosstabTotalRow({ view, byCell, total }) {
@@ -2077,16 +2064,6 @@ function getConfidentFailedO(crosstab) {
 function getCrosstabVisibleRowsO(byCell) {
   return CROSSTAB_CONFIDENCE_ROWS.filter((rowKey) =>
     CROSSTAB_METRIC_COLS.some((col) => (byCell[`${rowKey}|${col.key}`]?.count || 0) > 0));
-}
-
-// byCell 맵의 최대 셀 카운트 — 음영 정규화 분모.
-function crosstabMaxCountO(byCell) {
-  let max = 0;
-  for (const key in byCell) {
-    const c = byCell[key]?.count || 0;
-    if (c > max) max = c;
-  }
-  return max;
 }
 
 // ----- Loop-events log (raw daemon cycle stream, relocated from Learning) -----

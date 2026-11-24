@@ -148,30 +148,34 @@ test("status folds render open while their detail breakdowns start collapsed", a
   }
 });
 
-// the shared SplitRow with another default layout → a row that names its own layout renders the same under either
-function withSplitRowDefault(layout: string): Record<string, unknown> {
-  const SplitRow = (ui.UI as Record<string, Component>).SplitRow;
-  return { SplitRow: (props: Record<string, unknown>) => SplitRow({ layout, ...props }) };
+// a fold whose body holds a block of the page's own → its body is boxless, every block and nested fold on the host's inset
+function getFold(tree: RenderedNode, title: string): RenderedNode {
+  const [fold] = findNodes(tree, (n) => n.type === "Disclosure" && n.props.title === title);
+  assert.ok(fold, `${title} renders as a fold`);
+  return fold;
 }
 
-for (const sharedDefault of ["content", "equal"]) {
-  test(`paired cards sit side by side in one split row, each row naming its own layout (shared default ${sharedDefault})`, async () => {
-    const { tree } = await renderOutcomesScreen(0, withSplitRowDefault(sharedDefault));
-    const rows = [
-      // equal: peer reporting cards end level · content: each card keeps its own height
-      { name: "record attribution beside recording channels, ending level", ratio: "split-row--1-1", layout: "split-row--equal", titles: ["Record attribution", "Recording channels"] },
-      { name: "check results beside the crosstab", ratio: "split-row--1-1", layout: "split-row--content", titles: ["Automatic check results", "Confident but failed"] },
-    ];
-
-    for (const row of rows) {
-      const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes(row.ratio));
-      const pair = splitRows.find((n) => row.titles.every((title) => collectText(n).includes(title)));
-      assert.ok(pair, row.name);
-      assert.equal(pair.children.filter((child) => typeof child !== "string").length, 2, `${row.name}: exactly two columns`);
-      assert.ok(String(pair.props.className).includes(row.layout), `${row.name}: ${row.layout}`);
-    }
-  });
+function hasClass(node: RenderedNode, name: string): boolean {
+  return String(node.props.className ?? "").split(/\s+/).includes(name);
 }
+
+describe("a status fold's body holds its two blocks and its detail fold with no card inside", () => {
+  const rows = [
+    { name: "Reporting health", blocks: ["Record attribution", "Recording channels"], nested: "Daily breakdown" },
+    { name: "Self-report quality", blocks: ["Automatic check results", "Confident but failed"], nested: "By task type" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const fold = getFold((await renderOutcomesScreen(0)).tree, row.name);
+      const [split] = findNodes(fold, (n) => hasClass(n, "split-row"));
+
+      assert.equal(findNodes(fold, (n) => hasClass(n, "card")).length, 1, "the fold's own box is its one card");
+      assert.ok(hasClass(split, "split-row--divided"), "the two blocks part on one hairline");
+      assert.deepEqual(findNodes(split, (n) => n.type === "SectionLabel").map((n) => collectText(n)), row.blocks);
+      assert.equal(getFold(fold, row.nested).props.isInline, true, `${row.nested} folds inline`);
+    });
+  }
+});
 
 test("the per-agent table spans the full width", async () => {
   const { tree } = await renderOutcomesScreen(0);
@@ -192,8 +196,8 @@ function collectPaintedText(node: RenderedNode | string | null): string {
 }
 
 function getHeaderCopy(tree: RenderedNode): { kind: string; title: string; sub: unknown }[] {
-  return findNodes(tree, (n) => n.type === "CardHead" || n.type === "Disclosure")
-    .map((n) => ({ kind: String(n.type), title: String(n.props.title), sub: n.props.sub }));
+  return findNodes(tree, (n) => n.type === "CardHead" || n.type === "Disclosure" || n.type === "FoldBlockO")
+    .map((n) => ({ kind: String(n.type), title: String(n.props.title), sub: n.props.sub ?? n.props.status }));
 }
 
 test("every card and fold header on the screen fits the title and header-meta caps, loaded or not", async () => {
@@ -203,7 +207,7 @@ test("every card and fold header on the screen fits the title and header-meta ca
   const readyCrosstab = { status: "ready", busy: false, data: { crosstab }, error: null };
   const headers = [
     ...getHeaderCopy((await renderOutcomesScreen(0)).tree),
-    ...getHeaderCopy(renderScreen(create(mod.CrosstabCard as Component, { state: readyCrosstab, onRetry: () => undefined })) as RenderedNode),
+    ...getHeaderCopy(renderScreen(create(mod.CrosstabBlock as Component, { state: readyCrosstab, onRetry: () => undefined })) as RenderedNode),
   ];
 
   assert.ok(headers.length >= 8, `the screen's headers are all collected (${headers.length})`);
@@ -214,7 +218,15 @@ test("every card and fold header on the screen fits the title and header-meta ca
   }
 });
 
-describe("the cross-table header shows its share meta, count in the hover title, only when there are records, and always shows the mismatch status", () => {
+// a block's head line: its level-3 title, then its own status on the same line
+function getBlockHead(tree: RenderedNode): RenderedNode {
+  const [block] = findNodes(tree, (n) => n.type === "FoldBlockO");
+  assert.ok(block, "the region renders as a fold block");
+  const [head] = findNodes(block, (n) => n.children.some((child) => typeof child !== "string" && child.type === "SectionLabel"));
+  return head;
+}
+
+describe("the cross-table head shows its share meta, count in the hover title, only when there are records, and always shows the mismatch status", () => {
   const rows = [
     {
       name: "a ready cross table with records",
@@ -228,26 +240,23 @@ describe("the cross-table header shows its share meta, count in the hover title,
       const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
       const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
       const state = { status: "ready", busy: false, data: { crosstab: row.crosstab }, error: null };
-      const [head] = findNodes(renderScreen(create(mod.CrosstabCard as Component, { state, onRetry: () => undefined })) as RenderedNode,
-        (n) => n.type === "CardHead");
+      const head = getBlockHead(renderScreen(create(mod.CrosstabBlock as Component, { state, onRetry: () => undefined })) as RenderedNode);
 
-      const [sub] = findNodes(head, (n) => n.props.className === "card-sub");
-      const metas = findNodes(sub, (n) => typeof n.props.title === "string")
+      const metas = findNodes(head, (n) => typeof n.props.title === "string" && n.type === "span")
         .map((meta) => ({ text: collectText(meta), title: meta.props.title }));
       assert.deepEqual(metas, row.metas);
-      const statuses = findNodes(sub, (n) => n.type === "HeadStatus");
-      assert.equal(statuses.length, 1, "the status sits in the head's sub slot");
-      assert.equal(findNodes(head, (n) => n.type === "Badge").length, 0, "no badge in the head");
+      const statuses = findNodes(head, (n) => n.type === "HeadStatus");
+      assert.equal(statuses.length, 1, "the status sits on the title line");
       assert.match(collectText(statuses[0]), new RegExp(`${row.crosstab.polarTotal.toLocaleString("en-US")}\\s+mismatches`));
     });
   }
 });
 
-describe("a card's own status is the shared head Status in the head's sub slot, never the right slot", () => {
+describe("a block's own status is the shared head Status on its title's line", () => {
   const rows = [
-    { name: "Record attribution", component: "AttributionHealthCard", data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } } },
-    { name: "Recording channels", component: "ChannelLivenessCard", data: { channels: [], alerting: ["stop"], days: 7 } },
-    { name: "Confident but failed", component: "CrosstabCard", data: { crosstab: { total: 10, polarTotal: 4, byCell: {} } } },
+    { name: "Record attribution", component: "AttributionHealthBlock", data: { days_series: [], window_summary: { literal_omission_rate: 0.0123, total_attributed: 81 } } },
+    { name: "Recording channels", component: "ChannelLivenessBlock", data: { channels: [], alerting: ["stop"], days: 7 } },
+    { name: "Confident but failed", component: "CrosstabBlock", data: { crosstab: { total: 10, polarTotal: 4, byCell: {} } } },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -255,12 +264,11 @@ describe("a card's own status is the shared head Status in the head's sub slot, 
       const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
       const state = { status: "ready", busy: false, data: row.data, error: null };
       const tree = renderScreen(create(mod[row.component] as Component, { state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
-      const [head] = findNodes(tree, (n) => n.type === "CardHead");
-      const [sub] = findNodes(head, (n) => n.props.className === "card-sub");
+      const head = getBlockHead(tree);
 
-      assert.equal(findNodes(head, (n) => n.props["data-role"] === "head-status").length, 1, "one head status");
-      assert.equal(findNodes(sub, (n) => n.type === "HeadStatus").length, 1, "the shared Status, in the sub slot");
-      assert.equal(head.props.right ?? null, null, "the right slot stays empty");
+      assert.equal(collectText(findNodes(head, (n) => n.type === "SectionLabel")[0]), row.name);
+      assert.equal(findNodes(tree, (n) => n.props["data-role"] === "head-status").length, 1, "one head status");
+      assert.equal(findNodes(head, (n) => n.type === "HeadStatus").length, 1, "the shared Status, on the title line");
     });
   }
 });
@@ -310,10 +318,10 @@ test("a region's error card hands a focused, successful Retry to that region's o
     { name: "status band", component: "StatusBandO", props: { analyticsState: retrying, attentionState: ready, windowDays: 30, freshness: null, onRetry } },
     { name: "needs-you count", component: "StatusBandO", props: { analyticsState: ready, attentionState: retrying, windowDays: 30, freshness: null, onRetry } },
     { name: "by-agent failures", component: "AgentFailureTableO", props: { state: retrying, onRetry } },
-    { name: "record attribution", component: "AttributionHealthCard", props: { state: retrying, period: 30, onRetry } },
-    { name: "recording channels", component: "ChannelLivenessCard", props: { state: retrying, onRetry } },
-    { name: "check results", component: "GraderBreakdownCard", props: { state: retrying, onRetry } },
-    { name: "cross table", component: "CrosstabCard", props: { state: retrying, onRetry } },
+    { name: "record attribution", component: "AttributionHealthBlock", props: { state: retrying, period: 30, onRetry } },
+    { name: "recording channels", component: "ChannelLivenessBlock", props: { state: retrying, onRetry } },
+    { name: "check results", component: "GraderBreakdownBlock", props: { state: retrying, onRetry } },
+    { name: "cross table", component: "CrosstabBlock", props: { state: retrying, onRetry } },
     { name: "run events", component: "LoopEventsCard", props: { state: retrying, onRetry } },
     {
       name: "record ledger",
@@ -607,7 +615,7 @@ describe("the Record attribution head reads None only over a read window with no
   const renderCard = async (state: unknown) => {
     const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
     const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
-    return renderScreen(create(mod.AttributionHealthCard as Component, { state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
+    return renderScreen(create(mod.AttributionHealthBlock as Component, { state, period: 30, onRetry: () => undefined, shared: {} })) as RenderedNode;
   };
   const getHeads = (tree: RenderedNode) => findNodes(tree, (n) => n.props["data-role"] === "head-status");
 
