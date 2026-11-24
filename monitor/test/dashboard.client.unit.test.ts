@@ -202,7 +202,7 @@ interface WeekRowHelpers {
     rows: Array<{ result: string; count: number }>; writerTotal: number; span: string; agents: Array<{ agent: string; count: number }>;
   };
   buildHourGrid: (data: unknown) => {
-    rows: Array<{ day: string; counts: number[]; fold: string | null }>; total: number; span: string;
+    rows: Array<{ day: string; counts: number[]; fold: string | null }>; total: number; span: string; dateCount: number | null;
     peak: { day: string; hour: number; count: number; fold: string | null };
   };
   describeHourGrid: (grid: unknown) => string;
