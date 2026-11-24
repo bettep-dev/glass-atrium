@@ -13,7 +13,7 @@ import { dirname, resolve } from "node:path";
 import { imageUploadQuerySchema, messageBodySchema, ownerOrdersQuerySchema, replyBodySchema } from "../src/server/queue/schemas.js";
 import { getImageFacts } from "../src/server/queue/image-format.js";
 import { IMAGE_BYTES_MAX } from "../src/server/queue/images.js";
-import { collectText, createStatefulReact, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { collectText, createEffectReact, createFakeDocument, createStatefulReact, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { getRelayHistoryFixture } from "./lib/queue-render-fixtures.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -2638,6 +2638,22 @@ describe("the rail foot", () => {
     { name: "no resume renders no button", region: resumes([]), expected: [] },
   ];
   for (const row of rows) test(row.name, () => assert.deepEqual(footButton(row.region), row.expected));
+
+  test("the foot at rest, both drawers closed, keeps the page scrollable on the Queue and after leaving it", async () => {
+    const effects = createEffectReact();
+    const doc = createFakeDocument();
+    const live = (await loadScreenModule(UI_SRC, { React: effects.react, document: doc })) as { UI: Record<string, unknown> };
+    const page = (await loadScreenModule(QUEUE_SRC, { React: effects.react, URLSearchParams, window: { UI: live.UI, location: { hash: "#queue" } } })) as ScreenModule;
+    const relaySignal = { status: "ready", data: { count: { refused: 1, forwarded: 0, redacted: 0 }, hasRecord: true }, error: null, busy: false };
+    const { queue } = buildQueue({ resumes: resumes(["acked"]), relaySignal });
+    doc.reset();
+
+    const foot = effects.mount(() => (page.RailFootQ as Component)({ queue }), () => ({}));
+    const onQueue = doc.body.style.overflow;
+    foot.unmount();
+
+    assert.deepEqual({ onQueue, afterLeaving: doc.body.style.overflow }, { onQueue: "auto", afterLeaving: "auto" });
+  });
 });
 
 describe("order composer", () => {

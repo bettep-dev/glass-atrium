@@ -120,6 +120,7 @@ export interface EffectReact {
  * React stub that commits one render the way React does: host refs attach, then layout effects,
  * then passive effects, each in declaration order. Unmount runs layout cleanups, detaches refs,
  * then passive cleanups — also in declaration order.
+ * Nested function components render inside the same commit, parent before child — React runs a child's effects first.
  */
 export function createEffectReact(): EffectReact {
   let layout: EffectCallback[] = [];
@@ -133,7 +134,7 @@ export function createEffectReact(): EffectReact {
   function mount(render: () => unknown, attach: RefAttach) {
     layout = [];
     passive = [];
-    const tree = render();
+    const tree = getExpanded(render());
     const refs = putRefs(tree, attach, []);
     const layoutCleanups = layout.map((effect) => effect());
     const passiveCleanups = passive.map((effect) => effect());
@@ -146,6 +147,14 @@ export function createEffectReact(): EffectReact {
   }
 
   return { react, mount };
+}
+
+// function-component elements → their output, host elements kept as elements so their refs still attach
+function getExpanded(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(getExpanded);
+  if (!isElement(node)) return node;
+  if (typeof node.type === "function") return getExpanded((node.type as (p: unknown) => unknown)(node.props));
+  return { ...node, props: { ...node.props, children: getExpanded(node.props.children) } };
 }
 
 function putRefs(node: unknown, attach: RefAttach, refs: Array<{ current: unknown }>): Array<{ current: unknown }> {
