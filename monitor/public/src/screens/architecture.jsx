@@ -1775,9 +1775,7 @@ function NodePartHealth({
 
 	return (
 		<div data-node-health={unscoped}>
-			<h3 className="fs-title font-semibold text-ink mb-stack">
-				Health ({rows.length + looseDaemons.length})
-			</h3>
+			<DrawerHeadingAR>Health ({rows.length + looseDaemons.length})</DrawerHeadingAR>
 			<window.UI.Stack gap="block" className="arch-drawer-part-list">
 				{rows.map((row) => {
 					const renderDetail = HEALTH_ROW_DETAILS[row.kind];
@@ -2083,9 +2081,7 @@ function OwningScreenLinkAR({ nodeId }) {
 	if (!owner) return null;
 	return (
 		<div>
-			<h3 className="fs-title font-semibold text-ink mb-stack">
-				Records
-			</h3>
+			<DrawerHeadingAR>Records</DrawerHeadingAR>
 			<a className="fs-body" href={`#${owner.id}`}>
 				Open {owner.label}
 			</a>
@@ -2099,9 +2095,7 @@ function FlowSummary({ inbound, outbound, nodeIndex }) {
 		return <div className="fs-meta text-faint">No connections</div>;
 	return (
 		<div>
-			<h3 className="fs-title font-semibold text-ink mb-stack">
-				Connections ({total})
-			</h3>
+			<DrawerHeadingAR>Connections ({total})</DrawerHeadingAR>
 			<div className="space-y-list">
 				{inbound.length > 0 && (
 					<FlowList
@@ -2150,6 +2144,11 @@ function FlowList({ title, items, nodeIndex, direction }) {
 function getFlowPeerLabelAR(flow, direction, nodeIndex) {
 	const peerId = direction === "in" ? flow.from : flow.to;
 	return nodeIndex.get(peerId)?.label || peerId;
+}
+
+// a drawer section's heading — Health, Records and Connections share one look
+function DrawerHeadingAR({ children }) {
+	return <h3 className="fs-title font-semibold text-ink mb-stack">{children}</h3>;
 }
 
 // node.id → drawer info; a whole zone is named by its full wording, since the drawn title is one word
