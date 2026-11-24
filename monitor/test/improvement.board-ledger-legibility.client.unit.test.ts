@@ -521,11 +521,6 @@ describe("prose on the ledger, banner and drawer is set in sans; mono stays for 
       tree: () => sandbox.ParkedLoopBannerI({ applyCap: { capped_patterns: 2, capped_agents: 1, rearm_hint: "warn" } }),
     },
     {
-      name: "drawer footnote",
-      prose: "Scores come from the grader",
-      tree: () => sandbox.DetailBodyI({ fields: [], sections: [], footnote: "Scores come from the grader" }),
-    },
-    {
       name: "pre-verify verdict and axis label",
       prose: "Scope fidelity",
       tree: () =>

@@ -2047,7 +2047,7 @@ function DetailDrawerI({ row, onClose }) {
 }
 
 // Detail body — fields grid + 0..N text sections + pre-verify keyed block (pattern / proposal 공용).
-function DetailBodyI({ fields, sections, footnote, preVerify }) {
+function DetailBodyI({ fields, sections, preVerify }) {
 	const labelCls = "fs-meta text-dim font-medium";
 	return (
 		<div className="flex flex-col gap-3">
@@ -2078,9 +2078,6 @@ function DetailBodyI({ fields, sections, footnote, preVerify }) {
 					</div>
 				))}
 			{preVerify && <PreVerifyDetailI {...preVerify} labelCls={labelCls} />}
-			{footnote && (
-				<div className="fs-meta text-faint mt-2">{footnote}</div>
-			)}
 		</div>
 	);
 }
