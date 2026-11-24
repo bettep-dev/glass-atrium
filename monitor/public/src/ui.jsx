@@ -132,12 +132,12 @@ function getBadgeCount(value) {
 //   kind 'no-results' → 고정 문장 한 줄 + 조용한 reset(onReset 있을 때만) · 'first-use' → 호출자 message.
 const NO_RESULTS_MESSAGE = 'No records match these filters.';
 
-function EmptyState({ kind = 'first-use', message, hint, action, onReset, className='' }) {
+function EmptyState({ kind = 'first-use', message, hint, action, onReset, role, className='' }) {
   const isNoResults = kind === 'no-results';
   const text = isNoResults ? NO_RESULTS_MESSAGE : message;
   const slot = isNoResults && onReset ? <QuietButton onClick={onReset}>Reset filters</QuietButton> : action;
   return (
-    <div className={`placeholder ${className}`.trim()}>
+    <div role={role} className={`placeholder ${className}`.trim()}>
       <div><DayTokens>{text}</DayTokens></div>
       {hint && <div className="placeholder-hint"><DayTokens>{hint}</DayTokens></div>}
       {slot && <div className="mt-2 flex">{slot}</div>}
@@ -2811,11 +2811,11 @@ function RetryButton({ onRetry, isBusy = false, isInline = false, focusTargetId 
  * @param focusTargetId - region card id that takes focus if this card unmounts while its Retry is focused
  * @param minHeight - reserved slot height so the grid keeps its shape
  */
-function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
+function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTargetId, minHeight, role, className = '' }) {
   const copy = getErrorCopy(error, source);
   const retry = onRetry && <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId}/>;
   return (
-    <AlarmRow tone="crit" title={copy.sentence} detail={copy.next} actions={retry} minHeight={minHeight} className={`region-unavailable ${className}`.trim()}>
+    <AlarmRow tone="crit" title={copy.sentence} detail={copy.next} actions={retry} role={role} minHeight={minHeight} className={`region-unavailable ${className}`.trim()}>
       <ErrorDetails detail={copy.detail}/>
     </AlarmRow>
   );

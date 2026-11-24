@@ -1373,16 +1373,15 @@ function DocListCardCD({
 			<Card isFlush bar={bar} foot={foot} className="doc-list-card card--bar-flush flex-auto min-h-0 [&>.card-body]:max-h-none [&>.card-body]:overflow-y-visible">
 				{getRegionView(state) === "loading" && <LoadingPlaceholder label="documents" minHeight={240} />}
 				{state.error != null && (
-					<div role="alert">
-						<RegionUnavailable
-							source="the document list"
-							error={state.error}
-							onRetry={onRetry}
-							isBusy={state.busy === true}
-							focusTargetId={DOC_LIST_CARD_ID_CD}
-							className="p-card-pad"
-						/>
-					</div>
+					<RegionUnavailable
+						role="alert"
+						source="the document list"
+						error={state.error}
+						onRetry={onRetry}
+						isBusy={state.busy === true}
+						focusTargetId={DOC_LIST_CARD_ID_CD}
+						className="p-card-pad"
+					/>
 				)}
 				{state.status === "ready" && rows.length === 0 && (
 					/* WCAG 4.1.3 → the empty state announces itself */
@@ -2930,14 +2929,10 @@ function DocEmptyStateCD({ isSearchMode, groupCounts, inlineFilterProps }) {
 	const { EmptyState } = window.UI;
 	if (groupCounts?.total === 0 || !isFilterAppliedCD(inlineFilterProps)) {
 		const hasDocuments = (groupCounts?.total ?? 0) > 0;
-		return (
-			<div role="status" aria-live="polite">
-				{hasDocuments ? (
-					<EmptyState message="No open documents" hint="Pick All in Show to list done documents too." />
-				) : (
-					<EmptyState message="No documents yet" hint="A report or plan appears here once an agent posts it." />
-				)}
-			</div>
+		return hasDocuments ? (
+			<EmptyState role="status" message="No open documents" hint="Pick All in Show to list done documents too." />
+		) : (
+			<EmptyState role="status" message="No documents yet" hint="A report or plan appears here once an agent posts it." />
 		);
 	}
 	const { keyword, docStatusFilter, audienceFilter } = inlineFilterProps;
@@ -2952,11 +2947,7 @@ function DocEmptyStateCD({ isSearchMode, groupCounts, inlineFilterProps }) {
 	if (docStatusFilter && !isSearchMode) activeFilters.push(`status: ${statusLabel}`);
 	if (audienceFilter !== "all") activeFilters.push(`audience: ${audienceLabel}`);
 
-	return (
-		<div role="status" aria-live="polite">
-			<EmptyState kind="no-results" hint={activeFilters.length > 0 ? `Filters: ${activeFilters.join(" · ")}` : undefined} onReset={() => setDefaultFiltersCD(inlineFilterProps)} />
-		</div>
-	);
+	return <EmptyState role="status" kind="no-results" hint={activeFilters.length > 0 ? `Filters: ${activeFilters.join(" · ")}` : undefined} onReset={() => setDefaultFiltersCD(inlineFilterProps)} />;
 }
 
 // audience 필터 — 서버 audience 2값 {exposed, hidden}.

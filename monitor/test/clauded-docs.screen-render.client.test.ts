@@ -473,11 +473,41 @@ test("a failed read announces one plain-sentence card with one Retry as an alert
     assert.equal(cards.length, 1, row.name);
     assert.equal(cards[0].props.error, error, row.name);
     assert.equal(typeof cards[0].props.onRetry, "function", row.name);
-    const alerts = findNodes(tree, (n) => n.props.role === "alert");
+    // a component node and the box it renders share their props → count boxes only
+    const alerts = findNodes(tree, (n) => n.props.role === "alert" && /^[a-z]/.test(n.type));
     assert.equal(alerts.length, 1, `${row.name}: one announced failure`);
     assert.equal(findNodes(alerts[0], (n) => n === cards[0]).length, 1, `${row.name}: the alert is the failure card`);
     assert.doesNotMatch(collectText(tree), /HTTP \d/, row.name);
     assert.equal(findNodes(tree, (n) => n.type === "table").length, row.tables, `${row.name}: held rows stay`);
+  }
+});
+
+// a component node is no box in the page → its output stands in its place
+function getBoxChildren(node: ReturnType<typeof renderScreen>): Array<Exclude<ReturnType<typeof renderScreen>, string | null>> {
+  if (node === null || typeof node === "string") return [];
+  return node.children.flatMap((child) => {
+    if (typeof child === "string") return [];
+    return /^[a-z]/.test(child.type) ? [child] : getBoxChildren(child);
+  });
+}
+
+// the flush card's inset rule matches only its direct body → the empty line and the failed row carry their own live role
+describe("an empty or failed list is the flush card body's direct box, announcing itself", () => {
+  const rows = [
+    { name: "an empty corpus", overrides: { state: { status: "ready", data: {}, error: null, busy: false }, rows: [], groupCounts: { open: 0, done: 0, total: 0 } }, atom: "EmptyState", role: "status" },
+    { name: "a filter matching nothing", overrides: { state: { status: "ready", data: {}, error: null, busy: false }, rows: [], inlineFilterProps: { keyword: "plan", docStatusFilter: "open", audienceFilter: "all" } }, atom: "EmptyState", role: "status" },
+    { name: "a failed read", overrides: { state: { status: "error", data: null, error: "HTTP 500", busy: false }, rows: [] }, atom: "RegionUnavailable", role: "alert" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderListCard(screen, row.overrides);
+
+      const [body] = findNodes(tree, (n) => /(^|\s)card-body(\s|$)/.test(String(n.props.className ?? "")) && /(^|\s)flush(\s|$)/.test(String(n.props.className)));
+      const boxes = getBoxChildren(body).filter((n) => n.props.atom === row.atom);
+      assert.equal(boxes.length, 1, `${row.atom} is a direct box of the flush body`);
+      assert.equal(boxes[0].props.role, row.role);
+    });
   }
 });
 
