@@ -219,20 +219,33 @@ test("the Tags column states the page's majority format once and prints only exc
   assert.deepEqual(chips({ audience: "exposed", format: "md", commonFormat: null }), ["md"]);
 });
 
-// stacked rows prefix a meta cell with its column label → a Tags cell with no exception chip prints no bare "Tags"
-test("a stacked Tags cell prints its column label only when it carries a chip", async () => {
+// a Tags cell is never blank → no chip of its own prints the faint None (design.md §12.6 Cells), so the stacked label always has a value
+const TAGS_CELL_ROWS = [
+  { name: "no exception", props: { audience: "exposed", format: "md", commonFormat: "md" }, isTagged: false },
+  { name: "audience shared by every row", props: { audience: "hidden", format: "md", commonFormat: "md", commonAudience: "hidden" }, isTagged: false },
+  { name: "format exception", props: { audience: "exposed", format: "html", commonFormat: "md" }, isTagged: true },
+  { name: "audience exception", props: { audience: "hidden", format: "md", commonFormat: "md" }, isTagged: true },
+];
+
+test("a Tags cell prints the faint None exactly when it carries no chip", async () => {
+  const screen = await loadDocsScreen();
+  const DocTagsCell = screen.DocTagsCellCD as Component;
+  for (const row of TAGS_CELL_ROWS) {
+    const tree = renderScreen(DocTagsCell(row.props));
+    const chipCount = findNodes(tree, (n) => n.props.atom === "Badge").length;
+    const absentKinds = findNodes(tree, isAtom("AbsentValue")).map((n) => n.props.kind);
+    assert.deepEqual({ hasChip: chipCount > 0, absentKinds }, { hasChip: row.isTagged, absentKinds: row.isTagged ? [] : ["none"] }, row.name);
+  }
+});
+
+test("a stacked Tags cell always prints its column label beside its chips or its None", async () => {
   const screen = await loadDocsScreen();
   const DocTagsCell = screen.DocTagsCellCD as Component;
   const view = { isStacked: true, columnCount: 7 };
-  const labelsOf = (props: Record<string, unknown>) =>
-    findNodes(renderScreen(DocTagsCell({ view, ...props })), (n) => String(n.props.className).includes("tbl-cell-label")).map((n) => collectText(n));
-
-  const rows = [
-    { name: "no exception → no label", props: { audience: "exposed", format: "md", commonFormat: "md" }, labels: [] },
-    { name: "format exception → labelled", props: { audience: "exposed", format: "html", commonFormat: "md" }, labels: ["Tags"] },
-    { name: "audience exception → labelled", props: { audience: "hidden", format: "md", commonFormat: "md" }, labels: ["Tags"] },
-  ];
-  for (const row of rows) assert.deepEqual(labelsOf(row.props), row.labels, row.name);
+  for (const row of TAGS_CELL_ROWS) {
+    const labels = findNodes(renderScreen(DocTagsCell({ view, ...row.props })), (n) => String(n.props.className).includes("tbl-cell-label")).map((n) => collectText(n));
+    assert.deepEqual(labels, ["Tags"], row.name);
+  }
 });
 
 function listCardProps(onSelect: (id: number) => void): Record<string, unknown> {

@@ -1151,18 +1151,19 @@ function DocHeaderRefreshCD({ asOf, listState, onRefresh }) {
 
 // 서술 태그 전용 셀 — audience/format 칩을 제목 컬럼 밖에서 렌더.
 function DocTagsCellCD({ view, audience, format, commonFormat, commonAudience = null }) {
-	const { Badge, TableCell } = window.UI;
+	const { AbsentValue, Badge, TableCell } = window.UI;
 	const isAudienceShown = audience === "hidden" && commonAudience !== "hidden";
 	const isFormatShown = Boolean(DOC_FORMAT_BADGE_CD[format]) && format !== commonFormat;
 	return (
-		// no chip → no label: a stacked row never prints a bare "Tags"
-		<TableCell view={view} textRole="meta" label={isAudienceShown || isFormatShown ? "Tags" : undefined} className="doc-tags-cell doc-col-tags">
+		<TableCell view={view} textRole="meta" label="Tags" className="doc-tags-cell doc-col-tags">
 			{/* nowrap — 칩이 2줄로 접히면 행 높이가 튄다. */}
 			<span className="inline-flex items-center gap-label-inline whitespace-nowrap">
 				{/* audience = 서술 속성(상태 아님) → neutral metadata pill, glyph/색 없음. */}
 				{isAudienceShown && <Badge role="metadata">agent-only</Badge>}
 				{/* format = 서술 속성 → neutral metadata pill. */}
 				{isFormatShown && <Badge role="metadata">{format}</Badge>}
+				{/* no tag of its own varies by row → faint None, never a blank cell */}
+				{!isAudienceShown && !isFormatShown && <AbsentValue kind="none" />}
 			</span>
 		</TableCell>
 	);
