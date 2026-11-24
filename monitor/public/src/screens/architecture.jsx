@@ -1442,7 +1442,7 @@ function ArchIconAR({ name }) {
 // inSentence — the page alert lists stores mid-sentence, so only the proper noun keeps a capital
 const HEALTH_STORE_LABELS_AR = {
 	daemonState: { name: "Daemons", inSentence: "daemon health" },
-	hookState: { name: "Hook chain", inSentence: "the hook chain" },
+	hookState: { name: "Hooks", inSentence: "the hooks" },
 	pgState: { name: "PostgreSQL", inSentence: "PostgreSQL" },
 	hookFailState: { name: "Hook failures", inSentence: "hook failures" },
 };

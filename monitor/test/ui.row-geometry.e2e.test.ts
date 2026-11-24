@@ -90,7 +90,7 @@ const ALARM = (() => {
     { name: "a raised alert card with one line and an action", id: "alarm-card-line", height: 48, glyph: 16,
       markup: render(ui.AlertCard, { tone: "warn", title: "$842 so far today", actions: RETRY }) },
     { name: "a raised alert card with a detail line", id: "alarm-card-detail", height: 70, glyph: 16,
-      markup: render(ui.AlertCard, { tone: "crit", title: "1 harness part is down", body: "Hook Chain" }) },
+      markup: render(ui.AlertCard, { tone: "crit", title: "1 harness part is down", body: "Hooks" }) },
     { name: "an inset alert card with one line and an action", id: "alarm-card-inset", height: 48, glyph: 14,
       markup: render(ui.AlertCard, { tone: "info", surface: "inset", title: "This document was superseded", actions: RETRY }) },
     { name: "a hairline alarm row", id: "alarm-row-line", height: 48, glyph: 16,
@@ -181,7 +181,7 @@ const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body
     `<div id="${alarmDropId(row.id, px)}" style="width: ${px}px;">${row.markup}</div>`)).join("\n  ")}
   ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
   ${TYPE_SCALED_ROWS.map((row, i) => `<div id="type-scaled-target-${i}">${typeScaled(row.target)}</div>`).join("\n  ")}
-  ${ROW_LINE_STEPS.map((step) => `<div id="row-line-${step}" class="${step} leading-row">Hook chain · last run 3m ago</div>`).join("\n  ")}
+  ${ROW_LINE_STEPS.map((step) => `<div id="row-line-${step}" class="${step} leading-row">Hooks · last run 3m ago</div>`).join("\n  ")}
   <div id="disclosure-body-host" style="width: 480px;">${OPEN_DISCLOSURE}<div class="disclosure-body">PreToolUse · 3 hooks</div></div>
   <div style="display: flex; align-items: flex-start; gap: 24px;">
   </div>

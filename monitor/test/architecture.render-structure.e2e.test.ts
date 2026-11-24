@@ -1008,7 +1008,7 @@ describe("fault live fixture", () => {
 			drawnCount: 1,
 		},
 		{
-			// PostgreSQL, Hook chain and Chromium export faulted → each is its zone's one health node, so the badge rides the zone border where incoming edge labels end
+			// PostgreSQL, Hooks and Export via Chromium faulted → each is its zone's one health node, so the badge rides the zone border where incoming edge labels end
 			name: "a zone fault badge on Store, Safety and Documents",
 			sizes: [{ width: 1440, height: 900 }, { width: 1920, height: 1080 }],
 			build: () => {

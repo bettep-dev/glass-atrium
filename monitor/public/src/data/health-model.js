@@ -7,10 +7,10 @@
 // '분모가 정의 목록을 따른다'를 붉게 만들 수 있어야 함 (T14 · architecture.live-badge 픽스처).
 const HEALTH_CARD_DEFS = [
   { id: 'pg',            name: 'PostgreSQL',      icon: 'db',       kind: 'pg' },
-  { id: 'browser',       name: 'Chromium Export', icon: 'download', kind: 'browser' },
+  { id: 'browser',       name: 'Export via Chromium', icon: 'download', kind: 'browser' },
   { id: 'daemon-cycle',  name: 'autoagent',       icon: 'spark',    kind: 'daemon', daemonName: 'autoagent' },
   { id: 'glass-atrium-wiki-curator',  name: 'glass-atrium-wiki-curator',    icon: 'brain',    kind: 'daemon', daemonName: 'wiki' },
-  { id: 'hook-chain',    name: 'Hook Chain',      icon: 'pulse',    kind: 'hook' },
+  { id: 'hook-chain',    name: 'Hooks',           icon: 'pulse',    kind: 'hook' },
 ];
 
 // 데몬 판정 = 서버의 effective_status 소비 — 지연 여부를 클라가 다시 계산하지 않음.

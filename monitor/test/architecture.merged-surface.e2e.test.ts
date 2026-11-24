@@ -2875,7 +2875,7 @@ test("AC-T9 a payload response still on its way reads as loading, not as unreada
 
 // --- AC-B2-4: the health table stands on the part roster ---------------------
 
-// 확장 컨트롤을 내야 하는 행 — 데몬 둘 + Hook Chain (AC-B2-4d). 명부에서 유도하지 않고 이름으로
+// 확장 컨트롤을 내야 하는 행 — 데몬 둘 + Hooks (AC-B2-4d). 명부에서 유도하지 않고 이름으로
 // 고정함: 유도하면 구현의 규칙을 그대로 되읽어 무엇을 세든 초록이 됨. 부품이 하나 늘면 여기가
 // 붉어지는 것이 맞음 — 새 부품은 '펼칠 것이 있는가' 를 스스로 밝혀야 함.
 const EXPANDABLE_PART_IDS = ["daemon-cycle", "glass-atrium-wiki-curator", "hook-chain"];

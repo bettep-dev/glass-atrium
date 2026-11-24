@@ -392,7 +392,7 @@ test("the harness stat counts only the parts the shell actually polled", () => {
       harness: {
         ...HEALTHY,
         partsOk: 3, partsChecked: 4,
-        downNames: ["autoagent"], uncheckedNames: ["Hook Chain"],
+        downNames: ["autoagent"], uncheckedNames: ["Hooks"],
       },
       costState: LOADING, agentsState: LOADING, outcomesState: LOADING,
     }),
@@ -401,14 +401,14 @@ test("the harness stat counts only the parts the shell actually polled", () => {
   assert.equal(stat.value, "1 of 4 down", "the verdict leads, over what answered, not what exists");
   assert.equal(stat.tone, "crit");
   assert.equal(stat.context, null, "a firing stat leaves its line to the alarm row");
-  assert.ok(stat.notes.some((note) => note.includes("Hook Chain")), "the unchecked part is named behind ⓘ, not silently dropped");
+  assert.ok(stat.notes.some((note) => note.includes("Hooks")), "the unchecked part is named behind ⓘ, not silently dropped");
 });
 
 // the alarm list owns every alarm sentence (spec 44084 §9) → a firing stat keeps its value and tone, never the names or the words
 test("a firing stat never restates its alarm: the harness stat leaves the down parts to the alarm row", () => {
   const rows = [
     { name: "one down", downNames: ["autoagent"], uncheckedNames: [] as string[] },
-    { name: "two down beside an unpolled part", downNames: ["autoagent", "monitor"], uncheckedNames: ["Hook Chain"] },
+    { name: "two down beside an unpolled part", downNames: ["autoagent", "monitor"], uncheckedNames: ["Hooks"] },
   ];
   for (const row of rows) {
     const harness = { ...HEALTHY, partsOk: 4 - row.downNames.length, partsChecked: 5 - row.uncheckedNames.length, downNames: row.downNames, uncheckedNames: row.uncheckedNames };
@@ -583,7 +583,7 @@ function unreadFold(over: Record<string, unknown>): Fold {
   return { ...HEALTHY, unreadSources: ["daemon status"], error: "HTTP 500", ...over } as Fold;
 }
 // the three parts a two-part read leaves out — foldHarness lists every part it could not judge
-const LOST_PARTS = ["autoagent", "glass-atrium-wiki-curator", "Hook Chain"];
+const LOST_PARTS = ["autoagent", "glass-atrium-wiki-curator", "Hooks"];
 // every harness store the shell reads, by its label → the longest unread list a fold can carry
 const HARNESS_SOURCE_LABELS = ["the failure count", "daemon status", "the health probe", "the hook chain", "hook failures"];
 
@@ -738,7 +738,7 @@ test("parts lost to a cold read failure count against every part, never only the
 
 test("the coverage line credits the System map only when every read answered, so a lost part never reads as unpolled by design", () => {
   const rows = [
-    { name: "every read answered", fold: { ...HEALTHY, partsOk: 4, partsChecked: 4, uncheckedNames: ["Hook Chain"] } as Fold, isOnMap: true },
+    { name: "every read answered", fold: { ...HEALTHY, partsOk: 4, partsChecked: 4, uncheckedNames: ["Hooks"] } as Fold, isOnMap: true },
     { name: "a failed read lost three parts", fold: unreadFold({ partsOk: 2, partsChecked: 2, uncheckedNames: LOST_PARTS }), isOnMap: false },
   ];
 
@@ -799,7 +799,7 @@ test("the harness stat dims and reads busy while the shell re-reads it, like a r
 test("a harness stat with down parts says 'down' once across its value and context", () => {
   const rows = [
     { name: "one down", downNames: ["autoagent"], uncheckedNames: [] },
-    { name: "two down beside unpolled parts", downNames: ["autoagent", "monitor"], uncheckedNames: ["Hook Chain"] },
+    { name: "two down beside unpolled parts", downNames: ["autoagent", "monitor"], uncheckedNames: ["Hooks"] },
   ];
   for (const row of rows) {
     const stat = statOf(

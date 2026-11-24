@@ -530,7 +530,7 @@ test("the node drawer draws exactly its machine strings through MachineString", 
   const unpricedModelState = { status: "ready", data: { models: [{ model: "claude-opus-5-5-20261101", event_count: 3, last_seen_at: ago(5) }] } };
   const payloadState = { status: "ready", data: { daemon: "autoagent", entries: [{ run_date: "2026-11-23", summary: { verdict: "failed", error_signatures: [{ message: "timeout waiting for the grader", count: 2 }] } }] } };
   const partRows = [
-    { id: "hook-chain", name: "Hook Chain", kind: "hook", daemonName: null, nodeIds: ["hook_pipeline"], tone: "warn", statusLabel: "Warning", lastRunAt: null },
+    { id: "hook-chain", name: "Hooks", kind: "hook", daemonName: null, nodeIds: ["hook_pipeline"], tone: "warn", statusLabel: "Warning", lastRunAt: null },
     { id: "daemon-cycle", name: "autoagent", kind: "daemon", daemonName: "autoagent", nodeIds: ["hook_pipeline"], tone: "ok", statusLabel: "Healthy", lastRunAt: ago(2) },
   ];
   const daemons = [{ daemon_name: "learning-aggregator", effective_status: "ok", last_run_at: ago(3) }];
@@ -561,7 +561,7 @@ test("the node drawer reads None for every value its payloads leave out and date
     data: { daemon: "autoagent", entries: [{ run_date: "2026-11-23", summary: { verdict: "failed", error_signatures: [{ count: 2 }] } }, { summary: { verdict: "failed" } }] },
   };
   const partRows = [
-    { id: "hook-chain", name: "Hook Chain", kind: "hook", daemonName: null, nodeIds: ["hook_pipeline"], tone: "warn", statusLabel: "Warning", lastRunAt: null },
+    { id: "hook-chain", name: "Hooks", kind: "hook", daemonName: null, nodeIds: ["hook_pipeline"], tone: "warn", statusLabel: "Warning", lastRunAt: null },
     { id: "daemon-cycle", name: "autoagent", kind: "daemon", daemonName: "autoagent", nodeIds: ["hook_pipeline"], tone: "ok", statusLabel: "Healthy", lastRunAt: null },
   ];
   const daemons = [{ daemon_name: "learning-aggregator", effective_status: "ok", last_run_at: null }];

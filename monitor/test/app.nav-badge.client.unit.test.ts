@@ -241,7 +241,7 @@ test("an unretried hook failure puts the hook chain in the lane's down set", () 
   const fold = app.foldHarness(
     allHealthy({ hookFailState: ready({ count_24h: 3, unretried_count_24h: 2 }) }),
   );
-  assert.deepEqual([...fold.downNames], ["Hook Chain"]);
+  assert.deepEqual([...fold.downNames], ["Hooks"]);
   assert.equal(fold.partsOk, 4);
   assert.equal(fold.partsChecked, 5);
 });
@@ -249,7 +249,7 @@ test("an unretried hook failure puts the hook chain in the lane's down set", () 
 test("a hook store that has not answered leaves the part unchecked, not down", () => {
   const fold = app.foldHarness(allHealthy({ hookState: { status: "loading", data: null } }));
   assert.deepEqual([...fold.downNames], [], "silence is not a fault");
-  assert.deepEqual([...fold.uncheckedNames], ["Hook Chain"]);
+  assert.deepEqual([...fold.uncheckedNames], ["Hooks"]);
   assert.equal(fold.partsChecked, 4, "the denominator is what answered");
 });
 
@@ -262,7 +262,7 @@ test("a part the System map calls 'no data' is unchecked in the fold, never down
   const unprobed = app.foldHarness(
     allHealthy({ healthState: ready({ status: "ok", db: "open", browser: "unprobed" }) }),
   );
-  assert.deepEqual([...unprobed.uncheckedNames], ["Chromium Export"]);
+  assert.deepEqual([...unprobed.uncheckedNames], ["Export via Chromium"]);
   assert.deepEqual([...unprobed.downNames], []);
 });
 
