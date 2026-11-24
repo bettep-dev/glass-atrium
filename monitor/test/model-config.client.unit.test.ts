@@ -1960,6 +1960,18 @@ test("a matching row stays silent whether the read is fresh or a failed reload h
   }
 });
 
+test("an invalid edit puts a sentence-case alert in the save bar", async () => {
+  const tree = await renderSeededScreenMc({
+    config: seededConfigMc({ status: "ready", data: SCREEN_DATA_MC, key: "config", busy: false }),
+    form: { ...SCREEN_FORM_MC, budgets: { "budget.worker_max_usd": "abc" } },
+    asOfAt: Date.now(),
+  });
+  const [bar] = findAllMc(tree, (n) => n.props["aria-label"] === "Unsaved changes");
+  assert.ok(bar, "a dirty form shows the save bar");
+  const [alert] = findAllMc(bar.children, (n) => String(n.props.className ?? "").includes("text-crit"));
+  assert.strictEqual(textMc(alert.children).replace("✕", "").trim(), "Fix the highlighted fields before saving");
+});
+
 test("the glossary labels are headings, and their notes never repeat the agent a row already names", async () => {
   const tree = await renderSeededScreenMc({
     config: seededConfigMc({ status: "ready", data: SCREEN_DATA_MC, key: "config", busy: false }),

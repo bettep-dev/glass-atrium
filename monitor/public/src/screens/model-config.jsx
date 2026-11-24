@@ -505,7 +505,7 @@ function ScreenModelConfig() {
 						{hasErrors && (
 							<span className="fs-meta text-crit">
 								<span aria-hidden="true">✕ </span>
-								fix the highlighted fields before saving
+								Fix the highlighted fields before saving
 							</span>
 						)}
 					</div>
