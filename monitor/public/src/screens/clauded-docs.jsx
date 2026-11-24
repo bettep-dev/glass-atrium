@@ -916,10 +916,10 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-snippet mark { background: rgb(var(--accent) / 0.2); color: rgb(var(--ink)); padding: 0 2px; border-radius: 2px; }
         /* R6 본문 컨테이너 — iframe 자리 대체.
            스크롤 양도 — overflow:visible + height:auto → 문서가 자기 <body>{...} 룰을 .doc-body-isolation 으로 rescope 할 때 동일 selector·동일 specificity 후순위 승리로 overflow 를 visible 재설정해 wrap 의 overflow-y 를 무력화하던 회귀 차단(스크롤 컨테이너를 .doc-fs-body-wrap 으로 이관).
-           CARVE-OUT(rgb 9 9 11) — --surface(warm 12 10 9) 미사용은 의도적. 문서 자체 bg-zinc-950 과 hue·값을 정확히 일치시켜 cascade 비결정성 제거 (cool zinc reading palette). --surface 교체 시 hue 불일치 + 결정성 붕괴 → swap 금지.
+           --doc-canvas — 문서 자체 bg-zinc-950 과 같은 cool 캔버스, warm --surface 아님 → swap 금지.
            행간·자간 base default — 승리값은 specificity 높은 .doc-fs-body-inner > .doc-body-isolation 에 위치(아래) · 여기 base 는 문서 leading 부재 시 fallback.
            contain: layout — 문서의 fixed/absolute 요소가 이 상자를 기준으로 배치 → 넘침은 .doc-fs-body-wrap 스크롤 영역이 잘라냄, 뷰어 chrome 덮기 불가 (paint 는 넓게/전폭 breakout 까지 잘라내므로 미사용). */
-        .doc-body-isolation { width: 100%; height: auto; min-height: 0; flex: 1 1 auto; overflow: visible; contain: layout; background: rgb(9 9 11); border-radius: 0; box-shadow: none; box-sizing: border-box; line-height: 1.7; letter-spacing: 0.01em; }
+        .doc-body-isolation { width: 100%; height: auto; min-height: 0; flex: 1 1 auto; overflow: visible; contain: layout; background: rgb(var(--doc-canvas)); border-radius: 0; box-shadow: none; box-sizing: border-box; line-height: 1.7; letter-spacing: 0.01em; }
         /* 본문 다이어그램 폭 — 공유 설정(public/mermaid-config.js)이 채택 타입마다 useMaxWidth 를 껐으므로 SVG 가 고유폭을 유지함 → 넘침을 컨테이너가 스크롤로 받아 잘림을 막음.
            index.html 은 그 전역을 initialize 에 넘길 뿐 값을 갖지 않음 — 이 규칙이 서 있는 값의 출처는 설정 파일 한 곳임.
            svg max-width:none 은 문서가 자기 스타일시트에서 svg 폭을 묶는 경우의 방어 — 맵 캔버스(architecture.jsx)가 같은 이유로 두는 규칙과 같은 성격. */
@@ -947,27 +947,27 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* version-history — predecessor 전용 dim 룰.
            current=강조 / predecessor=.acked(opacity 0.5) 시각 구분. */
         .doc-revision-predecessor.acked { opacity: 0.5; }
-        /* code viewer (yaml/json/txt) — dark base (bg-zinc-900 + border-zinc-800).
+        /* code viewer (yaml/json/txt) — --doc-code 면 + --doc-line 테두리 + --doc-ink 글자.
            github-dark.min.css 가 .hljs span.hljs-* 토큰 색상 부여 — 본 컨테이너는 chrome (배경/테두리/패딩/폰트) 만 정의. */
-        .doc-code-pre { margin: 16px 0; padding: 16px; background: rgb(24 24 27); border: 1px solid rgb(39 39 42); border-radius: 6px; overflow-x: auto; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-size: 13px; line-height: 1.6; color: rgb(228 228 231); }
+        .doc-code-pre { margin: 16px 0; padding: 16px; background: rgb(var(--doc-code)); border: 1px solid rgb(var(--doc-line)); border-radius: 6px; overflow-x: auto; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-size: 13px; line-height: 1.6; color: rgb(var(--doc-ink)); }
         .doc-code-pre code { background: transparent; padding: 0; font-family: inherit; font-size: inherit; line-height: inherit; display: block; white-space: pre; }
         /* 전체화면 reading 면 — DetailSurface variant='fullscreen' bare panel 로 마운트 (overlay/backdrop/focus-trap/scroll-lock/Esc 닫기/z 계약은 공용 .detail-overlay).
            .detail-fullscreen 스코프로 specificity(0,2,0) 승격 → .detail-fullscreen .detail-panel(0,2,0) 의 max-width 980 / border / fade 애니메이션을 source-order 후순위로 제압, 불투명 zinc full-bleed 면 보존.
-           100vw × 100dvh (mobile dynamic viewport 정합) · border-radius 0 (fullscreen 자체가 viewer) · container fill cool zinc-950(rgb 9 9 11) → 3중 다크(--elev/zinc-950/--sunken) 불일치 제거. */
-        .detail-fullscreen .doc-fs-container { width: 100vw; max-width: 100vw; height: 100vh; height: 100dvh; background: rgb(9 9 11); border: none; border-radius: 0; box-shadow: none; display: flex; flex-direction: column; overflow: hidden; }
+           100vw × 100dvh (mobile dynamic viewport 정합) · border-radius 0 (fullscreen 자체가 viewer) · container fill --doc-canvas. */
+        .detail-fullscreen .doc-fs-container { width: 100vw; max-width: 100vw; height: 100vh; height: 100dvh; background: rgb(var(--doc-canvas)); border: none; border-radius: 0; box-shadow: none; display: flex; flex-direction: column; overflow: hidden; }
         /* bare body — .detail-body--bare(padding:0)에 full-height flex column 부여 → .doc-fs-split grid 가 panel 높이 채움 · 스크롤은 .doc-fs-body-wrap 셀이 소유(여기선 overflow:hidden, min-height:0 체인 유지). */
         .detail-fullscreen .doc-fs-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
         /* split grid: main(fluid) | meta(clamp 260-300). 가독성 본문 확폭 — meta col 소폭 축소(320→300)로 본문 여유 확보 + 모바일 collapse 분기. */
         .doc-fs-split { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 1fr clamp(260px, 20vw, 300px); overflow: hidden; }
         /* body wrap = 스크롤 컨테이너(구조 수정 핵심) — overflow:hidden → overflow-y:auto 전환 → 스크롤바가 body 셀 우측 끝(meta border 접점)에 안착("스크롤 우측 이동" 요청 충족) · grid 셀 높이 bound(상위 split flex:1+min-height:0) 가 scrollport 생성 → min-height:0 체인 유지 필수.
-           bg cool zinc-950(rgb 9 9 11) 정합 + 좌우 padding clamp(32-72) gutter 보존 (72 = 3 × --space-6).
+           bg --doc-canvas + 좌우 padding clamp(32-72) gutter (72 = 3 × --space-6).
            container-type — 본문 다이어그램 breakout 이 기준으로 삼는 상자(위 크기 프리셋의 cqi). */
-        .doc-fs-body-wrap { min-height: 0; container-type: inline-size; padding: var(--space-6) clamp(var(--space-8), 4vw, calc(3 * var(--space-6))) var(--space-8); background: rgb(9 9 11); overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgb(63 63 70 / 0.6) transparent; }
-        /* 얇은 다크 스크롤바 — tokens.css 글로벌 *::-webkit-scrollbar(10px·--line warm)를 .doc-fs-* 스코프 한정 override(specificity 0,1,1 > 0,0,1). 8px·zinc thumb. */
+        .doc-fs-body-wrap { min-height: 0; container-type: inline-size; padding: var(--space-6) clamp(var(--space-8), 4vw, calc(3 * var(--space-6))) var(--space-8); background: rgb(var(--doc-canvas)); overflow-y: auto; display: flex; flex-direction: column; scrollbar-width: thin; scrollbar-color: rgb(var(--doc-line)) transparent; }
+        /* 얇은 다크 스크롤바 — tokens.css 글로벌 *::-webkit-scrollbar(10px·--line warm)를 .doc-fs-* 스코프 한정 override(specificity 0,1,1 > 0,0,1). 8px · thumb rest --doc-line, hover --faint(전역 스크롤바 hover 와 같음). */
         .doc-fs-body-wrap::-webkit-scrollbar { width: 8px; }
         .doc-fs-body-wrap::-webkit-scrollbar-track { background: transparent; }
-        .doc-fs-body-wrap::-webkit-scrollbar-thumb { background: rgb(63 63 70 / 0.6); border-radius: 4px; border: none; }
-        .doc-fs-body-wrap::-webkit-scrollbar-thumb:hover { background: rgb(82 82 91); }
+        .doc-fs-body-wrap::-webkit-scrollbar-thumb { background: rgb(var(--doc-line)); border-radius: 4px; border: none; }
+        .doc-fs-body-wrap::-webkit-scrollbar-thumb:hover { background: rgb(var(--faint)); }
         /* inner measure-aware — max-width min(90%,1280px)(화면 90% 비율 + 초광폭 ~95-105ch 캡) + margin-inline auto(중앙) → wrap 스크롤바는 외곽, 본문은 중앙. */
         .doc-fs-body-inner { width: 100%; max-width: min(90%, 1280px); margin-inline: auto; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
         /* R6 — iframe 제거 후 .doc-body-isolation 컨테이너가 본문 직접 보유. */
@@ -977,14 +977,14 @@ function ScreenClaudedDocs(/* { onNav } */) {
         /* 행간·자간 승리값 — > + 더블클래스 specificity(0,2,1) 로 문서 rescoped body 룰(0,1,0) 제압 → !important 불필요.
            line-height 1.75 · letter-spacing 0.012em(light-on-dark halation 보정) · 상속 base → 코드블록/헤딩 등 per-element 로컬 override 유지. */
         .doc-fs-body-inner > .doc-body-isolation { line-height: 1.75; letter-spacing: 0.012em; }
-        /* meta sidebar — grid cell 풀높이 sticky · cool zinc(rgb 13 13 16 solid · 0.6 alpha 제거 → 본문 위 비침 제거) · border-left cool zinc(rgb 34 34 38 · --line warm 대체). */
-        .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(34 34 38); background: rgb(13 13 16); padding: var(--space-4) var(--space-6); }
-        /* 모바일 <768px — meta 하단 stack + border-top · wrap padding 축소 · bg 통일 반복(데스크톱 룰의 cool zinc 를 미디어 블록에서 재확인).
+        /* meta sidebar — grid cell 풀높이 sticky · 불투명 --doc-side(본문 비침 없음) · border-left --doc-line. */
+        .doc-fs-meta-side { overflow-y: auto; border-left: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); padding: var(--space-4) var(--space-6); }
+        /* 모바일 <768px — meta 하단 stack + border-top · wrap padding 축소 · bg 통일 반복(데스크톱 룰의 --doc-canvas · --doc-side 를 미디어 블록에서 재확인).
            max-width min(90%,1280px) 는 폰에서 90% 자동 승리(1280 캡 미발동) → px floor 없음 → overflow 무발생. 스크롤은 wrap 에서 동일 동작. */
         @media (max-width: 768px) {
           .doc-fs-split { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
-          .doc-fs-body-wrap { padding: var(--space-4); background: rgb(9 9 11); }
-          .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(34 34 38); background: rgb(13 13 16); max-height: 40vh; padding: var(--space-4); }
+          .doc-fs-body-wrap { padding: var(--space-4); background: rgb(var(--doc-canvas)); }
+          .doc-fs-meta-side { border-left: none; border-top: 1px solid rgb(var(--doc-line)); background: rgb(var(--doc-side)); max-height: 40vh; padding: var(--space-4); }
         }
         /* Viewer thin header — the fullscreen CardHead keeps the shared .card-head geometry (4 / --card-pad, min 48);
            only its type steps down here, so the reading area stays wide and the head reads as chrome. */
