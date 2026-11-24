@@ -71,6 +71,8 @@ const TYPE_SCALED_ROWS = [
   { name: "an undocumented element kind (a span)", target: `<span class="inline-target">Recent costs</span>` },
 ] as const;
 const typeScaled = (target: string): string => target.replace(`class="inline-target"`, `class="inline-target fs-meta"`);
+// each type step a row line pairs with the row-line key; TypeScaleStyle loads after base.css, as the live body <style> does
+const ROW_LINE_STEPS = ["fs-body", "fs-meta"] as const;
 
 // the shipped error-details fold every RegionFailure and AlertCard carries; each is laid out closed and open
 const ERROR_DETAIL = "HTTP 503 Service Unavailable";
@@ -178,6 +180,7 @@ const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body
     `<div id="${alarmDropId(row.id, px)}" style="width: ${px}px;">${row.markup}</div>`)).join("\n  ")}
   ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
   ${TYPE_SCALED_ROWS.map((row, i) => `<div id="type-scaled-target-${i}">${typeScaled(row.target)}</div>`).join("\n  ")}
+  ${ROW_LINE_STEPS.map((step) => `<div id="row-line-${step}" class="${step} leading-row">Hook chain · last run 3m ago</div>`).join("\n  ")}
   <div style="display: flex; align-items: flex-start; gap: 24px;">
   </div>
 </body></html>`;
@@ -277,6 +280,14 @@ describe("an inline target keeps a whole-pixel line box under a type-scale class
       assert.ok(Number.isInteger(parseFloat(lineHeight)), `line box ${lineHeight} is not a whole pixel`);
     });
   });
+});
+
+describe("the row-line key holds the 20 row line box under a same-element type step", () => {
+  for (const step of ROW_LINE_STEPS) {
+    test(`.${step} with leading-row computes the 20px row line`, async () => {
+      assert.equal(await page.$eval(`#row-line-${step}`, (el) => getComputedStyle(el).lineHeight), "20px");
+    });
+  }
 });
 
 // RegionFailure and AlertCard share one error-details fold: its summary sits on the C32 disclosure atom, the chevron the one open-state cue

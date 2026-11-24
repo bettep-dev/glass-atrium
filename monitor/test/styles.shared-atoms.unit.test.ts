@@ -328,6 +328,8 @@ describe("each atom variant a screen names sets only its own declarations, in on
     { name: "a flush card bar leaves the inset to its content and draws a hairline under it", selector: ".card--bar-flush > .card-bar",
       decls: { padding: "0", "border-bottom": "1px solid rgb(var(--line))" } },
     { name: "an inline-flush empty state keeps its block inset and drops its inline one", selector: ".placeholder--flush-inline", decls: { "padding-inline": "0" } },
+    { name: "the row-line key sets only the row line box, doubled to outrank a same-element type step", selector: ".leading-row.leading-row",
+      decls: { "line-height": "var(--lh-row)" } },
   ];
   for (const row of rows) {
     test(row.name, () => {

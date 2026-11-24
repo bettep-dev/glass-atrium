@@ -40,6 +40,11 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .inline-target.inline-target {
 	line-height: var(--lh-row);
 }
+/* row-line type key — a list row's text on the 20 row line box. Doubled class, not a Tailwind lineHeight key: the CDN
+   utilities load in <head>, so the body TypeScaleStyle .fs-* line-height would win over a single class */
+.leading-row.leading-row {
+	line-height: var(--lh-row);
+}
 /* the one checkbox visual (C24 inline target, §7.15) — a 16 token-drawn box, never the UA widget;
    neutral at rest, the one selected state when checked or mixed. Its label takes .inline-target for the 24 hit area.
    An input carries no pseudo-element in every engine → the check / minus glyph is a .ctl-checkbox-mark overlay. A toggle is discrete → no transition */
