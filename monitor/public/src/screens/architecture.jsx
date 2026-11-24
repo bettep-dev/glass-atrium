@@ -1532,7 +1532,7 @@ function HookChainDetail({ state }) {
 									<window.UI.DisclosureChevron />
 									<span>
 										<MachineString className="fs-meta text-ink">{row.event}</MachineString>{" "}
-										<span className="fs-meta text-faint">{row.hookCount} hooks</span>
+										<span className="fs-meta text-faint">{`${row.hookCount} ${row.hookCount === 1 ? "hook" : "hooks"}`}</span>
 									</span>
 								</summary>
 								<ul className="arch-hook-groups disclosure-body gap-stack">

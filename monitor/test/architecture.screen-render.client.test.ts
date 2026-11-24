@@ -475,6 +475,22 @@ test("the node drawer's title is a heading that ranks above its section headings
   assert.match(JSON.stringify(title.props?.children), /Hook pipeline/);
 });
 
+describe("an event summary counts its hooks in the noun's number", () => {
+  const hook = { command: "/h/a.sh", type: "command", timeout: 5 };
+  const rows = [
+    { name: "one hook reads singular", hooks: [hook], expected: /PreToolUse\s+1\s+hook$/ },
+    { name: "two hooks read plural", hooks: [hook, { ...hook, command: "/h/b.sh" }], expected: /PreToolUse\s+2\s+hooks$/ },
+  ];
+  for (const row of rows)
+    test(row.name, async () => {
+      const mod = await loadArch();
+      const state = { status: "ready", data: { source_path: "/s/settings.json", source_mtime: null, events: [{ event: "PreToolUse", groups: [{ matcher: "Bash", hooks: row.hooks }] }] } };
+      const tree = renderScreen(mod.React.createElement(mod.HookChainDetail, { state }));
+      const [summary] = findNodes(tree, (n) => n.type === "summary");
+      assert.match(collectText(summary).trim(), row.expected);
+    });
+});
+
 test("the hook chain lists each event collapsed, its hook paths behind a summary naming the count", async () => {
   const mod = await loadArch();
   const hooks = [{ command: "/h/a.sh", type: "command", timeout: 5 }, { command: "/h/b.sh", type: "command", timeout: null }];
