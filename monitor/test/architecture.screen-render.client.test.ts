@@ -199,6 +199,22 @@ test("the node drawer names each of its sections with a heading element", async 
     assert.match(headings, new RegExp(section), `the ${section} section has no heading element`);
 });
 
+test("the node drawer stacks the prose Description above its label's edge and keeps the file path on one row", async () => {
+  const mod = (await loadScreenModule(ARCH_SRC, { UI: uiStub({}), React: createReactStub() })) as {
+    React: { createElement: (t: unknown, p: unknown) => unknown };
+    NodeDetailBody: Component;
+  };
+  const props = {
+    info: { id: "canonical.wiki_d", label: "Wiki daemon", path: "wiki/", description: "Compiles fetched sources into notes." },
+    flows: [], nodeIndex: new Map(), liveDaemonsByNodeId: new Map(), healthPartRows: [], zoneIdByMemberId: new Map(),
+  };
+
+  const tree = renderScreen(mod.React.createElement(mod.NodeDetailBody, props));
+  const fields = findNodes(tree, (n) => n.props.atom === "DetailField");
+  const isStackedByLabel = Object.fromEntries(fields.map((n) => [n.props.label, Boolean(n.props.isStacked)]));
+  assert.deepEqual(isStackedByLabel, { "File path": false, Description: true });
+});
+
 type ArchModule = { React: { createElement: (t: unknown, p: unknown) => unknown } } & Record<string, Component>;
 
 // drawer sections read as titles, not as mono captions; the drawer's prose is sans and no mark keys a colour nothing explains

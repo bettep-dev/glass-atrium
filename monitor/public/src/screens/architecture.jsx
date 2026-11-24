@@ -2060,7 +2060,7 @@ function NodeDetailBody({
 			/>
 			<OwningScreenLinkAR nodeId={info.id} />
 			<DetailField label="File path" value={info.path} mono />
-			<DetailField label="Description" value={info.description} />
+			<DetailField label="Description" value={info.description} isStacked />
 		</>
 	);
 }
