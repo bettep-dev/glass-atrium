@@ -351,14 +351,14 @@ test("under a shared outage every failed region defers to the banner under its o
   const mod = await loadWikiScreen();
   const { createElement } = mod.React;
   const failed = { status: "error", data: null, error: OUTAGE, busy: false };
-  const shared = { sources: ["summary", "run history", "notes by type", "maintenance backlog", "per-run table"], error: OUTAGE };
+  const shared = { sources: ["Health", "Run history", "Notes by type", "Merge proposals", "Runs"], error: OUTAGE };
   const onRetry = () => {};
   const rows = [
     { name: "tile band", element: createElement(mod.WikiTileBand, { summaryState: failed, indexState: failed, backlogState: failed, cyclesState: failed, at: null, shared, onRetry }) },
     { name: "run history", element: createElement(mod.WikiRunHistorySection, { cyclesState: failed, summaryState: failed, shared, onRetry }) },
     { name: "notes by type", element: createElement(mod.WikiNotesByTypeSection, { state: failed, shared, onRetry }) },
-    { name: "per-run table", element: createElement(mod.WikiReportsBody, { state: failed, days: 30, shared, onRetry }) },
-    { name: "maintenance backlog", element: createElement(mod.WikiMaintenanceSection, { backlogState: failed, cyclesState: failed, shared, onRetry }) },
+    { name: "runs", element: createElement(mod.WikiReportsBody, { state: failed, days: 30, shared, onRetry }) },
+    { name: "merge proposals", element: createElement(mod.WikiMaintenanceSection, { backlogState: failed, cyclesState: failed, shared, onRetry }) },
   ];
   for (const row of rows) {
     const cards = findNodes(renderScreen(row.element), (n) => n.props.atom === "RegionFailure");
@@ -372,7 +372,7 @@ test("under a shared outage every failed region defers to the banner under its o
 test("a tile-band feeder the banner does not cover keeps its own sentence beside a covered one", async () => {
   const mod = await loadWikiScreen();
   const failed = { status: "error", data: null, error: OUTAGE, busy: false };
-  const shared = { sources: ["summary", "run history"], error: OUTAGE };
+  const shared = { sources: ["Health", "Run history"], error: OUTAGE };
   const tree = renderScreen(mod.React.createElement(mod.WikiTileBand, {
     summaryState: failed, indexState: failed, backlogState: LOADING, cyclesState: failed, at: null, shared, onRetry: () => {},
   }));
@@ -380,6 +380,49 @@ test("a tile-band feeder the banner does not cover keeps its own sentence beside
   assert.equal(cards.length, 1);
   assert.equal(cards[0].props.source, "the search index", "only the uncovered feeder is named");
   assert.equal(cards[0].props.shared, null, "the uncovered feeder is not quieted by the banner");
+});
+
+describe("a failed read speaks inside the card it feeds, never bare on the page", () => {
+  const failed = { status: "error", data: null, error: OUTAGE, busy: false };
+  const rows = [
+    {
+      name: "a failed tile-band feeder sits in the Health card",
+      render: (mod: ScreenModule) => mod.React.createElement(mod.WikiTileBand, {
+        summaryState: failed, indexState: { status: "ready", data: {}, error: null }, backlogState: READY_BACKLOG, at: null, shared: null, onRetry: () => {},
+      }),
+      isHost: (n: RenderedNode) => n.props.atom === "Card" && n.props.title === "Health",
+    },
+    {
+      name: "a failed backlog sits in the Merge proposals fold",
+      render: (mod: ScreenModule) => mod.React.createElement(mod.WikiMaintenanceSection, {
+        backlogState: failed, cyclesState: failed, shared: null, onRetry: () => {},
+      }),
+      isHost: (n: RenderedNode) => n.type === "details" && n.props.id === "wiki-merge-proposals",
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const tree = renderScreen(row.render(await loadWikiScreen()));
+      const isFailure = (n: RenderedNode) => n.props.atom === "RegionFailure";
+      const [host] = findNodes(tree, row.isHost);
+
+      assert.equal(findNodes(tree, isFailure).length, 1, "one failure for the region");
+      assert.equal(findNodes(host, isFailure).length, 1, "the failure renders inside its card");
+      assert.doesNotMatch(collectText(tree), /see above/, "no second line points at a failure elsewhere");
+    });
+  }
+});
+
+test("failure copy names each region by the label the screen shows", async () => {
+  const mod = await loadWikiScreen();
+  const { createElement } = mod.React;
+  const failed = { status: "error", data: null, error: OUTAGE, busy: false };
+  const sourceOf = (element: unknown) => findNodes(renderScreen(element), (n) => n.props.atom === "RegionFailure")[0].props.source;
+  const banner = findNodes(await renderWikiInState(failed), (n) => n.props.atom === "PageErrorBanner")[0];
+
+  assert.deepEqual([...(banner.props.sources as string[])], ["Health", "Run history", "Notes by type", "Merge proposals", "Runs"]);
+  assert.equal(sourceOf(createElement(mod.WikiMaintenanceSection, { backlogState: failed, cyclesState: failed, shared: null, onRetry: () => {} })), "merge proposals");
+  assert.equal(sourceOf(createElement(mod.WikiReportsBody, { state: failed, days: 30, shared: null, onRetry: () => {} })), "runs");
 });
 
 // every region of the page starts from this one state

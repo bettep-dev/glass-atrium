@@ -221,13 +221,13 @@ const PROPOSAL_PARKED_DAYS = PROPOSAL_PARKED_RUNS;
 // Element id of the merge-proposals fold — the backlog failure's Retry target.
 const MERGE_PROPOSALS_ID = "wiki-merge-proposals";
 
-// Wave section names — the banner lists them, and a region is covered when its feeder is among them.
+// Wave section names = the regions' visible titles — the banner lists them, and a region is covered when its feeder is among them.
 const WIKI_FEEDERS = Object.freeze({
-	summary: "summary",
-	runHistory: "run history",
-	notesByType: "notes by type",
-	backlog: "maintenance backlog",
-	runTable: "per-run table",
+	summary: "Health",
+	runHistory: "Run history",
+	notesByType: "Notes by type",
+	backlog: "Merge proposals",
+	runTable: "Runs",
 });
 
 // Region card ids — a covered region's slot names its card, so the banner's Retry lands there on recovery.
@@ -489,22 +489,24 @@ function WikiTileBand({ summaryState, indexState, backlogState, at, shared, onRe
 	const details = tiles.filter((tile) => tile.info);
 
 	return (
-		<div id={WIKI_REGION_IDS.tiles} className="flex flex-col gap-section">
-			{shown.length > 0 && (
-				<WikiRegionFailureW
-					feeders={shown.map((f) => f.feeder)}
-					source={`the ${shown.map((f) => f.label).join(" and ")}`}
-					error={shown[0].state.error}
-					isBusy={shown.some((f) => f.state.busy)}
-					shared={shared}
-					focusTargetId={WIKI_REGION_IDS.tiles}
-					onRetry={onRetry}
-				/>
-			)}
+		<div id={WIKI_REGION_IDS.tiles}>
 			<Card title="Health" info={details.length > 0 && <StatNotes stats={details} />} infoLabel="How these figures are read">
-				<div aria-busy={tiles.some((tile) => tile.state === "loading") ? "true" : undefined}>
-					<StatRow stats={tiles.map(buildStatW)} />
-				</div>
+				<window.UI.Stack gap="block">
+					{shown.length > 0 && (
+						<WikiRegionFailureW
+							feeders={shown.map((f) => f.feeder)}
+							source={`the ${shown.map((f) => f.label).join(" and ")}`}
+							error={shown[0].state.error}
+							isBusy={shown.some((f) => f.state.busy)}
+							shared={shared}
+							focusTargetId={WIKI_REGION_IDS.tiles}
+							onRetry={onRetry}
+						/>
+					)}
+					<div aria-busy={tiles.some((tile) => tile.state === "loading") ? "true" : undefined}>
+						<StatRow stats={tiles.map(buildStatW)} />
+					</div>
+				</window.UI.Stack>
 			</Card>
 		</div>
 	);
@@ -747,18 +749,6 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 
 	return (
 		<div className="flex flex-col gap-section">
-			{model.state === "error" ? (
-				<WikiRegionFailureW
-					feeders={[WIKI_FEEDERS.backlog]}
-					source="the maintenance backlog"
-					error={backlogState.error}
-					isBusy={backlogState.busy}
-					shared={shared}
-					focusTargetId={MERGE_PROPOSALS_ID}
-					onRetry={onRetry}
-				/>
-			) : null}
-
 			{/* Always present, so the backlog failure's Retry target and the page layout never lose it. */}
 			<WikiDisclosureW
 				id={MERGE_PROPOSALS_ID}
@@ -773,7 +763,18 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 						<LoadingPlaceholder label="merge proposals" />
 					</div>
 				) : model.state === "error" ? (
-					<window.UI.EmptyState message="The maintenance backlog could not be read — see above." />
+					// flush body → the failure block takes the card inset itself, as the Runs fold does
+					<div className="px-card-pad pb-card-pad">
+						<WikiRegionFailureW
+							feeders={[WIKI_FEEDERS.backlog]}
+							source="merge proposals"
+							error={backlogState.error}
+							isBusy={backlogState.busy}
+							shared={shared}
+							focusTargetId={MERGE_PROPOSALS_ID}
+							onRetry={onRetry}
+						/>
+					</div>
 				) : !model.proposals || model.proposals.length === 0 ? (
 					<window.UI.EmptyState
 						message={
@@ -1399,7 +1400,7 @@ function WikiReportsBody({ state, days, shared, onRetry }) {
 			<div className="px-card-pad pb-card-pad">
 				<WikiRegionFailureW
 					feeders={[WIKI_FEEDERS.runTable]}
-					source="the run table"
+					source="runs"
 					error={state.error}
 					isBusy={state.busy}
 					shared={shared}
