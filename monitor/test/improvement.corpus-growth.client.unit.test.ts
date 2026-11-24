@@ -1,8 +1,7 @@
 // Unit test for the instrumentation view's gauge helpers in
 // public/src/screens/improvement-instrumentation.jsx: the per-gauge verdicts the Operator view
 // reads through window.ImprovementInstrumentationVerdicts, the flagged-reason ranking, and
-// formatRateI, which the corpus-growth card reuses for compliance_rate /
-// override_rate. Those two are nullable end to end
+// the corpus-growth card's compliance_rate / override_rate. Those two are nullable end to end
 // because a null is insufficient data and a 0 is a measured total failure; a
 // renderer that folds them together destroys the distinction the column carries.
 // The view's cards are rendered too: their tone rides on a glyph, never on a word or a figure.
@@ -46,7 +45,7 @@ type Component = (props: Record<string, unknown>) => unknown;
 interface ImprovementHelpers {
   React: { createElement: unknown };
   [card: string]: unknown;
-  formatRateI: (rate: number | null | undefined) => string;
+  formatRateI: (rate: number) => string;
   styleRefGradeBadgeI: (emission: number | null, uncorroborated: number | null) => GaugeVerdict;
   getCorpusGrowthVerdictI: (latest: Record<string, unknown> | undefined) => GaugeVerdict;
   getRankedReasonsI: (segments: { items: ReasonSegment[] } | null) => ReasonSegment[];
@@ -68,13 +67,7 @@ helpers.React.createElement = (type: unknown, props: Record<string, unknown> | n
 });
 const TONE_GLYPH = helpers.window.UI.TONE_GLYPH as Record<string, string>;
 
-test("null rate renders as the insufficient-data dash, never a percentage", () => {
-  assert.equal(helpers.formatRateI(null), "—");
-  assert.equal(helpers.formatRateI(undefined), "—");
-});
-
-// The discriminating case: a falsy-check renderer passes the null case above and
-// fails here, collapsing a measured zero into "no data".
+// a falsy-check renderer collapses a measured zero into "no data"
 test("a measured zero rate stays a zero percentage", () => {
   assert.equal(helpers.formatRateI(0), "0.0%");
 });
@@ -183,6 +176,21 @@ function getRenderedProp(node: RecordedElement, key: string, value: unknown): un
 
 const READY = { status: "ready" };
 
+// a null rate is a known absence (spec 44084 §2.2): the word None in faint ink, never a dash, a zero or a legend explaining a dash
+test("a corpus reading with no compliance or override rate shows each as None", () => {
+  const latest = {
+    cycle_date: "2026-11-20", word_count: 41250, trend_delta: null, file_count: 38, token_estimate: 53600,
+    seeded_threshold: 60000, gate_pass_count: 0, gate_trip_count: 0, gate_total_count: 0,
+    compliance_rate: null, override_rate: null, trend_alert: false, absolute_alert: false,
+  };
+  const tree = viewTree((helpers.CorpusGrowthCardI as Component)({ state: { status: "ready", data: { total_audits: 1, audits: [latest] } } }));
+  const absent = tree.filter((el) => el.type === helpers.window.UI.AbsentValue).map((el) => el.props.kind);
+  const strings = tree.flatMap((el) => [el.props.children].flat()).filter((child): child is string => typeof child === "string");
+
+  assert.deepEqual(absent, ["none", "none"], "compliance and override each read None");
+  assert.deepEqual(strings.filter((text) => /—|insufficient/.test(text)), [], "no dash and no dash legend");
+});
+
 describe("instrumentation cards leave their tone on the glyph, never on a word or a figure", () => {
   const card = (name: string) => helpers[name] as Component;
   const rows = [
@@ -290,4 +298,133 @@ describe("instrumentation cards leave their tone on the glyph, never on a word o
       assert.deepEqual(toneOnText, [], "a word or figure repeats the tone its glyph already declares");
     });
   }
+});
+
+function getStrings(tree: RecordedElement[]): string[] {
+  return tree.flatMap((el) => [el.props.children].flat()).filter((child): child is string => typeof child === "string");
+}
+
+const STYLE_AGENT = {
+  agent: "glass-atrium-dev-node",
+  emission_count: 2,
+  emission_total: 3,
+  emission_rate: 0.66,
+  corroborated_count: 2,
+  uncorroborated_count: 1,
+  unverifiable_count: 0,
+  eligible_count: 3,
+};
+
+// the gate's verdict is a word an operator reads, one per tone: the strip and the card show the same word
+describe("the graduation gate's verdict word follows its tone", () => {
+  const WORD_BY_TONE: Record<string, string> = { "text-ok": "Pass", "text-warn": "Warn", "text-crit": "Block", "text-info": "Pending" };
+  const rows = [
+    { name: "nothing read yet", emission: null, uncorroborated: null },
+    { name: "emission below the gate", emission: 0.3, uncorroborated: 0.05 },
+    { name: "nothing adjudicated", emission: 0.6, uncorroborated: null },
+    { name: "passes the gate", emission: 0.6, uncorroborated: 0.05 },
+    { name: "too much uncorroborated", emission: 0.6, uncorroborated: 0.2 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const verdict = helpers.styleRefGradeBadgeI(row.emission, row.uncorroborated);
+
+      assert.equal(verdict.label, WORD_BY_TONE[verdict.tone]);
+    });
+  }
+});
+
+// glyph and word read together on the value line; the label stays the bare stat name
+describe("the graduation gate stat puts its glyph beside the verdict, not the label", () => {
+  const rows = [
+    { name: "a passing gate", emission: 0.6, uncorroborated: 0.05 },
+    { name: "a blocking gate", emission: 0.3, uncorroborated: 0.05 },
+    { name: "a pending gate", emission: 0.6, uncorroborated: null },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const card = (helpers.StyleRefCardI as Component)({
+        state: READY,
+        styleRef: { overall_emission_rate: row.emission, overall_uncorroborated_rate: row.uncorroborated, agents: [STYLE_AGENT] },
+      });
+      const statRow = viewTree(card).find((el) => el.type === helpers.window.UI.StatRow);
+      const gate = (statRow?.props.stats as Array<Record<string, unknown>>).find((stat) => stat.key === "gate");
+      const verdict = helpers.styleRefGradeBadgeI(row.emission, row.uncorroborated);
+      const value = viewTree(gate?.value);
+
+      assert.equal(typeof gate?.label, "string", "the label is the bare stat name");
+      assert.deepEqual(value.filter((el) => el.type === GlyphMarker).map((el) => el.props.s), [verdict.symbol]);
+      assert.ok(getStrings(value).some((text) => text.includes(verdict.label)), "the verdict word sits beside its glyph");
+    });
+  }
+});
+
+// a header is a whole word, and a stacked cell names its column by that same header
+test("the per-agent style-check table spells each header out and its stacked cells repeat it", () => {
+  const tree = viewTree((helpers.StyleRefAgentTableI as Component)({ rows: [STYLE_AGENT] }));
+  const table = tree.find((el) => el.type === helpers.window.UI.Table);
+  // spread → host-realm array; the sandbox realm fails deepStrictEqual
+  const headers = [...(table?.props.columns as Array<{ label: string; isNumeric?: boolean }>)];
+  const cellLabels = tree.filter((el) => el.type === helpers.window.UI.TableCell && el.props.label).map((el) => el.props.label);
+
+  assert.deepEqual(headers.filter((c) => c.label.endsWith(".")), [], "no abbreviated header");
+  assert.deepEqual(cellLabels, headers.filter((c) => c.isNumeric).map((c) => c.label));
+});
+
+// the agent column reads through the shared short-name atom, its full name kept for assistive tech
+describe("an instrumentation agent cell renders through the shared agent-name atom", () => {
+  const rows = [
+    { name: "style-check rate by agent", render: () => (helpers.StyleRefAgentTableI as Component)({ rows: [STYLE_AGENT] }) },
+    {
+      name: "add-only patches by agent",
+      render: () => (helpers.ProseOnlyAddCardI as Component)({
+        state: READY,
+        summary: { window_days: 30, agents: [{ agent: STYLE_AGENT.agent, count: 2 }], total: 2 },
+      }),
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const names = viewTree(row.render()).filter((el) => el.type === helpers.window.UI.AgentName).map((el) => el.props.name);
+
+      assert.deepEqual(names, [STYLE_AGENT.agent]);
+    });
+  }
+});
+
+const CORPUS_READING = {
+  cycle_date: "2026-11-20", word_count: 41250, trend_delta: 120, file_count: 38, token_estimate: 53600,
+  seeded_threshold: 60000, gate_pass_count: 9, gate_trip_count: 1, gate_total_count: 10,
+  compliance_rate: 0.9, override_rate: null, trend_alert: true, absolute_alert: false,
+};
+
+// the size reads against its threshold in one phrase; the remaining readings are one term-and-value list
+test("corpus growth leads with its size of the threshold and lists the rest as term-value pairs", () => {
+  const tree = viewTree((helpers.CorpusGrowthCardI as Component)({ state: { status: "ready", data: { total_audits: 1, audits: [CORPUS_READING] } } }));
+  const statRow = tree.find((el) => el.type === helpers.window.UI.StatRow);
+  const [lead] = statRow?.props.stats as Array<{ value: string; unit: string }>;
+  const lists = tree.filter((el) => el.type === "dl");
+  const terms = tree.filter((el) => el.type === "dt");
+  const values = tree.filter((el) => el.type === "dd");
+
+  assert.equal(`${lead.value} ${lead.unit}`, "41,250 of 60,000 words");
+  assert.equal(lists.length, 1, "one fact list");
+  assert.ok(terms.length > 0 && terms.length === values.length, "every term holds one value");
+  assert.deepEqual(getStrings(tree).filter((text) => /threshold/.test(text)), [], "the threshold reads once, in the lead");
+});
+
+// a reason reads label → count → bar, so the count sits right after the words it counts
+test("each flagged reason reads its count right after its label, before its bar", () => {
+  const list = (helpers.FlaggedReasonBarsI as Component)({
+    segments: { classifiedTotal: 9, items: [{ key: "a", label: "Size overrun", count: 6 }, { key: "b", label: "Low confidence", count: 3 }] },
+  }) as RecordedElement;
+  const items = [list.props.children].flat(2).filter(isElement);
+  const getPart = (cell: RecordedElement) => {
+    if (cell.type === helpers.window.UI.Bar) return "bar";
+    return /^\d[\d,]*$/.test(getStrings([cell]).join("")) ? "count" : "label";
+  };
+  const orders = items.map((item) => [item.props.children].flat().filter(isElement).map(getPart));
+
+  assert.equal(items.length, 2);
+  for (const order of orders) assert.deepEqual(order, ["label", "count", "bar"]);
 });

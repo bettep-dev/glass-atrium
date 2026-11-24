@@ -23,6 +23,13 @@ const PAYLOAD_SLOT_ID_I = Object.freeze({
 	proposalMeasurements: "improvement-proposal-measurements",
 });
 
+// one name per card → its error banner card reads the same title as its loading and data forms
+const CARD_TITLE_I = Object.freeze({
+	flaggedResults: "Flagged results (7 days)",
+	corpusGrowth: "Corpus growth",
+	correctionSignals: "Detection agreement",
+});
+
 // One banner per failed payload, in place of the group that payload owns.
 // `source` = the page's region name, so a shared outage banner naming it quiets this card
 function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTargetId }) {
@@ -45,7 +52,7 @@ function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTarge
 // 아니라 판정기가 무엇을 걸렀는지를 말하고, 걸린 행 자체는 Task results 가 소유한다.
 function FlaggedResultsCardI({ state, reviewReasons }) {
 	const { Card, Link, LoadingPlaceholder, Stack, StatRow } = window.UI;
-	const title = "Flagged results (7 days)";
+	const title = CARD_TITLE_I.flaggedResults;
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
@@ -75,34 +82,23 @@ function FlaggedReasonBarsI({ segments }) {
 	const { Bar } = window.UI;
 	const ranked = getRankedReasonsI(segments);
 
-	if (ranked.length === 0) {
-		return (
-			<div className="card-sub fs-meta">
-				Outcomes flagged in the last 7 days
-			</div>
-		);
-	}
+	if (ranked.length === 0) return null;
 
 	return (
+		// subgrid → one label column as wide as the longest label (cap 14rem), each count right after it, the bar takes the rest
 		<ul
-			className="stack stack--list"
+			className="grid grid-cols-[fit-content(14rem)_auto_1fr] gap-x-control gap-y-list fs-meta"
 			aria-label={`Why results were flagged — ${segments.classifiedTotal} rows classified`}
 		>
 			{ranked.map((s) => (
-				<li
-					key={s.key}
-					className="grid grid-cols-[minmax(0,14rem)_1fr_3.5rem] gap-x-control items-center fs-meta"
-					title={s.title}
-				>
+				<li key={s.key} className="col-span-full grid grid-cols-subgrid items-center" title={s.title}>
 					<span className="truncate">{s.label}</span>
+					<span className="tnum text-right">{formatIntI(s.count)}</span>
 					<Bar
 						value={s.count}
 						max={ranked[0].count}
 						ariaLabel={`${s.label} ${formatIntI(s.count)}`}
 					/>
-					<span className="tnum text-right">
-						{formatIntI(s.count)}
-					</span>
 				</li>
 			))}
 		</ul>
@@ -130,6 +126,17 @@ function ImprovementInstrumentationViewI({
 	failures,
 }) {
 	const { SplitRow, SplitColumn, getRegionView } = window.UI;
+	const rowLayout = {
+		signal: getRowLayoutI([
+			isCorpusGrowthEmptyI(corpusAuditState.data),
+			isCorrectionSignalsEmptyI(correctionState.data),
+		]),
+		measurement: getRowLayoutI([
+			isProseOnlyAddEmptyI(proseOnlyAdd),
+			isTierBreakdownEmptyI(tierBreakdown),
+			isConfidenceDistEmptyI(confidenceDist),
+		]),
+	};
 
 	return (
 		<div className="flex flex-col gap-section">
@@ -137,7 +144,7 @@ function ImprovementInstrumentationViewI({
 				{getRegionView(statsState) === "error" ? (
 					<PayloadErrorCardI
 						focusTargetId={PAYLOAD_SLOT_ID_I.flaggedResults}
-						title="Flagged results"
+						title={CARD_TITLE_I.flaggedResults}
 						source="loop stats"
 						failures={failures}
 						state={statsState}
@@ -150,12 +157,12 @@ function ImprovementInstrumentationViewI({
 					/>
 				)}
 			</div>
-			<SplitRow ratio="1:1" layout="equal">
+			<SplitRow ratio="1:1" layout={rowLayout.signal}>
 				<div id={PAYLOAD_SLOT_ID_I.corpusGrowth}>
 					{getRegionView(corpusAuditState) === "error" ? (
 						<PayloadErrorCardI
 							focusTargetId={PAYLOAD_SLOT_ID_I.corpusGrowth}
-							title="Corpus growth"
+							title={CARD_TITLE_I.corpusGrowth}
 							source="corpus audits"
 							failures={failures}
 							state={corpusAuditState}
@@ -169,7 +176,7 @@ function ImprovementInstrumentationViewI({
 					{getRegionView(correctionState) === "error" ? (
 						<PayloadErrorCardI
 							focusTargetId={PAYLOAD_SLOT_ID_I.correctionSignals}
-							title="Correction signals"
+							title={CARD_TITLE_I.correctionSignals}
 							source="correction signals"
 							failures={failures}
 							state={correctionState}
@@ -194,7 +201,7 @@ function ImprovementInstrumentationViewI({
 					<>
 						<StyleRefCardI state={listState} styleRef={styleRef} />
 						{/* two short gauges stack → the pair fills Confidence's height instead of stretching one half-empty */}
-						<SplitRow ratio="1:1" layout="equal">
+						<SplitRow ratio="1:1" layout={rowLayout.measurement}>
 							<SplitColumn>
 								<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
 								<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
@@ -211,6 +218,21 @@ function ImprovementInstrumentationViewI({
 	);
 }
 
+// a row stretches only while every card in it holds data → an empty card keeps its one-line height
+function getRowLayoutI(emptyFlags) {
+	return emptyFlags.some(Boolean) ? "content" : "equal";
+}
+
+// spec 44084 §2.2 Empty: head + one line · flush body → the line's own inset meets the title's
+function EmptyCardI({ title, sub, message }) {
+	const { Card, EmptyState } = window.UI;
+	return (
+		<Card title={title} sub={sub} isFlush>
+			<EmptyState message={message} />
+		</Card>
+	);
+}
+
 // ----- TierBreakdown card ------------------
 //
 // 3-Tier Eval Grader rollout baseline cohort split. Fixed 30d window.
@@ -221,13 +243,13 @@ function ImprovementInstrumentationViewI({
 //   - Total cohort = sum
 //
 // 데이터 부재 분기:
-//   - 모든 카운트 0 → "데이터 부재" 회색 indicator (migration 미적용 OR 30d 빈 cohort)
+//   - 모든 카운트 0 → 빈 카드 한 줄 (migration 미적용 OR 30d 빈 cohort)
 //   - error 상태 → 뷰가 카드 대신 목록 payload 오류 배너 1개를 렌더
 
 const TIER_BREAKDOWN_SUB_I = "30 days · self-reported";
 
 function TierBreakdownCardI({ state, tierBreakdown }) {
-	const { Card, EmptyState, LoadingPlaceholder, StatRow } = window.UI;
+	const { Card, LoadingPlaceholder, StatRow } = window.UI;
 	const title = "Results by check status";
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !tierBreakdown) {
@@ -238,20 +260,10 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 		);
 	}
 
-	const passCnt = Number(tierBreakdown.code_based_pass_30d ?? 0);
-	const failCnt = Number(tierBreakdown.code_based_fail_30d ?? 0);
-	const baselineCnt = Number(tierBreakdown.pre_3tier_baseline_count ?? 0);
-	const totalCnt = passCnt + failCnt + baselineCnt;
-	const windowDays = Number(tierBreakdown.window_days ?? 30);
-
-	// 데이터 부재 — migration 미적용 OR 30d 빈 cohort → 안내 indicator.
-	if (totalCnt === 0) {
-		return (
-			<Card title={title} sub={TIER_BREAKDOWN_SUB_I}>
-				<EmptyState message={`No tasks in the last ${windowDays} days`} />
-			</Card>
-		);
+	if (isTierBreakdownEmptyI(tierBreakdown)) {
+		return <EmptyCardI title={title} sub={TIER_BREAKDOWN_SUB_I} message="No task results in this window" />;
 	}
+	const { passCnt, failCnt, baselineCnt, totalCnt } = getTierCountsI(tierBreakdown);
 
 	// Pass-rate denominator는 baseline 제외 (code-based 만 의미 있는 비율).
 	const codeBasedTotal = passCnt + failCnt;
@@ -286,6 +298,17 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 	);
 }
 
+function isTierBreakdownEmptyI(tierBreakdown) {
+	return tierBreakdown != null && getTierCountsI(tierBreakdown).totalCnt === 0;
+}
+
+function getTierCountsI(tierBreakdown) {
+	const passCnt = Number(tierBreakdown.code_based_pass_30d ?? 0);
+	const failCnt = Number(tierBreakdown.code_based_fail_30d ?? 0);
+	const baselineCnt = Number(tierBreakdown.pre_3tier_baseline_count ?? 0);
+	return { passCnt, failCnt, baselineCnt, totalCnt: passCnt + failCnt + baselineCnt };
+}
+
 // ----- ConfidenceDist card -------------------
 //
 // confidence_observed × promotion_tier distribution, 30-day window (proposal-side)
@@ -293,7 +316,7 @@ function TierBreakdownCardI({ state, tierBreakdown }) {
 // no buckets or no proposals in the window → empty state · error → the view renders one list-payload error banner instead of the card
 
 function ConfidenceDistCardI({ state, confidenceDist }) {
-	const { Card, BulletBar, EmptyState, LoadingPlaceholder, StatRow } = window.UI;
+	const { Card, BulletBar, LoadingPlaceholder, StatRow } = window.UI;
 	const title = "Suggestion confidence";
 	const sub = "Measured · 30 days";
 	if (state.status === "error") return null;
@@ -305,14 +328,14 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 		);
 	}
 
-	const buckets = Array.isArray(confidenceDist.buckets)
-		? confidenceDist.buckets
-		: [];
+	// window 내 proposal 0건 → 카드 숨김 대신 빈 카드 한 줄 (proposal 발생 시 자동 데이터 표시)
+	if (isConfidenceDistEmptyI(confidenceDist)) {
+		return <EmptyCardI title={title} sub={sub} message="No suggestions in this window" />;
+	}
+
+	const buckets = getConfidenceBucketsI(confidenceDist);
 	const overallAvg = confidenceDist.overall_confidence_observed_avg;
-	const totalProposals = buckets.reduce(
-		(sum, b) => sum + Number(b.proposal_count ?? 0),
-		0,
-	);
+	const totalProposals = getProposalCountI(buckets);
 	// 측정분 분모 — overall avg 는 confidence_observed_avg 가 non-null 인 lane 만 가중
 	// (NULL-avg lane 제외). 측정분 = 해당 lane proposal_count 합 → 라벨에 측정분/전체 병기.
 	const measuredProposals = buckets.reduce(
@@ -324,16 +347,6 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 				: Number(b.proposal_count ?? 0)),
 		0,
 	);
-
-	// 데이터 부재 — window 내 proposal 0건 (실측 신뢰도 산정은 활성 상태).
-	// 카드 숨김 대신 "데이터 없음" 명시 (proposal 발생 시 자동 데이터 표시).
-	if (buckets.length === 0 || totalProposals === 0) {
-		return (
-			<Card title={title} sub={sub}>
-				<EmptyState message="No suggestions in the last 30 days" />
-			</Card>
-		);
-	}
 
 	const overallBadge = confidenceBadgeMetaI(overallAvg);
 	// C5: 실측 신뢰도(0-1 empirical posterior)를 척도상 위치(BulletBar)로 표시 — 숫자는 유지.
@@ -373,6 +386,18 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 			</TableBodyI>
 		</Card>
 	);
+}
+
+function isConfidenceDistEmptyI(confidenceDist) {
+	return confidenceDist != null && getProposalCountI(getConfidenceBucketsI(confidenceDist)) === 0;
+}
+
+function getConfidenceBucketsI(confidenceDist) {
+	return Array.isArray(confidenceDist.buckets) ? confidenceDist.buckets : [];
+}
+
+function getProposalCountI(buckets) {
+	return buckets.reduce((sum, b) => sum + Number(b.proposal_count ?? 0), 0);
 }
 
 // flush body for a table under lead blocks — the leads take the card-pad inset, the table's edge cells already carry it
@@ -444,10 +469,14 @@ const ADD_ONLY_COLUMNS_I = Object.freeze([
 ]);
 
 function ProseOnlyAddCardI({ state, summary }) {
-	const { Card, CARD_SLOTS, EmptyState, QuietButton, Table, TableRow, TableCell, getSlotRows, hasRegionRows } = window.UI;
+	const { AgentName, Card, CARD_SLOTS, QuietButton, Table, TableRow, TableCell, getSlotRows } = window.UI;
 	const [isShowingAll, setShowingAll] = React.useState(false);
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !summary) return null;
+	const sub = `${formatIntI(Number(summary.window_days ?? 0))} days`;
+	if (isProseOnlyAddEmptyI(summary)) {
+		return <EmptyCardI title="Add-only patches" sub={sub} message="No add-only patches in this window" />;
+	}
 	// server orders by agent name → rank by count before the slot cut, so the collapsed rows are the top ones
 	const agents = (Array.isArray(summary.agents) ? [...summary.agents] : []).sort(
 		(a, b) =>
@@ -467,41 +496,41 @@ function ProseOnlyAddCardI({ state, summary }) {
 		<Card
 			size={PROSE_ONLY_ADD_CARD_SIZE_I}
 			title="Add-only patches"
-			sub={`${formatIntI(Number(summary.window_days ?? 0))} days`}
+			sub={sub}
 			info={summary.truncation_caveat || null}
 			foot={foot}
-			isFlush={hasRegionRows(state, rows)}
+			isFlush
 		>
-			{rows.length === 0 ? (
-				<EmptyState message="No add-only patches in this window" />
-			) : (
-				<Table
-					caption="Add-only patches by agent"
-					columns={ADD_ONLY_COLUMNS_I}
-					foot={(view) => (
-						<TableRow view={view}>
-							<TableCell view={view} kind="row-header">Total</TableCell>
-							<TableCell view={view} textRole="meta" label="Add-only" isNumeric>{formatIntI(total)}</TableCell>
-						</TableRow>
-					)}
-				>
-					{(view) => rows.map((r) => (
-						<TableRow key={r.agent} view={view}>
-							<TableCell view={view}>{r.agent}</TableCell>
-							<TableCell view={view} textRole="meta" label="Add-only" isNumeric>
-								{formatIntI(Number(r.count ?? 0))}
-							</TableCell>
-						</TableRow>
-					))}
-				</Table>
-			)}
+			<Table
+				caption="Add-only patches by agent"
+				columns={ADD_ONLY_COLUMNS_I}
+				foot={(view) => (
+					<TableRow view={view}>
+						<TableCell view={view} kind="row-header">Total</TableCell>
+						<TableCell view={view} textRole="meta" label="Add-only" isNumeric>{formatIntI(total)}</TableCell>
+					</TableRow>
+				)}
+			>
+				{(view) => rows.map((r) => (
+					<TableRow key={r.agent} view={view}>
+						<TableCell view={view}><AgentName name={r.agent} /></TableCell>
+						<TableCell view={view} textRole="meta" label="Add-only" isNumeric>
+							{formatIntI(Number(r.count ?? 0))}
+						</TableCell>
+					</TableRow>
+				))}
+			</Table>
 		</Card>
 	);
 }
 
+function isProseOnlyAddEmptyI(summary) {
+	return summary != null && !(Array.isArray(summary.agents) && summary.agents.length > 0);
+}
+
 // OPTIONAL 단계 — 모든 row NULL 가능:
-//   - 전체 NULL 시 "데이터 누적 중" 안내 → NaN%/0/0 렌더 차단
-//   - per-agent rate null 시 "—" 표시 (denominator = 0)
+//   - overall emission rate NULL 시 빈 카드 한 줄 → NaN%/0/0 렌더 차단
+//   - per-agent rate null 시 None 표시 (denominator = 0)
 //
 // graduation gate: overall_emission_rate ≥ 0.50 AND
 //   overall_uncorroborated_rate < 0.10 — the uncorroborated share of the rows the
@@ -522,7 +551,7 @@ function ProseOnlyAddCardI({ state, summary }) {
 // 나머지 넷이 조용히 억제되는 동안 배너는 이미 경고 상태라 아무도 다시 보지 않는다. 전체
 
 function StyleRefCardI({ state, styleRef }) {
-	const { Card, BulletBar, EmptyState, LoadingPlaceholder, Stack, StatRow } = window.UI;
+	const { Card, BulletBar, LoadingPlaceholder, StatRow } = window.UI;
 	const title = "Style-check rate";
 	const sub = "7 days · checked before coding";
 	if (state.status === "error") return null;
@@ -537,10 +566,6 @@ function StyleRefCardI({ state, styleRef }) {
 	const overallEmission = styleRef.overall_emission_rate;
 	const overallUncorroborated = styleRef.overall_uncorroborated_rate;
 	const agentRows = Array.isArray(styleRef.agents) ? styleRef.agents : [];
-	const hasData = agentRows.some((r) => Number(r.emission_count ?? 0) > 0);
-
-	// 격상 게이트 — null-safe (데이터 부재 → 회색 pending indicator).
-	const gradeBadge = styleRefGradeBadgeI(overallEmission, overallUncorroborated);
 
 	// C3: 격상 임계치 대비 rate 를 BulletBar(척도상 위치 + target 마커)로 — % 텍스트는 유지.
 	//   - emission: target=0.5 (격상 게이트 ≥50%) · ≥0.5 구간을 ok 밴드로.
@@ -550,11 +575,16 @@ function StyleRefCardI({ state, styleRef }) {
 		overallEmission !== null &&
 		overallEmission !== undefined &&
 		!Number.isNaN(Number(overallEmission));
+	// no rate = no task result in the window (the gate's own No outcomes case) · a known 0 keeps the data form
+	if (!hasEmission) {
+		return <EmptyCardI title={title} sub={sub} message="No task results in this window" />;
+	}
+	const gradeBadge = styleRefGradeBadgeI(overallEmission, overallUncorroborated);
 	const hasUncorroborated =
 		overallUncorroborated !== null &&
 		overallUncorroborated !== undefined &&
 		!Number.isNaN(Number(overallUncorroborated));
-	const emissionBar = hasEmission ? (
+	const emissionBar = (
 		<BulletBar
 			value={Number(overallEmission)}
 			target={0.5}
@@ -564,7 +594,7 @@ function StyleRefCardI({ state, styleRef }) {
 			]}
 			ariaLabel={`Reported rate ${(Number(overallEmission) * 100).toFixed(0)}% (graduation target 50%)`}
 		/>
-	) : null;
+	);
 	const uncorroboratedBar = hasUncorroborated ? (
 		<BulletBar
 			value={Number(overallUncorroborated)}
@@ -580,11 +610,11 @@ function StyleRefCardI({ state, styleRef }) {
 	const stats = [
 		{
 			key: "gate",
-			label: <><SymI s={gradeBadge.symbol} className={gradeBadge.tone} size={12} /> Graduation gate</>,
-			value: gradeBadge.label,
+			label: "Graduation gate",
+			value: <><SymI s={gradeBadge.symbol} className={gradeBadge.tone} size={12} /> {gradeBadge.label}</>,
 			context: gradeBadge.hint,
 		},
-		{ key: "reported", label: "Reported rate (overall)", value: hasEmission ? formatRateI(overallEmission) : null, context: emissionBar },
+		{ key: "reported", label: "Reported rate (overall)", value: formatRateI(overallEmission), context: emissionBar },
 		{
 			key: "uncorroborated",
 			label: "Uncorroborated share",
@@ -593,35 +623,26 @@ function StyleRefCardI({ state, styleRef }) {
 		},
 	];
 
-	const statRow = <StatRow stats={stats} />;
-	// no data → "Collecting data" instead of the 3-count split and table; no table, so a padded body
 	return (
 		<Card
 			title={title}
 			sub={sub}
 			info="Uncorroborated share = uncorroborated ÷ (corroborated + uncorroborated) — adjudicated rows only, unverifiable excluded (graduation gate under 10%)."
-			isFlush={hasData}
+			isFlush
 		>
-			{hasData ? (
-				<TableBodyI
-					lead={<>
-						{statRow}
-						<StyleRefSplitI
-							corroborated={styleRef.overall_corroborated_count}
-							uncorroborated={styleRef.overall_uncorroborated_count}
-							unverifiable={styleRef.overall_unverifiable_count}
-							greenfield={styleRef.overall_greenfield_count}
-						/>
-					</>}
-				>
-					<StyleRefAgentTableI rows={agentRows} />
-				</TableBodyI>
-			) : (
-				<Stack gap="block">
-					{statRow}
-					<EmptyState message="Collecting data" />
-				</Stack>
-			)}
+			<TableBodyI
+				lead={<>
+					<StatRow stats={stats} />
+					<StyleRefSplitI
+						corroborated={styleRef.overall_corroborated_count}
+						uncorroborated={styleRef.overall_uncorroborated_count}
+						unverifiable={styleRef.overall_unverifiable_count}
+						greenfield={styleRef.overall_greenfield_count}
+					/>
+				</>}
+			>
+				<StyleRefAgentTableI rows={agentRows} />
+			</TableBodyI>
 		</Card>
 	);
 }
@@ -630,15 +651,15 @@ const STYLE_REF_COLUMNS_I = Object.freeze([
 	{ key: "agent", label: "Agent" },
 	{ key: "reported", label: "Reported", isNumeric: true },
 	{ key: "rate", label: "Rate", isNumeric: true },
-	{ key: "corroborated", label: "Corrob.", isNumeric: true },
-	{ key: "uncorroborated", label: "Uncorrob.", isNumeric: true },
+	{ key: "corroborated", label: "Corroborated", isNumeric: true },
+	{ key: "uncorroborated", label: "Uncorroborated", isNumeric: true },
 	{ key: "unverifiable", label: "Unverifiable", isNumeric: true },
 ]);
 
 function StyleRefAgentTableI({ rows }) {
 	// 행=agent (가변) / 열=6 (agent · reported · rate · corroborated · uncorroborated · unverifiable)
 	// per-agent rate 열은 없다 — 세 bucket 을 하나의 비율로 접으면 adjudicated 여부가 사라진다.
-	const { Table, TableRow, TableCell } = window.UI;
+	const { AgentName, Table, TableRow, TableCell } = window.UI;
 	return (
 		<Table caption="Style-check rate by agent" columns={STYLE_REF_COLUMNS_I}>
 			{(view) => rows.map((r) => {
@@ -651,17 +672,17 @@ function StyleRefAgentTableI({ rows }) {
 				const hasRate = r.emission_rate !== null && r.emission_rate !== undefined;
 				return (
 					<TableRow key={r.agent} view={view}>
-						<TableCell view={view}>{r.agent}</TableCell>
+						<TableCell view={view}><AgentName name={r.agent} /></TableCell>
 						<TableCell view={view} textRole="meta" label="Reported" isNumeric>
 							{formatIntI(emCount)} / {formatIntI(emTotal)}
 						</TableCell>
 						<TableCell view={view} textRole="meta" label="Rate" isNumeric>
 							{hasRate ? formatRateI(r.emission_rate) : <NoneCellI />}
 						</TableCell>
-						<TableCell view={view} textRole="meta" label="Corrob." isNumeric>
+						<TableCell view={view} textRole="meta" label="Corroborated" isNumeric>
 							{formatIntI(corroborated)} / {formatIntI(eligible)}
 						</TableCell>
-						<TableCell view={view} textRole="meta" label="Uncorrob." isNumeric>
+						<TableCell view={view} textRole="meta" label="Uncorroborated" isNumeric>
 							{formatIntI(uncorroborated)}
 						</TableCell>
 						<TableCell view={view} textRole="meta" label="Unverifiable" isNumeric>
@@ -707,7 +728,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "ℹ",
 			tone: "text-info",
-			label: "pending",
+			label: "Pending",
 			hint: "Collecting data (7 d window)",
 		};
 	}
@@ -715,7 +736,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "ℹ",
 			tone: "text-info",
-			label: "pending",
+			label: "Pending",
 			hint: "No outcomes in 7 d",
 		};
 	}
@@ -723,7 +744,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "✕",
 			tone: "text-crit",
-			label: "block",
+			label: "Block",
 			hint: `emission ${formatRateI(emissionRate)} < 50%`,
 		};
 	}
@@ -734,7 +755,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "ℹ",
 			tone: "text-info",
-			label: "pending",
+			label: "Pending",
 			hint: "Adjudicated: 0 (greenfield or unverifiable)",
 		};
 	}
@@ -742,22 +763,20 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "✓",
 			tone: "text-ok",
-			label: "pass",
+			label: "Pass",
 			hint: `emission ${formatRateI(emissionRate)} · uncorroborated ${formatRateI(uncorroboratedRate)}`,
 		};
 	}
 	return {
 		symbol: "⚠",
 		tone: "text-warn",
-		label: "warn",
+		label: "Warn",
 		hint: `uncorroborated ${formatRateI(uncorroboratedRate)} ≥ 10%`,
 	};
 }
 
-// Null-safe rate render — null → "—" (NaN% / 0/0 차단).
+// a known rate only — callers branch on null first (spec 44084 §2.2), so a 0 is a measured zero
 function formatRateI(rate) {
-	if (rate === null || rate === undefined || Number.isNaN(Number(rate)))
-		return "—";
 	return `${(Number(rate) * 100).toFixed(1)}%`;
 }
 
@@ -765,8 +784,8 @@ function formatRateI(rate) {
 // + revision_count delta. orphan 테이블(미배포/빈 데이터)은 정직한 빈 상태로 노출 —
 // 가짜 0 금지. error(503/테이블 부재) → 뷰가 카드 대신 재시도 가능한 오류 배너를 렌더.
 function CorrectionSignalsCardI({ state }) {
-	const { Card, Cluster, EmptyState, formatKstDate, LoadingPlaceholder, Stack, StatRow } = window.UI;
-	const title = "Detection agreement";
+	const { Card, Cluster, formatKstDate, LoadingPlaceholder, Stack, StatRow } = window.UI;
+	const title = CARD_TITLE_I.correctionSignals;
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
@@ -778,16 +797,9 @@ function CorrectionSignalsCardI({ state }) {
 	}
 
 	const d = state.data;
-	// 빈 테이블 → 정직한 빈 상태 (다음 단계 힌트 동반). 가짜 0% 미표기.
-	if (!d.total_signals) {
-		return (
-			<Card title={title} sub="Correction signals">
-				<EmptyState
-					message="No correction signals recorded yet"
-					hint="Appears once a run logs a stage1/stage2 detection."
-				/>
-			</Card>
-		);
+	// 빈 테이블 → 정직한 빈 카드 한 줄 (채워지는 조건 동반). 가짜 0% 미표기.
+	if (isCorrectionSignalsEmptyI(d)) {
+		return <EmptyCardI title={title} sub="Correction signals" message="No correction signals yet — each detection logs one" />;
 	}
 
 	const agr = d.agreement;
@@ -832,11 +844,15 @@ function CorrectionSignalsCardI({ state }) {
 	);
 }
 
+function isCorrectionSignalsEmptyI(data) {
+	return data != null && !data.total_signals;
+}
+
 // 코퍼스 성장 카드 — core.autoagent_corpus_audits 시리즈(cycle_date 당 1행).
 // null 은 "판독 불가", 0 은 "측정된 0" 으로 서로 다른 판독 → null 을 0 으로 접지 않는다.
 function CorpusGrowthCardI({ state }) {
-	const { Card, Cluster, EmptyState, Sparkline, LoadingPlaceholder, Stack, StatRow } = window.UI;
-	const title = "Corpus growth";
+	const { Card, Cluster, Sparkline, LoadingPlaceholder, Stack, StatRow } = window.UI;
+	const title = CARD_TITLE_I.corpusGrowth;
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
@@ -847,18 +863,11 @@ function CorpusGrowthCardI({ state }) {
 		);
 	}
 
-	const rows = Array.isArray(state.data.audits) ? state.data.audits : [];
-	const latest = rows[0];
-	if (!latest) {
-		return (
-			<Card title={title} sub="Per-cycle audit">
-				<EmptyState
-					message="No corpus readings yet"
-					hint="Appears once a daemon cycle writes one."
-				/>
-			</Card>
-		);
+	if (isCorpusGrowthEmptyI(state.data)) {
+		return <EmptyCardI title={title} sub="Per-cycle audit" message="No corpus readings yet — each daemon cycle writes one" />;
 	}
+	const rows = state.data.audits;
+	const latest = rows[0];
 
 	// 응답은 cycle_date DESC → 스파크는 시간순으로 뒤집는다.
 	const wordSeries = rows.map((r) => Number(r.word_count ?? 0)).reverse();
@@ -875,15 +884,13 @@ function CorpusGrowthCardI({ state }) {
 	const deltaLabel = hasDelta
 		? `${delta > 0 ? "+" : ""}${formatIntI(delta)} words vs previous`
 		: "no baseline yet";
-	const compliance = formatRateI(latest.compliance_rate);
-	const override = formatRateI(latest.override_rate);
-	const verdict = getCorpusGrowthVerdictI(latest);
+	const threshold = latest.seeded_threshold;
 	const stats = [
 		{
 			key: "words",
 			label: "Corpus size",
 			value: formatIntI(Number(latest.word_count ?? 0)),
-			unit: "words",
+			unit: threshold == null ? "words" : `of ${formatIntI(Number(threshold))} words`,
 			context: <><SymI s={deltaSymbol} className={deltaTone} /> {deltaLabel}</>,
 		},
 	];
@@ -908,41 +915,47 @@ function CorpusGrowthCardI({ state }) {
 						</span>
 					)}
 				</Cluster>
-				<Cluster gap="control-group" className="fs-meta text-faint tnum">
-					<span>{formatIntI(Number(latest.file_count ?? 0))} files</span>
-					<span>~{formatIntI(Number(latest.token_estimate ?? 0))} tokens</span>
-					<span>
-						threshold {formatIntI(Number(latest.seeded_threshold ?? 0))}
-					</span>
-					{verdict.tone === "text-warn" && (
-						<span className="text-dim">
-							<SymI s={verdict.symbol} className={verdict.tone} size={11} /> {verdict.label}
-						</span>
-					)}
-				</Cluster>
-				<Cluster gap="control-group" className="fs-meta text-faint tnum">
-					<span>
-						gate{" "}
-						<span className="text-ink">
-							{formatIntI(Number(latest.gate_pass_count ?? 0))}
-						</span>{" "}
-						pass ·{" "}
-						<span className="text-ink">
-							{formatIntI(Number(latest.gate_trip_count ?? 0))}
-						</span>{" "}
-						trip / {formatIntI(Number(latest.gate_total_count ?? 0))}
-					</span>
-					<span>compliance {compliance}</span>
-					<span>override {override}</span>
-				</Cluster>
-				{(latest.compliance_rate === null || latest.override_rate === null) && (
-					<div className="card-sub fs-meta">
-						— = insufficient data, never a measured zero.
-					</div>
-				)}
+				<CorpusFactsI latest={latest} />
 			</Stack>
 		</Card>
 	);
+}
+
+// files · tokens · gate checks · rates, and a raised alert → one fact list
+function CorpusFactsI({ latest }) {
+	const verdict = getCorpusGrowthVerdictI(latest);
+	const gate = [latest.gate_pass_count, latest.gate_trip_count, latest.gate_total_count].map((n) => formatIntI(Number(n ?? 0)));
+	const facts = [
+		["Files", formatIntI(Number(latest.file_count ?? 0))],
+		["Tokens", `~${formatIntI(Number(latest.token_estimate ?? 0))}`],
+		["Gate checks", `${gate[0]} pass · ${gate[1]} trip of ${gate[2]}`],
+		["Compliance", getCorpusRateI(latest.compliance_rate)],
+		["Override", getCorpusRateI(latest.override_rate)],
+	];
+	if (verdict.tone === "text-warn") {
+		facts.push(["Alert", <><SymI s={verdict.symbol} className={verdict.tone} size={11} /> {verdict.label}</>]);
+	}
+	return (
+		// three term-value pairs per line → two lines, the paired card's row keeps its 75% fill floor
+		<dl className="grid grid-cols-[repeat(3,auto_1fr)] gap-x-block gap-y-list fs-meta tnum">
+			{facts.map(([term, value]) => (
+				<React.Fragment key={term}>
+					<dt className="text-dim">{term}</dt>
+					<dd className="text-ink">{value}</dd>
+				</React.Fragment>
+			))}
+		</dl>
+	);
+}
+
+function isCorpusGrowthEmptyI(data) {
+	return data != null && !(Array.isArray(data.audits) && data.audits.length > 0);
+}
+
+// null = insufficient data, never a measured zero → None, not 0.0%
+function getCorpusRateI(rate) {
+	const { AbsentValue } = window.UI;
+	return rate == null ? <AbsentValue kind="none" /> : formatRateI(rate);
 }
 
 // Same shape as styleRefGradeBadgeI → the Operator view renders every gauge chip alike.
