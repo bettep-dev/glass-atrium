@@ -662,7 +662,7 @@ const FAILED_STAT = {
   context: "Couldn't load the fleet summary.", region: "agents", source: "the fleet summary", error: "HTTP 500", canRetry: true,
   target: "agents",
 };
-interface StatItem { key: string; label: string; value: unknown; unit?: string; context: unknown; href?: string; isLoading?: boolean }
+interface StatItem { key: string; label: string; value: unknown; unit?: string; context: unknown; href?: string; isLoading?: boolean; source?: string }
 
 function renderStatusCard(stats: unknown[], extra: Record<string, unknown> = {}): { tree: RenderedNode; items: StatItem[] } {
   const tree = render("StatusCard", { stats, onRetry: () => {}, ...extra });
@@ -802,6 +802,18 @@ test("a failed stat hands the next step and the raw error to the card's one ⓘ,
   const info = collectText(nodeOf(card.props.info)).replace(/\s+/g, " ");
   assert.ok(info.includes(copy.next), `the next step rides ⓘ: ${info}`);
   assert.ok(info.includes(copy.detail), `the raw error rides ⓘ: ${info}`);
+});
+
+// the loader reads "Loading {source}…" (ui.display-atoms.client) → each stat hands the noun its read fetches, never its label
+test("every loading stat names its loader by the noun its read fetches", () => {
+  const unread = { status: "loading", data: null, error: null };
+  const stats = (failMod.buildStats as (args: unknown) => unknown[])({
+    harness: { status: "loading" }, costState: unread, outcomesState: unread, agentsState: unread,
+  });
+  const { items } = renderStatusCard(stats);
+  assert.deepEqual(Array.from(items, (item) => [item.isLoading, item.source]), [
+    [true, "system parts"], [true, "task results"], [true, "agents"], [true, "today's spend"],
+  ]);
 });
 
 describe("a held week panel says Last known once, in its head; its body names the failed refresh only", () => {

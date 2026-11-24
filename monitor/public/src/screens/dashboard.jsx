@@ -319,7 +319,7 @@ function StatusCard({ stats, onRetry, sharedSources = NO_SHARED_SOURCES }) {
 
 // stat model → one StatRow stat; the value is the Link to the owning screen once there is something to link
 function buildStatItem(stat, { onRetry, isRetryShared }) {
-  if (stat.status === 'loading') return { key: stat.id, label: getStatLabel(stat), isLoading: true };
+  if (stat.status === 'loading') return { key: stat.id, label: getStatLabel(stat), isLoading: true, source: stat.source };
   return {
     key: stat.id, label: getStatLabel(stat), value: <StatValue stat={stat}/>, unit: stat.absent ? undefined : stat.unit,
     context: getStatContext(stat, { onRetry, isRetryShared }),
