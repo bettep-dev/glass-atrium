@@ -418,6 +418,39 @@ test("the node drawer draws exactly its machine strings through MachineString", 
   ].sort());
 });
 
+// §2.2: a value the payload leaves out is a known absence → the word None, never a dash
+test("the node drawer reads None for every value its payloads leave out and dates each run in the Day form", async () => {
+  const mod = await loadArch();
+  const hookState = { status: "ready", data: { events: [{ event: "SessionStart", groups: [] }] } };
+  const hookFailState = {
+    status: "ready",
+    data: { last_failure_ts: null, error_kind_breakdown: [{ error_kind: "db_unavailable", count: 1 }], failures: [{ id: 7, failure_ts: null, error_kind: "db_unavailable" }] },
+  };
+  const unpricedModelState = { status: "ready", data: { model_count: 0 } };
+  const payloadState = {
+    status: "ready",
+    data: { daemon: "autoagent", entries: [{ run_date: "2026-11-23", summary: { verdict: "failed", error_signatures: [{ count: 2 }] } }, { summary: { verdict: "failed" } }] },
+  };
+  const partRows = [
+    { id: "hook-chain", name: "Hook Chain", kind: "hook", daemonName: null, nodeIds: ["hook_pipeline"], tone: "warn", statusLabel: "Warning", lastRunAt: null },
+    { id: "daemon-cycle", name: "autoagent", kind: "daemon", daemonName: "autoagent", nodeIds: ["hook_pipeline"], tone: "ok", statusLabel: "Healthy", lastRunAt: null },
+  ];
+  const daemons = [{ daemon_name: "learning-aggregator", effective_status: "ok", last_run_at: null }];
+
+  const tree = renderScreen(mod.React.createElement(mod.NodePartHealth, {
+    nodeId: "canonical.hook_pipeline", partRows, daemons, payloadDaemon: "autoagent", onSelectDaemon: () => {},
+    payloadState, hookState, hookFailState, unpricedModelState,
+  }));
+  const text = collectText(tree);
+  const absent = findNodes(tree, (n) => n.props.atom === "AbsentValue").map((n) => n.props.kind);
+
+  assert.doesNotMatch(text, /—/, `a dash stands for a missing value — read: ${text}`);
+  // settings path · failure time · hook name · target table · window days ×2 · reason line · run date · last run ×2
+  assert.deepEqual(absent, Array(10).fill("none"), `read: ${text}`);
+  assert.match(text, /\b11-23\b/);
+  assert.doesNotMatch(text, /2026-11-23/, "a run list inside one window takes the Day form, not the full date");
+});
+
 test("a part's Open box action is the quiet ghost button, so a list of parts carries no column of bordered buttons", async () => {
   const mod = await loadArch();
   const nodeIndex = new Map([["canonical.cron", { id: "canonical.cron", label: "Scheduled background jobs" }]]);

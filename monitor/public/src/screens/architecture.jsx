@@ -276,8 +276,8 @@ function getHookFailureRows(state) {
 	return (state.data?.failures || []).map((failure, index) => ({
 		key: failure?.id ?? `${failure?.failure_ts}-${index}`,
 		failureTs: failure?.failure_ts || null,
-		hookName: failure?.hook_name || "—",
-		targetTable: failure?.target_table || "—",
+		hookName: failure?.hook_name || null,
+		targetTable: failure?.target_table || null,
 		kind: getHookFailKind(failure?.error_kind),
 		reason: failure?.payload_ref || null,
 		retryAttempted: Boolean(failure?.retry_attempted),
@@ -309,11 +309,11 @@ function getDaemonRunRows(payloadState, daemonName) {
 	// 서로 섞음. 자리(index)를 붙여 응답 안에서 유일하게 만듦.
 	return (data.entries || []).map((entry, index) => ({
 		key: `${entry?.run_date}-${index}`,
-		runDate: entry?.run_date || "—",
+		runDate: entry?.run_date || null,
 		verdict: entry?.summary?.verdict || "unknown",
 		reasons: (entry?.summary?.error_signatures || []).map((signature, sigIndex) => ({
 			key: `${signature?.message}-${sigIndex}`,
-			message: signature?.message || "—",
+			message: signature?.message || null,
 			count: Number(signature?.count) || 0,
 		})),
 	}));
@@ -1508,7 +1508,7 @@ function getHealthStoreErrorsAR(states) {
  * 안 됨 (LLM01). 파일의 유일한 raw-HTML 자리는 mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
  */
 function HookChainDetail({ state }) {
-	const { MachineString, formatRelativeTime } = window.UI;
+	const { AbsentValue, MachineString, formatRelativeTime } = window.UI;
 	const rows = getHookChainRows(state);
 
 	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
@@ -1531,7 +1531,7 @@ function HookChainDetail({ state }) {
 		<div className="arch-hook-chain">
 			{/* 어느 파일에서 읽었는지 — 훅이 안 돈다는 신고의 첫 확인 지점이 이 경로임 */}
 			<div className="arch-hook-head gap-list fs-meta text-dim">
-				<MachineString className="text-ink">{state.data?.source_path || "—"}</MachineString>
+				{state.data?.source_path ? <MachineString className="text-ink">{state.data.source_path}</MachineString> : <AbsentValue kind="none" />}
 				{sourceMtime && <span>edited {formatRelativeTime(sourceMtime)}</span>}
 			</div>
 			<ul className="arch-hook-events gap-stack">
@@ -1595,7 +1595,7 @@ function HookChainDetail({ state }) {
  * mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
  */
 function HookFailureDetail({ state }) {
-	const { MachineString, StatusDot, formatRelativeTime, formatKstFull } = window.UI;
+	const { AbsentValue, MachineString, StatusDot, formatRelativeTime, formatKstFull } = window.UI;
 	const rows = getHookFailureRows(state);
 
 	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
@@ -1619,7 +1619,7 @@ function HookFailureDetail({ state }) {
 				{/* 0 도 사실로 냄 — 창이 비었다는 것 자체가 아래 최종기록과 짝을 이루는 문장임 */}
 				<span className="text-ink" data-hook-fail-total="">
 					{total} {total === 1 ? "failure" : "failures"} in the last{" "}
-					<window.UI.NoWrap>{days ?? "—"} days</window.UI.NoWrap>
+					<window.UI.NoWrap>{days ?? <AbsentValue kind="none" />} days</window.UI.NoWrap>
 				</span>
 				{rows.length < total && <span>showing newest {rows.length}</span>}
 				{lastFailure ? (
@@ -1643,13 +1643,15 @@ function HookFailureDetail({ state }) {
 							key={row.key}
 							data-hook-fail-row=""
 							className="arch-hook-head gap-list fs-meta text-dim">
-							<time
-								dateTime={row.failureTs}
-								title={formatKstFull(row.failureTs)}>
-								{formatRelativeTime(row.failureTs)}
-							</time>
-							<MachineString className="text-ink">{row.hookName}</MachineString>
-							<MachineString>{row.targetTable}</MachineString>
+							{row.failureTs ? (
+								<time dateTime={row.failureTs} title={formatKstFull(row.failureTs)}>
+									{formatRelativeTime(row.failureTs)}
+								</time>
+							) : (
+								<AbsentValue kind="none" />
+							)}
+							{row.hookName ? <MachineString className="text-ink">{row.hookName}</MachineString> : <AbsentValue kind="none" />}
+							{row.targetTable ? <MachineString>{row.targetTable}</MachineString> : <AbsentValue kind="none" />}
 							{/* 라벨이 신호이고 tone 은 점이 실음 — meta 크기 글자에 심각도 색을
 							    얹으면 AA 대비에 못 미치고, 색만으로 실패 종류를 가르지도 않음 */}
 							<span className="inline-flex items-center">
@@ -1706,7 +1708,7 @@ function PricingAdvisoryDetail({ state }) {
 
 // advisory heading sentence — one per state the read can land in
 function PricingAdvisoryBody({ state }) {
-	const { StatusDot } = window.UI;
+	const { AbsentValue, StatusDot } = window.UI;
 	const data = state.data;
 	if (state.status === "error")
 		return (
@@ -1727,7 +1729,7 @@ function PricingAdvisoryBody({ state }) {
 	if (count === 0)
 		return (
 			<span className="fs-meta text-dim">
-				Every model run in the last {data?.days ?? "—"} days has a pricing row.
+				Every model run in the last {data?.days ?? <AbsentValue kind="none" />} days has a pricing row.
 			</span>
 		);
 
@@ -1763,7 +1765,7 @@ function NodePartHealth({
 	hookFailState,
 	unpricedModelState,
 }) {
-	const { Badge, MachineString, StatusDot, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
+	const { AbsentValue, Badge, MachineString, StatusDot, formatRelativeTime, daemonStatusLabel, daemonStatusTone } =
 		window.UI;
 	const [closedRowIds, setClosedRowIds] = useStateAR(() => new Set());
 
@@ -1822,12 +1824,11 @@ function NodePartHealth({
 								) : (
 									<span className="fs-meta text-dim">{getPartStatusTextAR(row)}</span>
 								)}
-								{/* 마지막 실행은 데몬 부품만 갖는 사실임 — 나머지 부품에서는 빈 값이 정답이라
-								    칸을 아예 두지 않음. 데몬인데 값이 없으면 그 없음은 보여야 하므로 '—' 로 냄. */}
+								{/* last run = a daemon-only fact → no field on other parts; a daemon with none shows its absence (§2.2) */}
 								{row.daemonName && (
 									<span className="fs-meta text-dim">
 										Last run{" "}
-										{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : "—"}
+										{row.lastRunAt ? formatRelativeTime(row.lastRunAt) : <AbsentValue kind="none" />}
 									</span>
 								)}
 							</div>
@@ -1888,7 +1889,7 @@ function NodePartHealth({
 							</Badge>
 							<span className="fs-meta text-dim">
 								Last run{" "}
-								{daemon.last_run_at ? formatRelativeTime(daemon.last_run_at) : "—"}
+								{daemon.last_run_at ? formatRelativeTime(daemon.last_run_at) : <AbsentValue kind="none" />}
 							</span>
 						</div>
 					</div>
@@ -1905,6 +1906,7 @@ function NodePartHealth({
  * 파일의 유일한 raw-HTML 자리는 mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
  */
 function DaemonRunDetail({ daemon, state }) {
+	const { AbsentValue, formatKstDay } = window.UI;
 	const runs = getDaemonRunRows(state, daemon);
 
 	// 못 읽음과 로딩을 갈라 부름 — 한 문장으로 접으면 조작자가 기다릴지 고칠지 못 정함.
@@ -1932,7 +1934,7 @@ function DaemonRunDetail({ daemon, state }) {
 		<ul className="arch-run-list">
 			{summary.failures.map((run) => (
 				<li key={run.key} className="arch-run-entry gap-list">
-					<span className="fs-meta text-ink">{run.runDate}</span>
+					<span className="fs-meta text-ink tnum">{run.runDate ? formatKstDay(run.runDate) : <AbsentValue kind="none" />}</span>
 					{run.reasons.length === 0 ? (
 						<span className="fs-meta text-dim">
 							{RUN_VERDICT_NOTE[run.verdict] || `Verdict: ${run.verdict}`}
@@ -1941,7 +1943,7 @@ function DaemonRunDetail({ daemon, state }) {
 						<ul className="arch-run-reasons">
 							{run.reasons.map((reason) => (
 								<li key={reason.key} className="fs-meta text-dim">
-									{reason.message}
+									{reason.message ?? <AbsentValue kind="none" />}
 									{/* 한 사이클에 반복된 서명은 횟수까지 밝힘 — 단발 장애와 반복 장애는 다른 사건임 */}
 									{reason.count > 1 && (
 										<span className="text-faint"> ×{reason.count}</span>
