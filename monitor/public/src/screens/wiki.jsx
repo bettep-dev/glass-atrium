@@ -991,7 +991,7 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 					className="ml-auto"
 				/>
 			</window.UI.Cluster>
-			<WikiReportsBody state={reportState} days={days} shared={shared} onRetry={onRetry} />
+			<WikiReportsBody state={reportState} shared={shared} onRetry={onRetry} />
 		</WikiDisclosureW>
 	);
 }
@@ -1023,10 +1023,9 @@ function sortRunsNewestFirstW(reports) {
 }
 
 // The server's p95 shares the cycles window, so it rides the same summary line.
+// No runs or a failed read → the body states it, so the head stays silent.
 function describeRunHistoryW(cyclesState, model, summaryState) {
-	if (window.UI.getRegionView(cyclesState) === "loading") return null;
-	if (window.UI.getRegionView(cyclesState) === "error") return "Unavailable";
-	if (model.rows.length === 0) return "No runs in range";
+	if (window.UI.getRegionView(cyclesState) !== "ready" || model.rows.length === 0) return null;
 
 	const p95 =
 		summaryState.status === "ready" ? summaryState.data?.cycle_p95_ms : null;
@@ -1390,7 +1389,7 @@ function isDryRunProposalW(proposal) {
 	return DRY_RUN_TAIL_W.test(proposal.suggested_action || "");
 }
 
-function WikiReportsBody({ state, days, shared, onRetry }) {
+function WikiReportsBody({ state, shared, onRetry }) {
 	if (window.UI.getRegionView(state) === "loading") {
 		return <WikiReportsTable reports={[]} isLoading />;
 	}
@@ -1411,11 +1410,8 @@ function WikiReportsBody({ state, days, shared, onRetry }) {
 		);
 	}
 	const reports = state.data?.reports || [];
-	if (reports.length === 0) {
-		return (
-			<window.UI.EmptyState message={`No wiki compile runs in the last ${days} days.`} />
-		);
-	}
+	// the fold count already says no runs in the window
+	if (reports.length === 0) return null;
 
 	const sortedDesc = sortRunsNewestFirstW(reports);
 

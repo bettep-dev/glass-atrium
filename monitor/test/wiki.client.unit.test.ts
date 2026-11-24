@@ -355,6 +355,19 @@ test("the run-history summary carries the cycle p95 exactly when the server repo
   helpers.window.UI.formatDuration = originalFormat;
 });
 
+describe("the run-history head stays silent when its body already states the fact", () => {
+  const rows = [
+    { name: "no runs in the window", cycles: ready({ cycles: [] }) },
+    { name: "the cycles read failed", cycles: errored },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const head = helpers.describeRunHistoryW(row.cycles, helpers.buildThroughputModel(row.cycles), ready({ cycle_p95_ms: 4200 }));
+      assert.equal(head, null);
+    });
+  }
+});
+
 test("the run-history summary fits the 32-character header-meta cap at its widest", () => {
   const originalFormat = helpers.window.UI.formatDuration;
   helpers.window.UI.formatDuration = (v: number, unit: string) => `${v}${unit}`;

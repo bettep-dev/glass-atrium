@@ -253,7 +253,7 @@ test("the Runs fold body is flush so the table's edge cells hold the one card-pa
 test("the Runs failure block takes the card inset itself inside the flush fold", async () => {
   const mod = await loadWikiScreen();
   const failed = { status: "error", data: null, error: OUTAGE, busy: false };
-  const tree = renderScreen(mod.React.createElement(mod.WikiReportsBody as Component, { state: failed, days: 30, shared: null, onRetry: () => {} }));
+  const tree = renderScreen(mod.React.createElement(mod.WikiReportsBody as Component, { state: failed, shared: null, onRetry: () => {} }));
   const insets = findNodes(tree, (n) => /\bpx-card-pad\b/.test(classOf(n)) && findNodes(n, (m) => m.props.atom === "RegionFailure").length > 0);
 
   assert.equal(insets.length, 1);
@@ -357,7 +357,7 @@ test("under a shared outage every failed region defers to the banner under its o
     { name: "tile band", element: createElement(mod.WikiTileBand, { summaryState: failed, indexState: failed, backlogState: failed, cyclesState: failed, at: null, shared, onRetry }) },
     { name: "run history", element: createElement(mod.WikiRunHistorySection, { cyclesState: failed, summaryState: failed, shared, onRetry }) },
     { name: "notes by type", element: createElement(mod.WikiNotesByTypeSection, { state: failed, shared, onRetry }) },
-    { name: "runs", element: createElement(mod.WikiReportsBody, { state: failed, days: 30, shared, onRetry }) },
+    { name: "runs", element: createElement(mod.WikiReportsBody, { state: failed, shared, onRetry }) },
     { name: "merge proposals", element: createElement(mod.WikiMaintenanceSection, { backlogState: failed, cyclesState: failed, shared, onRetry }) },
   ];
   for (const row of rows) {
@@ -422,7 +422,7 @@ test("failure copy names each region by the label the screen shows", async () =>
 
   assert.deepEqual([...(banner.props.sources as string[])], ["Health", "Run history", "Notes by type", "Merge proposals", "Runs"]);
   assert.equal(sourceOf(createElement(mod.WikiMaintenanceSection, { backlogState: failed, cyclesState: failed, shared: null, onRetry: () => {} })), "merge proposals");
-  assert.equal(sourceOf(createElement(mod.WikiReportsBody, { state: failed, days: 30, shared: null, onRetry: () => {} })), "runs");
+  assert.equal(sourceOf(createElement(mod.WikiReportsBody, { state: failed, shared: null, onRetry: () => {} })), "runs");
 });
 
 // every region of the page starts from this one state
@@ -833,6 +833,16 @@ test("the run-status mix bar takes the small radius, never a full pill", async (
   const [track] = findNodes(mix, (n) => n.props.role === "img");
 
   assert.match(classOf(track), /\brounded-sm\b/);
+});
+
+test("an empty Runs window leaves its fact to the fold count, with no body line repeating it", async () => {
+  const mod = await loadWikiScreen();
+  const tree = renderScreen(mod.React.createElement(mod.WikiReportsBody as Component, {
+    state: { status: "ready", data: { reports: [] }, error: null }, shared: null, onRetry: () => {},
+  }));
+
+  assert.equal(findNodes(tree, (n) => n.props.atom === "EmptyState").length, 0, "no empty-state line");
+  assert.equal(collectText(tree), "", "no text of its own");
 });
 
 test("the run-history empty state tells a wiki that never ran from a quiet window", async () => {
