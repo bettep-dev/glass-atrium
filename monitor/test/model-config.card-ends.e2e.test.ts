@@ -48,9 +48,10 @@ const CONFIG = {
   daemon_config_sync: "ok",
 };
 
-// side-by-side widths only — below 1280 the row stacks and has no shared end edge
+// side-by-side widths only — below 1280 the row stacks and has no shared end edge.
+// Every card ends at its own content (spec 44084 §12.3, owner decision) → the balance check gives way to it, never the reverse
 for (const width of [1280, 1440, 1568, 1920]) {
-  test(`the daemon model + caps column and the call-tier column end within one row of each other at ${width}px`, async () => {
+  test(`${width}px: the two daemon columns share a top, every card ends at its last row, and the columns end within one row of each other`, async () => {
     const app = Fastify({ logger: false });
     await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
     app.get("/api/model-config", async () => CONFIG);
@@ -62,20 +63,43 @@ for (const width of [1280, 1440, 1568, 1920]) {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       await page.goto(`${serverUrl}/#model-config`, { waitUntil: "load" });
       await page.waitForSelector(".split-row .split-col table tbody tr td input", { timeout: 30_000 });
+      // anonymous callbacks only: tsx wraps a named const in a __name() helper the page lacks
       const ends = await page.evaluate(() => {
         const row = document.querySelector(".split-row")!;
-        const stack = [...row.children[0].querySelectorAll(".card")].map((card) => card.getBoundingClientRect());
-        const tiers = row.children[1].getBoundingClientRect();
+        // a column is a card itself (the call tiers) or a stack of cards (daemon model + caps)
+        const [stack, tiers] = [row.children[0], row.children[1]].map((column) =>
+          column.matches(".card") ? [column] : [...column.querySelectorAll(".card")],
+        );
+        const cards = [...stack, ...tiers].map((card) => {
+          const box = card.getBoundingClientRect();
+          const body = card.querySelector(".card-body")!;
+          const rows = card.querySelectorAll("tbody tr");
+          const foot = card.querySelector(".card-foot");
+          const contentEnds = [rows[rows.length - 1], foot].filter((el) => el !== null && el !== undefined).map((el) => el!.getBoundingClientRect().bottom);
+          return {
+            title: card.querySelector("h2")?.textContent ?? "",
+            contentBottom: Math.max(...contentEnds),
+            innerBottom: box.bottom - parseFloat(getComputedStyle(card).borderBottomWidth) - parseFloat(getComputedStyle(body).paddingBottom),
+          };
+        });
+        const [stackBoxes, tierBoxes] = [stack, tiers].map((column) => column.map((card) => card.getBoundingClientRect()));
         return {
           rowPx: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-h")),
-          isSideBySide: stack.every((box) => tiers.left >= box.right),
-          stackBottom: Math.max(...stack.map((box) => box.bottom)),
-          tiersBottom: tiers.bottom,
+          isSideBySide: stackBoxes.every((box) => tierBoxes.every((tier) => tier.left >= box.right)),
+          tops: [row.children[0].getBoundingClientRect().top, row.children[1].getBoundingClientRect().top],
+          cards,
+          stackBottom: Math.max(...stackBoxes.map((box) => box.bottom)),
+          tiersBottom: Math.max(...tierBoxes.map((box) => box.bottom)),
         };
       });
 
       assert.ok(ends.rowPx > 0, "the row-height token resolves");
       assert.ok(ends.isSideBySide, `${width}px: the call tiers sit beside the daemon model + caps stack`);
+      assert.ok(Math.abs(ends.tops[0] - ends.tops[1]) <= 1, `${width}px: column tops ${ends.tops.join(" vs ")}`);
+      assert.strictEqual(ends.cards.length, 3, `${width}px: daemon model, caps and call tiers`);
+      for (const card of ends.cards) {
+        assert.ok(Math.abs(card.contentBottom - card.innerBottom) <= 1, `${width}px ${card.title}: content ends at ${card.contentBottom}, the card's inner bottom at ${card.innerBottom}`);
+      }
       const gap = Math.abs(ends.stackBottom - ends.tiersBottom);
       assert.ok(gap <= ends.rowPx, `${width}px: ends ${gap}px apart, more than one ${ends.rowPx}px row`);
     } finally {
