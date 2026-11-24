@@ -418,18 +418,13 @@ const SUPPRESSION_EVAL_RESULTS = [
 // and a reader comparing the lists must not meet two descriptions of one thing.
 const NON_AUTO_FIXABLE_COPY = {
   label: "Non-auto-fixable",
-  hint:
-    "The proposal removes a line outside every editable region, which add-only " +
-    "synthesis cannot express. Re-arm by wrapping the target in an EDITABLE region.",
+  hint: "The fix would remove a locked line. Wrap it in an EDITABLE region.",
 };
 
 const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = {
   "repeat-apply-cap": {
     label: "Repeat-apply cap",
-    hint:
-      "N applied patches did not abate the signal, so the loop stopped stacking " +
-      "another. Terminal, and no status reset clears it — see the parked-pattern " +
-      "warning below. Open design decision.",
+    hint: "Applied fixes did not reduce it, so the loop stopped. Nothing here restarts it.",
   },
   "no-metric-key": {
     label: "No metric key",
@@ -439,9 +434,7 @@ const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = 
   },
   "non-promptable": {
     label: "Non-promptable signal (retired)",
-    hint:
-      "The retired label-set intake skip, now the no-metric-key skip. A terminal " +
-      "row stamped by it stays as it was; its events age out of the window.",
+    hint: "Set aside by a retired intake rule. Nothing to do.",
   },
   "stale-pattern-skip": {
     label: "Pair re-check skip",
@@ -465,9 +458,7 @@ const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = 
   },
   "roster-mismatch": {
     label: "Roster mismatch",
-    hint:
-      "The pattern's agent is not an agents/*.md stem, so no patch could land. " +
-      "Fix the agent column or retire the row.",
+    hint: "It names an agent with no agent file. Correct the name or retire the row.",
   },
   "aggregator-pair": {
     label: "Pair verdict not met",
@@ -479,15 +470,11 @@ const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = 
   },
   "reject-streak-snooze": {
     label: "Reject-streak snooze",
-    hint:
-      "Consecutive proposals were refused by review. Terminal; re-arming needs " +
-      "the reject evidence cleared or scoped.",
+    hint: "Review refused this fix several times in a row. Clear those refusals to restart it.",
   },
   "reverted-snooze": {
     label: "Reverted snooze",
-    hint:
-      "A covering applied proposal was backed out by a human. Terminal; " +
-      "re-proposing would re-land what was just reverted.",
+    hint: "A person reverted the applied fix. Nothing to do.",
   },
   "non-auto-fixable": NON_AUTO_FIXABLE_COPY,
   // Same gate, two keys: the transition-reason marker above, the eval_result token
