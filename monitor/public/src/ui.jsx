@@ -1209,14 +1209,14 @@ function Disclosure({ kind = 'detail', title, sub, tone, level = 2, isFlush = fa
   </div>;
 }
 
-// ratio preset → base.css modifier; stacked below xl, side by side at xl.
-const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '2:1': '2-1' });
+// ratio preset → base.css modifier; stacked below xl, side by side at xl · rest:content = the second column at its content width.
+const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '2:1': '2-1', 'rest:content': 'rest-content' });
 
 // layout → base.css modifier: equal = peer cards match heights · content = each column its own height (rails, non-peer rows)
-// · divided = two in-card blocks parted by one hairline.
-const SPLIT_ROW_LAYOUTS = Object.freeze({ content: 'content', divided: 'divided', equal: 'equal' });
+// · divided = two in-card blocks parted by one hairline · aligned = peer cards share the row's tracks, so head, body and foot sit on one y.
+const SPLIT_ROW_LAYOUTS = Object.freeze({ aligned: 'aligned', content: 'content', divided: 'divided', equal: 'equal' });
 
-// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'equal' (default) | 'content' | 'divided'.
+// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'equal' (default) | 'content' | 'divided' | 'aligned'.
 function SplitRow({ ratio = '1:1', layout = 'equal', children, className = '' }) {
   const modifier = SPLIT_ROW_RATIOS[ratio] || SPLIT_ROW_RATIOS['1:1'];
   const layoutModifier = SPLIT_ROW_LAYOUTS[layout] || SPLIT_ROW_LAYOUTS.equal;

@@ -30,8 +30,8 @@ describe("split row ratio presets", () => {
     });
   }
 
-  test("only the even and the two-to-one spans are offered", () => {
-    assert.deepEqual(Object.keys(ratios).sort(), ["1:1", "2:1"]);
+  test("the even and two-to-one spans and the rest-beside-content span are offered", () => {
+    assert.deepEqual(Object.keys(ratios).sort(), ["1:1", "2:1", "rest:content"]);
   });
 
   test("an unknown ratio falls back to the even split rather than a missing modifier", () => {
@@ -58,6 +58,10 @@ describe("split row layout variants", () => {
 
   test("equal is the default, so peer cards end at one edge unless the row opts out", () => {
     assert.ok(classesOf(rowOf({})).includes(`split-row--${layouts.equal}`));
+  });
+
+  test("an aligned row carries its own modifier, so peer cards share the row's tracks", () => {
+    assert.ok(classesOf(rowOf({ layout: "aligned" })).includes("split-row--aligned"));
   });
 
   test("a divided row carries its own modifier, so two in-card blocks part on a hairline", () => {

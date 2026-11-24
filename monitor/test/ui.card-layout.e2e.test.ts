@@ -31,9 +31,15 @@ const variantRows = `
   <div class="split-row split-row--2-1 split-row--${layouts.content}" data-variant="rail"><div style="height: 2000px;">main</div>
     <div class="split-col split-col--rail" id="rail"><div style="height: 100px;">one</div><div style="height: 100px;">two</div></div></div>
   <div class="split-row split-row--1-1 split-row--${layouts.divided}" data-variant="divided"><div style="height: 300px;">tall</div><div>short</div></div>`;
+// peer cards whose heads and bodies differ in height: a two-line head beside a one-line one, a tall body beside a short one
+const getAlignedCard = (id: string, head: string, bodyPx: number) => `<div class="card" id="${id}"><div class="card-head" style="width: 120px;">${head}</div>
+  <div class="card-body" style="height: ${bodyPx}px;">body</div><div class="card-foot">foot</div></div>`;
+const alignedRow = `<div class="split-row split-row--1-1 split-row--${layouts.aligned}" id="aligned">
+  ${getAlignedCard("aligned-a", "Change summary", 120)}${getAlignedCard("aligned-b", "Rejected by bucket over the last thirty days", 60)}</div>`;
 const LAYOUT_PAGE = `<!doctype html><html><body style="margin: 0;">
   <div style="padding: 24px;">${splitRows}
     ${variantRows}
+    ${alignedRow}
   </div>
 </body></html>`;
 
@@ -89,13 +95,42 @@ describe("split row at real viewports", () => {
 
   test("from xl each split row divides its width at its preset ratio", async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    const rows = await readPairs();
+    const rows = (await readPairs()).filter((reading) => /^\d+:\d+$/.test(reading.key));
 
-    assert.equal(rows.length, Object.keys(ratios).length);
+    assert.equal(rows.length, Object.keys(ratios).filter((key) => /^\d+:\d+$/.test(key)).length);
     for (const reading of rows) {
       const [left, right] = reading.key.split(":").map(Number);
       assert.ok(Math.abs(reading.widthRatio - left / right) < RATIO_TOLERANCE, `${reading.key} width ratio ${reading.widthRatio}`);
     }
+  });
+
+  test("from xl a rest-beside-content row sizes its second column to its content and gives the first the rest", async () => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const sizes = await page.$eval('.split-row[data-ratio="rest:content"]', (row) => {
+      const [first, second] = [...row.children] as HTMLElement[];
+      const range = document.createRange();
+      range.selectNodeContents(second);
+      return { first: first.getBoundingClientRect().width, second: second.getBoundingClientRect().width, content: range.getBoundingClientRect().width, row: row.clientWidth };
+    });
+
+    assert.ok(Math.abs(sizes.second - sizes.content) < 1, `second ${sizes.second} vs its content ${sizes.content}`);
+    assert.ok(Math.abs(sizes.first + 16 + sizes.second - sizes.row) < 1, `first ${sizes.first} takes the rest of ${sizes.row}`);
+  });
+});
+
+describe("an aligned split row", () => {
+  test("from xl peer cards share row tracks: bodies start on one y and feet sit on one y", async () => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const parts = await page.$$eval("#aligned > .card", (cards) => cards.map((card) => ({
+        body: card.querySelector(".card-body")!.getBoundingClientRect().top - card.getBoundingClientRect().top,
+        foot: card.querySelector(".card-foot")!.getBoundingClientRect().top - card.getBoundingClientRect().top,
+        top: card.getBoundingClientRect().top,
+      })));
+      const isSideBySide = Math.abs(parts[0].top - parts[1].top) < 1;
+
+      assert.ok(isSideBySide, "pairs up from xl");
+      assert.equal(parts[0].body, parts[1].body, "bodies start on one offset");
+      assert.equal(parts[0].foot, parts[1].foot, "feet start on one offset");
   });
 });
 

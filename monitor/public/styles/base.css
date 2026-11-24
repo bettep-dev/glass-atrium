@@ -1855,6 +1855,20 @@ button.ra-step:hover {
 	border-block-start: 1px solid rgb(var(--line));
 }
 
+/* aligned — peer cards share the row's tracks (subgrid), one track per Card slot → heads, bars, bodies and feet start on one y.
+   The card's own row gap resets to 0, else the subgrid inherits the row's 16 between its slots */
+.split-row--aligned { align-items: stretch; }
+.split-row--aligned > .card {
+	display: grid;
+	grid-row: span 4;
+	grid-template-rows: subgrid;
+	row-gap: 0;
+}
+.split-row--aligned > .card > .card-head { grid-row: 1; }
+.split-row--aligned > .card > .card-bar { grid-row: 2; }
+.split-row--aligned > .card > .card-body { grid-row: 3; }
+.split-row--aligned > .card > .card-foot { grid-row: 4; }
+
 /* Split column (SplitColumn) — a card stack in one SplitRow column; the rail variant pins it while the taller column scrolls (xl only) */
 .split-col {
 	display: flex;
@@ -1866,6 +1880,7 @@ button.ra-step:hover {
 @media (min-width: 1280px) {
 	.split-row--1-1 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.split-row--2-1 { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+	.split-row--rest-content { grid-template-columns: minmax(0, 1fr) auto; }
 	.split-row--divided > * + * {
 		padding-block-start: 0;
 		border-block-start: 0;
