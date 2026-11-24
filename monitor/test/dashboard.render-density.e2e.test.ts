@@ -178,6 +178,7 @@ const STATUS_CARD_STATES: Array<{ name: string; open: () => Promise<Page> }> = [
     },
   },
   {
+    // a held all-clear reads the unknown glyph (sr "Unknown: ") before its Last known
     name: "when two stats are held over failed refreshes on two causes, each with its own Retry",
     open: async () => {
       const page = await openDashboard({ width: 1440, height: 900 });
@@ -185,7 +186,7 @@ const STATUS_CARD_STATES: Array<{ name: string; open: () => Promise<Page> }> = [
       await page.route(/\/api\/cost\/kpi/, (route) => route.fulfill({ status: 502, json: {} }));
       await page.getByRole("button", { name: "Refresh dashboard" }).click();
       await page.waitForFunction(
-        () => Array.from(document.querySelectorAll("#dash-status .stat-context")).filter((el) => /^Last known/.test(el.textContent ?? "")).length >= 2,
+        () => Array.from(document.querySelectorAll("#dash-status .stat-context")).filter((el) => /^Unknown: Last known/.test(el.textContent ?? "")).length >= 2,
         undefined,
         { timeout: 30_000 },
       );
@@ -473,6 +474,25 @@ describe("Runs by hour layout", () => {
     assert.ok(layout.hours.left > layout.results.left, "Runs by hour is the right half");
     assert.ok(layout.spend.top >= Math.max(layout.results.bottom, layout.hours.bottom), "Spend starts below the pair");
     assert.ok(layout.spend.width >= layout.results.width + layout.hours.width, "Spend spans the full width");
+    assertSquareCells(layout.cells);
+  });
+
+  test("at 1920 the Runs by hour card is as wide as its grid, and the task results take the rest of the row", async () => {
+    const page = await openDashboard({ width: 1920, height: 1080 });
+    const fit = await page.evaluate(() => {
+      const card = document.querySelector("#dash-week-hours .card") as HTMLElement;
+      const grid = document.querySelector("#dash-week-hours .dash-hour-grid") as HTMLElement;
+      const style = getComputedStyle(card);
+      const inner = card.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const body = card.querySelector(".card-body") as HTMLElement | null;
+      const bodyStyle = body ? getComputedStyle(body) : null;
+      const bodyInset = bodyStyle ? parseFloat(bodyStyle.paddingLeft) + parseFloat(bodyStyle.paddingRight) : 0;
+      return { inner: inner - bodyInset, grid: grid.getBoundingClientRect().width };
+    });
+    const layout = await getWeekLayout(page);
+    await page.close();
+    assert.ok(Math.abs(fit.inner - fit.grid) < 1, `card content ${fit.inner}px vs grid ${fit.grid}px`);
+    assert.ok(layout.results.width > layout.hours.width, "the task results take the rest");
     assertSquareCells(layout.cells);
   });
 

@@ -138,8 +138,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         @keyframes ga-spin { to { transform: rotate(360deg); } }
         .ga-spin { animation: ga-spin 0.9s linear infinite; transform-origin: center; }
         @media (prefers-reduced-motion: reduce) { .ga-spin { animation: none; } }
-        .dash-week-panel { display: flex; flex-direction: column; }
-        .dash-week-panel > .card { flex: 1 1 auto; }
         .dash-strip-track { height: 4rem; position: relative; }
         /* one 1px --line baseline across the strip → each day's segment reaches half the column gap either side */
         .dash-strip-base { position: absolute; bottom: 0; left: calc(var(--gap-label-inline) / -2); right: calc(var(--gap-label-inline) / -2); height: 1px; background: rgb(var(--line)); }
@@ -309,7 +307,8 @@ function getStatContext(stat, { onRetry, isRetryShared }) {
     <>
       {text && <span title={stat.cause ?? text}>{stat.isContextTripped ? <HeadStatus tone={stat.tone}>{line}</HeadStatus> : line}</span>}
       {hasRetry && (
-        <span className="ml-control">
+        // a one-line box → the 24 hit area overhangs the context line, the card never grows
+        <span className="one-line-box ml-control">
           <RetryButton onRetry={() => onRetry(stat.region)} isBusy={stat.isBusy} isInline focusTargetId={DASH_STATUS_ID}/>
         </span>
       )}
@@ -335,18 +334,18 @@ function buildStatNote(stat) {
 }
 
 // the week behind the status card → each panel states its own span (the strip 7 days, the results 7 days + today)
-// results | runs by hour pair from xl (both this week's runs; half width keeps the hour cells square and short) → Spend's strip spans the row below
+// results | runs by hour pair from xl (both this week's runs; the hour grid at its content width keeps its cells square) → Spend's strip spans the row below
 function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetryHeatmap, sharedSources = NO_SHARED_SOURCES }) {
   return (
     <>
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-section">
+      <window.UI.SplitRow ratio="rest:content">
         <WeekPanel id="dash-week-results" title="Task results" state={outcomesState} source="task results"
           note={`${OUTCOME.COUNTING_NOTE} ${RESULTS_PANEL_NOTE}`} isRetryShared={sharedSources.includes('task results')}
           render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
         <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
           note={(data) => <HourGridNote grid={data ? buildHourGrid(data) : null}/>} onRetry={onRetryHeatmap} isRetryShared={sharedSources.includes('runs by hour')}
           render={(data) => <HourGrid grid={buildHourGrid(data)}/>}/>
-      </div>
+      </window.UI.SplitRow>
       <WeekPanel id="dash-week-spend" title="Spend per day" state={spendState} source="daily spend" onRetry={onRetrySpend}
         isRetryShared={sharedSources.includes('daily spend')}
         render={(data) => <SpendStrip strip={buildSpendStrip(data.points)}/>}/>
@@ -363,7 +362,7 @@ function WeekPanel({ id, title, state, source, onRetry, render, note = null, isR
   const info = note && (typeof note === 'function' ? note(hasData ? state.data : null) : <p className="fs-body">{note}</p>);
   // a held reading says Last known in plain words beside the title, never a badge (spec 44084 §3)
   return (
-    <section id={id} className="dash-week-panel" aria-label={title} aria-busy={state.busy ? 'true' : undefined}>
+    <section id={id} aria-label={title} aria-busy={state.busy ? 'true' : undefined}>
       <Card title={title} sub={view === 'held' ? window.UI.LAST_KNOWN_TEXT : null} info={info}>
         <Stack gap="list">
           {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
