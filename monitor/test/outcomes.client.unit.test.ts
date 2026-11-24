@@ -59,7 +59,6 @@ interface OutcomesHelpers {
   ) => { budget: number; truncated: number; missing: number } | null;
   parseQaScoreO: (qaScore: unknown) => { sum: number; avg: number } | null;
   buildSummaryFlagO: (row: unknown) => { tone: string; title: string } | null;
-  buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
   getDetailValueLabelO: (axis: string, value: unknown) => string;
   splitLessonO: (markdown: string) => { lesson: string; body: string };
   formatToolUseO: (value: string) => string;
@@ -346,42 +345,26 @@ test("buildSummaryFlagO: review reasons come from the shared SoT and land in the
   assert.strictEqual(flag?.title, "Flagged for review: Other (Flagged for another reason)");
 });
 
-// --- buildActiveFilterChipsO: a chip reads like the filter control that set it ---
+// --- Drawer values: one value, one name across the filter bar, ledger cell and drawer ---
 
-describe("buildActiveFilterChipsO: each chip names its axis and value as the filter controls do", () => {
+describe("getDetailValueLabelO: a drawer value reads as the filter bar's option for the same value", () => {
+  const axes = vm.runInContext("FILTER_AXES_O", outcomes as unknown as vm.Context) as Array<{
+    axis: string;
+    options: Array<{ value: string; label: string }>;
+  }>;
   const rows = [
-    { name: "the default period adds no chip", filter: { days: 30 }, chips: [] },
-    { name: "another period names its window", filter: { days: 7 }, chips: ["Period: 7d"] },
-    { name: "a result names its label, not its enum", filter: { days: 30, result: "done_with_concerns" }, chips: ["Result: Done with caveats"] },
-    { name: "a flagged filter names its option", filter: { days: 30, review_flag: "false" }, chips: ["Flagged: Clear"] },
-    { name: "a task type keeps its canonical token", filter: { days: 30, task_type: "bug-fix" }, chips: ["Task type: bug-fix"] },
-    { name: "a missing confidence reads None", filter: { days: 30, confidence: "null" }, chips: ["Confidence: None"] },
-    { name: "a self-check names Pass", filter: { days: 30, metric_pass: "true" }, chips: ["Self-check: Pass"] },
-    { name: "an attribution names its short label", filter: { days: 30, attribution_source: "budget-truncation" }, chips: ["Attribution: budget-kill"] },
-    { name: "a keyword is quoted and shortened", filter: { days: 30, q: "a keyword longer than eighteen" }, chips: ['Keyword: "a keyword longer …"'] },
+    { name: "a high confidence", axis: "confidence", value: "high", optionValue: "high" },
+    { name: "a low confidence", axis: "confidence", value: "low", optionValue: "low" },
+    { name: "a missing confidence", axis: "confidence", value: null, optionValue: "null" },
+    { name: "a passed self-check", axis: "metric_pass", value: true, optionValue: "true" },
+    { name: "a failed self-check", axis: "metric_pass", value: false, optionValue: "false" },
+    { name: "a missing self-check", axis: "metric_pass", value: null, optionValue: "null" },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      assert.deepEqual(sameRealm(outcomes.buildActiveFilterChipsO(row.filter)), row.chips);
-    });
-  }
-});
-
-// --- Drawer values: one value, one name across chip, ledger cell and drawer ---
-
-describe("getDetailValueLabelO: a drawer value reads as the filter chip for the same value", () => {
-  const rows = [
-    { name: "a high confidence", axis: "confidence", value: "high", chipValue: "high" },
-    { name: "a low confidence", axis: "confidence", value: "low", chipValue: "low" },
-    { name: "a missing confidence", axis: "confidence", value: null, chipValue: "null" },
-    { name: "a passed self-check", axis: "metric_pass", value: true, chipValue: "true" },
-    { name: "a failed self-check", axis: "metric_pass", value: false, chipValue: "false" },
-    { name: "a missing self-check", axis: "metric_pass", value: null, chipValue: "null" },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      const chip = sameRealm(outcomes.buildActiveFilterChipsO({ days: 30, [row.axis]: row.chipValue }))[0];
-      assert.strictEqual(`${chip.split(": ")[0]}: ${outcomes.getDetailValueLabelO(row.axis, row.value)}`, chip);
+      const option = axes.find((group) => group.axis === row.axis)?.options.find((o) => o.value === row.optionValue);
+      assert.ok(option, `the ${row.axis} bar offers ${row.optionValue}`);
+      assert.strictEqual(outcomes.getDetailValueLabelO(row.axis, row.value), option.label);
     });
   }
 });

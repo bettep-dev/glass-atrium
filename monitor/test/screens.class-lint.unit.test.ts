@@ -111,9 +111,6 @@ const BASELINE: Record<string, BaselineRow[]> = {
   "model-config": [
     { rule: "raw-table", count: 11, owner: "B5" },
   ],
-  outcomes: [
-    { rule: "retired-class", count: 1, owner: "B2" },
-  ],
 };
 
 const roleKeys = getRoleKeys();

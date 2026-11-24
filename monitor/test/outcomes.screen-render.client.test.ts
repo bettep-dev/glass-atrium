@@ -265,6 +265,34 @@ describe("a card's own status is the shared head Status in the head's sub slot, 
   }
 });
 
+describe("an empty ledger names the window when no filter is applied, and offers the reset when one is", () => {
+  const onResetFilter = () => undefined;
+  const rows = [
+    { name: "no filter, the 30-day window", filter: { days: 30 }, includeAll: false, text: "No task results in the last 30 days.", canReset: false },
+    { name: "no filter, the 7-day window", filter: { days: 7 }, includeAll: false, text: "No task results in the last 7 days.", canReset: false },
+    { name: "an agent filter", filter: { days: 30, agent: "glass-atrium-dev-front" }, includeAll: false, text: "No records match these filters.", canReset: true },
+    { name: "the include-all toggle", filter: { days: 30 }, includeAll: true, text: "No records match these filters.", canReset: true },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadScreenModule(OUTCOMES_SRC, { UI: ui.UI, location: { hash: "" }, URLSearchParams });
+      const create = (mod.React as { createElement: (t: unknown, p: unknown) => unknown }).createElement;
+      const tree = renderScreen(create(mod.ResultTableCard as Component, {
+        state: { status: "ready", busy: false, data: { rows: [] }, error: null }, rows: [], totalMatched: 0, page: 0, limit: 50,
+        sort: "record_ts:desc", filter: row.filter, filterControls: { includeAll: row.includeAll }, onResetFilter,
+        closure: { pendingIds: new Set(), closedOverrides: new Map() }, needsYou: { rows: [], hiddenCount: 0 }, needsYouCap: 5,
+      })) as RenderedNode;
+      const [empty] = findNodes(tree, (n) => n.type === "EmptyState");
+      const resets = findNodes(empty, (n) => n.type === "button" && collectText(n).trim() === "Reset filters");
+
+      // collectText joins child nodes with a space → compare with whitespace dropped
+      const squash = (text: string) => text.replace(/\s+/g, "");
+      assert.ok(squash(collectText(empty)).startsWith(squash(row.text)), collectText(empty));
+      assert.equal(resets.length, row.canReset ? 1 : 0, "a reset only when a filter is applied");
+    });
+  }
+});
+
 // component nodes keep their name as type; the region's card is the first host element beneath them
 function getRootHost(node: RenderedNode): RenderedNode {
   const [child] = node.children;

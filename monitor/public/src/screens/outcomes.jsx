@@ -2288,8 +2288,8 @@ function ResultTableCard({
         <ResultTableBody
           state={state}
           rows={rows}
-          totalMatched={totalMatched}
           filter={filter}
+          isFilterApplied={isFilterAppliedO(filter, includeAll)}
           sort={sort}
           onSortChange={onSortChange}
           onResetFilter={onResetFilter}
@@ -2305,18 +2305,6 @@ function ResultTableCard({
   );
 }
 
-// Active filters → 'Axis: value' chip labels for the empty-state echo; default axes omitted, names follow the bar's axes.
-function buildActiveFilterChipsO(filter) {
-  const chips = [];
-  if (filter.days && filter.days !== 30) chips.push(`Period: ${filter.days}d`);
-  if (filter.agent) chips.push(`Agent: ${window.UI.getAgentDisplayName(filter.agent)}`);
-  for (const { axis, label, options } of FILTER_AXES_O) {
-    if (filter[axis]) chips.push(`${label}: ${getOptionLabelO(options, filter[axis])}`);
-  }
-  if (filter.q) chips.push(`Keyword: "${truncateO(filter.q, 18)}"`);
-  return chips;
-}
-
 function getOptionLabelO(options, value) {
   return options.find((option) => option.value === value)?.label ?? value;
 }
@@ -2327,14 +2315,8 @@ function getDetailValueLabelO(axis, value) {
   return getOptionLabelO(options, String(value ?? 'null'));
 }
 
-// Active-filter chip badges for the empty-state echo (ResultTableZeroStateO); the caller's Cluster lays them out.
-function FilterChipsO({ chips }) {
-  const { Badge } = window.UI;
-  return <>{chips.map((c) => <Badge key={c} role="metadata">{c}</Badge>)}</>;
-}
-
 function ResultTableBody({
-  state, rows, totalMatched, filter, sort, onSortChange, onResetFilter, onRowClick, onRetry, shared, closure, needsYou, needsYouCap, onToggleNeedsYou,
+  state, rows, filter, isFilterApplied, sort, onSortChange, onResetFilter, onRowClick, onRetry, shared, closure, needsYou, needsYouCap, onToggleNeedsYou,
 }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
@@ -2347,38 +2329,15 @@ function ResultTableBody({
     return <RegionErrorO source="the record ledger" state={state} onRetry={onRetry} shared={shared} focusTargetId={REGION_CARD_IDS.ledger} isInset/>;
   }
   if (rows.length === 0) {
-    return <ResultTableZeroStateO filter={filter} onResetFilter={onResetFilter}/>;
+    return isFilterApplied
+      ? <window.UI.EmptyState kind="no-results" onReset={onResetFilter}/>
+      : <window.UI.EmptyState message={`No task results in the last ${filter.days} days.`}/>;
   }
 
   return (
     <ResultTable
       rows={rows} sort={sort} onSortChange={onSortChange} onRowClick={onRowClick} closure={closure}
       needsYou={needsYou} needsYouCap={needsYouCap} onToggleNeedsYou={onToggleNeedsYou}/>
-  );
-}
-
-// 정직한 빈-상태 (S6 / T-OUT-3) — 활성 필터를 echo 해 '왜 비었는지' 맥락 제공 (never blank).
-//   활성 필터 0개면 '아직 기록 없음', 1개+면 칩으로 좁힌 축을 재노출 → 사용자가 무엇을 풀지 판단 가능.
-function ResultTableZeroStateO({ filter, onResetFilter }) {
-  const chips = filter ? buildActiveFilterChipsO(filter) : [];
-
-  return (
-    <div className="placeholder">
-      {chips.length === 0
-        ? 'No results recorded yet for this period'
-        : 'No results match the active filters'}
-      {chips.length > 0 && (
-        <window.UI.Cluster className="justify-center mt-label">
-          <span className="fs-meta text-faint">Active:</span>
-          <FilterChipsO chips={chips}/>
-        </window.UI.Cluster>
-      )}
-      <div className="mt-block">
-        <button className="btn sm" onClick={onResetFilter} aria-label="Reset filters">
-          Reset filters
-        </button>
-      </div>
-    </div>
   );
 }
 
@@ -3246,12 +3205,6 @@ function handleErrorO(err, setter) {
   setter({ status: 'error', data: null, error: errorMessage(err) });
 }
 
-
-function truncateO(str, len) {
-  if (typeof str !== 'string') return '';
-  if (str.length <= len) return str;
-  return str.slice(0, len - 1) + '…';
-}
 
 // 공용 formatInt 위임 (ui.jsx SoT) — 로컬 재구현 폐기. 음수/NaN → '—' 가드 승격 상속.
 const formatIntO = window.UI.formatInt;

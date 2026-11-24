@@ -94,7 +94,6 @@ interface OutcomesHelpers {
   loopEventsSummaryO: (state: PayloadState<{ events?: unknown[] }>) => string;
   getChannelLivenessBadgeO: (state: PayloadState<{ alerting?: string[]; days?: number }>) => { tone: string; text: string };
   AgentFailureBodyO: (props: { state: PayloadState<unknown>; onRetry: () => void; stickyStyle?: unknown }) => RenderNode;
-  buildActiveFilterChipsO: (filter: Record<string, unknown>) => string[];
   isFilterAppliedO: (filter: Record<string, unknown>, includeAll: boolean) => boolean;
   buildAgentOptionsO: (agents: string[], chosen: string) => { value: string; label: string }[];
   BandStatValueO: (props: { tile: BandTile; isLoading: boolean; unloadedText: string | null }) => RenderNode | string;
@@ -928,23 +927,22 @@ test("ledger row: a long summary keeps its full text for a CSS ellipsis and carr
   assert.ok(nodes.some((n) => n.type === "td" && n.props?.title === summary), "the cell title carries the full text");
 });
 
-test("ledger row and filter chips name the same value the same way", () => {
+test("ledger row and filter bar name the same value the same way", () => {
   const cellText = (row: RenderNode, index: number) => textOf(row.children[index] as RenderNode).trim();
+  const axes = vm.runInContext("FILTER_AXES_O", helpers as unknown as vm.Context) as Array<{
+    axis: string;
+    options: Array<{ value: string; label: string }>;
+  }>;
   const rows = [
     ...["done", "done_with_concerns", "fail", "blocked", "needs_context"].map((value) => ({ name: `result ${value}`, axis: "result", value, cell: 3 })),
     { name: "task type", axis: "task_type", value: "feature", cell: 2 },
   ];
   for (const row of rows) {
     const rendered = renderLedgerRow(ledgerRowOf(row.axis === "result" ? row.value : "done"));
-    const chips = helpers.buildActiveFilterChipsO({ days: 30, [row.axis]: row.value });
-    assert.strictEqual(chips.length, 1, row.name);
-    assert.ok(chips[0].endsWith(`: ${cellText(rendered, row.cell)}`), `${row.name}: chip '${chips[0]}' vs cell '${cellText(rendered, row.cell)}'`);
+    const option = axes.find((group) => group.axis === row.axis)?.options.find((o) => o.value === row.value);
+    assert.ok(option, `${row.name}: the bar offers the value`);
+    assert.strictEqual(cellText(rendered, row.cell), option.label, row.name);
   }
-});
-
-test("the agent filter chip names the agent by the display name the ledger shows", () => {
-  const agentChip = helpers.buildActiveFilterChipsO({ days: 30, agent: LEDGER_AGENT })[0];
-  assert.strictEqual(agentChip, `Agent: ${helpers.window.UI.getAgentDisplayName(LEDGER_AGENT)}`);
 });
 
 // --- drawer order, Needs-you cap, record fields, empty chart days ---
