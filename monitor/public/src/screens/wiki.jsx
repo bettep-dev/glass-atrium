@@ -1440,7 +1440,7 @@ function WikiReportsBody({ state, shared, onRetry }) {
 	return (
 		<div>
 			{/* per-run 보고는 동질 카드 N개 → 슬롭 card-grid 가 아니라 RECORD 표(.tbl)로 노출 (S1/S6).
-          최신 우선 · 수치 셀 .num · 시각 relative-time · 상태 DAEMON_STATUS_TONE · 상태 톤은 톤 글리프 + 상태어가 담당. */}
+          최신 우선 · 수치 셀 .num · 시작 HH:mm · 상태 DAEMON_STATUS_TONE · 상태 톤은 날짜 뒤 톤 글리프 + 상태어가 담당. */}
 			<WikiReportsTable reports={sortedDesc} />
 		</div>
 	);
@@ -1448,63 +1448,57 @@ function WikiReportsBody({ state, shared, onRetry }) {
 
 const WIKI_REPORT_COLUMNS = [
 	{ key: "run_date", label: "Run date" },
-	{ key: "status", label: "Status" },
+	{ key: "started", label: "Started" },
 	{ key: "deadlinks", label: "Broken links", isNumeric: true },
 	{ key: "dedup", label: "Duplicates", isNumeric: true },
-	{ key: "started", label: "Started" },
 ];
+// the run date takes the slack; fixed layout → no column moves with what a run's cells hold
+const WIKI_REPORT_WIDTHS_W = Object.freeze([undefined, "6rem", "8rem", "8rem"]);
+const WIKI_REPORT_TABLE_CLASS_W = "table-fixed";
 
 // Rows flow in page scroll; the Table wrapper clips, so a narrow pane never scrolls the run table sideways.
 function WikiReportsTable({ reports, isLoading = false }) {
 	const { Table, SkeletonRows } = window.UI;
-	// Every run healthy → the caption names it once and the column drops (spec §6 Cells, §7).
-	// Any other shared status is a deviation, and the caption is sr-only → its cells stay visible.
-	const sharedStatus = isLoading ? null : readSharedRunStatusW(reports);
-	const hasStatusColumn = sharedStatus === null || wikiStatusToneW(sharedStatus) !== "ok";
-	const columns = hasStatusColumn ? WIKI_REPORT_COLUMNS : WIKI_REPORT_COLUMNS.filter((c) => c.key !== "status");
-	const caption = hasStatusColumn
-		? "Wiki compile runs, newest first, one row per run"
-		: `Wiki compile runs, newest first, one row per run, every run ${wikiStatusLabelW(sharedStatus)}`;
 
 	return (
-		<Table caption={caption} columns={columns}>
+		<Table
+			caption="Wiki compile runs, newest first, one row per run"
+			columns={WIKI_REPORT_COLUMNS}
+			widths={WIKI_REPORT_WIDTHS_W}
+			className={WIKI_REPORT_TABLE_CLASS_W}
+		>
 			{isLoading
-				? <SkeletonRows rows={5} columns={columns.length} rowHeight={36} />
-				: (view) => reports.map((report) => (
-					<WikiReportRow key={report.run_date} report={report} view={view} hasStatusColumn={hasStatusColumn} />
-				))}
+				? <SkeletonRows rows={5} columns={WIKI_REPORT_COLUMNS.length} rowHeight={36} />
+				: (view) => reports.map((report) => <WikiReportRow key={report.run_date} report={report} view={view} />)}
 		</Table>
 	);
 }
 
-// The status every run shares, or null when the window's runs differ (or there are none).
-function readSharedRunStatusW(reports) {
-	const statuses = new Set(reports.map((r) => r.status));
-	return statuses.size === 1 ? [...statuses][0] ?? "" : null;
-}
-
-// Status = tone glyph + word, no pill; the backlog columns are snapshots re-stamped each run.
-function WikiReportRow({ report, view, hasStatusColumn }) {
+// a healthy run shows its date alone (the fold count says all healthy); any other states its glyph + word after the date
+function WikiReportRow({ report, view }) {
 	const { TableRow, TableCell, TONE_GLYPH } = window.UI;
 	const tone = wikiStatusToneW(report.status);
 
 	return (
 		<TableRow view={view}>
-			<TableCell view={view} kind="row-header" className="tabular-nums">{report.run_date}</TableCell>
-			{hasStatusColumn && (
-				<TableCell view={view} textRole="meta" label="Status">
-					<span className={tone === "neutral" ? "text-dim" : `text-${tone}`} aria-hidden="true">{`${TONE_GLYPH[tone]} `}</span>
-					{wikiStatusLabelW(report.status)}
-				</TableCell>
-			)}
+			<TableCell view={view} kind="row-header" className="tabular-nums">
+				{describeRunDayW(report.run_date)}
+				{tone !== "ok" && (
+					<>
+						{" "}
+						<span className={tone === "neutral" ? "text-dim" : `text-${tone}`} aria-hidden="true">{`${TONE_GLYPH[tone]} `}</span>
+						{wikiStatusLabelW(report.status)}
+					</>
+				)}
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Started" className="tabular-nums" title={report.started_at ? window.UI.formatKstFull(report.started_at) : undefined}>
+				<WikiCellValueW value={report.started_at ? window.UI.formatKstTime(report.started_at) : null} />
+			</TableCell>
 			<TableCell view={view} textRole="meta" label="Broken links" isNumeric>
 				<WikiCellValueW value={report.deadlinks_count} />
 			</TableCell>
 			<TableCell view={view} textRole="meta" label="Duplicates" isNumeric>
 				<WikiCellValueW value={report.dedup_count} />
-			</TableCell>
-			<TableCell view={view} textRole="meta" label="Started" title={report.started_at ? window.UI.formatKstFull(report.started_at) : undefined}>
-				<WikiCellValueW value={report.started_at ? window.UI.formatRelativeTime(report.started_at) : null} />
 			</TableCell>
 		</TableRow>
 	);

@@ -510,27 +510,14 @@ function renderRunRowsOf(mod: ScreenModule, reports: unknown[]): RenderedNode | 
 
 const WIDE_VIEW = { isStacked: false, columnCount: 4 };
 
-describe("the run table drops its Status column only when every run in the window is healthy", () => {
+const RUN_COLUMN_LABELS = ["Run date", "Started", "Broken links", "Duplicates"];
+
+describe("the run table keeps one column set, and a run that is not healthy states its glyph and word after its date", () => {
   const run = (run_date: string, status: string, deadlinks_count: number) => ({ run_date, status, deadlinks_count, dedup_count: 3 });
   const rows = [
-    {
-      name: "a uniform healthy window, its backlog still moving, states the shared status once in the caption",
-      reports: [run("2026-09-26", "ok", 2), run("2026-09-25", "ok", 1), run("2026-09-24", "ok", 1)],
-      hasStatusColumn: false,
-      shownWords: [],
-    },
-    {
-      name: "a mixed window states each run's status in its own cell",
-      reports: [run("2026-09-26", "ok", 1), run("2026-09-25", "partial", 1), run("2026-09-24", "ok", 1)],
-      hasStatusColumn: true,
-      shownWords: ["Healthy", "Warning"],
-    },
-    {
-      name: "a uniform failing window, its backlog still moving, shows the failure in every row",
-      reports: [run("2026-09-26", "fail", 2), run("2026-09-25", "fail", 1), run("2026-09-24", "fail", 1)],
-      hasStatusColumn: true,
-      shownWords: ["Failed"],
-    },
+    { name: "a healthy window", reports: [run("2026-09-26", "ok", 2), run("2026-09-25", "ok", 1)], dateTexts: ["09-26", "09-25"] },
+    { name: "a mixed window", reports: [run("2026-09-26", "ok", 1), run("2026-09-25", "partial", 1)], dateTexts: ["09-26", "09-25 ⚠ Warning"] },
+    { name: "a failing window", reports: [run("2026-09-26", "fail", 2), run("2026-09-25", "error", 1)], dateTexts: ["09-26 ✕ Failed", "09-25 ✕ Down"] },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -538,29 +525,36 @@ describe("the run table drops its Status column only when every run in the windo
       const tree = renderScreen(mod.React.createElement(mod.WikiReportsTable as Component, { reports: row.reports }));
       const [table] = findNodes(tree, (n) => n.props.atom === "Table");
       const heads = Array.from(table.props.columns as Array<{ label: string }>, (c) => c.label);
-      const tbody = renderTableRowsOf(mod, tree);
-      const statusCells = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.label === "Status");
+      const dateCells = findNodes(renderTableRowsOf(mod, tree), (n) => n.props.atom === "TableCell" && n.props.kind === "row-header");
 
-      assert.equal(heads.includes("Status"), row.hasStatusColumn, "the Status head follows the window's health");
-      assert.equal(statusCells.length, row.hasStatusColumn ? row.reports.length : 0, "status cells match the head");
-      assert.equal(/Healthy/.test(String(table.props.caption)), !row.hasStatusColumn, "only a shared healthy status is named once, in the caption");
-      // the caption is sr-only → a non-healthy status must reach sighted users through visible row text
-      for (const word of row.shownWords) assert.match(collectText(tbody), new RegExp(word), `the rows show ${word}`);
+      assert.deepEqual(heads, RUN_COLUMN_LABELS, "no Status column, in the ruled order");
+      const widths = Array.from(table.props.widths as Array<string | undefined>);
+      assert.equal(widths[0], undefined, "the run date takes the slack");
+      assert.ok(widths.length === heads.length && widths.slice(1).every(Boolean), "every other column has a set width");
+      assert.deepEqual(dateCells.map((cell) => collectText(cell).replace(/\s+/g, " ")), row.dateTexts);
     });
   }
 });
 
-test("a run's status reads as a tone glyph and a word, never a pill", async () => {
+test("a run's status reads as a tone glyph and a word in its date cell, never a pill", async () => {
   const mod = await loadWikiScreen();
   const tbody = renderRunRowsOf(mod, [
     { run_date: "2026-09-24", status: "fail", deadlinks_count: 0, dedup_count: 0 },
     { run_date: "2026-09-23", status: "ok", deadlinks_count: 0, dedup_count: 0 },
   ]);
-  const [status] = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.label === "Status");
-  const [glyph] = findNodes(status, (n) => n.props["aria-hidden"] === "true");
+  const [failed] = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.kind === "row-header");
+  const [glyph] = findNodes(failed, (n) => n.props["aria-hidden"] === "true");
   assert.match(classOf(glyph), /\btext-crit\b/, "the glyph carries the tone");
-  assert.match(collectText(status), /Failed/, "the word names the state");
+  assert.match(collectText(failed), /Failed/, "the word names the state");
   assert.equal(findNodes(tbody, (n) => n.props.atom === "Badge" || /\bpill\b/.test(classOf(n))).length, 0);
+});
+
+test("a run's start reads as its clock time, the full stamp in the cell title", async () => {
+  const mod = await loadWikiScreen();
+  const tbody = renderRunRowsOf(mod, [{ run_date: "2026-09-24", status: "ok", deadlinks_count: 0, dedup_count: 3, started_at: "2026-09-24T19:30:00Z" }]);
+  const [started] = findNodes(tbody, (n) => n.props.atom === "TableCell" && n.props.label === "Started");
+  assert.match(collectText(started), /^\d{2}:\d{2}$/);
+  assert.match(String(started.props.title), /^2026-09-2\d \d{2}:\d{2}:\d{2}/);
 });
 
 test("an unrecorded run cell reads None in faint ink, never a blank or a dash", async () => {
@@ -675,7 +669,7 @@ test("the per-run table gives every run its own row, unchanged runs included", a
   const dates = ["2026-09-24", "2026-09-23", "2026-09-22"];
   const reports = dates.map((run_date) => ({ run_date, status: "ok", deadlinks_count: 0, dedup_count: 3 }));
   const rows = findNodes(renderRunRowsOf(mod, reports), (n) => n.props.atom === "TableRow");
-  assert.deepEqual(rows.map((row) => dates.find((d) => collectText(row).includes(d))), dates);
+  assert.deepEqual(rows.map((row) => dates.find((d) => collectText(row).includes(d.slice(5)))), dates);
 });
 
 test("the maintenance section adds no broken-link line of its own", async () => {

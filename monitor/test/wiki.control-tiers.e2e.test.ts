@@ -1,6 +1,7 @@
 // Wiki folds on the DESIGN.md §7.15 disclosure tier, measured in a real browser on the shipped tokens.css, base.css and the screen's
 // own style block, rendered from the shipped components: each fold's summary is a 32 row — chevron, heading and count on one centre
 // line, the count at the row's far end — that keeps one box open, closed and in every pointer/keyboard state (§7.16).
+// The Runs table holds its columns in place whether its runs are healthy or not.
 // Runner: npx tsx --test test/wiki.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -38,7 +39,7 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   .flex { display: flex; } .flex-col { flex-direction: column; } .flex-wrap { flex-wrap: wrap; } .items-center { align-items: center; }
   .ml-auto { margin-left: auto; } .min-w-0 { min-width: 0; }
   .inline-block { display: inline-block; } .font-medium { font-weight: 500; } .leading-tight { line-height: 1.25; }
-  .rounded-md { border-radius: 0.375rem; } .border { border-width: 1px; }`;
+  .rounded-md { border-radius: 0.375rem; } .border { border-width: 1px; } .table-fixed { table-layout: fixed; }`;
 
 const noop = () => undefined;
 const LOADING = { status: "loading", data: null, error: null, busy: true };
@@ -49,12 +50,19 @@ const READY_BACKLOG = {
 };
 const RUN_TABLE = getMarkup("WikiRunTableSection", { reportState: LOADING, days: 30, onChangeDays: noop, onRetry: noop });
 const MAINTENANCE = getMarkup("WikiMaintenanceSection", { backlogState: READY_BACKLOG, cyclesState: LOADING, onRetry: noop });
+const runOf = (run_date: string, status: string) => ({ run_date, status, deadlinks_count: 1016, dedup_count: 12, started_at: `${run_date}T19:30:00Z` });
+// rest: every run healthy · alarm: the widest status words a run can show after its date
+const RUN_WINDOWS = {
+  rest: [runOf("2026-11-24", "ok"), runOf("2026-11-23", "ok")],
+  alarm: [runOf("2026-11-24", "quota_exceeded"), runOf("2026-11-23", "fail"), runOf("2026-11-22", "partial")],
+};
 
 // the fold widths the audit measured: the 1440 content column (1170) and the 820 one
 const FOLD_WIDTHS = [1170, 740] as const;
 const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   ${FOLD_WIDTHS.map((w) => `<div id="runs-${w}" style="width: ${w}px; padding: 24px;">${RUN_TABLE}</div>`).join("")}
   <div id="merge" style="width: ${FOLD_WIDTHS[0]}px; padding: 24px;">${MAINTENANCE}</div>
+  ${Object.entries(RUN_WINDOWS).map(([name, reports]) => `<div id="run-table-${name}" style="width: ${FOLD_WIDTHS[0]}px;">${getMarkup("WikiReportsTable", { reports })}</div>`).join("")}
 </body></html>`;
 
 const FOLDS = [...FOLD_WIDTHS.map((w) => ({ name: `Runs at ${w}`, id: `runs-${w}` })), { name: "Merge proposals", id: "merge" }];
@@ -127,3 +135,20 @@ for (const fold of FOLDS) {
     test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(summary));
   });
 }
+
+describe("the Runs table holds its columns whether its runs are healthy or not", () => {
+  const readColumnLefts = (id: string) =>
+    page.$$eval(`#${id} thead th`, (heads) => heads.map((th) => th.getBoundingClientRect().left));
+
+  test("every column starts at the same x in rest and alarm", async () => {
+    const [rest, alarm] = await Promise.all([readColumnLefts("run-table-rest"), readColumnLefts("run-table-alarm")]);
+    assert.equal(rest.length, 4, "four columns");
+    assert.deepEqual(alarm, rest);
+  });
+
+  test("no cell's content overflows its column", async () => {
+    const overflowing = await page.$$eval("[id^=run-table-] th, [id^=run-table-] td", (cells) =>
+      cells.filter((cell) => cell.scrollWidth > cell.clientWidth).map((cell) => cell.textContent));
+    assert.deepEqual(overflowing, []);
+  });
+});
