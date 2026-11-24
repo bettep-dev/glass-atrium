@@ -540,7 +540,7 @@ const sumCountsI = (list) =>
 function StatusBandI({ asOf, statsState, listState, learningLogState, suppression, awaiting, failures, styleRef, corpusAuditState, onOpenInstrumentation }) {
 	const { Card, StatRow } = window.UI;
 	return (
-		<section id={ANCHOR_ID_I.status} className="flex flex-col gap-2" aria-label="Loop status">
+		<section id={ANCHOR_ID_I.status} className="flex flex-col gap-list" aria-label="Loop status">
 			<Card>
 				<StatRow stats={getBandStatsI({ asOf, statsState, listState, learningLogState, suppression, awaiting, failures })} />
 			</Card>
@@ -669,13 +669,13 @@ function InstrumentationStripI({ styleRef, corpusAuditState, at, onOpen }) {
 	if (chips.length === 0) return null;
 	return (
 		<div
-			className="flex flex-wrap items-center gap-x-3 gap-y-1 fs-meta"
+			className="flex flex-wrap items-center gap-x-3 gap-y-stack fs-meta"
 			data-testid="instrumentation-strip"
 		>
 			{chips.map((chip) => (
 				<span
 					key={chip.key}
-					className="inline-flex items-center gap-1"
+					className="inline-flex items-center gap-label-inline"
 					title={chip.hint}
 				>
 					<SymI s={chip.symbol} className={chip.tone} size={11} />
@@ -722,7 +722,7 @@ function ViewTabsI({ view, onChange }) {
 		{ key: "operator", label: "Operator" },
 		{ key: "instrumentation", label: "Instrumentation" },
 	];
-	return <window.UI.Tabs id={VIEW_TABS_ID_I} label="Learning view" tabs={tabs} value={view} onChange={onChange} className="mt-3 mb-4" />;
+	return <window.UI.Tabs id={VIEW_TABS_ID_I} label="Learning view" tabs={tabs} value={view} onChange={onChange} className="mt-3 mb-section" />;
 }
 
 // ----- Rolling trend card (T-IMP-4) ------------------------------------------
@@ -738,7 +738,7 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 		return (
 			<div className="card" id={ANCHOR_ID_I.trend}>
 				<CardHead title="Verified vs rejected" />
-				<div className="px-4 pb-4">
+				<div className="px-card-pad pb-card-pad">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.trend}
 						source="loop events"
@@ -906,7 +906,7 @@ function CycleDecompositionRowI({ stats }) {
 
 	// 카테고리 = symbol+tone+label 로 dual-encode(색 단독 아님), 수량 = neutral count Badge(color≠count 규칙).
 	return (
-		<div className="flex items-center gap-2 mt-2 px-4 flex-wrap">
+		<div className="flex items-center gap-list mt-label px-card-pad flex-wrap">
 			<span className="fs-meta text-dim font-medium">
 				Run breakdown (7d)
 			</span>
@@ -956,7 +956,7 @@ function KanbanCardI({
 				/>
 			</div>
 			{isError ? (
-				<div className="p-4">
+				<div className="p-card-pad">
 					<ErrorBannerI
 						focusTargetId={ANCHOR_ID_I.suggestionBoard}
 						source="suggestions"
@@ -1053,9 +1053,9 @@ function KanbanColumnI({
 			: "Suggestions turned down, or closed without a verdict, show up here.";
 	// 헤더 sticky + --elev 배경 — 카드 본문 톤과 통일 · row scroll 시 헤더 비침 차단.
 	return (
-		<div className="flex flex-col min-h-0 min-w-0 gap-2">
+		<div className="flex flex-col min-h-0 min-w-0 gap-list">
 			<div
-				className="flex flex-col gap-1 flex-shrink-0"
+				className="flex flex-col gap-stack flex-shrink-0"
 				style={{
 					position: "sticky",
 					top: 0,
@@ -1082,13 +1082,13 @@ function KanbanColumnI({
 					</React.Fragment>
 				)}
 			</div>
-			<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2">
+			<div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-list">
 				{rows.length === 0 ? (
 					<EmptyState message={emptyMessage} hint={emptyHint} />
 				) : isCompact ? (
 					<RejectedCompactListI rows={shown} onRowClick={onRowClick} />
 				) : (
-					<ul className="flex flex-col gap-1">
+					<ul className="flex flex-col gap-stack">
 						{shown.map((row) => (
 							<li key={row.id}>
 								<AppliedHistoryRowI row={row} onClick={() => onRowClick(row)} />
@@ -1168,7 +1168,7 @@ function BoardRowI({ onClick, title, ariaLabel, lead, text, trail }) {
 		<button
 			type="button"
 			onClick={onClick}
-			className="i-row-card i-board-row i-tile-hover bg-elev rounded-md w-full min-w-0 text-left px-2 flex items-center gap-2 fs-meta"
+			className="i-row-card i-board-row i-tile-hover bg-elev rounded-md w-full min-w-0 text-left px-2 flex items-center gap-label fs-meta"
 			title={title}
 			aria-label={ariaLabel}
 		>
@@ -1249,14 +1249,14 @@ function RejectBucketSplitI({ summary, trend }) {
 				...cells.map(([label, count, hint]) => (
 				<span
 					key={label}
-					className="inline-flex items-baseline gap-1"
+					className="inline-flex items-baseline gap-label-inline"
 					title={hint}>
 					<span className="text-dim font-medium">{label}</span>
 					<span className="text-ink tnum">{formatIntI(Number(count ?? 0))}</span>
 				</span>
 			)),
 				hasSpark ? (
-					<span key="spark" className="ml-auto flex items-center gap-1">
+					<span key="spark" className="ml-auto flex items-center gap-label-inline">
 						<RejectSparkI trend={trend} />
 						<span className="text-faint">rejections per day</span>
 					</span>
@@ -1329,7 +1329,7 @@ function RejectedCompactListI({ rows, onRowClick }) {
 // Shared pattern label printed once as the group head, not on every row.
 function RejectedGroupI({ label, rows, onRowClick }) {
 	return (
-		<div className="flex flex-col gap-1">
+		<div className="flex flex-col gap-stack">
 			<div className="fs-meta text-faint truncate" title={label}>
 				{label}
 			</div>
@@ -1477,7 +1477,7 @@ function ProposalCardI({ row, onClick, onAction, pendingActionId }) {
 				)}
 				{/* pattern_label = 반복성 높은 2차 카테고리 라벨 → rationale 아래 tiny/faint 태그로 후퇴(USER: de-emphasized, 경쟁 금지). */}
 				<div
-					className="fs-meta text-faint mt-1 line-clamp-1"
+					className="fs-meta text-faint mt-stack line-clamp-1"
 					title={String(title)}
 				>
 					{title}
@@ -1507,7 +1507,7 @@ function ProposalActionsI({ row, isSafety, onAction, isPending }) {
 	return (
 		<div className="px-3 pb-3 pt-0">
 			{isSafety && (
-				<div className="fs-meta text-dim mb-1.5 flex items-center gap-1">
+				<div className="fs-meta text-dim mb-1.5 flex items-center gap-label-inline">
 					<SymI s="⚠" className="text-warn" size={11} /> Your call
 				</div>
 			)}

@@ -13,6 +13,7 @@ import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { createControlProbe, isSameBox } from "./lib/control-probe.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -122,7 +123,8 @@ before(async () => {
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
   await page.addStyleTag({ content: SCREEN_CSS });
-  cdp = await page.context().newCDPSession(page);
+  await page.addStyleTag({ content: getRoleKeyCss() });
+  cdp =await page.context().newCDPSession(page);
   await cdp.send("DOM.enable");
   await cdp.send("CSS.enable");
 });
