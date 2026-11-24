@@ -294,7 +294,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 						<Icon name={TONE_ICON.neutral} size={14} />
 					</span>
 					<span className="fs-meta text-faint min-w-0 break-words">
-						{`Couldn't read ${model.unchecked.join(", ")} — alarms from ${model.unchecked.length === 1 ? "it" : "them"} are not shown.`}
+						{`Alarms hidden: ${model.unchecked.join(", ")} unread.`}
 					</span>
 				</li>
 			)}
@@ -872,7 +872,7 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_REGION_W) {
 		linkFixes,
 		residueLine:
 			typeof notVerified === "number" && notVerified > 0
-				? `${formatCountW(notVerified)} candidate pairs went unverified this cycle (cost guard) — the proposal count is a floor.`
+				? `${formatCountW(notVerified)} pairs unverified (cost guard); the count is a floor.`
 				: null,
 	};
 }
@@ -1149,7 +1149,7 @@ function buildNoteTypeRowsW(rows) {
 // CYCLE_FRESH_OK_HOURS(24h)와 정합하되 run_date 는 날짜 단위라 일 카운트로 비교.
 const BACKLOG_STALE_DAYS = 1;
 const LIBRARY_COUNTING_NOTE_W =
-	"Waiting counts saved originals not yet compiled into notes; broken links come from the last dead-link dry run.";
+	"Waiting: originals not yet compiled. Broken links: last dry run.";
 
 // 'YYYY-MM-DD'(UTC) run_date → 오늘(UTC) 대비 경과일. 비정상/null → null (stale 분기 보류).
 // 데몬 run_date 가 UTC date 기준이므로 today 도 UTC 로 맞춰 비교 (outcomes.isoDayKeyO 패턴 미러).

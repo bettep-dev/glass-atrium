@@ -1004,7 +1004,42 @@ test("a feeder the alarm list could not read is named in plain words", async () 
   );
   const text = collectText(lane);
   assert.doesNotMatch(text, /\blane\b|incomplete/i);
-  assert.match(text, /alarms? from .+ (are|is) not shown/i);
+  assert.match(text, /Alarms hidden: search index unread\./);
+});
+
+describe("every wiki-owned sentence on the screen stays within 12 words", () => {
+  const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const rows = [
+    {
+      name: "the alarm list's unread feeders",
+      read: (mod: ScreenModule) => collectText(renderScreen(mod.React.createElement(mod.WikiAlarmLane as Component, {
+        summaryState: ERRORED, indexState: ERRORED, backlogState: ERRORED, cyclesState: ready({ cycles: [] }),
+      }))),
+    },
+    {
+      name: "the Library notes counting note",
+      read: (mod: ScreenModule) => (mod.buildLibraryTileW as (...states: unknown[]) => { info: string })(
+        ready({ notes_total: 1016 }), ready({}), ready({ backlog: { true_backlog: 0, deadlink_dryrun: [], run_date: "2026-11-22" } }),
+      ).info,
+    },
+    {
+      name: "the proposals' cost-guard residue",
+      read: (mod: ScreenModule) => (mod.buildMaintenanceModel as (state: unknown) => { residueLine: string })(
+        ready({ backlog: { dedup_proposals: { proposals: [], not_verified: 4 } } }),
+      ).residueLine,
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const text = row.read(await loadWikiScreen());
+      const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+
+      assert.ok(sentences.length > 0, "the copy renders");
+      for (const sentence of sentences) {
+        assert.ok(sentence.trim().split(/\s+/).length <= 12, `over 12 words: ${sentence}`);
+      }
+    });
+  }
 });
 
 test("a loading open card or tile states loading once, through its placeholder, not its count or caption", async () => {
