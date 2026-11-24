@@ -2860,6 +2860,36 @@ a.prose-link:hover {
 	display: flex;
 	gap: 8px;
 }
+/* bare — the alarm row with no shell, fill or radius: glyph · title · actions on one line, the actions at the row end */
+.alert-card--bare .alert-card-grid {
+	align-items: center;
+	padding: 0;
+}
+.alert-card--bare .alert-card-glyph {
+	height: auto;
+}
+.alert-card--bare .alert-card-content {
+	padding-block: 0;
+}
+/* one line at any width → the narrow drop of the actions under the title never applies */
+@container (max-width: 36rem) {
+	.alert-card--bare .alert-card-actions {
+		grid-column: auto;
+		margin-top: 0;
+	}
+}
+/* inline Retry — a quiet text action at context-line height: no border or box, the 24 hit area from .inline-target */
+.retry-inline {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: rgb(var(--dim));
+	font-size: var(--fs-meta);
+	cursor: pointer;
+}
+.retry-inline:hover {
+	color: rgb(var(--ink));
+}
 /* a Link action is one 20 text line → the slot holds the 32 first line, so it centres on the glyph and title */
 .alarm-row-actions {
 	min-height: var(--ctl-min-h);

@@ -2769,8 +2769,11 @@ function useFocusHandoff(targetId) {
   return controlRef;
 }
 
-// focusable while busy (aria-disabled + click guard) → keyboard focus survives the request
-function RetryButton({ onRetry, isBusy = false, focusTargetId }) {
+/**
+ * Retry for a failed read — focusable while busy (aria-disabled + click guard) → keyboard focus survives the request.
+ * @param isInline - a quiet text action on a context line (no border or box, 24 hit area) instead of the boxed `.btn.sm`
+ */
+function RetryButton({ onRetry, isBusy = false, isInline = false, focusTargetId }) {
   const controlRef = useFocusHandoff(focusTargetId);
   const handleClick = (event) => {
     if (isBusy) return;
@@ -2779,7 +2782,7 @@ function RetryButton({ onRetry, isBusy = false, focusTargetId }) {
   };
 
   return (
-    <button ref={controlRef} type="button" className="btn sm self-start" onClick={handleClick}
+    <button ref={controlRef} type="button" className={isInline ? 'retry-inline inline-target' : 'btn sm self-start'} onClick={handleClick}
       aria-disabled={isBusy ? 'true' : undefined} aria-busy={isBusy ? 'true' : undefined}>
       {isBusy ? 'Retrying…' : 'Retry'}
     </button>
@@ -2888,9 +2891,11 @@ const ALARM_GLYPH_SIZE = 16;
 // a ToneGlyph slot with no tone keeps the glyph's width → a lead column of glyphs holds its names on one x
 const EMPTY_GLYPH_SLOT_STYLE = Object.freeze({ width: ALARM_GLYPH_SIZE });
 
+const ALERT_CARD_SHELLS = Object.freeze({ raised: 'card alert-card', inset: 'sub-card bg-sunken alert-card', bare: 'alert-card alert-card--bare' });
+
 /**
  * The one conditional-alert card, drawn as the alarm row: tone rides only on the bare glyph, the shell stays neutral.
- * @param surface - 'raised' page-level card · 'inset' inside an existing card or panel
+ * @param surface - 'raised' page-level card · 'inset' inside an existing card or panel · 'bare' no shell, fill or radius: one line, actions at the row end
  * @param subjects - names of affected parts, shown as neutral chips
  * @param details - raw error kept behind a collapsed Details
  * @param actions - up to two secondary `.btn.sm` controls
@@ -2898,14 +2903,14 @@ const EMPTY_GLYPH_SLOT_STYLE = Object.freeze({ width: ALARM_GLYPH_SIZE });
  */
 function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, details, actions, hasLiveHost = false, onFocus, className = '' }) {
   const role = hasLiveHost ? undefined : tone === 'crit' ? 'alert' : 'status';
-  const isInset = surface === 'inset';
-  const shell = isInset ? 'sub-card bg-sunken alert-card' : 'card alert-card';
+  const isRaised = surface !== 'inset' && surface !== 'bare';
+  const shell = ALERT_CARD_SHELLS[surface] ?? ALERT_CARD_SHELLS.raised;
 
   return (
     <div role={role} className={`${shell} ${className}`.trim()} data-tone={tone} onFocus={onFocus}>
       <div className="alert-card-grid">
         <span className="alert-card-glyph" aria-hidden="true">
-          <Icon name={TONE_ICON[tone]} size={isInset ? 14 : ALARM_GLYPH_SIZE}/>
+          <Icon name={TONE_ICON[tone]} size={isRaised ? ALARM_GLYPH_SIZE : 14}/>
         </span>
         <div className="alert-card-content">
           {/* title and body ride DayTokens → a "7-day" / "30 days" token in any alert stays on one line */}

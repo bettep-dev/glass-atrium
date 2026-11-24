@@ -355,3 +355,28 @@ test("screens reach the shared Retry control through window.UI, so their own Ret
   assert.equal(typeof ui.RetryButton, "function");
   assert.equal(exposed.RetryButton, ui.RetryButton);
 });
+
+describe("the bare alert and the inline Retry", () => {
+  const classesOf = (node: RenderedNode) => String(node.props.className ?? "").split(/\s+/);
+
+  test("a bare alert drops the card and inset shells, keeping the alarm-row anatomy and its actions", () => {
+    const tree = render("AlertCard", { tone: "neutral", surface: "bare", title: "Couldn't refresh.", actions: "retry" });
+    const [shell] = findNodes(tree, (n) => n.props["data-tone"] === "neutral");
+    const classes = classesOf(shell);
+
+    assert.ok(classes.includes("alert-card--bare"), classes.join(" "));
+    for (const box of ["card", "sub-card", "bg-sunken"]) assert.ok(!classes.includes(box), `no ${box}`);
+    assert.equal(findNodes(tree, (n) => classesOf(n).includes("alert-card-actions")).length, 1);
+  });
+
+  test("an inline Retry is a quiet text action on the 24 hit area, busy and inert exactly like the boxed one", () => {
+    for (const isBusy of [false, true]) {
+      const [boxed] = findNodes(render("RetryButton", { isBusy, onRetry: () => {} }), (n) => n.type === "button");
+      const [inline] = findNodes(render("RetryButton", { isBusy, isInline: true, onRetry: () => {} }), (n) => n.type === "button");
+
+      assert.ok(classesOf(inline).includes("inline-target") && !classesOf(inline).includes("btn"), classesOf(inline).join(" "));
+      assert.equal(inline.props["aria-disabled"], boxed.props["aria-disabled"], `busy=${isBusy}`);
+      assert.equal(collectText(inline), collectText(boxed), `busy=${isBusy}`);
+    }
+  });
+});

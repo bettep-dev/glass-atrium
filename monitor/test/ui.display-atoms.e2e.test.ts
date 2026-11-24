@@ -74,6 +74,9 @@ const band = renderToStaticMarkup(h("div", { className: "card", style: { width: 
 const glyphSlots = renderToStaticMarkup(h("div", null,
   h("div", { className: "fs-body" }, h(UI.ToneGlyph, { tone: "warn" }), "Hooks"),
   h("div", { className: "fs-body" }, h(UI.ToneGlyph, { tone: null }), h("span", { id: "slot-empty-name" }, "Export via Chromium"))));
+// the held panel's line under a sub-line: a bare alert whose Retry is the inline text action
+const bareAlert = renderToStaticMarkup(h(UI.AlertCard, { tone: "neutral", surface: "bare", title: "Couldn't refresh.",
+  actions: h(UI.RetryButton, { isInline: true, onRetry: noop }) }));
 const fact = renderToStaticMarkup(h(UI.DetailField, { label: "File path", value: "hooks/track-outcome-with-a-very-long-name-that-has-to-wrap.sh", mono: true }));
 const getHeader = (id: string, title: string) => renderToStaticMarkup(h("div", { id }, h(UI.PageHeader, {
   title,
@@ -93,7 +96,7 @@ const inlineFold = renderToStaticMarkup(h("div", { style: { width: 600 } }, h(UI
   h(UI.Disclosure, { kind: "status", title: "Daily breakdown", isInline: true, className: "inline-fold" }, h("div", { id: "inline-fold-body" }, "rows")))));
 // the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
 const PAGE = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
-<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><div id="inline-fold" style="padding: 24px;">${inlineFold}</div><div id="glyph-slots" style="padding: 24px;">${glyphSlots}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="empties" style="width: 600px;">${empties}</div><div id="inline-fold" style="padding: 24px;">${inlineFold}</div><div id="glyph-slots" style="padding: 24px;">${glyphSlots}</div><div id="bare-alert" class="fs-body" style="padding: 24px; width: 480px;">${bareAlert}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
 
 let browser: Browser;
 let page: Page;
@@ -150,6 +153,28 @@ describe("a tone glyph slot", () => {
 
     assert.deepEqual([boxes[1].width, boxes[1].height], [boxes[0].width, boxes[0].height], "the empty slot is the glyph's size");
     assert.equal(empty.left, boxes[0].right, `name at ${empty.left}, glyph ends at ${boxes[0].right}`);
+  });
+});
+
+describe("a bare alert with an inline Retry", () => {
+  test("draws no shell, fill or radius and keeps glyph, title and Retry on one line, Retry at the row end", async () => {
+    const look = await page.$eval("#bare-alert .alert-card", (el) => {
+      const style = getComputedStyle(el);
+      return { background: style.backgroundColor, border: style.borderTopWidth, radius: style.borderTopLeftRadius };
+    });
+    const card = await boxOf("#bare-alert .alert-card");
+    const title = await boxOf("#bare-alert .alert-card-title");
+    const glyph = await boxOf("#bare-alert .alert-card-glyph svg");
+    const retry = await boxOf("#bare-alert button");
+    const retryBorder = await page.$eval("#bare-alert button", (el) => getComputedStyle(el).borderTopWidth);
+    const middle = (box: DOMRect) => box.top + box.height / 2;
+
+    assert.deepEqual(look, { background: "rgba(0, 0, 0, 0)", border: "0px", radius: "0px" });
+    assert.equal(retryBorder, "0px", "no button box");
+    assert.equal(retry.height, 24, "the 24 hit area");
+    assert.ok(Math.abs(middle(retry) - middle(title)) < 1 && Math.abs(middle(glyph) - middle(title)) < 1, `title ${middle(title)} · glyph ${middle(glyph)} · Retry ${middle(retry)}`);
+    assert.equal(retry.right, card.right, "Retry at the row end");
+    assert.equal(card.height, 24, "one line, as tall as its Retry");
   });
 });
 
