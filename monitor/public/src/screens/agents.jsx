@@ -1662,7 +1662,7 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
         <div className="fs-body text-dim leading-relaxed truncate" title={agent.description}>{agent.description}</div>
       )}
 
-      {/* last-run 1 메타 라인 (activity 단어는 drawer head 소유). 설명 부재 → 같은 줄 끝에 조용한 em-dash 로 신호 (#4). */}
+      {/* last-run 1 메타 라인 (activity 단어는 drawer head 소유). 설명 부재 → 같은 줄 끝에 조용한 em-dash 로 신호. */}
       <div className="fs-meta text-dim">
         Last run <span title={agent.last_run_at || undefined}>{lastRun}</span>
         {!agent.description && (
@@ -3375,8 +3375,7 @@ function FailShareGlyph({ tone, label = getFailShareLabel() }) {
 // §12.4 owner cut: a p95 over twice the fleet median (nearest rank) is too slow, never under 20 minutes (FLOOR in seconds).
 const P95_AGENT = { FLOOR: 1200, MEDIAN_MULTIPLE: 2, MIN_FLEET: 4 };
 
-// Owner Q1 → R1, designer: "Watch marks only agents past a fleet cut, like the P95 'too slow' cut."
-// → health penalty (1 − index) over twice the fleet median (nearest rank), never under the warn band's penalty
+// Watch marks only agents past a fleet cut, as Too slow does → health penalty (1 − index) over twice the fleet median (nearest rank), never under the warn band's penalty
 const WATCH_AGENT = { FLOOR: 1 - QH_HEALTH_WARN_MAX, MEDIAN_MULTIPLE: 2, MIN_FLEET: 4 };
 
 // ascending values → MEDIAN_MULTIPLE × nearest-rank median, never under FLOOR; a fleet under MIN_FLEET → FLOOR
