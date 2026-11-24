@@ -669,13 +669,15 @@ const STYLE_REF_COLUMNS_I = Object.freeze([
 	{ key: "uncorroborated", label: "Uncorroborated", isNumeric: true },
 	{ key: "unverifiable", label: "Unverifiable", isNumeric: true },
 ]);
+// fixed numeric columns → a column holds still whatever its cells read · 140 = "Uncorroborated" on one line after 12 + 12 interior padding
+const STYLE_REF_COL_WIDTHS_I = ["auto", ...Array(STYLE_REF_COLUMNS_I.length - 1).fill("calc(4 * var(--space-8) + var(--space-3))")];
 
 function StyleRefAgentTableI({ rows }) {
 	// 행=agent (가변) / 열=6 (agent · reported · rate · corroborated · uncorroborated · unverifiable)
 	// per-agent rate 열은 없다 — 세 bucket 을 하나의 비율로 접으면 adjudicated 여부가 사라진다.
 	const { AgentName, Table, TableRow, TableCell } = window.UI;
 	return (
-		<Table caption="Style-check rate by agent" columns={STYLE_REF_COLUMNS_I}>
+		<Table caption="Style-check rate by agent" columns={STYLE_REF_COLUMNS_I} widths={STYLE_REF_COL_WIDTHS_I} className="table-fixed">
 			{(view) => rows.map((r) => {
 				const emCount = Number(r.emission_count ?? 0);
 				const emTotal = Number(r.emission_total ?? 0);

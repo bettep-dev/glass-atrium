@@ -273,6 +273,47 @@ test("each mixed instrumentation card's bars state no number of their own", asyn
   }, MIXED_CARD_SUGGESTIONS);
 });
 
+// a known zero style-check rate: the same card form as MIXED_CARD_SUGGESTIONS, every figure in its cells narrower
+const STYLE_ZERO_SUGGESTIONS = {
+  ...SUGGESTIONS,
+  style_ref_summary: {
+    overall_emission_rate: 0,
+    overall_uncorroborated_rate: null,
+    overall_corroborated_count: 0,
+    overall_uncorroborated_count: 0,
+    overall_unverifiable_count: 0,
+    overall_greenfield_count: 0,
+    agents: [
+      { agent: "glass-atrium-agent-a", emission_count: 0, emission_total: 13, emission_rate: 0, corroborated_count: 0, uncorroborated_count: 0, unverifiable_count: 0, eligible_count: 0 },
+    ],
+  },
+};
+
+// the per-agent style-check table's header right edges, left to right
+function readStyleRefHeaderEdges(page: Page): Promise<number[]> {
+  return page.evaluate(() => {
+    const card = [...document.querySelectorAll<HTMLElement>("#improvement-instrumentation .card-title")]
+      .find((heading) => heading.textContent === "Style-check rate")!.closest(".card")!;
+    return [...card.querySelectorAll<HTMLElement>("table thead th")].map((th) => th.getBoundingClientRect().right);
+  });
+}
+
+// the columns hold still whatever the cells hold → a reader comparing two reads finds each figure where it was
+for (const width of [1440, 1920]) {
+  test(`each style-check table header keeps its right edge between a full and a zero reading at ${width}px`, async () => {
+    let full: number[] = [];
+    let zero: number[] = [];
+    await withInstrumentationPage(width, async (page) => { full = await readStyleRefHeaderEdges(page); }, MIXED_CARD_SUGGESTIONS);
+    await withInstrumentationPage(width, async (page) => { zero = await readStyleRefHeaderEdges(page); }, STYLE_ZERO_SUGGESTIONS);
+
+    assert.equal(full.length, 6, `${width}px: the table shows its six headers`);
+    assert.equal(zero.length, full.length, `${width}px: both readings show the same headers`);
+    full.forEach((edge, index) => {
+      assert.ok(Math.abs(edge - zero[index]) <= 1, `${width}px: header ${index + 1} ends at ${edge} in the full reading, ${zero[index]} at zero`);
+    });
+  });
+}
+
 interface EmptyCardReading {
   title: string;
   lineLeft: number;
