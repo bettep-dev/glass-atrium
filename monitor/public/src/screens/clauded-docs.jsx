@@ -122,6 +122,12 @@ function getDocAgeCD(iso, nowMs) {
 	return { days, label: getAgeLabelCD(days), bucket, isStale: bucket === "stale" };
 }
 
+// A row's age · stale only on an open row — a done document never goes stale.
+function getRowAgeCD(row, nowMs) {
+	const age = getDocAgeCD(row.created_at, nowMs);
+	return { age, isStale: age?.isStale === true && getOpenStageEntryCD(row) != null };
+}
+
 // Stage entry of an open row (a known stage short of done) · null otherwise.
 function getOpenStageEntryCD(row) {
 	const entry = stageEntryCD(rowStageCD(row));
@@ -1478,8 +1484,7 @@ function DocListCardCD({
 									isGroupRoot && expandedFolderIds.has(row.folder_id);
 								const storedStage = rowStageCD(row);
 								const shownStage = optimisticStatusOverrides.get(row.id) ?? storedStage;
-								const age = getDocAgeCD(row.created_at, nowMs);
-								const isStaleRow = age?.isStale === true && getOpenStageEntryCD(row) != null;
+								const { age, isStale: isStaleRow } = getRowAgeCD(row, nowMs);
 								const snippetText =
 									isSearchMode && row.snippet ? getSnippetTextCD(row.snippet, row.title) : "";
 								const rowClass = [
@@ -2037,7 +2042,9 @@ function GroupMembersRowsCD({
 		</TableRow>
 	) : null;
 
+	const nowMs = Date.now();
 	const memberRows = members.map((member) => {
+		const { age, isStale } = getRowAgeCD(member, nowMs);
 		const isSelectedViewer = member.id === selectedId;
 		const isSelectedMulti = selectedIds.has(member.id);
 		const isPending = pendingDelete && pendingDelete.id === member.id;
@@ -2049,6 +2056,7 @@ function GroupMembersRowsCD({
 			isSelectedMulti && "is-multi-selected",
 			isPending && "is-pending-delete",
 			isDragging && "is-dragging",
+			isStale && "is-stale",
 		]
 			.filter(Boolean)
 			.join(" ");
@@ -2143,7 +2151,7 @@ function GroupMembersRowsCD({
 				</TableCell>
 				<TableCell view={view} className="title-cell">
 					<div
-						className="doc-title-row font-medium fs-title text-ink"
+						className="doc-title-row font-medium fs-body text-ink"
 					>
 						{/* 멤버 행 leading slot — 재정렬 가능 시 drag handle(⠿), 아니면 빈칸 (제목 시작 x 통일). */}
 						<span className="doc-title-lead">
@@ -2177,9 +2185,7 @@ function GroupMembersRowsCD({
 					/>
 				)}
 				<DocAuthorCellCD view={view} author={member.author} />
-				<TableCell view={view} textRole="meta" label="Created" isNumeric className="fs-meta text-dim">
-					{formatDateCD(member.created_at)}
-				</TableCell>
+				<DocAgeCellCD view={view} createdAt={member.created_at} age={age} isStale={isStale} />
 			</TableRow>
 		);
 	});

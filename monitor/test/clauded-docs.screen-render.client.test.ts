@@ -1576,6 +1576,33 @@ describe("a group member state line keeps the cell atom's padding and colours it
   }
 });
 
+describe("a group member row draws its title and Created in the root row's face", () => {
+  const memberProps = {
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  };
+  const createdAt = new Date(Date.now() - 12 * 86_400_000).toISOString();
+  const rows = [
+    { name: "an open member past seven days", doc_status: "implementing", isStale: true },
+    { name: "a done member past seven days", doc_status: "done", isStale: false },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const member = { id: 21, title: "Member", doc_status: row.doc_status, format: "md", audience: "exposed", author: "a", created_at: createdAt };
+      const state = { status: "ready", data: [member, { ...member, id: 22 }], error: null };
+      const screen = await loadDocsScreen(stubbedStateReact(state));
+      const tree = renderScreen(inTbody((screen.GroupMembersRowsCD as Component)(memberProps)));
+      const [titleRow] = findNodes(tree, hasClass("doc-title-row"));
+      const [ageCell] = findNodes(tree, (n) => n.type === "DocAgeCellCD");
+      assert.deepEqual(
+        { face: String(titleRow.props.className).split(/\s+/).filter((c) => c.startsWith("fs-")), age: ageCell?.props.age?.label, isStale: ageCell?.props.isStale },
+        { face: ["fs-body"], age: "12d", isStale: row.isStale },
+      );
+    });
+  }
+});
+
 test("the version history names the current revision in ink, never in a severity tone", async () => {
   const screen = await loadDocsScreen();
   const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));
