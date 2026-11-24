@@ -34,7 +34,7 @@
    - Every product surface is opaque, the drawer and dialog scrim included (§12.9); blur stays only in the dev-only tweaks panel (§3.5).
 3) **Flat surfaces** — a card is one hairline on the page ground: no shadow, no inset highlight; the fill step alone raises it (§6.2 · §7.1 · §12.9).
 4) **숨 쉴 공간** — 하나의 간격 세트: the `--gap-*` role tokens (§12.1). 글자가 커지면 padding 은 **더 좁게**.
-   - zone 당 1차 초점 요소 ≤ 5. 밀도는 여백이 아니라 sparkline · sub-card · 점진적 공개로:
+   - zone 당 1차 초점 요소 ≤ 5. 밀도는 여백이 아니라 sparkline · 점진적 공개로:
      - `Disclosure` fold: `kind="status"` 열림 시작 · `kind="detail"` 접힘 시작 · warn/crit 이 되면 스스로 열리고 회복해도 강제로 닫지 않는다 (`getDisclosureOpen`).
      - `CardInfo` ⓘ → `DetailSurface` drawer (cap 초과 설명, §5.3) · `Popover` (card-head 아래 non-modal, §6.5) · 행 클릭 → 레코드 상세 `DetailSurface`.
 5) **구조적 투명성** — 배치 · 타이포 위계 · 색 코딩으로 위계가 첫눈에 읽힌다 (좌상단 = 가장 중요 · weight 등급 · severity 기호+색). 어떤 glass 효과보다 먼저.
@@ -461,7 +461,7 @@
 
 ### 6.5 기타 표면 · z stack
 
-- **`.sub-card`** (`AlertCard` `surface="inset"` 껍데기): `--radius-tile` 8 · padding `--card-pad` 16 · ring = `box-shadow 0 0 0 1px` `--line` (box model 무영향) — one hairline, no shadow or inset. 면 = `bg-elev` 또는 `sunken`.
+- **`.sub-card`** (`AlertCard` `surface="inset"` 껍데기): `--radius-tile` 8 · padding `--card-pad` 16 · ring = `box-shadow 0 0 0 1px` `--line` (box model 무영향) — one hairline, no shadow or inset. 면 = `ui.jsx` → `ALERT_CARD_SHELLS.inset`.
 - **`.popover-panel`** (`Popover`, non-modal): 트리거 아래 우측 정렬 (`top: calc(100% + 4px)`) · min 240 · max min(360px, 100vw − 32px) · max-h 60vh · inset `--card-pad` · rows stacked on `--gap-list` · `--overlay-surface` + 1px `--line` + `--radius-card` + `--shadow-overlay`.
   - z = overlay − 1 → 열린 `DetailSurface` 가 덮는다. 열려 있는 동안만 카드가 overflow 를 푼다 (`.card:has(.popover-panel)`).
 - **`.save-banner`**: sticky bottom dirty-state 바 — 불투명 `--elev` + 상단 1px `--line` + `--shadow-overlay` · z 10 · padding 12px 20px.
@@ -1119,7 +1119,7 @@
 - Cross-page attention lives in two places only: the Dashboard "Needs you" list (one row per actionable item, each a Link to its page) and the sidebar nav badge (count + glyph).
 - In-page attention: the card that owns the problem shows its status (glyph + word) in its head, once.
 - **Dashboard** — the "Needs you" list (§7.9 alarm row) and the Status card:
-  - list sources: every firing Status-card stat (Harness health · Task results · Fleet · Spend today) + the install state; a firing stat shows only its value and tone glyph, so its sentence is the row's.
+  - list sources: every firing Status-card stat (System parts · Failed or blocked · Agents · Spend today) + the install state; a firing stat shows only its figures and tone glyph — on the value, or on the context line where a warn trips there (open caveats · a failing streak, `dashboard.jsx` → `isContextTripped`) — so its sentence is the row's.
   - Task results row: the tripped line's share in words (`10% of task results failed or blocked in the last 7 days` · `12% of task results have open caveats in the last 7 days`), its count as the detail; the alarm lines stay behind the stat's ⓘ.
   - Fleet row: `N agent(s) is/are suspended` (crit, a streak as the detail) · else `N agent(s) is/are on a failing streak` (warn).
   - Spend row: the title names the figure its multiple judges — `$842 so far today` or `…, running at $3,310/day over the last 3 hours`; the detail is that figure's multiple of the 7-day average. Cost titles its own figure (§7.9 consumers).
