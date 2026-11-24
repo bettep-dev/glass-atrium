@@ -850,7 +850,7 @@ test("the run-history empty state tells a wiki that never ran from a quiet windo
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
   const rows = [
     { name: "never ran", summaryState: ready({ last_cycle_started_at: null }), message: "No runs yet", hint: /first daily wiki cycle/ },
-    { name: "ran before the window", summaryState: ready({ last_cycle_started_at: "2026-08-01T04:30:00Z", last_run_date: "2026-08-01" }), message: "No runs in the last 30 days", hint: /^Last run 2026-08-01$/ },
+    { name: "ran before the window", summaryState: ready({ last_cycle_started_at: "2026-08-01T04:30:00Z", last_run_date: "2026-08-01" }), message: "No runs in the last 30 days", hint: /^Last run 08-01$/ },
     { name: "summary still loading", summaryState: LOADING, message: "No runs in the last 30 days", hint: null },
   ];
   for (const row of rows) {
@@ -905,16 +905,21 @@ test("every merge proposal states in text which note absorbs which, and why, wit
   assert.equal(collectText(tree).match(/links to them need updating/g)?.length, 1, "the shared merge steps are stated once");
 });
 
-test("the missed-cycle alarm states its age in the short relative form", async () => {
+test("the missed-cycle alarm dates its run once, as MM-DD, with the Last run tile's own age", async () => {
   const mod = await loadWikiScreen();
   const ready = (data: unknown) => ({ status: "ready", data, error: null });
+  const startedAt = new Date(Date.now() - 45 * 86_400_000).toISOString();
+  const summaryState = ready({ last_cycle_started_at: startedAt, hours_since_last_cycle: 45 * 24, last_run_date: "2026-10-10" });
   const lane = renderScreen(
     mod.React.createElement(mod.WikiAlarmLane as Component, {
-      summaryState: ready({ hours_since_last_cycle: 40, last_run_date: "2026-09-20" }),
-      indexState: ready({}), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
+      summaryState, indexState: ready({}), backlogState: READY_BACKLOG, cyclesState: ready({ cycles: [] }),
     }),
   );
-  assert.match(collectText(lane), /· 40h ago —/);
+  const tile = (mod.buildLastRunTileW as (state: unknown) => { value: string })(summaryState);
+  const text = collectText(lane);
+
+  assert.match(text, new RegExp(`Last run 10-10 · ${tile.value} —`));
+  assert.doesNotMatch(text, /2026-10-10|\d+h ago/, "no year-long date, no second age form");
 });
 
 test("the last-run age reads as words, so its space never widens into a mono gap", async () => {

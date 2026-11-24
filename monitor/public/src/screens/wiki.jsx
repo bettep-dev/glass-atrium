@@ -328,7 +328,7 @@ function buildAlarmLaneModel(
 			key: "cycle-overdue",
 			tone: "crit",
 			label: "The daily cycle has not run",
-			detail: `Last run ${summary.last_run_date || "unknown"} · ${hours}h ago — inspect launchd.`,
+			detail: `Last run ${describeRunDayW(summary.last_run_date)} · ${window.UI.formatRelativeTime(summary.last_cycle_started_at)} — inspect launchd.`,
 		});
 	}
 
@@ -588,7 +588,7 @@ function buildLastRunTileW(state, at) {
 		label,
 		state: "ready",
 		value: window.UI.formatRelativeTime(d.last_cycle_started_at),
-		sub: overdue ? `${outcome.label}${describeCycleDateW(d.last_run_date)}` : outcome.label,
+		sub: outcome.label,
 		hint: d.last_run_date ? `Cycle ${d.last_run_date}` : undefined,
 		tone,
 	};
@@ -608,9 +608,9 @@ function getLastRunOutcomeW(state, at, overdue) {
 function describeP95W(ms) {
 	return typeof ms === "number" ? ` · p95 ${window.UI.formatDuration(ms, "ms")}` : "";
 }
-// unrecorded cycle date → no suffix, never "cycle undefined"
-function describeCycleDateW(date) {
-	return date ? ` · cycle ${date}` : "";
+// Day form MM-DD (spec §2.1); an unrecorded date reads unknown, never "undefined"
+function describeRunDayW(date) {
+	return date ? window.UI.formatKstDay(date) : "unknown";
 }
 
 // A zero names its cause: idle (nothing waiting) stays quiet, stalled (originals waiting) tints; the waiting count is Library notes' fact.
@@ -960,7 +960,7 @@ function describeRunHistoryEmptyW(summaryState) {
 	}
 	return {
 		message: `No runs in the last ${WIKI_CYCLE_DAYS} days`,
-		hint: summary?.last_run_date ? `Last run ${summary.last_run_date}` : null,
+		hint: summary?.last_run_date ? `Last run ${describeRunDayW(summary.last_run_date)}` : null,
 	};
 }
 

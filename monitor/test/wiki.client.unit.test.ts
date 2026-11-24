@@ -578,8 +578,8 @@ describe("the last-run tile keeps the shared freshness rule over a failed refres
     { name: "a settled healthy run names its outcome alone", summary: healthySummary({ cycle_p95_ms: 1000 }), sub: /^Healthy$/, tone: "neutral" },
     { name: "a healthy run held under a failed read reads Last known, never Healthy", summary: warm(healthySummary({ cycle_p95_ms: 1000 })), sub: /^Last known$/, tone: "neutral" },
     { name: "a failed run held under a failed read keeps its alarm", summary: warm(healthySummary({ last_status: "fail" })), sub: /^Last known: Failed$/, tone: "crit" },
-    { name: "a settled missed cycle reads Overdue", summary: healthySummary({ hours_since_last_cycle: 40 }), sub: /^Overdue · cycle /, tone: "crit" },
-    { name: "a missed cycle held under a failed read reads Last known: Overdue and keeps crit", summary: warm(healthySummary({ hours_since_last_cycle: 40 })), sub: /^Last known: Overdue · cycle /, tone: "crit" },
+    { name: "a settled missed cycle reads Overdue", summary: healthySummary({ hours_since_last_cycle: 40 }), sub: /^Overdue$/, tone: "crit" },
+    { name: "a missed cycle held under a failed read reads Last known: Overdue and keeps crit", summary: warm(healthySummary({ hours_since_last_cycle: 40 })), sub: /^Last known: Overdue$/, tone: "crit" },
   ];
   for (const row of rows) {
     test(row.name, () => {
@@ -688,19 +688,19 @@ test("the trend's tick cap is the largest one up to seven that splits its days i
   }
 });
 
-test("the last-run stat names its cycle date only when the summary records one", () => {
+test("the last-run stat names its cycle date in its tooltip only, when the summary records one", () => {
   const rows = [
-    { name: "dated, on time", date: "2026-09-24", hours: undefined, hint: "Cycle 2026-09-24", subCycle: false },
-    { name: "dated, overdue", date: "2026-09-24", hours: 999, hint: "Cycle 2026-09-24", subCycle: true },
-    { name: "undated, on time", date: null, hours: undefined, hint: undefined, subCycle: false },
-    { name: "undated, overdue", date: null, hours: 999, hint: undefined, subCycle: false },
+    { name: "dated, on time", date: "2026-09-24", hours: undefined, hint: "Cycle 2026-09-24" },
+    { name: "dated, overdue", date: "2026-09-24", hours: 999, hint: "Cycle 2026-09-24" },
+    { name: "undated, on time", date: null, hours: undefined, hint: undefined },
+    { name: "undated, overdue", date: null, hours: 999, hint: undefined },
   ];
   for (const row of rows) {
     const extra = row.hours === undefined ? {} : { hours_since_last_cycle: row.hours };
     const summary = healthySummary({ last_run_date: row.date, ...extra });
     const tile = glanceHelpers.buildLastRunTileW(summary) as { sub: string; hint?: string };
     assert.equal(tile.hint, row.hint, row.name);
-    assert.equal(/· cycle 2026-09-24$/.test(tile.sub), row.subCycle, `${row.name}: cycle date in the context line`);
+    assert.doesNotMatch(tile.sub, /09-24/, `${row.name}: the context line leaves the date to the lane and tooltip`);
     assert.doesNotMatch(tile.sub, /undefined|null/, `${row.name}: the context line holds no missing value`);
   }
 });
