@@ -277,6 +277,30 @@ test("validateFormMC: budget out of [0.05, 50.00] bounds → error; in-bounds �
   assert.deepStrictEqual(edge, {}, "exact bounds accepted");
 });
 
+describe("validateFormMC: a field alert fits the 160 control slot", () => {
+  const rows: Array<{ name: string; form: McForm; key: string }> = [
+    { name: "empty model", form: { models: { "model.daemon_cycle_worker": "" }, budgets: {} }, key: "model.daemon_cycle_worker" },
+    { name: "free-text model off the id pattern", form: { models: { "model.daemon_cycle_worker": "Claude-Custom" }, budgets: {} }, key: "model.daemon_cycle_worker" },
+    { name: "cap off the two-decimal form", form: { models: {}, budgets: { "budget.worker_max_usd": "1.234" } }, key: "budget.worker_max_usd" },
+    { name: "cap outside the bounds", form: { models: {}, budgets: { "budget.worker_max_usd": "50.01" } }, key: "budget.worker_max_usd" },
+    { name: "effort off the level list", form: { models: {}, budgets: {}, tiers: { "tier.worker_effort": "ultra" } }, key: "tier.worker_effort" },
+    { name: "output tokens off the whole-number form", form: { models: {}, budgets: {}, tiers: { "tier.worker_max_output_tokens": "0" } }, key: "tier.worker_max_output_tokens" },
+  ];
+  for (const row of rows) {
+    test(`${row.name}: the alert holds the 12-word bar`, () => {
+      const message = sameRealm(mc.validateFormMC(row.form, KNOWN_MODELS_FIXTURE))[row.key];
+      assert.ok(message, "the field is flagged");
+      assert.ok(message.split(/\s+/).length <= 12, `'${message}'`);
+    });
+  }
+
+  test("the format alerts read as the short range forms", () => {
+    const cap = sameRealm(mc.validateFormMC(rows[2].form, []))[rows[2].key];
+    const tokens = sameRealm(mc.validateFormMC(rows[5].form, []))[rows[5].key];
+    assert.deepStrictEqual([cap, tokens], ["Two decimals, $0.05 to $50.00", "Whole number, 1 to 999999, or blank"]);
+  });
+});
+
 // --- diffFormMC: partial-PUT payload builder (only changed fields, null when none) ---
 
 test("diffFormMC: no change → null (clean state — save-banner hidden, Save dormant not error-disabled)", () => {
@@ -528,10 +552,12 @@ async function loadMcScreens(
     SkeletonRows: (p: Record<string, unknown>) =>
       Array.from({ length: Number(p.rows) }, () => hMc("tr", { "aria-hidden": "true" })),
     TableHead: (p: Record<string, unknown>) => hMc("th", { "data-atom": "TableHead" }, p.children),
-    // the atom's wide mode: caption · colgroup from widths · thead of TableHeads from columns · one tbody per body
+    // the atom's wide mode: caption · colgroup from widths · thead of TableHeads from columns · one tbody per body,
+    // a `(view) => rows` body called with the wide view
     Table: (p: Record<string, unknown>) => {
       const columns = (p.columns ?? []) as Array<{ key: string; label: unknown }>;
       const bodies = (p.bodies ?? []) as Array<{ key: string; rows: unknown; isBusy?: boolean }>;
+      const view = { isStacked: false, columnCount: columns.length || ((p.widths ?? []) as string[]).length };
       return hMc(
         "table",
         { className: `tbl ${p.className ?? ""}`.trim(), "data-atom": "Table" },
@@ -539,9 +565,19 @@ async function loadMcScreens(
         p.widths ? hMc("colgroup", null, ...(p.widths as string[]).map((width) => hMc("col", { style: { width } }))) : null,
         // the atom renders no thead when columns are omitted
         p.columns ? hMc("thead", null, hMc("tr", null, ...columns.map((c) => hMc("th", { "data-atom": "TableHead" }, c.label)))) : null,
-        ...bodies.map((b) => hMc("tbody", { "aria-busy": b.isBusy ? "true" : undefined }, b.rows)),
+        ...bodies.map((b) =>
+          hMc("tbody", { "aria-busy": b.isBusy ? "true" : undefined }, typeof b.rows === "function" ? (b.rows as (v: unknown) => unknown)(view) : b.rows),
+        ),
       );
     },
+    TableRow: ({ view: _view, children, ...rest }: Record<string, unknown>) => hMc("tr", rest, children),
+    // a span cell covers the row from its start column, as the atom's colSpan does
+    TableCell: ({ view, kind, start = 0, children, className }: Record<string, unknown>) =>
+      hMc(
+        "td",
+        { className, colSpan: kind === "span" ? Math.max(1, Number((view as { columnCount?: number })?.columnCount ?? 0) - Number(start)) : undefined },
+        children,
+      ),
     AgentName: (p: Record<string, unknown>) =>
       hMc("span", { "data-atom": "AgentName", title: p.name }, getAgentDisplayNameMc(p.name)),
     formatKstTime: realUiMc.formatKstTime,
@@ -627,14 +663,14 @@ test("render harness: a screen component's emitted tree is readable as tags and 
   assert.ok(textsMc(tagsMc(tree, "caption")).length > 0, "the table caption readable");
   assert.strictEqual(tagsMc(tree, "select").length, 1, "the editable row's select is reachable");
   // Text: row content from the fixture, not from a copy of the component.
-  assert.ok(textMc(tree).includes("Daemon cycle helper"), "row label rendered from DOMAIN_META_MC");
+  assert.ok(textMc(tree).includes("Self-improve and wiki compile"), "row label rendered from DOMAIN_META_MC");
   assert.strictEqual(tagsMc(tree, "select")[0].props.value, "claude-opus-4-8", "the fixture value reaches the select");
 });
 
 test("render harness: the tree tracks the props it was given, not a fixed snapshot", async () => {
   const empty = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc([]));
   assert.strictEqual(tagsMc(empty, "select").length, 0, "no rows → no controls");
-  assert.ok(!textMc(empty).includes("Daemon cycle helper"), "no rows → no row label");
+  assert.ok(!textMc(empty).includes("Self-improve and wiki compile"), "no rows → no row label");
 });
 
 test("DomainsSectionMC loading skeleton reserves one placeholder row per server model domain", async () => {
@@ -755,7 +791,7 @@ describe("a knob with no key in the file stays silent when the file was read and
   for (const row of rows) {
     test(row.name, () => {
       const tree = renderComponentMc(screens.TiersSectionMC, { ...tiersPropsMc(), isFileRead: row.isFileRead });
-      const live = lineSlotMc(tree, "generation effort");
+      const live = lineSlotMc(tree, "Generation effort");
       assert.strictEqual(live === "", row.isCliDefault, live);
       assert.strictEqual(live.includes("No value read"), !row.isCliDefault, live);
     });
@@ -765,7 +801,7 @@ describe("a knob with no key in the file stays silent when the file was read and
 test("a knob whose file value the daemon rejects says so under its control with the reason, never a match or the CLI default", () => {
   const rejected = { ...TIER_ROW_FIXTURE_MC[0], file_error: '"ultra" is not a valid tier (allowed: low, medium, high, xhigh, max)' };
   const tree = renderComponentMc(screens.TiersSectionMC, { ...tiersPropsMc(), tiers: [rejected, ...TIER_ROW_FIXTURE_MC.slice(1)] });
-  const live = lineSlotMc(tree, "generation effort");
+  const live = lineSlotMc(tree, "Generation effort");
   assert.ok(live.includes("File value rejected"), `the rejection is worded: ${live}`);
   assert.ok(live.includes('"ultra"'), `the rejected value is named: ${live}`);
   assert.ok(!live.includes("In effect") && !live.includes("CLI default"), live);
@@ -802,7 +838,7 @@ test("a row in its steady state shows no mark; only a drifted row raises one war
   );
   assert.strictEqual(iconsMc(drifted, "warn").length, 1, "exactly one warn glyph per drifted row");
   assert.strictEqual(tonedMc(drifted, "warn").length, 0, "the drift mark is glyph + word, not a badge");
-  const live = lineSlotMc(drifted, "Daemon cycle helper");
+  const live = lineSlotMc(drifted, "Self-improve and wiki compile");
   const getDisplayName = realUiMc.getDisplayName as (kind: string, id: string) => string | null;
   assert.ok(live.includes(`In effect: ${getDisplayName("model", "claude-sonnet-5")}`), `the value in effect is named by its display name: ${live}`);
 });
@@ -1406,6 +1442,14 @@ test("tier notes show one unfolded entry per described tier", () => {
   assert.ok(textMc(tree).includes("self-improve proposals"), "every description stays reachable");
 });
 
+test("the call-tier notes draw the CLI flag and the env variable as machine strings", () => {
+  const [tierMeta] = vm.runInContext("[TIER_META_MC]", screens) as Array<Record<string, unknown>>;
+  const tree = renderComponentMc(screens.TierNotesMC, { title: "What each setting does", rows: Object.values(tierMeta) });
+  const mono = textsMc(findAllMc(tree, (n) => n.props["data-atom"] === "MachineString"));
+  assert.deepStrictEqual(mono, ["--effort", "--effort", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"]);
+  assert.ok(textMc(tree).includes("Default: no --effort flag"), "the sentence around the flag reads whole");
+});
+
 test("the model glossary names the tier's own saved id under its label", () => {
   const props = domainsPropsMc(THREE_TIERS_MC.map((d) => ({ ...d, desired: "claude-opus-4-8" })));
   const drawer = drawersMc(renderComponentMc(screens.DomainsSectionMC, props))[0];
@@ -1418,7 +1462,7 @@ test("the model glossary names the tier's own saved id under its label", () => {
   );
   assert.deepStrictEqual(
     savedIdOf,
-    { "Daemon cycle helper": "Saved id claude-opus-4-8" },
+    { "Self-improve and wiki compile": "Saved id claude-opus-4-8" },
     "the label carries its own tier's id; a domain with no client meta adds no entry",
   );
 });
@@ -1652,13 +1696,20 @@ describe("each card's glossary opens from its About settings drawer, never on th
   }
 });
 
-test("a glossary entry never restates its row's own hint", () => {
-  // script-scope consts stay off the context global, so read them through the context itself
-  const tables = vm.runInContext("[DOMAIN_META_MC, BUDGET_META_MC]", screens) as object[];
-  const metas = tables.flatMap((table) => Object.values(table));
-  for (const meta of metas as Array<{ label: string; hint: string; desc: string }>) {
-    assert.ok(!meta.desc.toLowerCase().includes(meta.hint.toLowerCase()), `${meta.label}: note restates its hint`);
+test("a daemon row at rest shows its label alone, and Self-improve is named once across the three daemon cards", () => {
+  const labels: string[] = [];
+  for (const [name, props] of [
+    ["DomainsSectionMC", domainsPropsMc()],
+    ["BudgetsSectionMC", budgetsPropsMc()],
+    ["TiersSectionMC", tiersPropsMc()],
+  ] as const) {
+    for (const tr of tagsMc(faceMc(renderComponentMc(screens[name], props)), "tr")) {
+      const lines = tagsMc(tr.children, "td")[0].children.filter((n): n is McTag => typeof n !== "string");
+      assert.strictEqual(lines.length, 1, `${name}: '${textMc(lines)}' holds its label alone`);
+      labels.push(textMc(lines));
+    }
   }
+  assert.strictEqual(labels.filter((label) => label.includes("Self-improve")).length, 1, labels.join(" · "));
 });
 
 test("long take-effect, cap and default sentences read as short labels; their detail sits in the drawer", () => {

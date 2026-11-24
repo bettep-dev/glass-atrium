@@ -33,6 +33,8 @@ const EFFORT_LEVELS_MC = ["low", "medium", "high", "xhigh", "max"];
 const OUTPUT_CAP_RE_MC = /^[1-9][0-9]{0,5}$/;
 // What an unset knob ('inherit' → key removed) runs at: no --effort flag / no output-cap env.
 const CLI_DEFAULT_LABEL_MC = "CLI default";
+const EFFORT_FLAG_MC = "--effort";
+const OUTPUT_CAP_ENV_MC = "CLAUDE_CODE_MAX_OUTPUT_TOKENS";
 
 const CUSTOM_OPTION_MC = "__custom__";
 
@@ -49,12 +51,11 @@ const MODEL_CAP_MC = {
 	"claude-sonnet-4-6": "Balanced — fast turnaround on mid-complexity work",
 	"claude-haiku-4-5": "Fastest / cheapest — simple, repetitive file ops",
 };
-// 도메인 표시 메타 — 라벨/1줄 힌트/전문 설명
+// 도메인 표시 메타 — 라벨/전문 설명
 // (GET 응답에 없는 파생 표시값이라 UI 상수로 유지).
 const DOMAIN_META_MC = {
 	"model.daemon_cycle_worker": {
-		label: "Daemon cycle helper",
-		hint: "Self-improve drafts, pre-verify and wiki compile",
+		label: "Self-improve and wiki compile",
 		desc: "Drafts self-improve proposals, runs pre-verify and summarizes wiki notes",
 		source: "daemon-config.json",
 		editable: true,
@@ -114,18 +115,16 @@ const SYNC_META_MC = {
 	},
 };
 
-// 예산 도메인 표시 메타 — 라벨/평이 설명. key = GET budgets[].domain (BudgetDomainKey).
+// 예산 도메인 표시 메타 — 라벨/전문 설명. key = GET budgets[].domain (BudgetDomainKey).
 // 미지의 key(서버 먼저 확장)는 fallback 메타로 그대로 렌더 (silent drop 금지).
 const BUDGET_META_MC = {
 	"budget.worker_max_usd": {
-		label: "Self-improve + wiki call cap",
-		hint: "Caps one generation or wiki compile call",
+		label: "Generation and wiki compile",
 		desc: "Shared cap: generation + wiki compile",
 		source: "daemon-config.json",
 	},
 	"budget.pre_verify_max_usd": {
-		label: "Self-improve pre-verify call cap",
-		hint: "Caps one self-improve pre-verify call",
+		label: "Pre-verify",
 		desc: "Read by the pre-verify step only",
 		source: "daemon-config.json",
 	},
@@ -135,33 +134,33 @@ const BUDGET_META_MC = {
 // Labels name the self-improve calls only: wiki compile reads neither knob.
 const TIER_META_MC = {
 	"tier.worker_effort": {
-		label: "Self-improve generation effort",
-		hint: "--effort on one self-improve generation call",
-		desc: "Default: no --effort flag",
+		label: "Generation effort",
+		desc: `Default: no ${EFFORT_FLAG_MC} flag`,
+		machine: EFFORT_FLAG_MC,
 		note: "With no flag, the settings or model default governs the call",
 		kind: "effort",
 		source: "daemon-config.json",
 	},
 	"tier.pre_verify_effort": {
-		label: "Self-improve pre-verify effort",
-		hint: "--effort on one self-improve pre-verify call",
-		desc: "Default: no --effort flag",
+		label: "Pre-verify effort",
+		desc: `Default: no ${EFFORT_FLAG_MC} flag`,
+		machine: EFFORT_FLAG_MC,
 		note: "Keep pre-verify at or above the generation level",
 		kind: "effort",
 		source: "daemon-config.json",
 	},
 	"tier.worker_max_output_tokens": {
-		label: "Self-improve generation output cap",
-		hint: "Max output tokens for one generation call",
-		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+		label: "Generation output tokens",
+		desc: `Sets ${OUTPUT_CAP_ENV_MC}`,
+		machine: OUTPUT_CAP_ENV_MC,
 		note: "The CLI silently lowers a value above the model's own limit",
 		kind: "output-cap",
 		source: "daemon-config.json",
 	},
 	"tier.pre_verify_max_output_tokens": {
-		label: "Self-improve pre-verify output cap",
-		hint: "Max output tokens for one pre-verify call",
-		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS for pre-verify",
+		label: "Pre-verify output tokens",
+		desc: `Sets ${OUTPUT_CAP_ENV_MC} for pre-verify`,
+		machine: OUTPUT_CAP_ENV_MC,
 		note: "Blank = the model default",
 		kind: "output-cap",
 		source: "daemon-config.json",
@@ -639,7 +638,7 @@ const AGENT_NO_PIN_LABEL_MC = "No pin — session model";
 const AGENT_SELECT_ID_MC = "mc-agent-model";
 const AGENT_BAR_IDLE_MC = "Select agents to set one model for all of them";
 const AGENT_MISSING_MODEL_MC = "Choose a model first";
-const AGENT_FOOT_MC = "Fable and Opus reason deepest and cost the most per token; Haiku is fastest and cheapest";
+const AGENT_FOOT_MC = "Fable and Opus: deepest, costliest. Haiku: fastest, cheapest.";
 const NOT_REGISTERED_TITLE_MC = "No entry in agent-registry.json — the lifecycle CLI does not track this file";
 // unverified whether the agent-file watcher sees a write through the agents-folder link → the restart wording, never "next spawn"
 const AGENT_TIMING_MC = {
@@ -1174,7 +1173,7 @@ async function putAgentPinsMC(body) {
 // One grid for the three daemon tables: the label takes the rest, the control column 12 interior + 160 control + 16 edge.
 // 160 = the 32 step above the widest line the slot holds ("Saved: CLI default Reset") → every control shares both edges.
 const LEDGER_COL_WIDTHS_MC = ["auto", "calc(5 * var(--space-8) + var(--space-3) + var(--card-pad))"];
-// Skeleton columns + empty-row colSpan for both ledgers.
+// Skeleton columns for the daemon ledgers.
 const LEDGER_COL_COUNT_MC = LEDGER_COL_WIDTHS_MC.length;
 // fixed layout → the widths above hold whatever a cell holds
 const LEDGER_TABLE_CLASS_MC = "table-fixed";
@@ -1228,15 +1227,16 @@ function DomainsSectionMC({
 									columns={LEDGER_COL_COUNT_MC}
 									rowHeight={LEDGER_ROW_HEIGHT_MC}
 								/>
-							) : rows.length === 0 ? (
+							) : rows.length === 0 ? (view) => (
 								<EmptyRowMC
-									colSpan={LEDGER_COL_COUNT_MC}
+									view={view}
 									message="No model domains reported."
 								/>
-							) : (
+							) : (view) => (
 								rows.map((d) => (
 									<DomainRowMC
 										key={d.domain}
+										view={view}
 										domain={d}
 										departure={timing.departures.get(d.domain)}
 										knownModels={knownModels}
@@ -1255,13 +1255,14 @@ function DomainsSectionMC({
 }
 
 // Empty roster — states zero rows explicitly, so it never reads as a failed load.
-function EmptyRowMC({ colSpan, message }) {
+function EmptyRowMC({ view, message }) {
+	const { TableCell, TableRow } = window.UI;
 	return (
-		<tr>
-			<td colSpan={colSpan}>
+		<TableRow view={view}>
+			<TableCell view={view} kind="span">
 				<div className="fs-meta text-faint">{message}</div>
-			</td>
-		</tr>
+			</TableCell>
+		</TableRow>
 	);
 }
 
@@ -1274,8 +1275,7 @@ function RowHintMC({ hint }) {
 // Full descriptions in one labelled list per section — a note per row repeats one affordance N times.
 function TierNotesMC({ title, rows }) {
 	const { MachineString, SectionLabel } = window.UI;
-	const isDescShown = (meta) => Boolean(meta.desc) && meta.desc !== meta.hint;
-	const notes = rows.filter((meta) => meta && (isDescShown(meta) || meta.savedId));
+	const notes = rows.filter((meta) => meta && (meta.desc || meta.savedId));
 	if (notes.length === 0) return null;
 
 	return (
@@ -1285,7 +1285,7 @@ function TierNotesMC({ title, rows }) {
 				{notes.map((meta) => (
 					<div key={meta.label}>
 						<dt className="text-ink">{meta.label}</dt>
-						{isDescShown(meta) && <dd className="is-wrap">{meta.desc}</dd>}
+						{meta.desc && <dd className="is-wrap">{getDescNodesMC(meta)}</dd>}
 						{meta.note && <dd className="is-wrap">{meta.note}</dd>}
 						{/* the select shows the friendly name → the saved id is read here, by keyboard and touch too */}
 						{meta.savedId && <dd>Saved id <MachineString>{meta.savedId}</MachineString></dd>}
@@ -1293,6 +1293,21 @@ function TierNotesMC({ title, rows }) {
 				))}
 			</dl>
 		</section>
+	);
+}
+
+// a flag or env name inside the sentence → mono through MachineString, the words around it stay sans
+function getDescNodesMC({ desc, machine }) {
+	const at = machine ? desc.indexOf(machine) : -1;
+	if (at === -1) return desc;
+	const { MachineString } = window.UI;
+
+	return (
+		<>
+			{desc.slice(0, at)}
+			<MachineString>{machine}</MachineString>
+			{desc.slice(at + machine.length)}
+		</>
 	);
 }
 
@@ -1395,6 +1410,7 @@ function getApplyLineMC(mode) {
 }
 
 function DomainRowMC({
+	view,
 	domain: d,
 	departure,
 	knownModels,
@@ -1405,22 +1421,21 @@ function DomainRowMC({
 }) {
 	const meta = DOMAIN_META_MC[d.domain] || {
 		label: d.domain,
-		hint: "",
 		desc: "",
 		editable: d.editable !== false,
 	};
 	// 서버 editable=false 가 우선 — UI 메타와 어긋나면 보수적으로 read-only.
 	const editable = d.editable !== false && meta.editable !== false;
 	const id = `mc-model-${d.domain}`;
+	const { TableCell, TableRow } = window.UI;
 
 	return (
-		<tr className="is-top-aligned">
-			<td>
+		<TableRow view={view} className="is-top-aligned">
+			<TableCell view={view} textRole="label">
 				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
-				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
-			</td>
-			<td>
+			</TableCell>
+			<TableCell view={view} textRole="label">
 				{editable ? (
 					<ModelSelectMC id={id} domain={d.domain} knownModels={knownModels} value={value} error={error} onChange={onChange} />
 				) : (
@@ -1443,8 +1458,8 @@ function DomainRowMC({
 					savedValue={defaultValue && getModelOptionLabelMC(defaultValue)}
 					onReset={() => onChange(defaultValue)}
 				/>
-			</td>
-		</tr>
+			</TableCell>
+		</TableRow>
 	);
 }
 
@@ -1601,15 +1616,16 @@ function BudgetsSectionMC({
 								columns={LEDGER_COL_COUNT_MC}
 								rowHeight={LEDGER_ROW_HEIGHT_MC}
 							/>
-						) : rows.length === 0 ? (
+						) : rows.length === 0 ? (view) => (
 							<EmptyRowMC
-								colSpan={LEDGER_COL_COUNT_MC}
+								view={view}
 								message="No budget caps reported."
 							/>
-						) : (
+						) : (view) => (
 							rows.map((b) => (
 								<BudgetRowMC
 									key={b.domain}
+									view={view}
 									budget={b}
 									departure={timing.departures.get(b.domain)}
 									value={form.budgets[b.domain] ?? ""}
@@ -1637,20 +1653,20 @@ function budgetPlaceholderMC() {
  * 예산 1행 — $ 입력(2-decimal 문자열) + invalid 즉시 field-adjacent role=alert (T-MDL-4)
  * + 실측 + ghost default/reset (T-MDL-6), all three in the line slot under the field.
  */
-function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChange }) {
+function BudgetRowMC({ view, budget: b, departure, value, defaultValue, error, onChange }) {
 	const id = `mc-budget-${b.domain}`;
-	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
+	const { TableCell, TableRow } = window.UI;
+	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
 	const showError = Boolean(error);
 
 	return (
-		<tr className="is-top-aligned">
-			<td>
+		<TableRow view={view} className="is-top-aligned">
+			<TableCell view={view} textRole="label">
 				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
-				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
-			</td>
-			<td>
+			</TableCell>
+			<TableCell view={view} textRole="label">
 				<span className={`field-affix${showError ? " is-error" : ""}`}>
 					<span className="field-affix__sym">$</span>
 					<input
@@ -1676,8 +1692,8 @@ function BudgetRowMC({ budget: b, departure, value, defaultValue, error, onChang
 					savedValue={defaultValue}
 					onReset={() => onChange(defaultValue)}
 				/>
-			</td>
-		</tr>
+			</TableCell>
+		</TableRow>
 	);
 }
 
@@ -1724,15 +1740,16 @@ function TiersSectionMC({
 								columns={LEDGER_COL_COUNT_MC}
 								rowHeight={LEDGER_ROW_HEIGHT_MC}
 							/>
-						) : rows.length === 0 ? (
+						) : rows.length === 0 ? (view) => (
 							<EmptyRowMC
-								colSpan={LEDGER_COL_COUNT_MC}
+								view={view}
 								message="No call tiers reported."
 							/>
-						) : (
+						) : (view) => (
 							rows.map((t) => (
 								<TierRowMC
 									key={t.domain}
+									view={view}
 									tier={t}
 									departure={timing.departures.get(t.domain)}
 									value={form.tiers?.[t.domain] ?? "inherit"}
@@ -1751,7 +1768,7 @@ function TiersSectionMC({
 }
 
 // The unset effort level: a short option label that fits the select, the whole meaning in its title.
-const EFFORT_INHERIT_TITLE_MC = `${CLI_DEFAULT_LABEL_MC} — no --effort flag`;
+const EFFORT_INHERIT_TITLE_MC = `${CLI_DEFAULT_LABEL_MC} — no ${EFFORT_FLAG_MC} flag`;
 const EFFORT_OPTIONS_MC = ["inherit", ...EFFORT_LEVELS_MC].map((level) =>
 	level === "inherit" ? { key: level, label: CLI_DEFAULT_LABEL_MC, title: EFFORT_INHERIT_TITLE_MC } : { key: level, label: level },
 );
@@ -1760,23 +1777,22 @@ const EFFORT_OPTIONS_MC = ["inherit", ...EFFORT_LEVELS_MC].map((level) =>
  * One knob row — an effort select (CLI default + the five levels) or a token-count field where
  * blank = unset ('inherit'), plus In effect and the saved-value reset.
  */
-function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead, onChange }) {
-	const meta = TIER_META_MC[t.domain] || { label: t.domain, hint: "", desc: "", kind: "", source: "daemon-config.json" };
+function TierRowMC({ view, tier: t, departure, value, defaultValue, error, isFileRead, onChange }) {
+	const meta = TIER_META_MC[t.domain] || { label: t.domain, desc: "", kind: "", source: "daemon-config.json" };
 	const showError = Boolean(error);
 	// absent key = the unset state, not an unread one — unless the file itself was not read
 	const live = t.actual ?? (isFileRead ? CLI_DEFAULT_LABEL_MC : null);
 	const labelOf = (v) => (v === "inherit" ? CLI_DEFAULT_LABEL_MC : v);
-	const { Select } = window.UI;
+	const { Select, TableCell, TableRow } = window.UI;
 	const id = `mc-tier-${t.domain}`;
 
 	return (
-		<tr className="is-top-aligned">
-			<td>
+		<TableRow view={view} className="is-top-aligned">
+			<TableCell view={view} textRole="label">
 				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
-				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
-			</td>
-			<td>
+			</TableCell>
+			<TableCell view={view} textRole="label">
 				{meta.kind === "effort" ? (
 					<Select
 						id={id}
@@ -1793,11 +1809,11 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 					<input
 						type="text"
 						inputMode="numeric"
-						className={`field tabular-nums text-right${showError ? " is-error" : ""}`}
+						className={`field tabular-nums${showError ? " is-error" : ""}`}
 						value={value === "inherit" ? "" : value}
 						placeholder={CLI_DEFAULT_LABEL_MC}
 						onChange={(e) => onChange(e.target.value === "" ? "inherit" : e.target.value)}
-						aria-label={`${meta.label} in tokens`}
+						aria-label={meta.label}
 						aria-invalid={showError ? "true" : undefined}
 						aria-describedby={showError ? `${id}-error` : undefined}
 					/>
@@ -1815,8 +1831,8 @@ function TierRowMC({ tier: t, departure, value, defaultValue, error, isFileRead,
 					savedValue={labelOf(defaultValue)}
 					onReset={() => onChange(defaultValue)}
 				/>
-			</td>
-		</tr>
+			</TableCell>
+		</TableRow>
 	);
 }
 
@@ -2044,8 +2060,7 @@ function validateFormMC(form, knownModels) {
 	// per-call 캡은 각각 독립 검증 — daily≤monthly 류의 cross-field 불변식 없음 (단일 호출 캡).
 	for (const [key, v] of Object.entries(form.budgets)) {
 		if (!BUDGET_RE_MC.test(v)) {
-			errors[key] =
-				`Amount with exactly 2 decimals (e.g. 0.50), between $${BUDGET_MIN_USD_MC.toFixed(2)} and $${BUDGET_MAX_USD_MC.toFixed(2)}`;
+			errors[key] = `Two decimals, $${BUDGET_MIN_USD_MC.toFixed(2)} to $${BUDGET_MAX_USD_MC.toFixed(2)}`;
 			continue;
 		}
 		const n = Number(v);
@@ -2062,7 +2077,7 @@ function validateFormMC(form, knownModels) {
 		if (kind === "effort" && !EFFORT_LEVELS_MC.includes(v)) {
 			errors[key] = `Pick ${CLI_DEFAULT_LABEL_MC} or one of: ${EFFORT_LEVELS_MC.join(", ")}`;
 		} else if (kind === "output-cap" && !OUTPUT_CAP_RE_MC.test(v)) {
-			errors[key] = "A whole number of tokens from 1 to 999999, no leading zero — or blank";
+			errors[key] = "Whole number, 1 to 999999, or blank";
 		}
 	}
 
