@@ -29,6 +29,7 @@ interface Alarm {
 }
 interface Stat {
   id: string;
+  isContextTripped?: boolean;
   label: string;
   window?: string;
   status: string;
@@ -117,6 +118,7 @@ test("every down part becomes one harness row naming the parts", () => {
   assert.equal(rows[0]!.tone, "crit");
   assert.equal(rows[0]!.target, "architecture", "the row routes to the screen that owns the fact");
   assert.ok(rows[0]!.detail?.includes("PostgreSQL"), "the parts are named, not just counted");
+  assert.equal(rows[0]!.title, "2 system parts are down", "the shared noun for the watched parts");
 });
 
 test("an unavailable harness fold raises no alarm — absence is not a fault", () => {
@@ -233,9 +235,9 @@ describe("every firing Task results or Fleet stat has its alarm row, in the stat
 describe("a Task results or Fleet alarm states its count in words and links to the owning page", () => {
   const rows = [
     { name: "failed or blocked over its line", id: "outcomes", sources: { outcomesState: outcomes([{ result: "fail", count: 30 }, { result: "blocked", count: 10 }]) },
-      title: "10% of task results failed or blocked in the last 7 days", detail: "40 of 400 reported outcomes", target: "outcomes", targetLabel: "Task results" },
+      title: "10% of task results failed or blocked in the last 7 days", detail: "40 of 400 task results", target: "outcomes", targetLabel: "Task results" },
     { name: "open caveats over their line", id: "outcomes", sources: { outcomesState: outcomes([{ result: "done_with_concerns", count: 48 }]) },
-      title: "12% of task results have open caveats in the last 7 days", detail: "48 of 400 reported outcomes", target: "outcomes", targetLabel: "Task results" },
+      title: "12% of task results have open caveats in the last 7 days", detail: "48 of 400 task results", target: "outcomes", targetLabel: "Task results" },
     { name: "one suspended agent beside a streak", id: "fleet", sources: { agentsState: fleet(1, 2) },
       title: "1 agent is suspended", detail: "2 on a failing streak", target: "agents", targetLabel: "Agents" },
     { name: "suspended agents and no streak", id: "fleet", sources: { agentsState: fleet(3, 0) },
@@ -316,7 +318,7 @@ test("a failed stat names its own region and source, so its Retry reloads that r
     assert.equal(stat.region, region, statId);
     assert.ok(stat.source, `${statId} names what failed to load`);
     assert.equal(stat.error, "HTTP 500", `${statId} carries the raw answer for Details`);
-    assert.match(String(stat.context), /fleet summary|task results|today's spend/, `${statId}: the context line states what failed`);
+    assert.match(String(stat.context), /agents|task results|today's spend/, `${statId}: the context line states what failed`);
   }
 });
 
@@ -398,7 +400,8 @@ test("the harness stat counts only the parts the shell actually polled", () => {
   );
   assert.equal(stat.value, "1 of 4 down", "the verdict leads, over what answered, not what exists");
   assert.equal(stat.tone, "crit");
-  assert.ok(stat.context?.includes("Hook Chain"), "the unchecked part is named, not silently dropped");
+  assert.equal(stat.context, null, "a firing stat leaves its line to the alarm row");
+  assert.ok(stat.notes.some((note) => note.includes("Hook Chain")), "the unchecked part is named behind ⓘ, not silently dropped");
 });
 
 // the alarm list owns every alarm sentence (spec 44084 §9) → a firing stat keeps its value and tone, never the names or the words
@@ -422,13 +425,13 @@ test("a firing stat never restates its alarm: the harness stat leaves the down p
 test("the harness and fleet stats fill the context line under their count with a secondary fact", () => {
   const harness = statOf(
     dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: LOADING }), "harness");
-  assert.equal(harness.context, "All 5 parts polled on every harness read", "a fully polled harness says its coverage");
+  assert.equal(harness.context, "All 5 checked", "a fully polled harness says its coverage");
   const agentsState = ready({
     agents: [{ agent_id: "glass-atrium-agent-a", agent_name: "glass-atrium-agent-a", runs: 2731 }],
     meta: { total_agents: 12, circuit_breaker: { source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0, alarms: [] } },
   });
   const fleet = statOf(dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState, outcomesState: LOADING }), "fleet");
-  assert.equal(fleet.context, "0 on a failing streak");
+  assert.equal(fleet.context, "None on a failing streak");
   assert.ok(fleet.notes.includes("12 of 20 registered agents had a run in the last 7 days."), JSON.stringify(fleet.notes));
   assert.ok(fleet.notes.includes("Most runs: glass-atrium-agent-a, 2,731."), "the busiest agent is the region's one ordered row");
   const noRows = fleetStat({ source: "loaded", registry_agents: 20, suspended_count: 0, streak_count: 0, alarms: [] });
@@ -472,25 +475,29 @@ test("the outcome stat leads with the failed share, its counts on the context li
     "outcomes",
   );
   assert.equal(stat.value, "2%", "the failed share is the headline, its .0 dropped");
-  assert.equal(stat.context, "4 of 200 failed or blocked", "the context names both results the share counts");
+  assert.equal(stat.context, "4 of 200 task results", "the context names the count and its denominator");
   const notes = stat.notes.join(" ");
-  assert.match(notes, /alarm at 5%/, "the failure alert line moves behind ⓘ");
+  // the drawer leads each stat's notes with its label → the failure line never restates it
+  assert.equal(stat.notes[0], "Alarm at 5%.", "the failure alert line moves behind ⓘ");
   assert.match(notes, /Open caveats 5% \(10\), alarm at 10%/, "the caveat share sits beside its own alert line");
-  assert.match(notes, /writer-emitted/, "and the counting rule");
-  assert.doesNotMatch(String(stat.context), /alarm|writer-emitted/, "the visible line carries neither");
+  assert.match(notes, /reported themselves/, "and the counting rule");
+  assert.doesNotMatch(String(stat.context), /alarm|reported/i, "the visible line carries neither");
 });
 
 // spec 44084 §9 (R8): a firing stat is value + tone glyph; its alarm row already states the count
-describe("the outcome stat's context line counts the failures only while no alarm row states a count", () => {
+// spec 44084 §9.1: the glyph sits on the figure that tripped → the value, or the context line naming the tripped count
+describe("the outcome stat's context line names the tripped count when the value is not the figure that tripped", () => {
   const rows = [
-    { name: "caveats over their line → the alarm row holds the count, the line stays empty", byResult: [{ result: "done_with_concerns", count: 48 }], context: null },
-    { name: "failures over their line → the alarm row holds the count, the line stays empty", byResult: [{ result: "fail", count: 40 }, { result: "done_with_concerns", count: 48 }], context: null },
-    { name: "neither line tripped → the failed count", byResult: [{ result: "fail", count: 4 }, { result: "done_with_concerns", count: 8 }], context: "4 of 400 failed or blocked" },
+    { name: "caveats over their line → the line names the caveat count", byResult: [{ result: "done_with_concerns", count: 48 }], context: "48 of 400 with open caveats", isContextTripped: true },
+    { name: "failures over their line → the value tripped, the line stays empty", byResult: [{ result: "fail", count: 40 }, { result: "done_with_concerns", count: 48 }], context: null, isContextTripped: false },
+    { name: "neither line tripped → the failed count", byResult: [{ result: "fail", count: 4 }, { result: "done_with_concerns", count: 8 }], context: "4 of 400 task results", isContextTripped: false },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const stats = dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: outcomes(row.byResult) });
-      assert.equal(statOf(stats, "outcomes").context, row.context);
+      const stat = statOf(stats, "outcomes");
+      assert.equal(stat.context, row.context);
+      assert.equal(stat.isContextTripped === true, row.isContextTripped, "the glyph's place");
     });
   }
 });
@@ -536,6 +543,21 @@ test("the spend stat states no multiple of its own — its alarm rule and basis 
     const stat = statOf(dash.buildStats({ harness: HEALTHY, costState: kpi(row.today, row.avg, row.pace), agentsState: LOADING, outcomesState: LOADING }), "spend");
     assert.doesNotMatch(String(stat.context), /×/, `${row.name}: "${stat.context}"`);
     assert.ok(stat.notes.some((note) => /1\.25× the 7-day average \(\$10\.00\/day\)/.test(note)), `${row.name}: ${JSON.stringify(stat.notes)}`);
+  }
+});
+
+// owner rule: no sentence on a screen runs past 12 words, and none uses a recorder-internal word
+test("every sentence in the Status card's ⓘ stays within 12 plain words", () => {
+  const states = [
+    { outcomesState: ready({ total: 200, by_result: [{ result: "fail", count: 4 }, { result: "done", count: 196 }] }), costState: kpi(3, 10, 8) },
+    { outcomesState: ready({ total: 4, by_result: [{ result: "fail", count: 4 }] }), costState: kpi(0, 0) },
+  ];
+  for (const state of states) {
+    const notes = dash.buildStats({ harness: HEALTHY, agentsState: LOADING, ...state }).flatMap((stat) => stat.notes ?? []);
+    for (const sentence of notes.flatMap((note) => note.split(/(?<=\.)\s+/))) {
+      assert.ok(sentence.split(/\s+/).length <= 12, `${sentence.split(/\s+/).length} words: "${sentence}"`);
+      assert.doesNotMatch(sentence, /writer-emitted|synthesized|reconstructed|poisoned/, sentence);
+    }
   }
 });
 
@@ -632,7 +654,7 @@ test("held failures sharing one cause collapse into the page banner's single Ret
   });
   const shared = failure.getPageSharedFailure(stats);
   assert.ok(shared, "held failures join the banner");
-  assert.deepEqual([...shared.sources].sort(), ["task results", "the fleet summary", "today's spend"]);
+  assert.deepEqual([...shared.sources].sort(), ["agents", "task results", "today's spend"]);
 });
 
 test("the week panels join the stats' outage when the cause is the same, so one cause keeps one Retry", () => {
@@ -655,7 +677,7 @@ test("a cold harness outage is a failed stat listed in the same banner as the re
   const stats = dash.buildStats({ harness, costState: ERRORED, agentsState: ERRORED, outcomesState: ERRORED });
   const stat = statOf(stats, "harness");
   assert.equal(stat.status, "error");
-  assert.ok(failure.getPageSharedFailure(stats)?.sources.includes("harness health"), "the banner names the harness");
+  assert.ok(failure.getPageSharedFailure(stats)?.sources.includes("system parts"), "the banner names the system parts");
 });
 
 test("a harness refresh that failed over held readings reads last-known, keeping a held fault", () => {
@@ -726,9 +748,9 @@ test("the coverage line credits the System map only when every read answered, so
       "harness",
     );
     // the coverage line is the context of a full read, and moves behind ⓘ when the context names an unread source
-    const coverage = [stat.context, ...stat.notes].find((line) => / parts /.test(String(line))) ?? "";
+    const coverage = [stat.context, ...stat.notes].find((line) => / of 5 (checked|read) /.test(String(line))) ?? "";
     assert.equal(/System map/.test(coverage), row.isOnMap, `${row.name}: System map credit in "${coverage}"`);
-    assert.match(coverage, new RegExp(`^${row.fold.partsChecked} of 5 parts`), `${row.name}: states how many parts it covers`);
+    assert.match(coverage, new RegExp(`^${row.fold.partsChecked} of 5 `), `${row.name}: states how many parts it covers`);
   }
 });
 
@@ -740,7 +762,7 @@ test("part names keep their hyphens unbreakable wherever the page lists them", (
   );
   const [row] = dash.buildAlarms({ harness, costState: kpi(10, 10), installKind: "hidden" });
   const lists = [
-    { where: "stat coverage line", text: String(stat.context), name: /Chromium‑Export/ },
+    { where: "stat coverage note", text: stat.notes.join(" "), name: /Chromium‑Export/ },
     { where: "lane row detail", text: row?.detail ?? "", name: /glass‑atrium‑wiki‑curator/ },
   ];
 
@@ -762,7 +784,7 @@ test("a partly unread harness never reads healthy, and the lane cannot claim an 
 
   const readiness = failure.getAlarmReadiness({ harness, outcomesState: ready({}), agentsState: ready({}), costState: kpi(1, 10), updateState: ready({}) });
   assert.equal(readiness.status, "unknown");
-  assert.ok(readiness.unread.includes("harness health"));
+  assert.ok(readiness.unread.includes("system parts"));
 });
 
 describe("a source whose held alarm the list already shows is not announced as unread again", () => {
@@ -818,26 +840,37 @@ test("the spend stat states its move against yesterday by this time from the she
     { name: "level with yesterday", today: 10, yesterday: 10, context: /^Level with \$10\.00 yesterday by this time$/ },
     { name: "a fractional move keeps one decimal", today: 10.5, yesterday: 9, context: /^Up 16\.7% on \$9\.00 yesterday by this time$/ },
     { name: "a move under a tenth of a point is still a move", today: 10.001, yesterday: 10, context: /^Up <0\.1% on \$10\.00 yesterday by this time$/ },
+    { name: "a rise just under double stays a percentage", today: 19.98, yesterday: 10, context: /^Up 99\.8% on \$10\.00 yesterday by this time$/ },
+    { name: "a doubled day is a multiple, never a three-digit percentage", today: 20, yesterday: 10, context: /^2\.0× yesterday by this time \(\$10\.00\)$/ },
+    { name: "a day far past double states its multiple", today: 88, yesterday: 11, context: /^8\.0× yesterday by this time \(\$11\.00\)$/ },
   ];
   for (const row of rows) {
     const harness = { ...HEALTHY, kpi: { today_cost_usd: row.today, yesterday_same_time_cost_usd: row.yesterday } };
     const stat = statOf(
-      dash.buildStats({ harness, costState: kpi(row.today, 10), agentsState: LOADING, outcomesState: LOADING }),
+      dash.buildStats({ harness, costState: kpi(row.today, 1000), agentsState: LOADING, outcomesState: LOADING }),
       "spend",
     );
     assert.match(String(stat.context), row.context, row.name);
   }
 });
 
-test("the fleet stat states the failing streak until its alarm row does, and keeps the fleet size behind ⓘ", () => {
+test("a firing spend stat leaves its line empty — the alarm row holds the one baseline", () => {
+  const harness = { ...HEALTHY, kpi: { today_cost_usd: 30, yesterday_same_time_cost_usd: 10 } };
+  const stat = statOf(dash.buildStats({ harness, costState: kpi(30, 10), agentsState: LOADING, outcomesState: LOADING }), "spend");
+  assert.equal(stat.tone, "warn");
+  assert.equal(stat.context, null);
+});
+
+test("the agents stat states the failing streak on its line unless a suspension trips, and keeps the fleet size behind ⓘ", () => {
   const rows = [
-    { name: "no streak, no row", suspended: 0, streak: 0, context: "0 on a failing streak" },
-    { name: "a streak fires the row", suspended: 0, streak: 3, context: null },
-    { name: "a suspension fires the row, the streak its detail", suspended: 1, streak: 2, context: null },
+    { name: "no streak, no row", suspended: 0, streak: 0, context: "None on a failing streak", isContextTripped: false },
+    { name: "a streak fires the row, the line names the tripped count", suspended: 0, streak: 3, context: "3 on a failing streak", isContextTripped: true },
+    { name: "a suspension fires the row, the streak its detail", suspended: 1, streak: 2, context: null, isContextTripped: false },
   ];
-  for (const { name, suspended, streak, context } of rows) {
+  for (const { name, suspended, streak, context, isContextTripped } of rows) {
     const stat = fleetStat({ source: "loaded", suspended_count: suspended, streak_count: streak });
     assert.equal(stat.context, context, name);
+    assert.equal(stat.isContextTripped === true, isContextTripped, `${name}: the glyph's place`);
     assert.ok(stat.notes.some((note) => /12 agents/.test(note)), `streak ${streak}: ${JSON.stringify(stat.notes)}`);
   }
 });
@@ -895,5 +928,24 @@ test("the spend stat says why its day-over-day change is missing, telling a pend
     const harness = { ...HEALTHY, kpi: row.kpi, error: row.error ?? null };
     const stat = statOf(dash.buildStats({ harness, costState: kpi(5, 10), agentsState: LOADING, outcomesState: LOADING }), "spend");
     assert.match(String(stat.context), row.context, row.name);
+  }
+});
+
+// spec 44084 §9.1: one noun per thing → every outcome line says task results, never outcomes
+describe("the Failed or blocked stat names its records task results in every state it can read", () => {
+  const rows = [
+    { name: "too few to judge", state: ready({ total: 4, by_result: [{ result: "fail", count: 4 }] }) },
+    { name: "nothing recorded", state: ready({ total: 0, by_result: [] }) },
+    { name: "no writer-reported record", state: ready({}) },
+    { name: "a prior window too small to compare", state: outcomesWithPrior(CURRENT_20PCT, { total: 2, by_result: [{ result: "done", count: 2 }] }) },
+    { name: "a judged week", state: outcomesWithPrior(CURRENT_20PCT, { total: 200, by_result: [{ result: "fail", count: 10 }, { result: "done", count: 190 }] }) },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const stat = statOf(dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState: LOADING, outcomesState: row.state }), "outcomes");
+      const lines = [stat.context, ...stat.notes].filter(Boolean).join(" | ");
+      assert.doesNotMatch(lines, /\boutcomes\b/, lines);
+      assert.match(lines, /task results/, lines);
+    });
   }
 });

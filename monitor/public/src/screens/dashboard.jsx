@@ -44,7 +44,7 @@ const SEVERITY_RANK = { crit: 3, warn: 2, info: 1, neutral: 0 };
 
 function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const {
-    PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, INITIAL_REGION_STATE, getRegionSummary,
+    PageHeader, TypeScaleStyle, FreshnessStamp, RefreshButton, PageErrorBanner, MachineString, INITIAL_REGION_STATE, getRegionSummary,
   } = window.UI;
 
   const [costState,      setCostState]      = useStateD(INITIAL_REGION_STATE);
@@ -139,16 +139,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         @keyframes ga-spin { to { transform: rotate(360deg); } }
         .ga-spin { animation: ga-spin 0.9s linear infinite; transform-origin: center; }
         @media (prefers-reduced-motion: reduce) { .ga-spin { animation: none; } }
-        /* an idle lane is out of flow → no blank band and no section gap of its own; a lane between two sections keeps one gap */
-        .space-sections > .dash-lane.sr-only + * { margin-top: 0; }
-        .space-sections > * + .dash-lane.sr-only + * { margin-top: var(--gap-section); }
-        /* an agent name in the results panel is a plain anchor → an underline makes its hover visible */
-        .dash-drill:hover, .dash-drill:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
-        /* a stat's Retry rides its context line in a one-line box → the 32 control overhangs into the card padding, the card never grows */
-        .dash-stat-retry { margin-left: var(--space-2); }
         .dash-week-panel { display: flex; flex-direction: column; }
         .dash-week-panel > .card { flex: 1 1 auto; }
-        .dash-week-panel .card-body { display: flex; flex-direction: column; gap: var(--gap-list); }
         .dash-strip-track { height: 4rem; position: relative; }
         /* one 1px --line baseline across the strip → each day's segment reaches half the column gap either side */
         .dash-strip-base { position: absolute; bottom: 0; left: calc(var(--gap-label-inline) / -2); right: calc(var(--gap-label-inline) / -2); height: 1px; background: rgb(var(--line)); }
@@ -157,11 +149,12 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-strip-bar { background: currentColor; border-radius: 2px; }
         /* today is still accruing → an outlined bar, never a filled one that reads as a closed day */
         .dash-strip-partial { background: transparent; border: 1px dashed currentColor; }
-        .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem; align-items: center; gap: var(--gap-label-inline); }
+        /* last track = the breakage rows' arrow box → every count in the card ends on one edge */
+        .dash-result-row { display: grid; grid-template-columns: 9rem 1fr 4.5rem auto; align-items: center; }
         .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
         /* tracks capped at the cell cap → capped cells keep even 2px gaps instead of floating in wider tracks */
-        /* the label track grows to its widest label → a folded "Wed ×2" stays on one line instead of spilling into the first cell */
-        .dash-hour-grid { display: grid; grid-template-columns: minmax(2.5rem, max-content) repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; line-height: 1; }
+        /* one fixed label track, sized to the widest label "Wed ×2" → a folded weekday never shifts the grid */
+        .dash-hour-grid { display: grid; grid-template-columns: 3rem repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; }
         /* neutral ink ramp (spec 44084 §4.1) → the lowest run hour clears 3:1 on the card; a zero hour is an outline, never a fill */
         .dash-hour-cell, .dash-hour-swatch { border-radius: 2px; }
         .dash-hour-cell { aspect-ratio: 1; }
@@ -171,7 +164,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="2"] { background: var(--heat-2); }
         :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="3"] { background: var(--heat-3); }
         :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="4"] { background: var(--heat-4); }
-        .dash-hour-key { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--gap-label); }
         .dash-hour-steps { display: flex; gap: 2px; }
         .dash-hour-tick { white-space: nowrap; }
       `}</style>
@@ -182,7 +174,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
           sub={<span className="fs-meta">Triage</span>}
           freshness={
             <>
-              {version && <span className="fs-meta font-mono text-dim">{version}</span>}
+              {version && <MachineString className="fs-meta text-dim">{version}</MachineString>}
               <FreshnessStamp {...getFreshnessInputD(settledAt, waveStates, harness)}/>
             </>
           }
@@ -191,7 +183,8 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         />
       </div>
 
-      <div className="space-sections">
+      {/* an idle lane is sr-only → out of flow, so it takes no section gap */}
+      <div className="flex flex-col gap-section">
         {sharedFailure && (
           <PageErrorBanner sources={sharedFailure.sources} error={sharedFailure.error} onRetry={triggerRefresh}
             isBusy={isWaveBusy} focusTargetId={DASH_STATUS_ID}/>
@@ -277,9 +270,9 @@ const ALARM_READINESS_LOADING = Object.freeze({ status: 'loading', unread: [] })
 // each source of the lane, in tie order → its readiness label, the one alarm row it can raise and that row's builder;
 // isAnswered → a read payload that still lacks the reading its row is built on is no answer
 const ALARM_SOURCES = [
-  { key: 'harness', label: 'harness health', alarmId: 'harness', build: buildHarnessAlarm },
+  { key: 'harness', label: 'system parts', alarmId: 'harness', build: buildHarnessAlarm },
   { key: 'outcomesState', label: 'task results', alarmId: 'outcomes', build: buildOutcomeAlarm },
-  { key: 'agentsState', label: 'fleet', alarmId: 'fleet', build: buildFleetAlarm, isAnswered: (source) => getBreakerCounts(source.data) != null },
+  { key: 'agentsState', label: 'agents', alarmId: 'fleet', build: buildFleetAlarm, isAnswered: (source) => getBreakerCounts(source.data) != null },
   { key: 'costState', label: "today's spend", alarmId: 'spend', build: buildSpendAlarm },
   { key: 'updateState', label: 'install state', alarmId: 'install', build: buildInstallAlarm },
 ];
@@ -309,16 +302,16 @@ function isSourceAnswered(source, isAnswered) {
 // the card outlives every recovery → a banner or stat Retry that leaves on success hands focus here
 const DASH_STATUS_ID = 'dash-status';
 
-const RESULTS_STAT_POINTER = 'the Task results stat above';
+const RESULTS_STAT_POINTER = 'the Failed or blocked stat above';
 
 // spec 44084 §9 — one card, four stats (label, value, one context line); every counting rule and window behind one ⓘ
 function StatusCard({ stats, onRetry, sharedSources = NO_SHARED_SOURCES }) {
-  const { Card, StatRow } = window.UI;
+  const { Card, StatRow, StatNotes } = window.UI;
   const noted = stats.filter((stat) => stat.notes?.length > 0);
   const items = stats.map((stat) => buildStatItem(stat, { onRetry, isRetryShared: sharedSources.includes(stat.source) }));
   return (
     <div id={DASH_STATUS_ID} aria-busy={stats.some((stat) => stat.isBusy) ? 'true' : undefined}>
-      <Card title="Status" info={noted.length > 0 && <StatNotes stats={noted}/>} infoLabel="How these figures are read">
+      <Card title="Status" info={noted.length > 0 && <StatNotes stats={noted.map(buildStatNote)}/>} infoLabel="How these figures are read">
         <StatRow stats={items}/>
       </Card>
     </div>
@@ -342,17 +335,19 @@ function getStatLabel(stat) {
 
 // the one visible line: the builder's context or a banner pointer; the stat's own Retry rides it
 function getStatContext(stat, { onRetry, isRetryShared }) {
-  const { DayTokens, RetryButton } = window.UI;
+  const { DayTokens, HeadStatus, RetryButton } = window.UI;
   const isCovered = isRetryShared && stat.error != null;
   // a banner-carried outage is stated once, above → the value reads Not loaded, the line is the pointer alone
   const text = isCovered && stat.status === 'error' ? window.UI.getNoticePointer() : stat.context;
   const hasRetry = Boolean(stat.canRetry) && !isRetryShared;
   if (!text && !hasRetry) return null;
+  const line = <DayTokens>{text}</DayTokens>;
   return (
     <>
-      {text && <span title={stat.cause ?? text}><DayTokens>{text}</DayTokens></span>}
+      {text && <span title={stat.cause ?? text}>{stat.isContextTripped ? <HeadStatus tone={stat.tone}>{line}</HeadStatus> : line}</span>}
       {hasRetry && (
-        <span className="one-line-box dash-stat-retry">
+        // a one-line box → the 32 control overhangs into the card padding, the card never grows
+        <span className="one-line-box ml-control">
           <RetryButton onRetry={() => onRetry(stat.region)} isBusy={stat.isBusy} focusTargetId={DASH_STATUS_ID}/>
         </span>
       )}
@@ -360,30 +355,21 @@ function getStatContext(stat, { onRetry, isRetryShared }) {
   );
 }
 
-// tones a stat may show → a firing stat shows its value and tone glyph only; the alarm list owns the sentence
+// tones a stat may show → the glyph sits on the figure that tripped (the value, or the context line); the alarm list owns the sentence
 const FIRING_TONES = new Set(['warn', 'crit']);
 
 function StatValue({ stat }) {
   const { AbsentValue, ToneGlyph } = window.UI;
   if (stat.absent) return <AbsentValue kind={stat.absent}/>;
   const figure = <span className={`whitespace-nowrap${stat.isBusy ? ' opacity-70' : ''}`}>{stat.value}</span>;
-  if (!FIRING_TONES.has(stat.tone)) return figure;
+  if (!FIRING_TONES.has(stat.tone) || stat.isContextTripped) return figure;
   return <><ToneGlyph tone={stat.tone}/>{figure}</>;
 }
 
 // the card's one ⓘ — each stat's notes led by its label
-function StatNotes({ stats }) {
+function buildStatNote(stat) {
   const { DayTokens } = window.UI;
-  return (
-    <>
-      {stats.map((stat) => (
-        <p key={stat.id} className="m-0">
-          <strong className="font-medium text-ink">{getStatLabel(stat)}</strong>
-          {' — '}<DayTokens>{stat.notes.join(' ')}</DayTokens>
-        </p>
-      ))}
-    </>
-  );
+  return { key: stat.id, label: getStatLabel(stat), info: <DayTokens>{stat.notes.join(' ')}</DayTokens> };
 }
 
 // the week behind the status card → each panel states its own span (the strip 7 days, the results 7 days + today)
@@ -391,8 +377,8 @@ function StatNotes({ stats }) {
 function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetryHeatmap, sharedSources = NO_SHARED_SOURCES }) {
   return (
     <>
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-card">
-        <WeekPanel id="dash-week-results" title="This week's task results" state={outcomesState} source="task results"
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-section">
+        <WeekPanel id="dash-week-results" title="Task results" state={outcomesState} source="task results"
           note={`${OUTCOME.COUNTING_NOTE} ${RESULTS_PANEL_NOTE}`} isRetryShared={sharedSources.includes('task results')}
           render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
         <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
@@ -409,7 +395,7 @@ function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetr
 // a panel without onRetry shares its source with a stat → the stat speaks for the failure, the panel only points to it
 // note: a sentence, or (data | null) → the drawer body, so a fact read from the payload joins the method it qualifies
 function WeekPanel({ id, title, state, source, onRetry, render, note = null, isRetryShared = false }) {
-  const { Card, LoadingPlaceholder } = window.UI;
+  const { Card, LoadingPlaceholder, Stack } = window.UI;
   const view = getPanelView(state);
   const hasData = view === 'ready' || view === 'held';
   const info = note && (typeof note === 'function' ? note(hasData ? state.data : null) : <p className="fs-body">{note}</p>);
@@ -417,9 +403,11 @@ function WeekPanel({ id, title, state, source, onRetry, render, note = null, isR
   return (
     <section id={id} className="dash-week-panel" aria-label={title} aria-busy={state.busy ? 'true' : undefined}>
       <Card title={title} sub={view === 'held' ? window.UI.LAST_KNOWN_TEXT : null} info={info}>
-        {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
-        <PanelFailure id={id} view={view} state={state} source={source} onRetry={onRetry} isRetryShared={isRetryShared}/>
-        {hasData && render(state.data)}
+        <Stack gap="list">
+          {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
+          <PanelFailure id={id} view={view} state={state} source={source} onRetry={onRetry} isRetryShared={isRetryShared}/>
+          {hasData && render(state.data)}
+        </Stack>
       </Card>
     </section>
   );
@@ -448,13 +436,18 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
   return <AlertCard tone="crit" surface="inset" title={copy.sentence} body={copy.next} details={copy.detail} actions={retry}/>;
 }
 
+// a week panel's one sub-line: its span, then its count when it has one; the window itself sits in the stat labels
+function SpanLine({ span, children }) {
+  return <p className="fs-meta text-dim"><window.UI.DayTokens>{span}</window.UI.DayTokens>{children != null && <> · {children}</>}</p>;
+}
+
+// the server zero-fills each day → no points at all means no window to state
 function SpendStrip({ strip }) {
-  if (strip.bars.length === 0) return <p className="fs-meta text-dim">No spend recorded in the last <window.UI.NoWrap>7 days</window.UI.NoWrap>.</p>;
+  if (strip.bars.length === 0) return <p className="fs-meta text-dim">No spend recorded</p>;
   const max = Math.max(...strip.bars.map((bar) => bar.cost)) || 1;
-  const hasPartial = strip.bars.some((bar) => bar.isPartial);
   return (
     <>
-      <p className="fs-meta text-dim"><window.UI.DayTokens>{strip.span}</window.UI.DayTokens>{hasPartial ? ' · today is still accruing' : ''}</p>
+      <SpanLine span={strip.span}/>
       <ol className="grid grid-cols-7 gap-label-inline" aria-label={`Spend per day, ${strip.span}`}>
         {strip.bars.map((bar) => (
           <li key={bar.date} className="flex flex-col items-center gap-stack min-w-0">
@@ -473,49 +466,53 @@ function SpendStrip({ strip }) {
 }
 
 // a result's bar is a quantity → the data colour; the label word (ui.jsx RESULT_META) names the result
+// the breakage group under the result rows → a block gap marks the boundary
 function ResultPanel({ panel }) {
-  if (panel.writerTotal <= 0) return <p className="fs-meta text-dim">No reported outcomes, <window.UI.DayTokens>{panel.span}</window.UI.DayTokens>.</p>;
+  const { Stack } = window.UI;
+  const subLine = <SpanLine span={panel.span}>{formatInt(panel.writerTotal)} task results</SpanLine>;
+  if (panel.writerTotal <= 0) return subLine;
   return (
     <>
-      <p className="fs-meta text-dim">
-        <window.UI.DayTokens>{panel.span}</window.UI.DayTokens> · {formatInt(panel.writerTotal)} reported outcomes
-      </p>
-      <ul className="flex flex-col gap-list">
-        {panel.rows.map((row) => {
-          return (
-            <li key={row.result} className="dash-result-row fs-body">
+      {subLine}
+      <Stack gap="block">
+        <ul className="flex flex-col gap-list">
+          {panel.rows.map((row) => (
+            <li key={row.result} className="dash-result-row gap-label-inline fs-body">
               <span>{window.UI.resolveResultMeta(row.result).label}</span>
               <div aria-hidden="true">
                 <div className="dash-result-fill text-data" style={{ width: `${(row.count / panel.writerTotal) * 100}%` }}/>
               </div>
               <span className="tabular-nums text-right">{formatInt(row.count)}</span>
+              <span aria-hidden="true" className="link-arrow invisible">→</span>
             </li>
-          );
-        })}
-      </ul>
-      <BreakageAgents agents={panel.agents}/>
+          ))}
+        </ul>
+        <BreakageAgents agents={panel.agents}/>
+      </Stack>
     </>
   );
 }
 
+// the whole row is one Link (spec 44084 §9.1) → name left, count and the Link's arrow right
 function BreakageAgents({ agents }) {
+  const { Link } = window.UI;
   if (agents.length === 0) return <p className="fs-meta text-dim">No agent had a failed or blocked run.</p>;
   return (
-    <>
+    <window.UI.Stack gap="list">
       <h3 className="fs-meta text-dim">Most failed or blocked</h3>
       <ul className="flex flex-col gap-list">
         {agents.map((row) => (
-          <li key={row.agent} className="flex items-center justify-between gap-label-inline fs-body">
+          <li key={row.agent} className="flex fs-body">
             {/* a real href, not onNav → the query reaches the Task results filter through hashchange */}
-            <a href={getAgentOutcomesHref(row.agent)} className="dash-drill inline-target min-w-0"
+            <Link href={getAgentOutcomesHref(row.agent)} className="inline-target flex-1 min-w-0 gap-label-inline"
               aria-label={`${row.agent}: ${formatInt(row.count)} failed or blocked — open its task results`}>
-              <span className="truncate">{row.agent}</span>
-            </a>
-            <span className="tabular-nums">{formatInt(row.count)}</span>
+              <span className="flex-1 min-w-0 truncate">{row.agent}</span>
+              <span className="tabular-nums">{formatInt(row.count)}</span>
+            </Link>
           </li>
         ))}
       </ul>
-    </>
+    </window.UI.Stack>
   );
 }
 
@@ -528,19 +525,19 @@ const HOUR = {
   TICKS: new Set([0, 6, 12, 18]),
   STEPS: [1, 2, 3, 4],
   // the heatmap counts differently from the results panel beside it → it states its own basis
-  GRID_BASIS: 'All recorded runs — reconstructed included, poisoned excluded.',
+  GRID_BASIS: 'Counts every recorded run, including ones the harness rebuilt. Runs in a quarantined window are left out.',
 };
 
 function HourGrid({ grid }) {
-  const { NoWrap } = window.UI;
-  if (grid.total <= 0) return <p className="fs-meta text-dim">No runs recorded in the last <NoWrap>7 days</NoWrap>.</p>;
+  const subLine = <SpanLine span={grid.span}>{formatInt(grid.total)} runs</SpanLine>;
+  if (grid.total <= 0) return subLine;
   return (
     <>
-      <p className="fs-meta text-dim"><window.UI.DayTokens>{grid.span}</window.UI.DayTokens> · {formatInt(grid.total)} runs</p>
+      {subLine}
       <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid fs-meta text-dim">
         {grid.rows.map((row) => (
           <React.Fragment key={row.day}>
-            <span className="whitespace-nowrap" title={row.fold ?? undefined}>{row.fold ? `${row.day} ×2` : row.day}</span>
+            <span className="whitespace-nowrap leading-none" title={row.fold ?? undefined}>{row.fold ? `${row.day} ×2` : row.day}</span>
             {row.counts.map((count, hour) => (
               <span key={hour} className="dash-hour-cell" data-heat={getHeatStep(count, grid.max)}
                 title={`${getRowLabel(row)} ${formatHour(hour)} — ${formatInt(count)} runs`}/>
@@ -548,33 +545,33 @@ function HourGrid({ grid }) {
           </React.Fragment>
         ))}
         <span/>
-        {HOUR.OF_DAY.map((hour) => <span key={hour} className="dash-hour-tick">{HOUR.TICKS.has(hour) ? formatHourTick(hour) : ''}</span>)}
+        {HOUR.OF_DAY.map((hour) => <span key={hour} className="dash-hour-tick leading-none">{HOUR.TICKS.has(hour) ? formatHourTick(hour) : ''}</span>)}
       </div>
       {/* the img label already states range and peak → the key is for the eye only */}
-      <div className="dash-hour-key fs-meta text-dim" aria-hidden="true">
+      <div className="dash-hour-key flex items-center gap-label mt-label fs-meta text-dim" aria-hidden="true">
         <span>0</span>
         <span className="dash-hour-swatch" data-heat={0}/>
         <span>1</span>
         <span className="dash-hour-steps">
           {HOUR.STEPS.map((step) => <span key={step} className="dash-hour-swatch" data-heat={step}/>)}
         </span>
-        <span>{formatInt(grid.max)} runs per hour</span>
+        <span>{formatInt(grid.max)} runs per hour{grid.folds.length > 0 && ' · ×2 = two dates summed'}</span>
       </div>
     </>
   );
 }
 
-// the ⓘ drawer — the basis always; the weekday fold once the payload names a doubled weekday
+// the ⓘ drawer — the basis and the window's date count; the weekday fold once the payload names a doubled weekday
 function HourGridNote({ grid }) {
   const { NoWrap } = window.UI;
   return (
     <>
-      <p className="fs-body">{HOUR.GRID_BASIS}</p>
+      <p className="fs-body">{HOUR.GRID_BASIS}{grid?.dateCount ? ` Covers ${grid.dateCount} calendar dates.` : ''}</p>
       {grid?.folds.length > 0 && (
         <p className="fs-body">
-          {grid.folds.map((row, at) => (
-            <React.Fragment key={row.day}>{at > 0 && ' · '}<NoWrap>{`${row.day} ×2`}</NoWrap>{` sums ${row.fold}`}</React.Fragment>
-          ))} — runs are counted by weekday, not by date.
+          {grid.folds.map((row) => (
+            <React.Fragment key={row.day}><NoWrap>{`${row.day} ×2`}</NoWrap>{` sums ${row.fold}. `}</React.Fragment>
+          ))}Runs are counted by weekday.
         </p>
       )}
     </>
@@ -811,7 +808,7 @@ function buildHarnessAlarm({ harness }) {
   if (!harness || harness.status !== 'ready' || harness.downNames.length === 0) return null;
   return {
     tone: 'crit',
-    title: `${harness.downNames.length} harness ${harness.downNames.length === 1 ? 'part is' : 'parts are'} down`,
+    title: `${harness.downNames.length} system ${harness.downNames.length === 1 ? 'part is' : 'parts are'} down`,
     detail: joinPartNames(harness.downNames),
     isHeld: hasHeldPartRead(harness),
     target: 'architecture',
@@ -830,7 +827,7 @@ function buildOutcomeAlarm({ outcomesState }) {
   return {
     tone: rate.tone,
     title: `${share} of task results ${isCrit ? 'failed or blocked' : 'have open caveats'} in the last 7 days`,
-    detail: `${formatInt(count)} of ${formatInt(rate.writerTotal)} reported outcomes`,
+    detail: `${formatInt(count)} of ${formatInt(rate.writerTotal)} task results`,
     isHeld: outcomesState.error != null, target: 'outcomes', targetLabel: 'Task results',
   };
 }
@@ -853,7 +850,7 @@ function describeAgentCount(count, state) {
 }
 
 function describeStreak(streak) {
-  return `${formatInt(streak)} on a failing streak`;
+  return `${streak === 0 ? 'None' : formatInt(streak)} on a failing streak`;
 }
 
 function buildSpendAlarm({ costState }) {
@@ -921,7 +918,7 @@ function markHeldStat(stat, state) {
   const isAlarm = FIRING_TONES.has(stat.tone);
   const cause = getHeldCause(stat.source);
   return {
-    ...stat, tone: isAlarm ? stat.tone : 'neutral', isHeld: true, error: state.error, canRetry: true,
+    ...stat, tone: isAlarm ? stat.tone : 'neutral', isHeld: true, error: state.error, canRetry: true, isContextTripped: false,
     context: LAST_KNOWN_TEXT, cause, notes: [`${cause}.`, ...stat.notes],
   };
 }
@@ -930,7 +927,7 @@ function markHeldStat(stat, state) {
 // an unread part never counts as healthy
 function buildHarnessStat(harness) {
   const base = {
-    id: 'harness', label: 'Harness health', region: HARNESS_REGION, target: 'architecture', source: 'harness health', notes: [],
+    id: 'harness', label: 'System parts', region: HARNESS_REGION, target: 'architecture', source: 'system parts', notes: [],
   };
   if (harness && harness.status === 'loading') {
     return { ...base, status: 'loading', tone: 'neutral', value: null, context: null };
@@ -940,7 +937,7 @@ function buildHarnessStat(harness) {
   }
   if (!harness || harness.status !== 'ready') {
     // not a region fetch error → never joins the page banner, so the stat keeps its own Retry
-    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', context: 'Harness readings unavailable.', canRetry: true };
+    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', context: 'System parts unavailable.', canRetry: true };
   }
   return { ...base, ...describeHarnessReading(harness), status: 'ready', error: harness.error ?? null };
 }
@@ -954,10 +951,11 @@ function describeHarnessReading(harness) {
   const coverage = describeHarnessCoverage(harness, isPartlyUnread);
   // a known fault keeps crit; otherwise an unread source withholds the healthy verdict
   const unreadTone = isPartlyUnread ? 'info' : 'ok';
+  // a down part trips the value → the line goes empty, its coverage behind ⓘ
   const reading = {
     tone: downCount > 0 ? 'crit' : unreadTone,
     value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
-    context: coverage, notes: [], canRetry: isPartlyUnread,
+    context: downCount > 0 ? null : coverage, notes: downCount > 0 ? [`${coverage}.`] : [], canRetry: isPartlyUnread,
   };
   if (!isPartlyUnread) return reading;
   const unread = describeUnread(harness, lostCount);
@@ -975,10 +973,10 @@ function describeUnread(harness, lostCount) {
 // an unpolled part never reads as one more down part
 // a failed read leaves parts unjudged too, indistinguishable in the fold → then no part is credited to the System map
 function describeHarnessCoverage(harness, isPartlyUnread) {
-  if (harness.uncheckedNames.length === 0) return `All ${formatInt(harness.partsChecked)} parts polled on every harness read`;
-  const counted = `${formatInt(harness.partsChecked)} of ${formatInt(harness.partsTotal)} parts`;
+  if (harness.uncheckedNames.length === 0) return `All ${formatInt(harness.partsChecked)} checked`;
+  const counted = `${formatInt(harness.partsChecked)} of ${formatInt(harness.partsTotal)}`;
   if (isPartlyUnread) return `${counted} read this time`;
-  return `${counted} polled here; ${joinPartNames(harness.uncheckedNames)} checked on the System map`;
+  return `${counted} checked here; ${joinPartNames(harness.uncheckedNames)} on the System map`;
 }
 
 // U+2011 non-breaking hyphen → a name like glass-atrium-wiki-curator never wraps mid-name in a narrow line
@@ -1007,7 +1005,7 @@ function buildFailedStat(base, error) {
 // stat 2 — task results over 7 days. verdict and alert lines come from the shared ui.jsx rule (Task results' own denominator)
 function buildOutcomeStat(outcomesState) {
   const base = {
-    id: 'outcomes', label: 'Task results', window: '7d', target: 'outcomes', region: 'outcomes', source: 'task results', notes: [],
+    id: 'outcomes', label: 'Failed or blocked', window: '7d', target: 'outcomes', region: 'outcomes', source: 'task results', notes: [],
   };
   const pending = buildPendingStat(base, outcomesState);
   if (pending) return pending;
@@ -1015,7 +1013,9 @@ function buildOutcomeStat(outcomesState) {
   const trend = describeOutcomeTrend(rate, outcomesState.data?.prior_window);
   return {
     ...base, status: OUTCOME.STAT_STATUS[rate.status], tone: rate.tone,
-    value: describeOutcomeValue(rate), absent: isOutcomeJudgeable(rate) ? undefined : 'none', context: describeOutcomeContext(rate),
+    value: describeOutcomeValue(rate), unit: rate.status === 'low-n' ? `of ${formatInt(rate.writerTotal)}` : undefined,
+    absent: isOutcomeJudgeable(rate) ? undefined : 'none', context: describeOutcomeContext(rate),
+    isContextTripped: rate.tone === 'warn',
     notes: [...describeOutcomeLines(rate), ...(trend ? [`${trend}.`] : []), OUTCOME.COUNTING_NOTE],
   };
 }
@@ -1026,39 +1026,41 @@ const OUTCOME = {
     unavailable: 'unavailable', empty: 'empty', 'low-n': 'unavailable', ok: 'ready', warn: 'ready', crit: 'ready',
   },
   JUDGED: new Set(['ok', 'warn', 'crit']),
-  COUNTING_NOTE: 'Counts only writer-emitted outcomes — records the agent reported itself; synthesized records are left out.',
+  COUNTING_NOTE: 'Counts only task results agents reported themselves.',
 };
 // the panel beside the stat counts every result → its ⓘ says how the stat's caveat figure differs
-const RESULTS_PANEL_NOTE = 'The Task results stat above counts the same outcomes; its caveat figure counts open caveats only.';
+const RESULTS_PANEL_NOTE = 'The Failed or blocked stat counts the same task results. Its caveat figure counts open caveats only.';
 
 // empty or no writer-reported outcome → known to hold nothing (absent 'none'), the share has no denominator
 function isOutcomeJudgeable(rate) {
   return rate.status === 'low-n' || OUTCOME.JUDGED.has(rate.status);
 }
 
+// low-n → the count the label names, its sample as the unit; too few for a share
 function describeOutcomeValue(rate) {
-  if (rate.status === 'low-n') return formatInt(rate.writerTotal);
+  if (rate.status === 'low-n') return formatInt(rate.breakage);
   if (!isOutcomeJudgeable(rate)) return null;
   return getSharePct(rate.breakage, rate.writerTotal);
 }
 
 function describeOutcomeContext(rate) {
-  if (rate.status === 'unavailable') return 'No reported outcomes to judge.';
-  if (rate.status === 'empty') return 'No outcomes recorded in the last 7 days.';
-  if (rate.status === 'low-n') return 'outcomes, too few to judge';
-  // a tripped leg's count is its alarm row's detail → the firing stat shows value + glyph only
-  if (FIRING_TONES.has(rate.tone)) return null;
-  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} failed or blocked`;
+  if (rate.status === 'unavailable') return 'No task results to judge.';
+  if (rate.status === 'empty') return 'No task results recorded';
+  if (rate.status === 'low-n') return 'too few to judge';
+  // the failed share tripped → the value carries the glyph, the alarm row the count; open caveats tripped → the line names them
+  if (rate.tone === 'crit') return null;
+  if (rate.tone === 'warn') return `${formatInt(rate.openCaveats)} of ${formatInt(rate.writerTotal)} with open caveats`;
+  return `${formatInt(rate.breakage)} of ${formatInt(rate.writerTotal)} task results`;
 }
 
 // the alert lines and the caveat share → behind ⓘ, beside the counting rule
 function describeOutcomeLines(rate) {
   const { LOW_N_MIN, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE } = window.UI;
-  if (rate.status === 'low-n') return [`Needs ${LOW_N_MIN} reported outcomes to judge.`];
+  if (rate.status === 'low-n') return [`Needs ${LOW_N_MIN} task results to judge.`];
   if (!OUTCOME.JUDGED.has(rate.status)) return [];
   const caveats = `Open caveats ${getSharePct(rate.openCaveats, rate.writerTotal)} (${formatInt(rate.openCaveats)})`;
   return [
-    `Failed or blocked: alarm at ${formatAlertLine(OUTCOME_BREAKAGE_CRIT_SHARE)}.`,
+    `Alarm at ${formatAlertLine(OUTCOME_BREAKAGE_CRIT_SHARE)}.`,
     `${caveats}, alarm at ${formatAlertLine(OUTCOME_OPEN_CAVEAT_WARN_SHARE)}.`,
   ];
 }
@@ -1068,7 +1070,7 @@ function describeOutcomeTrend(rate, prior) {
   if (!prior || !OUTCOME.JUDGED.has(rate.status)) return null;
   const priorRange = window.UI.formatDayRange(prior);
   const priorRate = window.UI.resolveOutcomeRate(prior);
-  if (!OUTCOME.JUDGED.has(priorRate.status)) return `No comparison — too few reported outcomes in ${priorRange}`;
+  if (!OUTCOME.JUDGED.has(priorRate.status)) return `No comparison — too few task results in ${priorRange}`;
   const points = (rate.breakage / rate.writerTotal - priorRate.breakage / priorRate.writerTotal) * 100;
   const change = Math.abs(points) < 0.05 ? 'Level' : `${points > 0 ? 'Up' : 'Down'} ${window.UI.formatDecimal(Math.abs(points))} pts`;
   return `${change} since ${formatDay(prior.period_end)} vs ${getSharePct(priorRate.breakage, priorRate.writerTotal)} in ${priorRange}`;
@@ -1091,7 +1093,7 @@ function getSharePct(numerator, denominator) {
 
 // stat 3 — fleet. headline = suspended agents from the circuit-breaker summary; an unloaded breaker is unavailable, never 0
 function buildFleetStat(agentsState) {
-  const base = { id: 'fleet', label: 'Fleet', window: '7d', target: 'agents', region: 'agents', source: 'the fleet summary', notes: [] };
+  const base = { id: 'fleet', label: 'Agents', window: '7d', target: 'agents', region: 'agents', source: 'agents', notes: [] };
   const pending = buildPendingStat(base, agentsState);
   if (pending) return pending;
   const breaker = getBreakerCounts(agentsState.data);
@@ -1103,8 +1105,9 @@ function buildFleetStat(agentsState) {
   const meta = agentsState.data.meta;
   const notes = [describeFleetReach(Number(meta.total_agents), Number(meta.circuit_breaker.registry_agents)), describeBusiestAgent(agentsState.data.agents?.[0])];
   return {
-    // a firing fleet's streak is its alarm row's words → the line stays empty
-    ...base, status: 'ready', tone, value: formatInt(suspended), unit: 'suspended', context: tone === 'ok' ? describeStreak(streak) : null,
+    // a suspension trips the value → the line stays empty; a streak alone trips the line, which names it
+    ...base, status: 'ready', tone, value: formatInt(suspended), unit: 'suspended', context: tone === 'crit' ? null : describeStreak(streak),
+    isContextTripped: tone === 'warn',
     notes: notes.filter(Boolean),
   };
 }
@@ -1139,10 +1142,12 @@ function buildSpendStat(costState, harness) {
 
   const pace = resolveSpendPace(costState);
   const tone = { hot: 'warn', normal: 'ok' }[pace.status] ?? 'neutral';
-  const note = pace.status === 'no-basis'
-    ? 'No spend in the last 7 days — no baseline to judge the pace against.'
-    : `Alarms when today's spend so far, or the last 3 hours' rate held for a day, reaches ${SPEND_PACE_CUT}× the 7-day average (${formatUsdCompact(pace.basis)}/day).`;
-  return { ...base, status: 'ready', tone, value: formatUsdCompact(pace.today), context: describeSpendTrend(harness), notes: [note] };
+  const notes = pace.status === 'no-basis'
+    ? ['No spend in the last 7 days to judge the pace against.']
+    : [`Alarm at ${SPEND_PACE_CUT}× the 7-day average (${formatUsdCompact(pace.basis)}/day).`, 'Judged on spend so far and the 3-hour pace.'];
+  // a hot day trips the value → the alarm row holds the one baseline
+  const context = tone === 'warn' ? null : describeSpendTrend(harness);
+  return { ...base, status: 'ready', tone, value: formatUsdCompact(pace.today), context, notes };
 }
 
 // day-over-day from one payload (the shell's /api/dashboard/kpi) → today and its comparand never mix sources
@@ -1155,9 +1160,12 @@ function describeSpendTrend(harness) {
   const prior = Number(kpi.yesterday_same_time_cost_usd);
   if (kpi.today_cost_usd == null || kpi.yesterday_same_time_cost_usd == null) return 'Change on yesterday unavailable — the reading carries no spend';
   if (!(prior > 0)) return 'No spend yesterday by this time to compare against';
-  const change = ((Number(kpi.today_cost_usd) - prior) / prior) * 100;
+  const ratio = Number(kpi.today_cost_usd) / prior;
+  const change = (ratio - 1) * 100;
   const comparand = `${formatUsdCompact(prior)} yesterday by this time`;
   if (change === 0) return `Level with ${comparand}`;
+  // a rise of 100% or more is a multiple (spec 44084 §2.1) → no three-digit percentage
+  if (ratio >= 2) return `${ratio.toFixed(1)}\u00d7 yesterday by this time (${formatUsdCompact(prior)})`;
   return `${change > 0 ? 'Up' : 'Down'} ${window.UI.formatPct(Math.abs(change))} on ${comparand}`;
 }
 
@@ -1241,8 +1249,8 @@ function buildHourGrid(data) {
   const peak = cells.reduce((best, cell) => (cell.count > best.count ? cell : best), cells[0]);
   return {
     rows, peak, max: peak.count, total: cells.reduce((sum, cell) => sum + cell.count, 0),
-    folds: rows.filter((row) => row.fold),
-    span: dates ? `${formatDay(dates.first)} – today, ${dates.count} calendar dates` : 'Last 7 days',
+    folds: rows.filter((row) => row.fold), dateCount: dates?.count ?? null,
+    span: dates ? `${formatDay(dates.first)} – today` : 'Last 7 days',
   };
 }
 

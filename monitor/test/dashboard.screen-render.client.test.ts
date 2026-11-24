@@ -23,7 +23,7 @@ const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
 const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
 
 // shared words and the atoms that build them pass through from ui.jsx
-const REAL_UI_NAMES = new Set(["ALERT_SEVERITY_WORD", "AlarmRow", "getNoticePointer", "LAST_KNOWN_TEXT", "getHeldCause"]);
+const REAL_UI_NAMES = new Set(["ALERT_SEVERITY_WORD", "AlarmRow", "getNoticePointer", "LAST_KNOWN_TEXT", "getHeldCause", "StatNotes"]);
 
 // window.UI stub — every atom resolves to a transparent host element; shared words and maps come from the real ui.jsx.
 function uiStub(): unknown {
@@ -125,20 +125,20 @@ const rateMod = (await loadScreenModule(DASH_SRC, {
   },
   React: createReactStub(),
 })) as ScreenModule;
-const buildOutcomeStat = rateMod.buildOutcomeStat as (state: unknown) => { value: string | null; absent?: string; context: string | null; notes: string[] };
+const buildOutcomeStat = rateMod.buildOutcomeStat as (state: unknown) => { value: string | null; unit?: string; absent?: string; context: string | null; notes: string[] };
 
-test("the Task results stat headlines a bare failed share, its counts on the context line until its alarm row states them, its caveat share behind ⓘ", () => {
+test("the Failed or blocked stat headlines a bare failed share, its line naming the count at rest or the tripped caveat count, its caveat share behind ⓘ", () => {
+  const contexts = { ok: "7 of 40 task results", warn: "9 of 40 with open caveats", crit: null };
   for (const [status, tone] of [["ok", "ok"], ["warn", "warn"], ["crit", "crit"]] as const) {
     const stat = buildOutcomeStat({ status: "ready", data: { status, tone, writerTotal: 40, breakage: 7, openCaveats: 9 } });
     assert.equal(stat.value, "17.5%", `${status}: the headline is the share alone, no denominator to wrap`);
-    const context = tone === "ok" ? "7 of 40 failed or blocked" : null;
-    assert.equal(stat.context, context, `${status}: a firing stat leaves the tripped count to its alarm row`);
+    assert.equal(stat.context, contexts[tone], `${status}: the line names the tripped count only when the value did not trip`);
     assert.ok(stat.notes.some((note) => /22\.5% \(9\)/.test(note)), `${status}: the caveat share and count sit behind ⓘ`);
   }
 
   const lowN = buildOutcomeStat({ status: "ready", data: { status: "low-n", tone: "neutral", writerTotal: 12, breakage: 1, openCaveats: 0 } });
-  assert.equal(lowN.value, "12", "too small a sample still shows how many there are");
-  assert.match(String(lowN.context), /too few to judge/i);
+  // the label reads Failed or blocked → the value is that count, the unit the sample it sits in, no share
+  assert.deepEqual([lowN.value, lowN.unit, lowN.context], ["1", "of 12", "too few to judge"]);
 });
 
 test("a Task results stat with nothing to judge reads None, never a dash", () => {
@@ -149,11 +149,63 @@ test("a Task results stat with nothing to judge reads None, never a dash", () =>
   }
 });
 
+test("an empty week's Task results stat says none were recorded, leaving the window to its label", () => {
+  const stat = buildOutcomeStat({ status: "ready", data: { status: "empty", tone: "neutral", writerTotal: 0, breakage: 0, openCaveats: 0 } });
+  assert.equal(stat.context, "No task results recorded");
+});
+
 function renderResultPanel(byResult: Array<{ result: string; count: number }>): RenderedNode {
   const total = byResult.reduce((sum, row) => sum + row.count, 0);
   const panel = (rateMod.buildResultPanel as (data: unknown) => unknown)({ total, reconstructed_total: 0, by_result: byResult, by_agent_result: [] });
   return renderScreen(rateMod.React.createElement(rateMod.ResultPanel as Component, { panel })) as RenderedNode;
 }
+
+// spec 44084 §9.1: one noun, one window form → the sub-line says task results, never outcomes
+test("the results panel counts task results on its sub-line, filled or empty", () => {
+  for (const byResult of [[{ result: "done", count: 40 }, { result: "fail", count: 2 }], []]) {
+    const [subLine] = findNodes(renderResultPanel(byResult), (n) => n.type === "p");
+    const total = byResult.reduce((sum, row) => sum + row.count, 0);
+    assert.equal(collectText(subLine).replace(/\s+/g, " ").trim(), `Last 7 days and today · ${total} task results`);
+  }
+});
+
+// one count edge per card → the result rows keep an empty cell where each breakage row draws its arrow
+test("every result row ends in an arrow-wide empty cell, the boundary to the breakage group a block gap", () => {
+  const panel = {
+    rows: [{ result: "done", count: 40 }, { result: "fail", count: 2 }], writerTotal: 42, span: "09-22 – today",
+    agents: [{ agent: "glass-atrium-dev-db", count: 2 }],
+  };
+  const tree = render("ResultPanel", { panel });
+  const rows = findNodes(tree, (n) => hasClass(n, "dash-result-row"));
+  for (const row of rows) {
+    const last = row.children.at(-1) as RenderedNode;
+    assert.ok(hasClass(last, "link-arrow") && hasClass(last, "invisible"), "the trailing cell is the arrow's own box, unpainted");
+  }
+  const [group] = findNodes(tree, (n) => n.props.atom === "Stack" && n.props.gap === "block");
+  assert.ok(group, "the result list and the breakage group sit in a block-gap stack");
+  assert.equal(findNodes(group, (n) => n.type === "h3").length, 1, "the breakage head opens the second group");
+});
+
+// spec 44084 §9.1: Task results applies the agent query on arrival → each row is its own Link, the head keeps its words
+test("each Most failed or blocked row is one Link to that agent's task results, its name and count inside", () => {
+  const agents = [{ agent: "glass-atrium-dev-shell", count: 2 }, { agent: "glass-atrium-dev-db", count: 1 }];
+  const tree = render("BreakageAgents", { agents });
+  const [head] = findNodes(tree, (n) => n.type === "h3");
+  assert.equal(collectText(head), "Most failed or blocked");
+  const rows = findNodes(tree, (n) => n.type === "li");
+  assert.equal(rows.length, agents.length);
+  rows.forEach((row, at) => {
+    assert.equal(row.children.length, 1, "the whole row is the target");
+    const links = findNodes(row, (n) => n.props.atom === "Link");
+    assert.equal(links.length, 1, "one Link per row");
+    const [link] = links;
+    assert.equal(link.props.href, `#outcomes?agent=${agents[at].agent}&days=7`);
+    // formatInt is a stubbed atom here → the count's own cell is asserted, after the name
+    const cells = findNodes(link, (n) => n.type === "span" && n.props["aria-hidden"] !== "true");
+    assert.deepEqual(cells.map((cell) => hasClass(cell, "tabular-nums")), [false, true], "the name, then the count");
+    assert.equal(collectText(cells[0]), agents[at].agent);
+  });
+});
 
 test("spend and result bars carry the data colour; today's partial day keeps its outline in it", () => {
   const strip = (mod.buildSpendStrip as (points: unknown) => unknown)(
@@ -191,7 +243,9 @@ test("the alarm lane, the spend strip and the results panel space by role keys, 
 
 describe("the week results panel", () => {
   const rowTexts = (tree: RenderedNode) =>
-    findNodes(tree, (n) => classOf(n).includes("dash-result-row")).map((row) => collectText(row).replace(/\s+/g, " ").trim());
+    findNodes(tree, (n) => classOf(n).includes("dash-result-row")).map((row) =>
+      // the arrow-wide trailing cell is unpainted → the row reads its label, bar and count
+      row.children.filter((cell) => (cell as RenderedNode).props?.["aria-hidden"] !== "true").map(collectText).join(" ").replace(/\s+/g, " ").trim());
 
   test("names every result in words and keeps a known result with no runs as a zero row", () => {
     const tree = renderResultPanel([
@@ -250,7 +304,7 @@ test("the results panel's counting note opens from its Card's ⓘ, never from a 
   assert.deepEqual(hasInfo, { "dash-week-results": true, "dash-week-hours": true, "dash-week-spend": false }, "the results and hour panels carry a counting note");
 
   const results = panels.find((panel) => panel.props.id === "dash-week-results")!;
-  assert.match(collectText(nodeOf(infoOf(results))), /writer-emitted/, "the drawer carries the note");
+  assert.match(collectText(nodeOf(infoOf(results))), /task results agents reported themselves/, "the drawer carries the note");
   assert.match(collectText(nodeOf(infoOf(results))), /open caveats only/i, "and names how the Task results stat's caveat figure differs");
 
   const panel = renderResultPanel([{ result: "done", count: 40 }, { result: "fail", count: 2 }]);
@@ -416,10 +470,10 @@ describe("an empty alarm lane stays silent once its sources are read, and says i
     { name: "every source read → silent", sources: ALL_READ, status: "read", unread: [] },
     { name: "a source still loading → loading, even beside a failed one", sources: { ...ALL_READ, harness: { status: "loading" }, costState: { status: "error" } }, status: "loading", unread: [] },
     { name: "fleet still loading → loading", sources: { ...ALL_READ, agentsState: { status: "loading" } }, status: "loading", unread: [] },
-    { name: "harness fold unavailable → unknown", sources: { ...ALL_READ, harness: { status: "unavailable" } }, status: "unknown", unread: ["harness health"] },
+    { name: "harness fold unavailable → unknown", sources: { ...ALL_READ, harness: { status: "unavailable" } }, status: "unknown", unread: ["system parts"] },
     { name: "task results read failed → unknown", sources: { ...ALL_READ, outcomesState: { status: "error" } }, status: "unknown", unread: ["task results"] },
-    { name: "fleet read failed → unknown", sources: { ...ALL_READ, agentsState: { status: "error" } }, status: "unknown", unread: ["fleet"] },
-    { name: "fleet breaker unavailable → unknown", sources: { ...ALL_READ, agentsState: breakerOf("unavailable") }, status: "unknown", unread: ["fleet"] },
+    { name: "fleet read failed → unknown", sources: { ...ALL_READ, agentsState: { status: "error" } }, status: "unknown", unread: ["agents"] },
+    { name: "fleet breaker unavailable → unknown", sources: { ...ALL_READ, agentsState: breakerOf("unavailable") }, status: "unknown", unread: ["agents"] },
     { name: "spend read failed → unknown", sources: { ...ALL_READ, costState: { status: "error" } }, status: "unknown", unread: ["today's spend"] },
     { name: "install read failed → unknown", sources: { ...ALL_READ, updateState: { status: "error" } }, status: "unknown", unread: ["install state"] },
   ];
@@ -461,6 +515,15 @@ describe("the week block", () => {
     assert.equal(pairs.length, 1, "one two-column row from xl");
     assert.deepEqual(sectionIds(pairs[0]), ["dash-week-results", "dash-week-hours"], "Spend stays out of the paired row");
   });
+
+  // spec 44084 §9.1: the Status card states the window → no panel title restates it
+  test("titles each panel by its subject alone", () => {
+    const tree = render("WeekRow", {
+      spendState: LOADING, outcomesState: LOADING, heatmapState: LOADING, onRetrySpend: () => {}, onRetryHeatmap: () => {},
+    });
+    const titles = findNodes(tree, (n) => n.type === "section").map((n) => n.props["aria-label"]);
+    assert.deepEqual(titles, ["Task results", "Runs by hour", "Spend per day"]);
+  });
 });
 
 test("hour ticks read as bare two-digit hours while each cell's tooltip keeps the full hour", () => {
@@ -492,6 +555,46 @@ test("a folded weekday keeps its ×2 token on one line in the fold sentence and 
   const [label] = findNodes(chart, (n) => n.props.title === "09-23 + today");
   assert.equal(label && collectText(label), "Wed ×2", "the row label names the folded weekday");
   assert.match(classOf(label), /\bwhitespace-nowrap\b/, "the row label never wraps inside its track");
+  const [key] = findNodes(render("HourGrid", { grid }), (n) => hasClass(n, "dash-hour-key"));
+  // the fold key joins the peak's own text → one separator spacing, never the flex gap plus a space
+  const [peak] = findNodes(key, (n) => n.type === "span" && /runs per hour/.test(collectText(n)));
+  assert.match(collectText(peak).replace(/\s+/g, " "), /runs per hour · ×2 = two dates summed$/, "a folded row adds its key to the peak line");
+});
+
+test("the hour grid's ⓘ states how many dates the window covers, beside the basis", () => {
+  const grid = { rows: [], total: 0, max: 0, span: "09-22 – today", dateCount: 9, folds: [], peak: null };
+  assert.match(collectText(render("HourGridNote", { grid })), /quarantined window are left out\.\s*Covers 9 calendar dates\./);
+});
+
+// each panel's sub-line keeps its ruled form → an empty week still reads {span} · 0 {noun}, never a window sentence
+test("a week panel with nothing recorded keeps its span sub-line with a zero count", () => {
+  const grid = { rows: [], total: 0, max: 0, span: "09-22 – today", folds: [], peak: null };
+  // rateMod passes DayTokens' children through → the span text is walkable
+  const [hours] = findNodes(renderScreen(rateMod.React.createElement(rateMod.HourGrid as Component, { grid })) as RenderedNode, (n) => n.type === "p");
+  assert.match(collectText(hours).replace(/\s+/g, " ").trim(), /^09-22 – today · 0 runs$/);
+  const spend = render("SpendStrip", { strip: { bars: [], span: null } });
+  assert.equal(collectText(spend).trim(), "No spend recorded", "no points → no window to state");
+});
+
+test("the spend strip's sub-line is its span alone, the dashed bar marking today", () => {
+  const strip = (mod.buildSpendStrip as (points: unknown) => { span: string })(
+    ["2026-09-22", "2026-09-23"].map((date, i) => ({ date, cost_usd: 12.5 + i, session_count: 1 })),
+  );
+  const [subLine] = findNodes(render("SpendStrip", { strip }), (n) => n.type === "p");
+  assert.equal(collectText(subLine).replace(/\s+/g, " ").trim(), strip.span);
+});
+
+// owner rule: no sentence on a screen runs past 12 words, and none uses a recorder-internal word
+test("every sentence in the week panels' ⓘ drawers stays within 12 plain words", () => {
+  const loading = { data: null, error: null, busy: true };
+  const row = render("WeekRow", { spendState: loading, outcomesState: loading, heatmapState: loading, onRetrySpend: () => {}, onRetryHeatmap: () => {} });
+  const infos = findNodes(row, (n) => n.props.atom === "Card").map((card) => card.props.info).filter(Boolean);
+  const folded = { rows: [], total: 9, max: 9, span: "09-22 – today", dateCount: 9, folds: [{ day: "Wed", fold: "09-23 + today" }], peak: null };
+  const texts = [...infos.map((info) => collectText(nodeOf(info))), collectText(render("HourGridNote", { grid: folded }))];
+  for (const sentence of texts.flatMap((text) => text.replace(/\s+/g, " ").split(/(?<=\.)\s+/)).filter(Boolean)) {
+    assert.ok(sentence.split(" ").length <= 12, `${sentence.split(" ").length} words: "${sentence}"`);
+    assert.doesNotMatch(sentence, /writer-emitted|synthesized|reconstructed|poisoned/, sentence);
+  }
 });
 
 describe("Runs by hour heat ramp", () => {
@@ -517,13 +620,13 @@ describe("Runs by hour heat ramp", () => {
     assert.equal(key.props["aria-hidden"], "true");
     assert.deepEqual(findNodes(key, (n) => hasClass(n, "dash-hour-swatch")).map((n) => n.props["data-heat"]), [0, 1, 2, 3, 4]);
     // formatInt is a stubbed atom here → the peak figure itself is asserted in the e2e
-    assert.match(collectText(key), /^0\s*1\s*runs per hour$/);
+    assert.match(collectText(key), /^0\s*1\s*runs per hour$/, "no fold → no ×2 key");
   });
 
   test("the method sentences leave the card body for its ⓘ", () => {
-    assert.doesNotMatch(collectText(tree), /reconstructed|counted by weekday/, "the body carries no method sentence");
+    assert.doesNotMatch(collectText(tree), /harness rebuilt|counted by weekday/, "the body carries no method sentence");
     assert.match(collectText(render("HourGridNote", { grid: { ...grid, folds: [{ day: "Wed", fold: "09-23 + today" }] } })),
-      /reconstructed included, poisoned excluded[\s\S]*counted by weekday/);
+      /harness rebuilt[\s\S]*Wed ×2\s*sums 09-23 \+ today\.\s*Runs are counted by weekday\.$/);
   });
 });
 
@@ -596,6 +699,14 @@ test("a firing stat shows its value and tone glyph only; a calm stat shows the v
     assert.equal(collectText(value).replace(/\s+/g, " ").trim(), "2 of 7 down", `${row.tone}: no word beside the figure but the glyph's own`);
     assert.equal(findNodes(value, (n) => hasClass(n, "whitespace-nowrap")).length, 1, `${row.tone}: the figure never wraps`);
   }
+});
+
+test("a stat whose context tripped draws its value at rest and its line as the head Status in the stat's tone", () => {
+  const { items } = renderStatusCard([{ ...READY_STAT, tone: "warn", value: "1.2%", context: "48 of 400 with open caveats", isContextTripped: true }]);
+  assert.equal(findNodes(nodeOf(items[0].value), (n) => n.props.atom === "ToneGlyph").length, 0, "no glyph on a figure under its line");
+  const [status] = findNodes(nodeOf(items[0].context), (n) => n.props.atom === "HeadStatus");
+  assert.equal(status?.props.tone, "warn", "the glyph moves to the line, in the stat's tone");
+  assert.match(collectText(status), /^\s*48 of 400 with open caveats\s*$/, "the count only");
 });
 
 test("an absent value paints its kind's word through the shared AbsentValue, and a unit rides only a real figure", () => {

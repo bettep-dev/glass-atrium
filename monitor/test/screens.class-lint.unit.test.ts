@@ -84,10 +84,7 @@ const BASELINE: Record<string, BaselineRow[]> = {
   ],
   dashboard: [
     { rule: "numeric-spacing", count: 1, owner: "C1" },
-    { rule: "zero-reset", count: 1, owner: "C1" },
-    { rule: "retired-class", count: 2, owner: "C1" },
-    { rule: "font-mono", count: 1, owner: "C1" },
-    { rule: "style-spacing-type", count: 10, owner: "C1" },
+    { rule: "style-spacing-type", count: 2, owner: "C1" },
   ],
   improvement: [
     { rule: "numeric-spacing", count: 84, owner: "C2" },
