@@ -968,8 +968,7 @@ test("the breakage count takes a crit glyph only once its share of the agent's o
     assert.deepEqual(getToneTextClasses(cell), [], `${row.name}: numeral tone`);
     const glyphs = findNodes(cell, (n) => n.type === "FailShareGlyph" && n.props.tone === "crit");
     assert.equal(glyphs.length, row.crit ? 1 : 0, `${row.name}: crit glyph beside the numeral`);
-    const bar = findNodes(cell, (n) => n.props?.atom === "Bar")[0];
-    assert.equal(bar?.props.tone, row.crit ? "crit" : "neutral", `${row.name}: bar tone follows the glyph`);
+    assert.equal(findAtoms(cell, "Bar").length, 0, `${row.name}: a counts column draws no rate bar`);
   }
 });
 
@@ -1015,12 +1014,12 @@ test("the drawer breakage badge takes the same crit step as the ledger numeral",
   }
 });
 
-test("a failing pair keeps its failure glyph at any sample beside a neutral rate, and a small sample carries the shared low-sample mark instead of grey italics", async () => {
-  const mod = await loadAgentsScreen();
+test("a failing pair's success cell is plain ink with its fraction, no glyph, bar or bold, and a small sample carries the shared low-sample mark", async () => {
+  const mod = await loadAgentsScreen({ formatPctWithDenominator: REAL_UI.formatPctWithDenominator });
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const rows = [
-    { name: "n under LOW_N_MIN", successCount: 1, rateDenominator: 3, isLowSample: true },
-    { name: "n at LOW_N_MIN", successCount: 2, rateDenominator: 5, isLowSample: false },
+    { name: "n under LOW_N_MIN", successCount: 1, rateDenominator: 3, isLowSample: true, text: "33.3% (1/3)" },
+    { name: "n at LOW_N_MIN", successCount: 25, rateDenominator: 31, isLowSample: false, text: "80.6% (25/31)" },
   ];
   for (const row of rows) {
     const pair = { agent: "glass-atrium-dev-react", task_type: "feature", ...row, pooledRate: row.successCount / row.rateDenominator, totalCount: row.rateDenominator };
@@ -1028,14 +1027,13 @@ test("a failing pair keeps its failure glyph at any sample beside a neutral rate
       React.createElement(mod.TopNFailingAgentsTable as Component, { pairs: [pair], failureByAgent: new Map(), days: 14 }),
     );
     const rateCell = findCellByTitle(tree, /^pooled passed/);
-    const style = (rateCell?.props.style as Record<string, unknown> | undefined) ?? {};
-    assert.equal(style.color, undefined, `${row.name}: the rate numeral takes no tone`);
-    assert.equal(findNodes(rateCell, (n) => n.type === "FailShareGlyph" && n.props.tone === "crit").length, 1, `${row.name}: the failure glyph sits beside the rate`);
-    assert.notEqual(style.fontStyle, "italic", `${row.name}: no unexplained italics`);
+    assert.ok(collectText(rateCell).startsWith(row.text), `${row.name}: ${collectText(rateCell)}`);
+    assert.deepEqual(getToneTextClasses(rateCell), [], `${row.name}: plain ink`);
+    assert.doesNotMatch(String(rateCell?.props.className), /\bfont-(?:semibold|bold)\b/, `${row.name}: no bold`);
+    assert.equal(findNodes(rateCell, (n) => n.type === "FailShareGlyph").length, 0, `${row.name}: no crit glyph`);
+    assert.equal(findNodes(rateCell, (n) => n.props?.role === "img" || n.props?.atom === "Bar").length, 0, `${row.name}: no bar`);
     const mark = findNodes(rateCell, (n) => n.props?.atom === "LowSampleMark")[0];
     assert.equal(mark?.props.n, row.isLowSample ? row.rateDenominator : undefined, `${row.name}: shared low-sample mark`);
-    const bar = findNodes(rateCell, (n) => n.props?.atom === "Bar")[0];
-    assert.equal(bar?.props.tone, row.isLowSample ? "neutral" : "crit", `${row.name}: bar tint`);
   }
 });
 
@@ -1867,12 +1865,28 @@ test("the failing-pairs limit keeps a solid signal over a worse small sample whi
   assert.equal(out.failingTotal, 2);
 });
 
-test("the failing-pairs header meta counts failing over judged pairs within the 32-character meta cap", async () => {
-  const mod = await loadAgentsScreen();
+test("the failing-pairs header meta counts failing over judged pairs in words, the window left to the page header", async () => {
+  const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
   const getSub = mod.getFailingPairsSub as (...a: unknown[]) => string;
-  const sub = getSub("ready", 120, 1500, 90);
-  assert.equal(sub, "120 of 1500 ≤ 95% · 90d");
+  const sub = getSub("ready", 17, 69, 30);
+  assert.equal(sub, "17 of 69 pairs at or below 95%");
   assert.ok(sub.length <= 32, `${sub.length} chars`);
+});
+
+test("the failing-pairs foot holds only the show-all toggle, so a list that fits draws no foot", async () => {
+  const mod = await loadAgentsScreen({ getSlotRows: REAL_UI.getSlotRows, CARD_SLOTS: REAL_UI.CARD_SLOTS, formatInt: REAL_UI.formatInt });
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const day = (task_type: string) => ({ agent: "glass-atrium-dev-node", task_type, event_date: "2026-09-01", success_count: 5, failure_count: 5, total_count: 10 });
+  const footOf = (taskTypes: string[]) => {
+    const tree = renderScreen(React.createElement(mod.TopNFailingAgentsCard as Component, {
+      state: { status: "ready", data: { rows: taskTypes.map(day) }, error: null }, days: 30, onRetry: () => undefined, failureByAgent: new Map(),
+    }));
+    const foot = findAtoms(tree, "Card")[0]?.props.foot;
+    return foot ? collectText(renderScreen(foot as never)).trim() : null;
+  };
+  const many = Array.from({ length: 17 }, (_, i) => `type-${i}`);
+  assert.equal(footOf(["feature"]), null, "a list that fits draws no foot");
+  assert.equal(footOf(many), "Show all 17", "a long list shows the toggle alone");
 });
 
 test("the review-flag and task-type headers keep their meta within the 32-character cap", async () => {

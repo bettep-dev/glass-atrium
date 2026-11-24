@@ -1119,7 +1119,7 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
           {isLowSample && <span className="fs-meta text-faint">low sample</span>}
         </span>
       </TableCell>
-      <TableCell view={view} isNumeric className="tbl-bar-cell" title={failTitle}>
+      <TableCell view={view} isNumeric title={failTitle}>
         {!isFailureRead ? (
           <window.UI.AbsentValue kind="not-loaded" title={failTitle}/>
         ) : breakage.count > 0 ? (
@@ -1130,14 +1130,6 @@ function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, 
           </span>
         ) : (
           <window.UI.AbsentValue kind="none"/>
-        )}
-        {/* 0 → None, no bar · ≥1 → bar always present (min-width floor), width = breakage_rate, tone = failed tone. */}
-        {isFailureRead && breakage.count > 0 && (
-          <Bar
-            value={Math.max(breakage.rate, 0.01)}
-            tone={failTone}
-            ariaLabel={`breakage rate ${formatPctAg(breakage.rate * 100)}`}
-          />
         )}
       </TableCell>
       <TableCell view={view}
@@ -2546,8 +2538,8 @@ function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent 
         title="Most-failing pairs"
         sub={getFailingPairsSub(state.status, failingTotal, measuredPairs, days)}
         isFlush={window.UI.hasRegionRows(state, failingPairs)}
-        foot={state.status === 'ready' && (
-          <PairedCardFootAg note={`At or below ${getOffTargetRateLabelAg()} · solid samples first`} total={failingPairs.length}
+        foot={state.status === 'ready' && (hiddenCount > 0 || isShowingAll) && (
+          <PairedCardFootAg total={failingPairs.length}
             hiddenCount={hiddenCount} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
         )}>
         <TopNFailingAgentsBody failures={failures} state={state} days={days} onRetry={onRetry} pairs={isShowingAll ? failingPairs : rows} failureByAgent={failureByAgent}/>
@@ -2560,17 +2552,17 @@ function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent 
 function getFailingPairsSub(status, failingTotal, measuredCount, days) {
   if (status === 'loading') return `last ${days} days`;
   if (status !== 'ready') return 'Unavailable — not loaded';
-  return `${failingTotal} of ${measuredCount} ≤ ${getOffTargetRateLabelAg()} · ${days}d`;
+  return `${formatIntAg(failingTotal)} of ${formatIntAg(measuredCount)} pairs at or below ${getOffTargetRateLabelAg()}`;
 }
 
 /**
- * Pinned foot of a paired S card: one short note, then "Show all N" while rows sit past the slot.
+ * Pinned foot of a paired S card: an optional short note, then "Show all N" while rows sit past the slot.
  * @param total - every row the card holds; the toggle opens them in the card itself
  */
 function PairedCardFootAg({ note, total, hiddenCount, isShowingAll, onToggle }) {
   return (
     <>
-      <span className="truncate">{note}</span>
+      {note && <span className="truncate">{note}</span>}
       {(hiddenCount > 0 || isShowingAll) && (
         <button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={onToggle}>
           {isShowingAll ? `Show top ${window.UI.CARD_SLOTS[PAIRED_CARD_SIZE].rowCount}` : `Show all ${total}`}
@@ -2653,20 +2645,9 @@ function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
         </TableCell>
         <TableCell view={view}
           isNumeric
-          className="font-semibold tbl-bar-cell"
           title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${lowN})` : ''}`}>
-          {/* every listed pair is failing → the glyph marks it whatever its sample size */}
-          <span className="inline-flex items-center justify-end gap-label-inline">
-            <FailShareGlyph tone="crit"/>
-            {window.UI.formatPctWithDenominator(p.successCount, p.rateDenominator)}
-          </span>
+          {window.UI.formatPctWithDenominator(p.successCount, p.rateDenominator)}
           {isLowSample && <window.UI.LowSampleMark n={p.rateDenominator}/>}
-          {/* Pair success-rate bar — crit like the matrix, except n < LOW_N_MIN, which the legend keeps neutral. */}
-          <window.UI.Bar
-            value={p.pooledRate}
-            tone={isLowSample ? 'neutral' : 'crit'}
-            ariaLabel={`pair success rate ${formatPctAg(p.pooledRate * 100)}`}
-          />
         </TableCell>
         <TableCell view={view}
           isNumeric
