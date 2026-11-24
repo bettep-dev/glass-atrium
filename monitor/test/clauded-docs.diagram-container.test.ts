@@ -181,7 +181,9 @@ function getViewerDocBodyCss(): string {
   // the block spells its spacing with the --space-* ladder, which the app always loads from tokens.css
   const ladder = readFileSync(TOKENS_PATH, "utf8").match(/--space-[\w]+\s*:\s*[^;]+;/g) ?? [];
   assert.ok(ladder.length > 0, "tokens.css 의 --space-* 사다리를 찾지 못함");
-  return `:root{${ladder.join("")}}` + jsx.slice(open + "<style>{`".length, close);
+  // the reading column centres on the Tailwind mx-auto utility, which the app loads from its CDN
+  const utilities = ".mx-auto{margin-left:auto;margin-right:auto}";
+  return `:root{${ladder.join("")}}${utilities}` + jsx.slice(open + "<style>{`".length, close);
 }
 
 const TYPE_NODES = FIXTURE_TYPES.map(
@@ -246,7 +248,7 @@ function buildViewerHarness(css: string, nodes: string = TYPE_NODES): string {
   return buildHarnessDocument(
     css,
     '<div class="detail-fullscreen"><div class="doc-fs-body-wrap">' +
-      '<div class="doc-fs-body-inner"><div class="doc-body-isolation">' +
+      '<div class="doc-fs-body-inner mx-auto"><div class="doc-body-isolation">' +
       nodes +
       "</div></div></div></div>",
   );
@@ -266,7 +268,7 @@ function buildFullscreenHarness(css: string, nodes: string): string {
     css,
     '<div class="detail-fullscreen"><div class="doc-fs-container"><div class="doc-fs-body">' +
       '<div class="doc-fs-split">' +
-      '<div class="doc-fs-body-wrap"><div class="doc-fs-body-inner"><div class="doc-body-isolation">' +
+      '<div class="doc-fs-body-wrap"><div class="doc-fs-body-inner mx-auto"><div class="doc-body-isolation">' +
       nodes +
       "</div></div></div>" +
       '<aside class="doc-fs-meta-side"></aside>' +

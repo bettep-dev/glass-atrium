@@ -1344,6 +1344,15 @@ test("a ready viewer renders its head, the metadata rail and exactly one documen
   assert.equal(findNodes(tree, hasClass("doc-body-isolation")).length, 1, "one document body");
 });
 
+test("the viewer's reading column centres on mx-auto, and its screen rule sets no margin", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderViewerPanel(screen, { status: "ready", data: viewerDoc() });
+  const [column] = findNodes(tree, hasClass("doc-fs-body-inner"));
+  assert.ok(column, "the reading column renders");
+  assert.ok(hasClass("mx-auto")(column), String(column.props.className));
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-fs-body-inner"), /(^|[;\s])margin(-inline)?\s*:/);
+});
+
 test("the list card's bar adds no inset of its own, since its full-bleed strips own theirs", async () => {
   const screen = await loadDocsScreen();
   const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));

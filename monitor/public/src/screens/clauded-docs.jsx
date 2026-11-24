@@ -964,8 +964,8 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-fs-body-wrap::-webkit-scrollbar-track { background: transparent; }
         .doc-fs-body-wrap::-webkit-scrollbar-thumb { background: rgb(var(--doc-line)); border-radius: 4px; border: none; }
         .doc-fs-body-wrap::-webkit-scrollbar-thumb:hover { background: rgb(var(--faint)); }
-        /* inner measure-aware — max-width min(90%,1280px)(화면 90% 비율 + 초광폭 ~95-105ch 캡) + margin-inline auto(중앙) → wrap 스크롤바는 외곽, 본문은 중앙. */
-        .doc-fs-body-inner { width: 100%; max-width: min(90%, 1280px); margin-inline: auto; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+        /* inner measure-aware — max-width min(90%,1280px)(화면 90% 비율 + 초광폭 ~95-105ch 캡) + markup mx-auto(중앙) → wrap 스크롤바는 외곽, 본문은 중앙. */
+        .doc-fs-body-inner { width: 100%; max-width: min(90%, 1280px); flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
         /* R6 — iframe 제거 후 .doc-body-isolation 컨테이너가 본문 직접 보유. */
         .doc-fs-body-inner > .doc-body-isolation { flex: 1 1 auto; min-height: 0; border-radius: 0; box-shadow: none; }
         /* 정당화된 단일 !important — 문서가 authored 한 max-w-4xl utility(56rem 고정)를 override → 넓어진 inner(min 90%/1280px) 를 본문이 채우도록. third-party 클래스 override = 문서화된 예외. */
@@ -2675,7 +2675,7 @@ function ViewerBodyCD({ state }) {
 		: DOC_BODY_SCOPE_CD;
 	return (
 		<div className="doc-fs-body-wrap">
-			<div className="doc-fs-body-inner">
+			<div className="doc-fs-body-inner mx-auto">
 				<div
 					ref={bodyContainerRef}
 					lang={DOC_BODY_LANG_CD}
