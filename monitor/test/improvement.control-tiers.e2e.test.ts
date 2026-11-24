@@ -57,6 +57,7 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   .line-clamp-1, .line-clamp-3 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; }
   .line-clamp-1 { -webkit-line-clamp: 1; } .line-clamp-3 { -webkit-line-clamp: 3; }
   .font-medium { font-weight: 500; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
   .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; } .rounded-md { border-radius: 0.375rem; }`;
 
 const noop = () => undefined;
@@ -172,7 +173,7 @@ describe("a suggestion board row sits on the 32 control tier and keeps it in eve
 describe("a proposal card keeps its clamped text under hover and focus", () => {
   for (const width of LANE_WIDTHS) {
     test(`hover, focus-visible and active keep the card's box at ${width} wide`, () =>
-      assertBoxHeldAcrossStates(`#lane-${width} > .sub-card > button.i-row-card`));
+      assertBoxHeldAcrossStates(`#lane-${width} > div > button.i-row-card`));
   }
 });
 

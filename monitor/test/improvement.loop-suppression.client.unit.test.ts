@@ -363,9 +363,18 @@ function allWhere(node: unknown, isMatch: (el: RecordedElement) => boolean, out:
   return out;
 }
 
+const heldTable = () => sandbox.HeldCauseTableI({ buckets: SUPPRESSION.parked, rows: SUPPRESSION.parked_patterns }) as RecordedElement;
+
+// the house Table builds each body's rows for its view → each held body's rows, built for a wide view
+function getHeldBodies(): RecordedElement[][] {
+  const table = heldTable();
+  const view = { isStacked: false, columnCount: (table.props.columns as unknown[]).length };
+  return Array.from(table.props.bodies as Array<{ rows: (view: unknown) => RecordedElement[] }>, (body) => body.rows(view));
+}
+
 // the held table one level rendered: each cause row component replaced by what it returns
 const heldCauseRows = () =>
-  allByType(sandbox.HeldCauseTableI({ buckets: SUPPRESSION.parked, rows: SUPPRESSION.parked_patterns }), sandbox.HeldCauseRowsI).map(
+  allByType(getHeldBodies(), sandbox.HeldCauseRowsI).map(
     (el) => (sandbox.HeldCauseRowsI as (props: unknown) => RecordedElement)(el.props),
   );
 
@@ -381,17 +390,14 @@ test("each held cause's rows open from its name in the table and start folded", 
     assert.ok(list, "the toggle names the row list it opens");
     assert.equal(list.props.hidden, true, "a folded list keeps its rows out of view");
   }
-  const [name, held, agents] = allByType(causes[1], "td").map((cell) => faceTextOf(cell).replace(/\s+/g, " ").trim());
+  const [name, held, agents] = allByType(causes[1], sandbox.window.UI.TableCell).map((cell) => faceTextOf(cell).replace(/\s+/g, " ").trim());
   assert.ok(name.startsWith("Non-promptable signal"), name);
   assert.ok(!name.includes("design decision remedy text"), "the remedy stays off the cause cell");
   assert.deepEqual([held, agents], ["7", "6"], "the count and agents sit in their own columns");
 });
 
 test("held causes split into a needs-a-human group and a set-aside group, each led by its sum", () => {
-  const table = sandbox.HeldCauseTableI({ buckets: SUPPRESSION.parked, rows: SUPPRESSION.parked_patterns });
-  const groups = allByType(table, "tbody").map((body) => {
-    const [lead, ...causes] = body.props.children as RecordedElement[];
-    const rows = causes.flat() as RecordedElement[];
+  const groups = getHeldBodies().map(([lead, ...rows]) => {
     return {
       lead: faceTextOf(lead).replace(/\s+/g, " ").trim(),
       glyphs: rows.map((row) =>
@@ -399,9 +405,9 @@ test("held causes split into a needs-a-human group and a set-aside group, each l
           .filter((slot) => slot.props.isShown === true).length),
     };
   });
-  // the first group's lead row carries the column heads for every row below it
+  assert.deepEqual(Array.from(heldTable().props.columns as Array<{ label: string }>, (column) => column.label), ["Cause", "Held", "Agents"]);
   assert.deepEqual(groups, [
-    { lead: "Needs a human (1) Held Agents", glyphs: [1] },
+    { lead: "Needs a human (1)", glyphs: [1] },
     { lead: "Set aside by design (7)", glyphs: [0] },
   ]);
 });

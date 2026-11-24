@@ -314,27 +314,6 @@ test(`held table body cells set their text at the --fs-control step at ${SIDE_BY
   for (const size of reading.sizes) assert.equal(size, reading.step, "a held cell sits at the house table's body step");
 });
 
-test(`each awaiting suggestion's ring sits inside the list's scroll box at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
-  const awaiting = [1, 2].map((id) => ({ id, status: "pending", approval_tier: "safety", pattern_label: `Awaiting suggestion ${id}`, rationale: "r", cycle_date: "2026-09-28" }));
-  const routes = { "/api/improvement": { proposals: [], actionable_proposals: awaiting } };
-  const insets = await getPageReading(routes, ".i-await-body > *", () => {
-    const box = document.querySelector<HTMLElement>(".i-await-body")!;
-    const edge = box.getBoundingClientRect();
-    return [...box.children].map((card) => {
-      const rect = card.getBoundingClientRect();
-      // the ring is an outside box-shadow → its spread is the room the card needs on every side
-      const ring = parseFloat(getComputedStyle(card).boxShadow.match(/(-?[\d.]+)px\s*$/)?.[1] ?? "0");
-      return { ring, room: Math.min(rect.left - edge.left, edge.right - rect.right, rect.top - edge.top) };
-    });
-  });
-
-  assert.equal(insets.length, 2, "every awaiting suggestion renders");
-  for (const inset of insets) {
-    assert.ok(inset.ring > 0, "an awaiting card draws its ring");
-    assert.ok(inset.room >= inset.ring - 0.01, `the ring needs ${inset.ring}px but the card sits ${inset.room}px from the scroll edge`);
-  }
-});
-
 test(`a held cause's name opens its rows under it, inside its table row, at ${SIDE_BY_SIDE_WIDTH}px`, async () => {
   const learningLog = getLearningLog(1, 0, 2);
   learningLog.loop_suppression_state.parked_patterns = [

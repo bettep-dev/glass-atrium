@@ -625,6 +625,12 @@ test("the drawer names the approval tier in words, never echoing the raw tier ke
   assert.ok(!text.includes("auto (auto)"), text);
 });
 
+// the drawer's fields, each drawn through the shared DetailField → its dt / dd pair
+function getDrawerFacts(tree: unknown): unknown[] {
+  const fields = findAll(tree, (el) => el.type === sandbox.window.UI.DetailField);
+  return fields.map((field) => (field.type as (props: unknown) => unknown)(field.props));
+}
+
 describe("the drawer prints each field in words, never the stored machine key", () => {
   const row = {
     id: 42,
@@ -637,9 +643,9 @@ describe("the drawer prints each field in words, never the stored machine key", 
     cost_guard_state: "warn",
     reviewed_at: "2026-09-10T05:20:07Z",
   };
-  const tree = sandbox.DetailBodyI(sandbox.buildDetailPropsI(row));
-  const terms = findAll(tree, (el) => el.type === "dt");
-  const values = findAll(tree, (el) => el.type === "dd");
+  const facts = getDrawerFacts(sandbox.DetailBodyI(sandbox.buildDetailPropsI(row)));
+  const terms = findAll(facts, (el) => el.type === "dt");
+  const values = findAll(facts, (el) => el.type === "dd");
   const valueOf = (label: string) => values[terms.findIndex((el) => visibleText(el) === label)];
   const rows = [
     { name: "status", label: "Status", printed: "Rejected", mono: false },
@@ -664,9 +670,9 @@ describe("the drawer prints each field in words, never the stored machine key", 
 // a date is never mono: the face prints the short form, the full stamp rides the hover title
 describe("the pattern drawer prints its dates in sans, the full stamp on hover only", () => {
   const row = { kind: "pattern", id: 7, agent: AGENT, discovered_date: "2026-11-22", last_updated: "2026-11-22T09:30:00.123Z" };
-  const tree = sandbox.DetailBodyI(sandbox.buildDetailPropsI(row));
-  const terms = findAll(tree, (el) => el.type === "dt");
-  const values = findAll(tree, (el) => el.type === "dd");
+  const facts = getDrawerFacts(sandbox.DetailBodyI(sandbox.buildDetailPropsI(row)));
+  const terms = findAll(facts, (el) => el.type === "dt");
+  const values = findAll(facts, (el) => el.type === "dd");
   const valueOf = (label: string) => values[terms.findIndex((el) => visibleText(el) === label)];
   const rows = [
     { name: "first-seen day", label: "First seen", printed: "2026-11-22", title: undefined },
