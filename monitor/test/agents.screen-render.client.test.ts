@@ -46,6 +46,8 @@ UI_SCALARS.formatPct = REAL_UI.formatPct;
 UI_SCALARS.formatDecimal = REAL_UI.formatDecimal;
 // A failed read's cause rides the shipped error copy, so a Not-loaded title reads as it does on the page.
 UI_SCALARS.getErrorCopy = REAL_UI.getErrorCopy;
+// A covered region's pointer line rides the shipped pointer copy.
+UI_SCALARS.getNoticePointer = REAL_UI.getNoticePointer;
 // Tables ride the shipped Table and cell atoms → head cells and body rows render as on the page.
 for (const name of ["Table", "TableRow", "TableCell"]) UI_SCALARS[name] = REAL_UI[name];
 // The status band rides the shipped stat row → labels, values and context lines render as on the page.
@@ -320,7 +322,7 @@ async function renderStatusBand({ onRetry, failures, ...sources }: Record<string
   return renderComponent("AgentStatusBand", { tiles: buildTiles(sources), failures, onRetry });
 }
 
-test("the alarm lane renders loading, error, unavailable and a loaded zero distinctly", async () => {
+test("the alarm lane renders loading and an unreadable state, and nothing for a failed read or a clear fleet", async () => {
   const onRetry = () => undefined;
   const loading = await renderComponent("AgentAlarmLane", { state: LOADING_STATE, onRetry });
   const failed = await renderComponent("AgentAlarmLane", { state: ERROR_STATE, onRetry });
@@ -329,8 +331,7 @@ test("the alarm lane renders loading, error, unavailable and a loaded zero disti
 
   assert.ok(isBusy(loading));
   assert.deepEqual(getBadgeTexts(loading), []);
-  assert.deepEqual(getUnavailableSources(failed), ["agent summary"], "the failure names the read that failed");
-  assert.deepEqual(getBadgeTexts(failed), []);
+  assert.deepEqual([collectText(failed), getUnavailableSources(failed)], ["", []], "a failed read renders no lane, the Unsafe to route stat speaking for it");
   assert.deepEqual(getBadgeTexts(unavailable), ["unavailable"]);
   assert.equal(collectText(loadedZero), "", "a clear fleet renders no alarm lane");
 });
@@ -339,16 +340,12 @@ test("a Retry on a cold failure keeps the error card busy and hands focus to a c
   const putRegionRequest = REAL_UI.putRegionRequest as (state: unknown, key: string, request: unknown) => Record<string, unknown>;
   const retrying = putRegionRequest(ERROR_STATE, "k", new AbortController());
   const ready = { status: "ready", data: [], error: null };
-  const lane = await renderComponent("AgentAlarmLane", { state: retrying, onRetry: () => undefined });
   const band = await renderStatusBand({
     summaryState: retrying, failureState: ready, overageState: ready,
     failureByAgent: new Map(), overageByAgent: new Map(), onRetry: () => undefined,
   });
 
-  const [laneCard] = findAtoms(lane, "RegionUnavailable");
-  assert.equal(laneCard?.props.isBusy, true, "the lane keeps its error card, marked busy, while the Retry runs");
-  assert.equal(laneCard?.props.focusTargetId, "agents-status", "an emptied lane hands focus to the status band");
-  assert.equal(findNodes(band, (n) => n.props.id === "agents-status").length, 1, "the band carries the lane's focus target");
+  assert.equal(findNodes(band, (n) => n.props.id === "agents-status").length, 1, "the band carries its own focus target");
 
   const tileCards = findAtoms(band, "RegionUnavailable");
   assert.ok(tileCards.length > 0, "the summary-backed tiles keep their error cards through the Retry");
@@ -800,7 +797,7 @@ test("an outage every region shares shows one page banner with the only Retry, a
 });
 
 test("a region that fails alone keeps its own Retry and no page banner appears", async () => {
-  const tree = await renderComponent("AgentAlarmLane", { state: ERROR_STATE, onRetry: () => undefined });
+  const tree = await renderComponent("AgentSummaryCard", { state: ERROR_STATE, days: 30, onRetry: () => undefined });
   assert.deepEqual(findAtoms(tree, "RegionCovered"), []);
   const [region] = findAtoms(tree, "RegionUnavailable");
   assert.equal(typeof region?.props.onRetry, "function");
@@ -1791,6 +1788,40 @@ function getBandTile(tree: RenderedNode | string | null, label: string): Rendere
     .filter((n) => labels.every((other) => other === label || !collectText(n).includes(other)))[0] ?? null;
 }
 
+describe("a status stat another surface speaks for reads Not loaded in faint ink, its cause on hover, its context line pointing at that surface", () => {
+  const ready = { status: "ready", data: [], error: null };
+  const failed = { ...ERROR_STATE, busy: false };
+  const rows = [
+    {
+      name: "the page notice covers every failed read",
+      reads: { summaryState: failed, failureState: failed, overageState: failed }, success: failed,
+      labels: ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"], pointer: "See the notice above.",
+    },
+    {
+      name: "a sibling stat speaks for a read that failed alone",
+      reads: { summaryState: failed, failureState: ready, overageState: ready }, success: ready,
+      labels: ["Needs info"], pointer: "See the agent summary notice.",
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadAgentsScreen();
+      const getFailures = mod.getAgentSourceFailures as (entries: [string, unknown][]) => unknown;
+      const failures = getFailures([["agent summary", row.reads.summaryState], ["failure patterns", row.reads.failureState], ["budget overages", row.reads.overageState], ["success rates", row.success]]);
+      const tree = await renderStatusBand({ failures, days: 30, ...row.reads, failureByAgent: new Map(), overageByAgent: new Map(), onRetry: () => undefined });
+      for (const label of row.labels) {
+        const tile = getBandTile(tree, label);
+        const [value] = findAtoms(tile, "AbsentValue");
+        assert.deepEqual([value?.props.kind, collectText(value)], ["not-loaded", "Not loaded"], `${label}: the faint Not loaded word`);
+        assert.match(String(value?.props.title), /HTTP 500/, `${label}: the cause on hover`);
+        const [context] = findNodes(tile, (n) => n.props?.className === "stat-context");
+        assert.equal(collectText(context).trim(), row.pointer, `${label}: the context line points at the speaker`);
+        assert.equal(findAtoms(tile, "RegionCovered").length, 0, `${label}: no pointer sentence in the value`);
+      }
+    });
+  }
+});
+
 test("the over-cap and needs-context tiles state their rate over runs, and the tone follows the rate rather than presence", async () => {
   const ready = { status: "ready", data: [], error: null };
   const agents = [{ agent_id: "a", runs: 600, needs_context_count: 2 }, { agent_id: "b", runs: 400, needs_context_count: 1 }];
@@ -2196,19 +2227,21 @@ test("one failed read gives one error card, and every other region it feeds poin
   const failures = getFailures([["agent summary", failed], ["success rates", ready], ["failure patterns", ready], ["budget overages", ready]]);
   assert.equal(failures.banner, null, "one failed source raises no page banner");
   const onRetry = () => undefined;
+  const band = await renderStatusBand({
+    failures, days: 30, summaryState: failed, failureState: ready, overageState: ready,
+    failureByAgent: new Map(), overageByAgent: new Map(), onRetry,
+  });
   const trees = [
     await renderComponent("AgentAlarmLane", { failures, state: failed, onRetry }),
-    await renderStatusBand({
-      failures, days: 30, summaryState: failed, failureState: ready, overageState: ready,
-      failureByAgent: new Map(), overageByAgent: new Map(), onRetry,
-    }),
+    band,
     await renderComponent("AgentSummaryCard", { failures, state: failed, days: 30, onRetry }),
   ];
   const cards = trees.flatMap((tree) => findAtoms(tree, "RegionUnavailable"));
   assert.deepEqual(cards.map((card) => card.props.source), ["agent summary"], "the summary read speaks once, named by its read");
   assert.equal(typeof cards[0].props.onRetry, "function");
   const covered = trees.flatMap((tree) => findAtoms(tree, "RegionCovered"));
-  assert.equal(covered.length, 3, "the unsafe and needs-context tiles and the ledger point at that card");
+  assert.equal(covered.length, 1, "the ledger points at that card");
+  assert.match(collectText(getBandTile(band, "Needs info")), /See the agent summary notice\./, "the needs-info stat points at that card");
 });
 
 test("the drawer's breakage headline names what it counts and sets the blocked part apart as a compliant halt", async () => {

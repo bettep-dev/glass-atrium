@@ -117,7 +117,6 @@ const REGION_FEEDERS = {
 
 // Render order of the regions each read feeds → the first slot carries a failed read's card, the rest point at it.
 const FAILURE_SLOTS = [
-  [REGION_FEEDERS.summary, 'circuit-breaker state'],
   [REGION_FEEDERS.summary, 'unsafe to route'],
   [REGION_FEEDERS.failure, 'failed'],
   [REGION_FEEDERS.overage, 'over tool-use cap'],
@@ -397,7 +396,7 @@ function ScreenAgents() {
       <div
         aria-busy={isAnyRegionBusy ? 'true' : undefined}
         className={`flex flex-col gap-section ${isAnyRegionBusy && summaryAsOfAt != null ? 'opacity-70 motion-safe:transition-opacity motion-safe:duration-[120ms]' : ''}`.trim()}>
-      <AgentAlarmLane failures={sourceFailures} state={summaryState} onRetry={triggerRefresh}/>
+      <AgentAlarmLane state={summaryState}/>
 
       <AgentStatusBand failures={sourceFailures} tiles={statusTiles} onRetry={triggerRefresh}/>
 
@@ -564,7 +563,8 @@ function getOffTargetRowsAg(matrix) {
 
 // Alarm lane — one row per suspended or streaking agent, nothing when the fleet
 // is clear. An unreadable state dir renders unavailable; it is never a zero.
-function AgentAlarmLane({ failures, state, onRetry }) {
+// A failed read renders nothing: the Unsafe to route stat reads the same source and speaks for it.
+function AgentAlarmLane({ state }) {
   const { Badge, Card, Cluster, Stack } = window.UI;
   const view = window.UI.getRegionView(state);
 
@@ -575,13 +575,7 @@ function AgentAlarmLane({ failures, state, onRetry }) {
       </div>
     );
   }
-  if (view === 'error') {
-    return (
-      <Card>
-        <window.UI.RegionFailure source={REGION_FEEDERS.summary} region="circuit-breaker state" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.status} onRetry={onRetry}/>
-      </Card>
-    );
-  }
+  if (view === 'error') return null;
 
   const breaker = readyData(state)?.meta?.circuit_breaker ?? null;
   if (!breaker) return null;
@@ -761,18 +755,31 @@ function joinSubAg(parts) {
 
 // tile model → one StatRow stat; the counting rules ride the card head's one ⓘ
 function buildStatusStatAg({ key, label, sub, info, unavailableSub, status, failures, cardId, onRetry, ...state }) {
+  const pointer = status === 'error' ? getStatPointerAg(failures, state.feeder, label.toLowerCase()) : null;
   return {
     key,
     label,
-    value: <StatusStatValueAg label={label} status={status} failures={failures} cardId={cardId} onRetry={onRetry} {...state}/>,
-    context: status === 'unavailable' ? (unavailableSub ?? sub) : sub,
+    value: <StatusStatValueAg label={label} status={status} pointer={pointer} failures={failures} cardId={cardId} onRetry={onRetry} {...state}/>,
+    context: pointer ?? (status === 'unavailable' ? (unavailableSub ?? sub) : sub),
   };
 }
 
+// RegionFailure's covered test, as a context line → null when this stat is the slot that speaks
+function getStatPointerAg(failures, source, region) {
+  const { getNoticePointer } = window.UI;
+  if (failures?.banner?.sources?.includes(source)) return getNoticePointer(null);
+  const speaker = failures?.speakers.get(source);
+  return speaker != null && speaker !== region ? getNoticePointer(null, `the ${source} notice`) : null;
+}
+
 // Calm is silence → only a crit or warn count carries a glyph, its word for screen readers.
-function StatusStatValueAg({ label, status, feeder, value, tone, error, busy, failures, cardId, onRetry }) {
+// A covered failed read → the faint Not loaded word; the banner's Retry still lands on this card
+function StatusStatValueAg({ label, status, pointer, feeder, value, tone, error, busy, failures, cardId, onRetry }) {
   const { Badge, Icon, TONE_ICON } = window.UI;
   if (status === 'loading') return <span className="text-faint" aria-busy="true">…</span>;
+  if (status === 'error' && pointer) {
+    return <span data-covered-card-id={failures?.banner?.sources?.includes(feeder) ? cardId : undefined}>{getUnreadValueAg({ error }, feeder)}</span>;
+  }
   if (status === 'error') {
     return <window.UI.RegionFailure source={feeder} region={label.toLowerCase()} error={error} isBusy={busy} failures={failures} focusTargetId={cardId} onRetry={onRetry}/>;
   }
