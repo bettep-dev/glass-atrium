@@ -271,3 +271,41 @@ describe("DetailSurface dismissal", async () => {
     assert.deepEqual(refocus, [{ isBackgroundLive: true, overflow: "auto" }]);
   });
 });
+
+describe("DetailSurface scroll lock", async () => {
+  const effects = createEffectReact();
+  const doc = createFakeDocument();
+  const live = await loadScreenModule(UI_SRC, { React: effects.react, document: doc });
+
+  function mountSurface(isOpen: boolean) {
+    const panel = { name: "panel", querySelectorAll: () => [], contains: (node: unknown) => node === panel, focus: () => { doc.activeElement = panel; } };
+    const overlay = { name: "overlay", tagName: "DIV", parentElement: null };
+    return effects.mount(
+      () => (live.DetailSurface as Component)({ open: isOpen, onClose: () => undefined, title: "Relay history", children: "body" }),
+      (element) => (element.props.role === "dialog" ? panel : overlay),
+    );
+  }
+
+  const rows = [
+    { name: "a drawer closed before the confirm opened over it", opens: [true, true], releaseOrder: [0, 1], whileMounted: "hidden", afterFirstRelease: "hidden" },
+    { name: "the confirm closed before the drawer under it", opens: [true, true], releaseOrder: [1, 0], whileMounted: "hidden", afterFirstRelease: "hidden" },
+    { name: "two surfaces mounted closed, as a page at rest holds them", opens: [false, false], releaseOrder: [0, 1], whileMounted: "auto", afterFirstRelease: "auto" },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name}: the body locks only while a surface is open and scrolls again once every surface is gone`, () => {
+      doc.reset();
+      const surfaces = row.opens.map(mountSurface);
+      const whileMounted = doc.body.style.overflow;
+      const [firstIndex, secondIndex] = row.releaseOrder;
+      surfaces[firstIndex].unmount();
+      const afterFirstRelease = doc.body.style.overflow;
+      surfaces[secondIndex].unmount();
+
+      assert.deepEqual(
+        { whileMounted, afterFirstRelease, afterRelease: doc.body.style.overflow },
+        { whileMounted: row.whileMounted, afterFirstRelease: row.afterFirstRelease, afterRelease: "auto" },
+      );
+    });
+  }
+});

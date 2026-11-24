@@ -704,10 +704,17 @@ function LoadingStat({ label }) {
 // 토큰 재사용 — z-index/모션/면 색상은 tokens.css · base.css 단일 SoT (ad-hoc 금지).
 // id sequence for element-title aria-labelledby targets — works without useId (render-harness React stub).
 let detailTitleSeq = 0;
-// open surfaces in mount order — the last one owns the keyboard (a confirm over a drawer).
+// open surfaces in mount order — the last one owns the keyboard (a confirm over a drawer); a modal one locks body scroll.
 const openSurfaces = [];
+// body overflow before the first modal surface opened; null while no modal surface is open
+let unlockedOverflow = null;
 
-function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, children, labelledBy, suppressOutsideClose, nav, bare = false, panelClassName = '', bodyClassName = '' }) {
+// the panel mounts only while open → a closed surface (a page at rest) never locks, traps or registers
+function DetailSurface({ open, ...props }) {
+  return open ? <DetailSurfacePanel {...props}/> : null;
+}
+
+function DetailSurfacePanel({ onClose, variant = 'drawer', title, sub, footer, children, labelledBy, suppressOutsideClose, nav, bare = false, panelClassName = '', bodyClassName = '' }) {
   const overlayRef = useRef(null);
   const panelRef = useRef(null);
   const titleIdRef = useRef(null);
@@ -715,9 +722,9 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
 
   // 마운트 전용 — 포커스 캡처/복원 + scroll-lock 은 surface 생애주기(열림→닫힘)에만 묶임.
   // onClose/nav 의존 금지 — 부모 re-render(인라인 onClose 신규 생성)에 캡처/복원이 재실행돼
-  // triggerRef 가 상호작용 중 덮어쓰이고 포커스가 트리거로 튀는 회귀 차단. surface 는 open 시에만 마운트.
+  // triggerRef 가 상호작용 중 덮어쓰이고 포커스가 트리거로 튀는 회귀 차단.
   useEffect(() => {
-    setSurfaceOpen(panelRef, true);
+    setSurfaceOpen(panelRef, true, true);
 
     // opens on the panel, never a control → a mouse open rings nothing; Tab enters at the first control
     panelRef.current?.focus();
@@ -725,13 +732,8 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
     const inertTargets = overlayRef.current ? getInertTargets(overlayRef.current) : [];
     for (const node of inertTargets) node.inert = true;
 
-    // body scroll-lock — 언마운트/닫힘 시 복원 (현 오버레이엔 부재 → 여기서 단일 추가).
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
     return () => {
       setSurfaceOpen(panelRef, false);
-      document.body.style.overflow = prevOverflow;
       for (const node of inertTargets) node.inert = false;
     };
   }, []);
@@ -763,8 +765,6 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose, nav]);
-
-  if (!open) return null;
 
   // confirm 만 click-outside 차단 옵션 — destructive 다이얼로그 오작동 방지.
   const onBackdrop = (variant === 'confirm' && suppressOutsideClose) ? undefined : onClose;
@@ -934,16 +934,32 @@ function getInertTargets(overlay) {
   return targets;
 }
 
-/** Registers or releases a surface; a repeated open never stacks the same surface twice. */
-function setSurfaceOpen(entry, isOpen) {
-  const index = openSurfaces.indexOf(entry);
+/**
+ * Registers or releases a surface; a repeated open never stacks the same surface twice.
+ * @param isModal - the surface locks body scroll while it is open
+ */
+function setSurfaceOpen(entry, isOpen, isModal = false) {
+  const index = openSurfaces.findIndex((surface) => surface.entry === entry);
   if (index !== -1) openSurfaces.splice(index, 1);
-  if (isOpen) openSurfaces.push(entry);
+  if (isOpen) openSurfaces.push({ entry, isModal });
+  setBodyLock(openSurfaces.some((surface) => surface.isModal));
+}
+
+// one saved value for the whole stack → any release order restores the overflow from before the first lock
+function setBodyLock(isLocked) {
+  if (isLocked === (unlockedOverflow !== null)) return;
+  if (isLocked) {
+    unlockedOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return;
+  }
+  document.body.style.overflow = unlockedOverflow;
+  unlockedOverflow = null;
 }
 
 /** Surface that owns Tab/Esc/Arrow handling, or null when none is open. */
 function getTopSurface() {
-  return openSurfaces.length > 0 ? openSurfaces[openSurfaces.length - 1] : null;
+  return openSurfaces.length > 0 ? openSurfaces[openSurfaces.length - 1].entry : null;
 }
 
 // 하위호환 별칭 — 기존 Modal API(title/onClose/children/footer) 유지, confirm variant 위임.
