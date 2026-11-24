@@ -229,6 +229,106 @@ describe("an instrumentation card with nothing to show is its head and one flush
   }
 });
 
+const ADD_ONLY_CAVEAT = "Floor, not a total — the stored diff is truncated before classification.";
+
+// one head in every state: what a card measures still holds at zero → the empty form keeps the data form's title, sub and info
+// a sub that prints a figure from the read is left out of its row's keys
+const HEAD_FORMS = [
+  {
+    name: "results by check status",
+    card: "TierBreakdownCardI",
+    keys: ["title", "sub", "info"],
+    empty: { state: READY, tierBreakdown: { window_days: 30, code_based_pass_30d: 0, code_based_fail_30d: 0, pre_3tier_baseline_count: 0 } },
+    data: { state: READY, tierBreakdown: { window_days: 30, code_based_pass_30d: 12406, code_based_fail_30d: 538, pre_3tier_baseline_count: 0 } },
+  },
+  {
+    name: "style-check rate",
+    card: "StyleRefCardI",
+    keys: ["title", "sub", "info"],
+    empty: { state: READY, styleRef: { overall_emission_rate: null, overall_uncorroborated_rate: null, agents: [] } },
+    data: { state: READY, styleRef: { overall_emission_rate: 0.6, overall_uncorroborated_rate: 0.05, agents: [] } },
+  },
+  {
+    name: "add-only patches",
+    card: "ProseOnlyAddCardI",
+    keys: ["title", "sub", "info"],
+    empty: { state: READY, summary: { window_days: 30, agents: [], total: 0, truncation_caveat: ADD_ONLY_CAVEAT } },
+    data: { state: READY, summary: { window_days: 30, agents: [{ agent: "glass-atrium-dev-db", count: 2 }], total: 2, truncation_caveat: ADD_ONLY_CAVEAT } },
+  },
+  {
+    name: "suggestion confidence",
+    card: "ConfidenceDistCardI",
+    keys: ["title", "sub", "info"],
+    empty: { state: READY, confidenceDist: { buckets: [], overall_confidence_observed_avg: null } },
+    data: { state: READY, confidenceDist: { buckets: [{ promotion_tier: "candidate", proposal_count: 12, confidence_observed_avg: 0.75 }], overall_confidence_observed_avg: 0.75 } },
+  },
+  {
+    name: "detection agreement",
+    card: "CorrectionSignalsCardI",
+    keys: ["title", "info"],
+    empty: { state: { status: "ready", data: { total_signals: 0 }, error: null } },
+    data: {
+      state: {
+        status: "ready",
+        error: null,
+        data: {
+          total_signals: 128,
+          latest_event_ts: "2026-11-20T05:00:00Z",
+          agreement: { total: 128, agreement_count: 120, both_matched: 70, stage1_only: 5, stage2_only: 3, neither_matched: 50 },
+          revision_delta_sum: 4,
+          revision_delta_max: 2,
+        },
+      },
+    },
+  },
+  {
+    name: "corpus growth",
+    card: "CorpusGrowthCardI",
+    keys: ["title", "info"],
+    empty: { state: { status: "ready", data: { total_audits: 0, audits: [] }, error: null } },
+    data: { state: { status: "ready", error: null, data: { total_audits: 1, audits: [{ cycle_date: "2026-11-20", word_count: 41250, seeded_threshold: 60000 }] } } },
+  },
+];
+
+describe("an empty instrumentation card keeps the head its data form shows", () => {
+  const ui = sandbox.window.UI as unknown as Record<string, unknown>;
+  const cards = sandbox as unknown as Record<string, (props: unknown) => RecordedElement>;
+  // the empty form is the screen's one empty-card component → expand it to the Card it renders
+  const getHead = (form: RecordedElement, keys: string[]) => {
+    const card = form.type === ui.Card ? form : (form.type as (props: unknown) => RecordedElement)(form.props);
+    return Object.fromEntries(keys.map((key) => [key, card.props[key]]));
+  };
+  for (const row of HEAD_FORMS) {
+    test(row.name, () => {
+      sandbox.React.useState = () => [false, () => {}];
+      const empty = getHead(cards[row.card](row.empty), row.keys);
+      const data = getHead(cards[row.card](row.data), row.keys);
+
+      assert.deepEqual(empty, data);
+    });
+  }
+});
+
+// the list read is open → the add-only card holds its slot as the card below it in the column does, with the same height
+test("while the list read is open, the add-only card is its titled S card with one announced placeholder", () => {
+  const ui = sandbox.window.UI as unknown as Record<string, unknown>;
+  const cards = sandbox as unknown as Record<string, (props: unknown) => RecordedElement>;
+  const loading = { status: "loading", data: null, error: null };
+  sandbox.React.useState = () => [false, () => {}];
+
+  const card = sandbox.ProseOnlyAddCardI({ state: loading, summary: null }) as RecordedElement;
+  const below = cards.TierBreakdownCardI({ state: loading, tierBreakdown: null });
+  const [placeholder] = findElements(card, (el) => el.type === ui.LoadingPlaceholder);
+  const [belowPlaceholder] = findElements(below, (el) => el.type === ui.LoadingPlaceholder);
+
+  assert.equal(card?.type, ui.Card, "the loading form is the shared Card");
+  assert.deepEqual({ size: card.props.size, title: card.props.title, sub: card.props.sub }, { size: "S", title: "Add-only patches", sub: undefined });
+  assert.deepEqual(
+    { label: placeholder?.props.label, minHeight: placeholder?.props.minHeight },
+    { label: "add-only patches", minHeight: belowPlaceholder?.props.minHeight },
+  );
+});
+
 // spec 44084 §2.2 Zero: outcomes exist and none reported a style check → a measured 0, not an empty card
 test("a known zero style-check rate keeps the stat row and the per-agent table", () => {
   const ui = sandbox.window.UI as unknown as Record<string, unknown>;

@@ -273,6 +273,103 @@ test("each mixed instrumentation card's bars state no number of their own", asyn
   }, MIXED_CARD_SUGGESTIONS);
 });
 
+// a known zero style-check rate: the same card form as MIXED_CARD_SUGGESTIONS, every figure in its cells narrower
+const STYLE_ZERO_SUGGESTIONS = {
+  ...SUGGESTIONS,
+  style_ref_summary: {
+    overall_emission_rate: 0,
+    overall_uncorroborated_rate: null,
+    overall_corroborated_count: 0,
+    overall_uncorroborated_count: 0,
+    overall_unverifiable_count: 0,
+    overall_greenfield_count: 0,
+    agents: [
+      { agent: "glass-atrium-agent-a", emission_count: 0, emission_total: 13, emission_rate: 0, corroborated_count: 0, uncorroborated_count: 0, unverifiable_count: 0, eligible_count: 0 },
+    ],
+  },
+};
+
+// the per-agent style-check table's header right edges, left to right
+function readStyleRefHeaderEdges(page: Page): Promise<number[]> {
+  return page.evaluate(() => {
+    const card = [...document.querySelectorAll<HTMLElement>("#improvement-instrumentation .card-title")]
+      .find((heading) => heading.textContent === "Style-check rate")!.closest(".card")!;
+    return [...card.querySelectorAll<HTMLElement>("table thead th")].map((th) => th.getBoundingClientRect().right);
+  });
+}
+
+// the columns hold still whatever the cells hold → a reader comparing two reads finds each figure where it was
+for (const width of [1440, 1920]) {
+  test(`each style-check table header keeps its right edge between a full and a zero reading at ${width}px`, async () => {
+    let full: number[] = [];
+    let zero: number[] = [];
+    await withInstrumentationPage(width, async (page) => { full = await readStyleRefHeaderEdges(page); }, MIXED_CARD_SUGGESTIONS);
+    await withInstrumentationPage(width, async (page) => { zero = await readStyleRefHeaderEdges(page); }, STYLE_ZERO_SUGGESTIONS);
+
+    assert.equal(full.length, 6, `${width}px: the table shows its six headers`);
+    assert.equal(zero.length, full.length, `${width}px: both readings show the same headers`);
+    full.forEach((edge, index) => {
+      assert.ok(Math.abs(edge - zero[index]) <= 1, `${width}px: header ${index + 1} ends at ${edge} in the full reading, ${zero[index]} at zero`);
+    });
+  });
+}
+
+// both alerts raised → the longest Alert value the fact list can hold
+const ALERT_REGIONS: Record<string, object> = {
+  ...FILLED_REGIONS,
+  "/api/improvement/corpus-audits": {
+    total_audits: 1,
+    audits: [{ cycle_date: "2026-11-20", word_count: 61250, trend_delta: 2400, file_count: 38, token_estimate: 79600, seeded_threshold: 60000,
+      gate_pass_count: 9, gate_trip_count: 1, gate_total_count: 10, compliance_rate: 0.9, override_rate: 0.1, trend_alert: true, absolute_alert: true }],
+  },
+};
+
+interface FactListReading {
+  lines: string[][];
+  firstColumnLefts: number[];
+}
+
+// the corpus fact list: terms grouped by line, each line's first term left edge
+function readCorpusFacts(page: Page): Promise<FactListReading> {
+  return page.evaluate(() => {
+    const card = [...document.querySelectorAll<HTMLElement>("#improvement-instrumentation .card-title")]
+      .find((heading) => heading.textContent === "Corpus growth")!.closest(".card")!;
+    // the stat row is a dl of its own → the fact list is the one outside it
+    const list = [...card.querySelectorAll<HTMLElement>("dl")].find((dl) => !dl.closest(".stat-row"))!;
+    const terms = [...list.querySelectorAll<HTMLElement>("dt")];
+    const byTop = new Map<number, HTMLElement[]>();
+    for (const term of terms) {
+      const top = Math.round(term.getBoundingClientRect().top);
+      byTop.set(top, [...(byTop.get(top) ?? []), term]);
+    }
+    const lines = [...byTop.entries()].sort(([a], [b]) => a - b).map(([, line]) => line);
+    return {
+      lines: lines.map((line) => line.map((term) => term.textContent ?? "")),
+      firstColumnLefts: lines.map((line) => line[0].getBoundingClientRect().left),
+    };
+  });
+}
+
+// line 1 = size facts, line 2 = gate facts, each on the first column; a missing Alert never pulls the gate line up
+const FACT_LIST_ROWS = [
+  { width: 1280, regions: ALERT_REGIONS, lines: [["Files", "Tokens", "Alert"], ["Gate checks", "Compliance", "Override"]] },
+  { width: 1440, regions: ALERT_REGIONS, lines: [["Files", "Tokens", "Alert"], ["Gate checks", "Compliance", "Override"]] },
+  { width: 1920, regions: ALERT_REGIONS, lines: [["Files", "Tokens", "Alert"], ["Gate checks", "Compliance", "Override"]] },
+  { width: 1440, regions: FILLED_REGIONS, lines: [["Files", "Tokens"], ["Gate checks", "Compliance", "Override"]] },
+];
+
+for (const row of FACT_LIST_ROWS) {
+  const alert = row.regions === ALERT_REGIONS ? "with an alert raised" : "with no alert";
+  test(`corpus facts read size then gate, each line on the first column, ${alert} at ${row.width}px`, async () => {
+    await withInstrumentationPage(row.width, async (page) => {
+      const facts = await readCorpusFacts(page);
+
+      assert.deepEqual(facts.lines, row.lines, `${row.width}px: the facts group by line`);
+      assert.ok(Math.abs(facts.firstColumnLefts[0] - facts.firstColumnLefts[1]) <= 1, `${row.width}px: both lines open on one column — ${facts.firstColumnLefts}`);
+    }, MIXED_CARD_SUGGESTIONS, row.regions);
+  });
+}
+
 interface EmptyCardReading {
   title: string;
   lineLeft: number;
