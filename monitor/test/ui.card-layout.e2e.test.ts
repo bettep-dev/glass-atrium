@@ -30,7 +30,8 @@ const variantRows = `
   <div class="split-row split-row--1-1 split-row--${layouts.equal}" data-variant="equal"><div style="height: 400px;">tall</div><div>short</div></div>
   <div class="split-row split-row--2-1 split-row--${layouts.content}" data-variant="rail"><div style="height: 2000px;">main</div>
     <div class="split-col split-col--rail" id="rail"><div style="height: 100px;">one</div><div style="height: 100px;">two</div></div></div>
-  <div class="split-row split-row--1-1 split-row--${layouts.divided}" data-variant="divided"><div style="height: 300px;">tall</div><div>short</div></div>`;
+  <div class="split-row split-row--1-1 split-row--${layouts.divided}" data-variant="divided"><div style="height: 300px;">tall</div><div>short</div></div>
+  <div class="split-row split-row--${ratios["1:1-wide"]} split-row--${layouts.divided}" data-variant="divided-wide"><div style="height: 300px;">tall</div><div>short</div></div>`;
 // peer cards whose heads and bodies differ in height: a two-line head beside a one-line one, a tall body beside a short one
 const getAlignedCard = (id: string, head: string, bodyPx: number) => `<div class="card" id="${id}"><div class="card-head" style="width: 120px;">${head}</div>
   <div class="card-body" style="height: ${bodyPx}px;">body</div><div class="card-foot">foot</div></div>`;
@@ -43,9 +44,13 @@ const LAYOUT_PAGE = `<!doctype html><html><body style="margin: 0;">
   </div>
 </body></html>`;
 
+// a preset pairs up from its own width: xl, or the wide 1:1 only once each half holds a five-column table
+const SPLIT_FROM_PX: Record<string, number> = { "1:1-wide": 1920 };
+const XL_PX = 1280;
 const viewportRows = [
-  { name: "below xl each split row stacks", width: 1024, isSplit: false },
-  { name: "from xl each split row pairs up", width: 1440, isSplit: true },
+  { name: "below xl each split row stacks", width: 1024 },
+  { name: "from xl each split row but the wide 1:1 pairs up", width: 1440 },
+  { name: "from 1920 every split row pairs up", width: 1920 },
 ] as const;
 
 interface PairReading { key: string; isSideBySide: boolean; widthRatio: number }
@@ -88,7 +93,7 @@ describe("split row at real viewports", () => {
 
       assert.equal(readings.length, Object.keys(ratios).length);
       for (const reading of readings) {
-        assert.equal(reading.isSideBySide, row.isSplit, `${reading.key} at ${row.width}px`);
+        assert.equal(reading.isSideBySide, row.width >= (SPLIT_FROM_PX[reading.key] ?? XL_PX), `${reading.key} at ${row.width}px`);
       }
     });
   }
@@ -181,8 +186,10 @@ describe("split row layout variants at real viewports", () => {
 
   // stacked → the hairline crosses above the second block · from xl → it runs between the two
   const dividedRows = [
-    { name: "below xl a divided row draws one hairline above its second block, a gap clear of each", width: 1024, edge: "top" },
-    { name: "from xl a divided row draws one hairline between its blocks, a gap clear of each", width: 1440, edge: "left" },
+    { name: "below xl a divided row draws one hairline above its second block, a gap clear of each", width: 1024, edge: "top", variant: "divided" },
+    { name: "from xl a divided row draws one hairline between its blocks, a gap clear of each", width: 1440, edge: "left", variant: "divided" },
+    { name: "a wide divided row still stacked at 1440 draws its hairline above the second block", width: 1440, edge: "top", variant: "divided-wide" },
+    { name: "from 1920 a wide divided row draws its hairline between its blocks", width: 1920, edge: "left", variant: "divided-wide" },
   ] as const;
   for (const row of dividedRows) {
     test(row.name, async () => {
@@ -194,7 +201,7 @@ describe("split row layout variants at real viewports", () => {
         probe.remove();
         return color;
       });
-      const [first, second] = await page.$$eval('.split-row[data-variant="divided"] > *', (blocks) => blocks.map((block) => {
+      const [first, second] = await page.$$eval(`.split-row[data-variant="${row.variant}"] > *`, (blocks) => blocks.map((block) => {
         const style = getComputedStyle(block);
         return { box: block.getBoundingClientRect().toJSON() as DOMRect, top: `${style.borderTopWidth} ${style.borderTopColor}`,
           left: `${style.borderLeftWidth} ${style.borderLeftColor}`, pad: { top: style.paddingTop, left: style.paddingLeft } };

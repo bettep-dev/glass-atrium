@@ -1202,7 +1202,8 @@ function Disclosure({ kind = 'detail', title, sub, tone, level = 2, isFlush = fa
 }
 
 // ratio preset → base.css modifier; stacked below xl, side by side at xl · rest:content = the second column at its content width.
-const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '2:1': '2-1', 'rest:content': 'rest-content' });
+// '1:1-wide' pairs only from 1920 → each half then holds a five-column table
+const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '1:1-wide': '1-1-wide', '2:1': '2-1', 'rest:content': 'rest-content' });
 
 // layout → base.css modifier: equal = peer cards match heights · content = each column its own height (rails, non-peer rows)
 // · divided = two in-card blocks parted by one hairline · aligned = peer cards share the row's tracks, so head, body and foot sit on one y.

@@ -190,6 +190,16 @@ test("the Learning-run events fold's flush body holds the run log with no card i
   assert.equal(findNodes(fold, (n) => n.props.id === "outcomes-loop-events").length, 1, "the Retry target stays in the fold");
 });
 
+// five channel columns overflow a half row at 1440 → Reporting health pairs only at the wide split
+test("Reporting health pairs its blocks on the wide split, Self-report quality on the xl one", async () => {
+  const { tree } = await renderOutcomesScreen(0);
+  const presets = (ui.UI as Record<string, Record<string, string>>).SPLIT_ROW_RATIOS;
+  const ratioOf = (name: string) => findNodes(getFold(tree, name), (n) => hasClass(n, "split-row"))[0];
+
+  assert.ok(hasClass(ratioOf("Reporting health"), `split-row--${presets["1:1-wide"]}`));
+  assert.ok(hasClass(ratioOf("Self-report quality"), `split-row--${presets["1:1"]}`));
+});
+
 test("the per-agent table spans the full width", async () => {
   const { tree } = await renderOutcomesScreen(0);
   const splitRows = findNodes(tree, (n) => String(n.props.className ?? "").includes("split-row"));

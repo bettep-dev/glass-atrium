@@ -30,8 +30,8 @@ describe("split row ratio presets", () => {
     });
   }
 
-  test("the even and two-to-one spans and the rest-beside-content span are offered", () => {
-    assert.deepEqual(Object.keys(ratios).sort(), ["1:1", "2:1", "rest:content"]);
+  test("the even, wide-even and two-to-one spans and the rest-beside-content span are offered", () => {
+    assert.deepEqual(Object.keys(ratios).sort(), ["1:1", "1:1-wide", "2:1", "rest:content"]);
   });
 
   test("an unknown ratio falls back to the even split rather than a missing modifier", () => {

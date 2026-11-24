@@ -1916,7 +1916,7 @@ button.ra-step:hover {
 	.split-row--1-1 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.split-row--2-1 { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
 	.split-row--rest-content { grid-template-columns: minmax(0, 1fr) auto; }
-	.split-row--divided > * + * {
+	.split-row--divided:not(.split-row--1-1-wide) > * + * {
 		padding-block-start: 0;
 		border-block-start: 0;
 		padding-inline-start: var(--gap-section);
@@ -1926,6 +1926,16 @@ button.ra-step:hover {
 		position: sticky;
 		top: 24px;
 		align-self: start;
+	}
+}
+/* the wide 1:1 pairs once each half holds a five-column table; until then it stacks like below xl */
+@media (min-width: 1920px) {
+	.split-row--1-1-wide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.split-row--1-1-wide.split-row--divided > * + * {
+		padding-block-start: 0;
+		border-block-start: 0;
+		padding-inline-start: var(--gap-section);
+		border-inline-start: 1px solid rgb(var(--line));
 	}
 }
 

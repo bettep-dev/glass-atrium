@@ -725,7 +725,7 @@ function ScreenOutcomes({ onNav }) {
       </div>
       <window.UI.Disclosure kind="status" title="Reporting health" sub={reportingHealthSummaryO(channelLivenessState, attributionState)} className="mt-section">
         <window.UI.Stack>
-          <window.UI.SplitRow ratio="1:1" layout="divided">
+          <window.UI.SplitRow ratio="1:1-wide" layout="divided">
             <AttributionHealthBlock state={attributionState} period={analyticsPeriod} {...regionRetry}/>
             <ChannelLivenessBlock state={channelLivenessState} {...regionRetry}/>
           </window.UI.SplitRow>
