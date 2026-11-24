@@ -917,7 +917,7 @@ test("the header sync token speaks only when the file needs action and leaves th
   // Loading and error are distinct readings — neither may look like a settled 'in sync'.
   const unavailable = textMc(renderComponentMc(screens.SyncTokenMC, { state: "error", sync: undefined }));
   assert.ok(unavailable.includes("unavailable") && !unavailable.includes("In sync"), "error never reads as in sync");
-  // the stamp beside it already reads '… loading' → the token adds no second ellipsis
+  // the Refresh label already reads Loading… → the token adds no second busy cue
   assert.strictEqual(textMc(renderComponentMc(screens.SyncTokenMC, { state: "loading", sync: undefined })), "");
 });
 
@@ -1331,13 +1331,13 @@ test("the drift banner's remedy is pressable and resends the drifted rows' saved
   assert.strictEqual(tagsMc(pending, "button").length, 0, "saving cannot fix an un-migrated DB");
 });
 
-test("an empty roster never reads as in sync, whatever the file state says", () => {
+test("an empty roster leaves the header token silent, whatever the file state says", () => {
   const headerSync = sandboxFnMc<(data: unknown) => string>("headerSyncMC");
   for (const fileSync of ["ok", "drift", "file-missing"]) {
     const sync = headerSync({ daemon_config_sync: fileSync, domains: [], budgets: [] });
-    const token = textMc(renderComponentMc(screens.SyncTokenMC, { state: "ready", sync }));
-    assert.ok(!token.includes("In sync"), `${fileSync}: an empty roster is not 'In sync'`);
-    assert.ok(token.includes("Nothing to sync"), `${fileSync}: the empty roster is named`);
+    assert.strictEqual(sync, "empty", `${fileSync}: an empty roster keeps its own sync value`);
+    // the three empty cards already say so → a header status adds nothing
+    assert.deepStrictEqual(renderComponentMc(screens.SyncTokenMC, { state: "ready", sync }), [], `${fileSync}: renders nothing`);
   }
   const populated = headerSync({ daemon_config_sync: "ok", domains: DOMAIN_ROW_FIXTURE_MC, budgets: [] });
   assert.strictEqual(populated, "ok", "a populated roster keeps the file's sync state");
