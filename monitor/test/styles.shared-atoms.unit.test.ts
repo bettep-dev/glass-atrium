@@ -330,6 +330,8 @@ describe("each atom variant a screen names sets only its own declarations, in on
     { name: "an inline-flush empty state keeps its block inset and drops its inline one", selector: ".placeholder--flush-inline", decls: { "padding-inline": "0" } },
     { name: "the row-line key sets only the row line box, doubled to outrank a same-element type step", selector: ".leading-row.leading-row",
       decls: { "line-height": "var(--lh-row)" } },
+    { name: "a disclosure body sets only its start inset: the chevron plus the trigger's gap", selector: ".disclosure-body",
+      decls: { "padding-inline-start": "calc(14px + var(--space-1))" } },
   ];
   for (const row of rows) {
     test(row.name, () => {

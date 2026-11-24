@@ -26,6 +26,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .disclosure:hover {
 	color: rgb(var(--ink));
 }
+/* what a disclosure opens starts on its trigger's label: 14 = ui.jsx DISCLOSURE_CHEVRON_PX, then the .disclosure gap */
+.disclosure-body {
+	padding-inline-start: calc(14px + var(--space-1));
+}
 /* opt-in 24 hit target (WCAG 2.5.8) for a text link, a ledger expander or a checkbox hit area — never a global link rule, since
    prose links sit under the criterion's inline exception. Middle-aligned → the box keeps a 40 .tbl row and its text on the line.
    An inline-flex box takes no ellipsis of its own → a clipped label truncates on an inner span, so the target stays in its cell */

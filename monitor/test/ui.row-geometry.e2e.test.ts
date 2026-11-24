@@ -46,6 +46,7 @@ const ICON_ROWS = [
 // the shipped DisclosureButton; a `summary` takes the same atom class
 const DISCLOSURE_CHEVRON = iconMarkup({ name: "chevR", size: 14 });
 const DISCLOSURE_BUTTON = render(ui.DisclosureButton, { isOpen: false, onToggle: () => {}, label: "2 more buckets" });
+const OPEN_DISCLOSURE = render(ui.DisclosureButton, { isOpen: true, onToggle: () => {}, label: "Recent runs" });
 
 // control family of the .tbl control-cell rule — each sits in a row beside a text cell
 const CONTROL_ROWS = [
@@ -181,6 +182,7 @@ const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body
   ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
   ${TYPE_SCALED_ROWS.map((row, i) => `<div id="type-scaled-target-${i}">${typeScaled(row.target)}</div>`).join("\n  ")}
   ${ROW_LINE_STEPS.map((step) => `<div id="row-line-${step}" class="${step} leading-row">Hook chain · last run 3m ago</div>`).join("\n  ")}
+  <div id="disclosure-body-host" style="width: 480px;">${OPEN_DISCLOSURE}<div class="disclosure-body">PreToolUse · 3 hooks</div></div>
   <div style="display: flex; align-items: flex-start; gap: 24px;">
   </div>
 </body></html>`;
@@ -288,6 +290,19 @@ describe("the row-line key holds the 20 row line box under a same-element type s
       assert.equal(await page.$eval(`#row-line-${step}`, (el) => getComputedStyle(el).lineHeight), "20px");
     });
   }
+});
+
+// the body's inset is the chevron's 14 + the .disclosure gap → a body opened under a DisclosureButton starts on its label
+test("a disclosure body starts on its trigger's label, past the chevron", async () => {
+  const { label, body } = await page.$eval("#disclosure-body-host", (host) => {
+    const text = host.querySelector(".disclosure-body")?.firstChild;
+    const span = host.querySelector(".disclosure > span");
+    if (!text || !span) throw new Error("fixture lacks the disclosure label or its body text");
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    return { label: span.getBoundingClientRect().left, body: range.getClientRects()[0].left };
+  });
+  assert.ok(Math.abs(body - label) < 0.5, `body text at ${body}, trigger label at ${label}`);
 });
 
 // RegionFailure and AlertCard share one error-details fold: its summary sits on the C32 disclosure atom, the chevron the one open-state cue
