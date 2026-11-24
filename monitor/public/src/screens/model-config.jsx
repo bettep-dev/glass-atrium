@@ -33,6 +33,8 @@ const EFFORT_LEVELS_MC = ["low", "medium", "high", "xhigh", "max"];
 const OUTPUT_CAP_RE_MC = /^[1-9][0-9]{0,5}$/;
 // What an unset knob ('inherit' → key removed) runs at: no --effort flag / no output-cap env.
 const CLI_DEFAULT_LABEL_MC = "CLI default";
+const EFFORT_FLAG_MC = "--effort";
+const OUTPUT_CAP_ENV_MC = "CLAUDE_CODE_MAX_OUTPUT_TOKENS";
 
 const CUSTOM_OPTION_MC = "__custom__";
 
@@ -133,28 +135,32 @@ const BUDGET_META_MC = {
 const TIER_META_MC = {
 	"tier.worker_effort": {
 		label: "Generation effort",
-		desc: "Default: no --effort flag",
+		desc: `Default: no ${EFFORT_FLAG_MC} flag`,
+		machine: EFFORT_FLAG_MC,
 		note: "With no flag, the settings or model default governs the call",
 		kind: "effort",
 		source: "daemon-config.json",
 	},
 	"tier.pre_verify_effort": {
 		label: "Pre-verify effort",
-		desc: "Default: no --effort flag",
+		desc: `Default: no ${EFFORT_FLAG_MC} flag`,
+		machine: EFFORT_FLAG_MC,
 		note: "Keep pre-verify at or above the generation level",
 		kind: "effort",
 		source: "daemon-config.json",
 	},
 	"tier.worker_max_output_tokens": {
 		label: "Generation output tokens",
-		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+		desc: `Sets ${OUTPUT_CAP_ENV_MC}`,
+		machine: OUTPUT_CAP_ENV_MC,
 		note: "The CLI silently lowers a value above the model's own limit",
 		kind: "output-cap",
 		source: "daemon-config.json",
 	},
 	"tier.pre_verify_max_output_tokens": {
 		label: "Pre-verify output tokens",
-		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS for pre-verify",
+		desc: `Sets ${OUTPUT_CAP_ENV_MC} for pre-verify`,
+		machine: OUTPUT_CAP_ENV_MC,
 		note: "Blank = the model default",
 		kind: "output-cap",
 		source: "daemon-config.json",
@@ -1279,7 +1285,7 @@ function TierNotesMC({ title, rows }) {
 				{notes.map((meta) => (
 					<div key={meta.label}>
 						<dt className="text-ink">{meta.label}</dt>
-						{meta.desc && <dd className="is-wrap">{meta.desc}</dd>}
+						{meta.desc && <dd className="is-wrap">{getDescNodesMC(meta)}</dd>}
 						{meta.note && <dd className="is-wrap">{meta.note}</dd>}
 						{/* the select shows the friendly name → the saved id is read here, by keyboard and touch too */}
 						{meta.savedId && <dd>Saved id <MachineString>{meta.savedId}</MachineString></dd>}
@@ -1287,6 +1293,21 @@ function TierNotesMC({ title, rows }) {
 				))}
 			</dl>
 		</section>
+	);
+}
+
+// a flag or env name inside the sentence → mono through MachineString, the words around it stay sans
+function getDescNodesMC({ desc, machine }) {
+	const at = machine ? desc.indexOf(machine) : -1;
+	if (at === -1) return desc;
+	const { MachineString } = window.UI;
+
+	return (
+		<>
+			{desc.slice(0, at)}
+			<MachineString>{machine}</MachineString>
+			{desc.slice(at + machine.length)}
+		</>
 	);
 }
 
@@ -1747,7 +1768,7 @@ function TiersSectionMC({
 }
 
 // The unset effort level: a short option label that fits the select, the whole meaning in its title.
-const EFFORT_INHERIT_TITLE_MC = `${CLI_DEFAULT_LABEL_MC} — no --effort flag`;
+const EFFORT_INHERIT_TITLE_MC = `${CLI_DEFAULT_LABEL_MC} — no ${EFFORT_FLAG_MC} flag`;
 const EFFORT_OPTIONS_MC = ["inherit", ...EFFORT_LEVELS_MC].map((level) =>
 	level === "inherit" ? { key: level, label: CLI_DEFAULT_LABEL_MC, title: EFFORT_INHERIT_TITLE_MC } : { key: level, label: level },
 );

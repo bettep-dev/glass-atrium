@@ -1442,6 +1442,14 @@ test("tier notes show one unfolded entry per described tier", () => {
   assert.ok(textMc(tree).includes("self-improve proposals"), "every description stays reachable");
 });
 
+test("the call-tier notes draw the CLI flag and the env variable as machine strings", () => {
+  const [tierMeta] = vm.runInContext("[TIER_META_MC]", screens) as Array<Record<string, unknown>>;
+  const tree = renderComponentMc(screens.TierNotesMC, { title: "What each setting does", rows: Object.values(tierMeta) });
+  const mono = textsMc(findAllMc(tree, (n) => n.props["data-atom"] === "MachineString"));
+  assert.deepStrictEqual(mono, ["--effort", "--effort", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"]);
+  assert.ok(textMc(tree).includes("Default: no --effort flag"), "the sentence around the flag reads whole");
+});
+
 test("the model glossary names the tier's own saved id under its label", () => {
   const props = domainsPropsMc(THREE_TIERS_MC.map((d) => ({ ...d, desired: "claude-opus-4-8" })));
   const drawer = drawersMc(renderComponentMc(screens.DomainsSectionMC, props))[0];
