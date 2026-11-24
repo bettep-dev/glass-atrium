@@ -46,6 +46,8 @@ UI_SCALARS.formatPct = REAL_UI.formatPct;
 UI_SCALARS.formatDecimal = REAL_UI.formatDecimal;
 // A failed read's cause rides the shipped error copy, so a Not-loaded title reads as it does on the page.
 UI_SCALARS.getErrorCopy = REAL_UI.getErrorCopy;
+// A covered region's pointer line rides the shipped pointer copy.
+UI_SCALARS.getNoticePointer = REAL_UI.getNoticePointer;
 // Tables ride the shipped Table and cell atoms → head cells and body rows render as on the page.
 for (const name of ["Table", "TableRow", "TableCell"]) UI_SCALARS[name] = REAL_UI[name];
 // The status band rides the shipped stat row → labels, values and context lines render as on the page.
@@ -305,7 +307,10 @@ function isBusy(tree: RenderedNode | string | null): boolean {
 }
 
 async function renderComponent(name: string, props: Record<string, unknown>): Promise<RenderedNode | string | null> {
-  const mod = await loadAgentsScreen();
+  return renderComponentOf(await loadAgentsScreen(), name, props);
+}
+
+async function renderComponentOf(mod: Record<string, unknown>, name: string, props: Record<string, unknown>): Promise<RenderedNode | string | null> {
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   return renderScreen(React.createElement(mod[name] as Component, props));
 }
@@ -317,7 +322,7 @@ async function renderStatusBand({ onRetry, failures, ...sources }: Record<string
   return renderComponent("AgentStatusBand", { tiles: buildTiles(sources), failures, onRetry });
 }
 
-test("the alarm lane renders loading, error, unavailable and a loaded zero distinctly", async () => {
+test("the alarm lane renders loading and an unreadable state, and nothing for a failed read or a clear fleet", async () => {
   const onRetry = () => undefined;
   const loading = await renderComponent("AgentAlarmLane", { state: LOADING_STATE, onRetry });
   const failed = await renderComponent("AgentAlarmLane", { state: ERROR_STATE, onRetry });
@@ -326,8 +331,7 @@ test("the alarm lane renders loading, error, unavailable and a loaded zero disti
 
   assert.ok(isBusy(loading));
   assert.deepEqual(getBadgeTexts(loading), []);
-  assert.deepEqual(getUnavailableSources(failed), ["agent summary"], "the failure names the read that failed");
-  assert.deepEqual(getBadgeTexts(failed), []);
+  assert.deepEqual([collectText(failed), getUnavailableSources(failed)], ["", []], "a failed read renders no lane, the Unsafe to route stat speaking for it");
   assert.deepEqual(getBadgeTexts(unavailable), ["unavailable"]);
   assert.equal(collectText(loadedZero), "", "a clear fleet renders no alarm lane");
 });
@@ -336,16 +340,12 @@ test("a Retry on a cold failure keeps the error card busy and hands focus to a c
   const putRegionRequest = REAL_UI.putRegionRequest as (state: unknown, key: string, request: unknown) => Record<string, unknown>;
   const retrying = putRegionRequest(ERROR_STATE, "k", new AbortController());
   const ready = { status: "ready", data: [], error: null };
-  const lane = await renderComponent("AgentAlarmLane", { state: retrying, onRetry: () => undefined });
   const band = await renderStatusBand({
     summaryState: retrying, failureState: ready, overageState: ready,
     failureByAgent: new Map(), overageByAgent: new Map(), onRetry: () => undefined,
   });
 
-  const [laneCard] = findAtoms(lane, "RegionUnavailable");
-  assert.equal(laneCard?.props.isBusy, true, "the lane keeps its error card, marked busy, while the Retry runs");
-  assert.equal(laneCard?.props.focusTargetId, "agents-status", "an emptied lane hands focus to the status band");
-  assert.equal(findNodes(band, (n) => n.props.id === "agents-status").length, 1, "the band carries the lane's focus target");
+  assert.equal(findNodes(band, (n) => n.props.id === "agents-status").length, 1, "the band carries its own focus target");
 
   const tileCards = findAtoms(band, "RegionUnavailable");
   assert.ok(tileCards.length > 0, "the summary-backed tiles keep their error cards through the Retry");
@@ -541,8 +541,9 @@ describe("the drawer hero's success figure carries no tone at any rate, which ri
         agent, drawerAgent: agent.agent_id, summaryState: { status: "ready", data: { agents: [agent] }, error: null },
         revisionState: emptyRows, reviewByAgentState: emptyRows, onRetry: () => undefined,
       });
-      const figures = findNodes(tree, (n) => /\bhero-stat\b/.test(String(n.props?.className ?? "")));
-      assert.equal(figures.length, 1, "one hero figure");
+      const metric = findNodes(tree, (n) => n.type === "DetailMetric" && n.props.label === "Success rate")[0];
+      const figures = findNodes(metric, (n) => /\bfs-title\b/.test(String(n.props?.className ?? "")));
+      assert.equal(figures.length, 1, "one success figure at the title size");
       assert.doesNotMatch(String(figures[0].props.className), /\btext-(ok|warn|crit|info)\b/);
       assert.equal(collectText(figures[0]).includes(HIGH_FAIL_WORD), row.crit);
     });
@@ -602,29 +603,8 @@ test("the status band is one card holding one stat row, a stat per fleet questio
   assert.equal(findAtoms(band, "Card").length, 1, "the card sits inside the band's focus target");
   const statRows = findNodes(tree, hasClass("stat-row"));
   assert.equal(statRows.length, 1);
-  // each label's own span — the ⓘ beside it carries the counting rule, not the label
-  assert.deepEqual(findNodes(statRows[0], (n) => n.type === "dt").map((n) => collectText(findNodes(n, (c) => c.type === "span")[0]).trim()),
+  assert.deepEqual(findNodes(statRows[0], (n) => n.type === "dt").map((n) => collectText(n).trim()),
     ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"]);
-});
-
-test("every status-band tile names the window its count covers", async () => {
-  const ready = { status: "ready", data: [], error: null };
-  const tree = await renderStatusBand({
-    days: 14,
-    summaryState: getSummaryState(BREAKER_LOADED_ZERO),
-    failureState: ready,
-    overageState: ready,
-    failureByAgent: new Map(),
-    overageByAgent: new Map(),
-    onRetry: () => undefined,
-  });
-  const labels = ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"];
-  const tiles = labels.map((label) => findNodes(tree, (n) => n.type === "div" && collectText(n).startsWith(label))
-    .filter((n) => labels.every((other) => other === label || !collectText(n).includes(other)))[0]);
-  assert.match(collectText(tiles[0]), /\bnow\b/, "breaker state is current, not windowed");
-  for (const tile of tiles.slice(1)) {
-    assert.match(collectText(tile), /last 14d/);
-  }
 });
 
 test("the ledger opens sorted by breakages, riskiest agents first", async () => {
@@ -725,7 +705,7 @@ test("the ledger sorts from its column heads: the sorted head carries its arrow 
     ["Success", "none", "arrow-up-down"],
     ["Failed", "descending", "arrow-down"],
     ["P95", "none", "arrow-up-down"],
-    ["Trend", undefined, undefined],
+    ["Runs,", undefined, undefined],
   ]);
   assert.equal(findNodes(tree, (n) => n.type === "select").length, 0, "no separate sort select remains");
   assert.equal(findNodes(tree, (n) => n.props?.role === "status").length, 0, "the note lives in the head, not in a band above the rows");
@@ -817,7 +797,7 @@ test("an outage every region shares shows one page banner with the only Retry, a
 });
 
 test("a region that fails alone keeps its own Retry and no page banner appears", async () => {
-  const tree = await renderComponent("AgentAlarmLane", { state: ERROR_STATE, onRetry: () => undefined });
+  const tree = await renderComponent("AgentSummaryCard", { state: ERROR_STATE, days: 30, onRetry: () => undefined });
   assert.deepEqual(findAtoms(tree, "RegionCovered"), []);
   const [region] = findAtoms(tree, "RegionUnavailable");
   assert.equal(typeof region?.props.onRetry, "function");
@@ -968,8 +948,25 @@ test("the breakage count takes a crit glyph only once its share of the agent's o
     assert.deepEqual(getToneTextClasses(cell), [], `${row.name}: numeral tone`);
     const glyphs = findNodes(cell, (n) => n.type === "FailShareGlyph" && n.props.tone === "crit");
     assert.equal(glyphs.length, row.crit ? 1 : 0, `${row.name}: crit glyph beside the numeral`);
-    const bar = findNodes(cell, (n) => n.props?.atom === "Bar")[0];
-    assert.equal(bar?.props.tone, row.crit ? "crit" : "neutral", `${row.name}: bar tone follows the glyph`);
+    assert.equal(findAtoms(cell, "Bar").length, 0, `${row.name}: a counts column draws no rate bar`);
+  }
+});
+
+describe("the Failed or blocked cell reads the fail+blocked total, any blocked part as faint meta after it, the split in its title", () => {
+  const rows = [
+    { name: "failed and blocked runs", fail_count: 12, blocked_count: 38, total: "50", meta: ["38 blocked"] },
+    { name: "failed runs alone", fail_count: 3, blocked_count: 0, total: "3", meta: [] as string[] },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadAgentsScreen();
+      const failure = { total_breakages: row.fail_count + row.blocked_count, fail_count: row.fail_count, blocked_count: row.blocked_count, breakage_rate: 0.1 };
+      const cell = findCellByTitle(renderToneRow(mod, {}, failure), /^breakages/);
+      const figures = collectText(cell).match(/\d+/g) ?? [];
+      assert.equal(figures[0], row.total, "the value is the total the head names");
+      assert.deepEqual(getFaintMetaTexts(cell), row.meta, "the blocked part reads as faint meta");
+      assert.match(String(cell?.props.title), new RegExp(`fail ${row.fail_count} \\+ blocked ${row.blocked_count}`), "the split rides the title");
+    });
   }
 });
 
@@ -1015,29 +1012,12 @@ test("the drawer breakage badge takes the same crit step as the ledger numeral",
   }
 });
 
-test("a P95 numeral stays neutral at every tier, the glyph alone carrying the tier while amber stays off the routine warn tier", async () => {
-  const mod = await loadAgentsScreen();
-  const rows = [
-    { name: "fast tier", p95_ms: 300_000, numeral: [] as string[], glyph: "text-ok" },
-    { name: "warn tier, the bulk of live agents", p95_ms: 900_000, numeral: [] as string[], glyph: "text-dim" },
-    { name: "crit tier", p95_ms: 1_500_000, numeral: [] as string[], glyph: "text-crit" },
-  ];
-  for (const row of rows) {
-    const cell = findCellByTitle(renderToneRow(mod, { p95_ms: row.p95_ms }, null), /^p95 latency tier/);
-    const glyph = findNodes(cell, (n) => n.type === "span" && n.props?.["aria-hidden"] === "true")[0];
-    assert.equal(glyph?.props.className, row.glyph, `${row.name}: glyph tier`);
-    const numeralTones = findNodes(cell, (n) => n.props?.["aria-hidden"] !== "true" && TONED_CLASS.test(String(n.props?.className ?? "")))
-      .map((n) => String(n.props.className));
-    assert.deepEqual(numeralTones, row.numeral, `${row.name}: numeral tone`);
-  }
-});
-
-test("a failing pair keeps its failure glyph at any sample beside a neutral rate, and a small sample carries the shared low-sample mark instead of grey italics", async () => {
-  const mod = await loadAgentsScreen();
+test("a failing pair's success cell is plain ink with its fraction, no glyph, bar or bold, and a small sample carries the shared low-sample mark", async () => {
+  const mod = await loadAgentsScreen({ formatPctWithDenominator: REAL_UI.formatPctWithDenominator });
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
   const rows = [
-    { name: "n under LOW_N_MIN", successCount: 1, rateDenominator: 3, isLowSample: true },
-    { name: "n at LOW_N_MIN", successCount: 2, rateDenominator: 5, isLowSample: false },
+    { name: "n under LOW_N_MIN", successCount: 1, rateDenominator: 3, isLowSample: true, text: "33.3% (1/3)" },
+    { name: "n at LOW_N_MIN", successCount: 25, rateDenominator: 31, isLowSample: false, text: "80.6% (25/31)" },
   ];
   for (const row of rows) {
     const pair = { agent: "glass-atrium-dev-react", task_type: "feature", ...row, pooledRate: row.successCount / row.rateDenominator, totalCount: row.rateDenominator };
@@ -1045,38 +1025,55 @@ test("a failing pair keeps its failure glyph at any sample beside a neutral rate
       React.createElement(mod.TopNFailingAgentsTable as Component, { pairs: [pair], failureByAgent: new Map(), days: 14 }),
     );
     const rateCell = findCellByTitle(tree, /^pooled passed/);
-    const style = (rateCell?.props.style as Record<string, unknown> | undefined) ?? {};
-    assert.equal(style.color, undefined, `${row.name}: the rate numeral takes no tone`);
-    assert.equal(findNodes(rateCell, (n) => n.type === "FailShareGlyph" && n.props.tone === "crit").length, 1, `${row.name}: the failure glyph sits beside the rate`);
-    assert.notEqual(style.fontStyle, "italic", `${row.name}: no unexplained italics`);
+    assert.ok(collectText(rateCell).startsWith(row.text), `${row.name}: ${collectText(rateCell)}`);
+    assert.deepEqual(getToneTextClasses(rateCell), [], `${row.name}: plain ink`);
+    assert.doesNotMatch(String(rateCell?.props.className), /\bfont-(?:semibold|bold)\b/, `${row.name}: no bold`);
+    assert.equal(findNodes(rateCell, (n) => n.type === "FailShareGlyph").length, 0, `${row.name}: no crit glyph`);
+    assert.equal(findNodes(rateCell, (n) => n.props?.role === "img" || n.props?.atom === "Bar").length, 0, `${row.name}: no bar`);
     const mark = findNodes(rateCell, (n) => n.props?.atom === "LowSampleMark")[0];
     assert.equal(mark?.props.n, row.isLowSample ? row.rateDenominator : undefined, `${row.name}: shared low-sample mark`);
-    const bar = findNodes(rateCell, (n) => n.props?.atom === "Bar")[0];
-    assert.equal(bar?.props.tone, row.isLowSample ? "neutral" : "crit", `${row.name}: bar tint`);
   }
 });
 
-test("the ledger's activity mark names activity under a labelled column, never a health word that contradicts the success rate", async () => {
+test("the ledger heads read Agent first and Runs, 7d last, with no activity glyph in any row", async () => {
   const mod = await loadAgentsScreen();
   const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
-  const table = renderScreen(
-    React.createElement(mod.AgentSummaryTable as Component, { agents: [], pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {} }),
-  );
+  const agents = ["active", "idle", "inactive", "error"].map((status, i) => ({ agent_id: `a${i}`, agent_name: `a${i}`, status, runs: 40, success_pct: 100, p95_ms: 60_000 }));
+  const table = renderScreen(React.createElement(mod.AgentSummaryTable as Component, { agents, pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {} }));
   const headers = findColumnHeads(table).map((n) => collectText(n).trim());
-  assert.ok(headers.some((h) => /activity/i.test(h)), `ledger headers: ${headers.join(" | ")}`);
+  assert.equal(headers[0], "Agent");
+  assert.equal(headers[headers.length - 1], "Runs, 7d");
+  assert.doesNotMatch(collectText(table), /[●◐○]/);
+});
 
+function getFaintMetaTexts(tree: RenderedNode | string | null): string[] {
+  return findNodes(tree, (n) => /\bfs-meta\b/.test(String(n.props?.className ?? "")) && /\btext-faint\b/.test(String(n.props.className)))
+    .map((n) => getVisibleText(n).trim());
+}
+
+describe("a ledger row names its activity in a visible faint word only off the active state, an error adding the table's 13px crit glyph", () => {
   const rows = [
-    { status: "active", word: "Active" },
-    { status: "inactive", word: "Inactive" },
-    { status: "idle", word: "Idle" },
+    { status: "active", word: null, glyphSizes: [] as number[] },
+    { status: "idle", word: "Idle", glyphSizes: [] },
+    { status: "inactive", word: "Inactive", glyphSizes: [] },
+    { status: "error", word: "Error", glyphSizes: [13] },
   ];
   for (const row of rows) {
-    const tree = renderToneRow(mod, { status: row.status, last_run_at: "2026-09-25T00:00:00Z" }, null);
-    assert.equal(findNodes(tree, (n) => n.props?.atom === "StatusDot").length, 0, `${row.status}: no OK/Warning health dot`);
-    const mark = findNodes(tree, (n) => /^Activity: /.test(String(n.props?.title ?? "")))[0];
-    assert.match(String(mark?.props.title), new RegExp(`^Activity: ${row.word}`), `${row.status}: mark names activity`);
-    assert.doesNotMatch(String(mark?.props.className), /text-(ok|warn)/, `${row.status}: no health tone`);
+    test(row.status, async () => {
+      const mod = await loadAgentsScreen();
+      const [nameCell] = findNodes(renderToneRow(mod, { status: row.status, last_run_at: "2026-09-25T00:00:00Z" }, null), (n) => n.type === "td");
+      assert.deepEqual(getFaintMetaTexts(nameCell), row.word ? [row.word] : [], "the activity word is visible faint meta");
+      const glyphs = findNodes(nameCell, (n) => n.props?.["aria-hidden"] === "true" && /\btext-crit\b/.test(String(n.props.className)));
+      assert.deepEqual(glyphs.map((n) => findAtoms(n, "Icon")[0]?.props.size), row.glyphSizes, "only an error takes the crit glyph, at the table glyph size");
+      assert.equal(findAtoms(nameCell, "StatusDot").length, 0, "no status dot");
+    });
   }
+});
+
+test("an activity word and a setup need read as two meta items, a separator between them", async () => {
+  const mod = await loadAgentsScreen();
+  const [nameCell] = findNodes(renderToneRow(mod, { status: "idle", compatibility: "Requires a live daemon" }, null), (n) => n.type === "td");
+  assert.deepEqual(getFaintMetaTexts(nameCell), ["Idle", "·", "Requires setup"]);
 });
 
 test("the drawer's rework count sums revisions across runs rather than repeating the run count", async () => {
@@ -1163,13 +1160,14 @@ test("a matrix sparkline draws the data colour unless its pair is over the fail-
   assert.deepEqual(swatches, [...drawn]);
 });
 
-test("a compatibility requirement rides a short row tag with the full text on hover, never a truncated sentence", async () => {
+test("a compatibility requirement reads as faint meta text after the name, its full text on hover, with no badge", async () => {
   const mod = await loadAgentsScreen();
   const requirement = "Requires monitor running at http://127.0.0.1:16145 with a live daemon";
-  const tree = renderToneRow(mod, { compatibility: requirement }, null);
-  const badge = findNodes(tree, (n) => n.props?.atom === "Badge")[0];
-  assert.equal(badge?.props.title, `Requires: ${requirement}`);
-  assert.doesNotMatch(collectText(badge), /…/);
+  const [nameCell] = findNodes(renderToneRow(mod, { compatibility: requirement }, null), (n) => n.type === "td");
+  const [tag] = findNodes(nameCell, (n) => n.props?.title === `Requires: ${requirement}`);
+  assert.match(String(tag?.props.className), /\bfs-meta\b.*\btext-faint\b|\btext-faint\b.*\bfs-meta\b/);
+  assert.equal(getVisibleText(tag).trim(), "Requires setup");
+  assert.equal(findAtoms(nameCell, "Badge").length + findAtoms(nameCell, "Pill").length, 0, "no badge or pill");
 });
 
 const FS_MICRO = /\bfs-micro\b/;
@@ -1370,19 +1368,16 @@ test("the ledger carries Runs and No record as columns instead of a per-row expa
   rows.forEach((row, i) => assert.equal(collectText(cells[i]), row.noRecord, row.name));
 });
 
-test("a ledger row leads with its failed count and keeps blocked as an untoned secondary", async () => {
+test("a ledger row's blocked runs never raise the failure tone", async () => {
   const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
   // 29 blocked of 100 outcomes: a 30% breakage rate, but a failed share of 1% or none.
   const rows = [
-    { name: "one failed run", fail: 1, lead: /^1\b/ },
-    { name: "blocked runs only — the failed count still reads as a zero", fail: 0, lead: /^0\b/ },
+    { name: "one failed run", fail: 1 },
+    { name: "blocked runs only", fail: 0 },
   ];
   for (const row of rows) {
     const failure = { total_breakages: row.fail + 29, fail_count: row.fail, blocked_count: 29, breakage_rate: 0.3 };
     const cell = findCellByTitle(renderToneRow(mod, {}, failure), /^breakages/);
-    const text = collectText(cell).trim();
-    assert.match(text, row.lead, `${row.name}: the failed count leads`);
-    assert.match(text, /29\s+blocked/, `${row.name}: blocked rides as the secondary`);
     const tonedClasses = findNodes(cell, (n) => TONED_CLASS.test(String(n.props?.className ?? "")));
     assert.equal(tonedClasses.length, 0, `${row.name}: compliant halts do not raise the failure tone`);
   }
@@ -1418,8 +1413,34 @@ test("the status band counts failed agents in red and carries blocked-only agent
     assert.deepEqual(getValueTexts(tile), [String(row.value)], `${row.name}: value`);
     assert.equal(collectText(tile).match(/(Needs attention|Watch):/)?.[1] ?? null, row.srWord, `${row.name}: the glyph's word for screen readers`);
     // the ledger's Failed or blocked column counts runs over the same window, so the tile states runs too
-    assert.match(collectText(tile), /last 14d · 10 blocked runs in 2 agents/, `${row.name}: blocked runs and agents over the tile window`);
+    assert.match(collectText(tile), /10 blocked runs in 2 agents/, `${row.name}: blocked runs and agents`);
   }
+});
+
+describe("the Status card", () => {
+  const ready = { status: "ready", data: [], error: null };
+  const renderBand = () => renderStatusBand({
+    days: 30, summaryState: getSummaryState(BREAKER_LOADED_ZERO), failureState: ready, overageState: ready,
+    failureByAgent: new Map([["glass-atrium-dev-0", { fail_count: 1, blocked_count: 5, total_breakages: 6, breakage_rate: 0.1 }]]),
+    overageByAgent: new Map(), onRetry: () => undefined,
+  });
+
+  test("holds one info button in its head, whose body is the shared stat notes, and no stat label holds a button", async () => {
+    const tree = await renderBand();
+    const [card] = findAtoms(tree, "Card");
+    assert.equal(card?.props.title, "Status");
+    const [notes] = findAtoms(renderScreen(card?.props.info as never), "StatNotes");
+    const stats = (notes?.props.stats ?? []) as Array<{ label: string }>;
+    assert.deepEqual(Array.from(stats, (stat) => stat.label), ["Failed", "Over tool-use cap", "Needs info"]);
+    assert.equal(findAtoms(tree, "CardInfo").length, 0, "no info button in a stat label");
+  });
+
+  test("states no window in a context line, the page header stating it once", async () => {
+    const tree = await renderBand();
+    for (const label of ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"]) {
+      assert.doesNotMatch(collectText(getBandTile(tree, label)), /last \d+ ?d/, label);
+    }
+  });
 });
 
 test("the failures sort puts agents with failures before compliant halts, then the higher failure rate", async () => {
@@ -1446,57 +1467,43 @@ test("Instrumentation is an open status fold whose head states the verdict, and 
   }
 });
 
-test("the instrumentation head names the first loaded source's lead figure within the 32-character meta cap, and warns on unfinished runs", async () => {
-  const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
-  const verdict = mod.getInstrumentationVerdict as (l: unknown, r: unknown, a?: unknown) => { tone: string; sub: string };
-  const lifecycle = (start: number, done: number) => ({ status: "ready", data: { rows: [{ agent_type: "a", start_count: start, completed_count: done }] } });
-  const review = { status: "ready", data: { rows: [{ review_flagged_count: 14, total_count: 100 }] } };
-  const loading = { status: "loading" };
-  const rows = [
-    { name: "unfinished runs warn", l: lifecycle(20, 8), r: review, tone: "warn", sub: "12 runs with no record" },
-    { name: "every run finished", l: lifecycle(8, 8), r: review, tone: "ok", sub: "0 runs with no record" },
-    { name: "only review flags read", l: loading, r: review, tone: "neutral", sub: "14% flagged" },
-    { name: "nothing read yet", l: loading, r: loading, tone: "neutral", sub: "Is the measuring apparatus sound" },
-    { name: "activations never lengthen a head that already has a lead", l: lifecycle(8, 8), r: review, a: ACTIVATIONS_READY, tone: "ok", sub: "0 runs with no record" },
-    { name: "only activations read", l: loading, r: loading, a: ACTIVATIONS_READY, tone: "neutral", sub: "2.5% activation false-positive" },
-    { name: "a window with no activations states that, never a rate over an empty denominator", l: loading, r: loading, a: ACTIVATIONS_EMPTY, tone: "neutral", sub: "no activations" },
-    { name: "an unread activation source adds nothing, never 0 %", l: loading, r: review, a: ACTIVATIONS_FAILED, tone: "neutral", sub: "14% flagged" },
-    { name: "widest: a 5-digit orphan total", l: lifecycle(99_999, 0), r: review, a: ACTIVATIONS_READY, tone: "warn", sub: "99,999 runs with no record" },
-    { name: "widest: a full false-positive share leads alone", l: loading, r: loading, a: ACTIVATIONS_ALL_FALSE, tone: "neutral", sub: "100% activation false-positive" },
-  ];
-  for (const row of rows) {
-    const got = verdict(row.l, row.r, row.a);
-    assert.deepEqual({ ...got }, { tone: row.tone, sub: row.sub }, row.name);
-    assert.ok(got.sub.length <= 32, `${row.name}: "${got.sub}" is ${got.sub.length} chars`);
-  }
-});
-
+// 1,765 of 12,500 events flagged over two days → the 14.1 % share the head states
+const REVIEW_FLAGS_READY = { status: "ready", data: { rows: [
+  { event_date: "2026-11-22", total_count: 6000, review_flagged_count: 900 },
+  { event_date: "2026-11-23", total_count: 6500, review_flagged_count: 865 },
+] }, error: null };
+const ACTIVATIONS_CLEAN = { status: "ready", data: { summary: { total_activations: 1200, overall_false_positive_rate: 0 } }, error: null };
 const ACTIVATIONS_READY = { status: "ready", data: { summary: { total_activations: 1200, overall_false_positive_rate: 0.025 } }, error: null };
 const ACTIVATIONS_EMPTY = { status: "ready", data: { summary: { total_activations: 0, overall_false_positive_rate: 0 } }, error: null };
 const ACTIVATIONS_FAILED = { status: "error", data: null, error: { message: "HTTP 503" } };
-const ACTIVATIONS_ALL_FALSE = { status: "ready", data: { summary: { total_activations: 9999, overall_false_positive_rate: 1 } }, error: null };
 
-test("the Instrumentation fold body carries every clause the head leaves out, and an unread source says unavailable rather than 0 %", async () => {
-  const idle = { status: "loading", data: null, error: null };
-  const lifecycle = { status: "ready", data: { rows: [{ agent_type: "a", start_count: 2000, completed_count: 127 }] }, error: null };
-  const review = { status: "ready", data: { rows: [{ review_flagged_count: 14, total_count: 100 }] }, error: null };
+test("the instrumentation head states the flagged share and the activation false-positive share, and an unread activation source says not loaded, never 0 %", async () => {
+  const mod = await loadAgentsScreen();
+  const getSub = mod.getInstrumentationSub as (r: unknown, a: unknown) => string;
+  const loading = { status: "loading", data: null, error: null };
   const rows = [
-    { name: "read", l: idle, r: idle, a: ACTIVATIONS_READY, line: /activation false-positive 2\.5% of 1,200 activations · last 30d/ },
-    { name: "every source read", l: lifecycle, r: review, a: ACTIVATIONS_READY, line: /^1,873 runs with no completion record · 14% flagged · activation false-positive 2\.5% of 1,200 activations · last 30d$/ },
-    { name: "read with no activations", l: idle, r: idle, a: ACTIVATIONS_EMPTY, line: /no activations · last 30d/ },
-    { name: "failed", l: idle, r: idle, a: ACTIVATIONS_FAILED, line: /Activation rate unavailable/ },
-    { name: "not yet read", l: idle, r: idle, a: idle, line: /Activation rate unavailable/ },
+    { name: "both sources read", r: REVIEW_FLAGS_READY, a: ACTIVATIONS_CLEAN, sub: "14.1% flagged · 0% false-positive activations" },
+    { name: "a nonzero false-positive share", r: REVIEW_FLAGS_READY, a: ACTIVATIONS_READY, sub: "14.1% flagged · 2.5% false-positive activations" },
+    { name: "a window with no activations states that, never a rate over an empty denominator", r: REVIEW_FLAGS_READY, a: ACTIVATIONS_EMPTY, sub: "14.1% flagged · no activations" },
+    { name: "a failed activation read", r: REVIEW_FLAGS_READY, a: ACTIVATIONS_FAILED, sub: "14.1% flagged · activations not loaded" },
+    { name: "an activation read in flight", r: REVIEW_FLAGS_READY, a: loading, sub: "14.1% flagged · activations not loaded" },
+    { name: "unread review flags add nothing", r: loading, a: ACTIVATIONS_READY, sub: "2.5% false-positive activations" },
   ];
-  for (const row of rows) {
-    const tree = await renderComponent("InstrumentationFold", {
-      lifecycleState: row.l, reviewState: row.r, activationState: row.a, days: 30, onRetry: () => undefined,
-    });
-    const [line] = findNodes(tree, (n) => n.type === "p" && row.line.test(collectText(n)));
-    assert.ok(line, `${row.name}: ${collectText(tree)}`);
-    if (row.a !== ACTIVATIONS_READY) assert.doesNotMatch(collectText(tree), /\b0(\.0)?\s*%/, `${row.name}: no zero rate`);
-    // only dim/faint are registered secondary-ink colors — any other text-* class falls back to full ink
-    assert.match(String(line?.props.className ?? ""), /\btext-(dim|faint)\b/, `${row.name}: secondary-ink tone`);
-  }
+  for (const row of rows) assert.equal(getSub(row.r, row.a), row.sub, row.name);
+});
+
+test("the Instrumentation fold carries no tone and its body is the review-flag chart alone, with the flagged total once and no unfinished count", async () => {
+  const tree = await renderComponent("InstrumentationFold", { reviewState: REVIEW_FLAGS_READY, activationState: ACTIVATIONS_CLEAN, onRetry: () => undefined });
+  const [fold] = findAtoms(tree, "Disclosure");
+  assert.equal(fold?.props.tone, undefined, "the head reads plain, whatever the shares");
+  assert.equal(fold?.props.sub, "14.1% flagged · 0% false-positive activations");
+  assert.deepEqual([findAtoms(fold, "Card").length, findNodes(fold, (n) => n.type === "p").length], [0, 0], "no card box and no sentence");
+  const [region] = findNodes(fold, (n) => n.props?.id === "agents-review-flags");
+  assert.equal(typeof region?.type, "string", "the region id rides a plain wrapper");
+  assert.ok(findCaption(region, "1,765 flagged"), collectText(region));
+  const text = collectText(fold);
+  assert.equal(text.match(/1,765/g)?.length, 1, text);
+  assert.doesNotMatch(text, /no record|unfinished/, "the unfinished count lives on the No completion record head alone");
 });
 
 test("the drawer's Performance section states the agent's budget crossings, peak and P95; a read in flight shows the loading look, a failed read marks Not loaded with its cause, never 0", async () => {
@@ -1572,9 +1579,28 @@ test("a matrix sparkline is a named image rather than an unlabelled drawing", as
   assert.match(String(img?.props["aria-label"]), /dev-react feature/);
 });
 
-test("drawer section titles are h2 headings under the dialog's own name", async () => {
-  const tree = await renderComponent("AgentDrawerSection", { title: "Reliability" });
-  assert.equal(findAtoms(tree, "SubCard")[0]?.props.labelLevel, 2);
+test("the No completion record head states the unfinished count as a warn head status, with no window and no pill", async () => {
+  const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt, getSlotRows: REAL_UI.getSlotRows, CARD_SLOTS: REAL_UI.CARD_SLOTS });
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  const tree = renderScreen(React.createElement(mod.LifecycleStatsCard as Component, {
+    state: { status: "ready", data: { rows: [{ agent_type: "glass-atrium-dev-node", start_count: 1300, stop_count: 40, completed_count: 35, p95_duration_sec: 60 }] }, error: null },
+    days: 30, onSelect: () => {}, onRetry: () => {},
+  }));
+  const [card] = findAtoms(tree, "Card");
+  const sub = renderScreen(card?.props.sub as never);
+  const [status] = findAtoms(sub, "HeadStatus");
+  assert.deepEqual([status?.props.tone, collectText(status).replace(/\s+/g, " ")], ["warn", "1,265 unfinished"]);
+  assert.equal(card?.props.right ?? null, null, "no pill beside the head");
+  assert.doesNotMatch(collectText(sub), /last \d+ days/i, "the page header states the window");
+});
+
+test("a drawer section is a plain section under an h2 label, with no sub-card box", async () => {
+  const tree = await renderComponent("AgentDrawerSection", { id: "drawer-reliability", title: "Reliability" });
+  const [section] = findNodes(tree, (n) => n.type === "section");
+  assert.equal(section?.props.id, "drawer-reliability");
+  const [label] = findAtoms(section, "SectionLabel");
+  assert.deepEqual([label?.props.level, collectText(label)], [2, "Reliability"]);
+  assert.equal(findAtoms(tree, "SubCard").length, 0, "no box inside the drawer");
 });
 
 test("the drawer's name reads its parts apart and never repeats the surface's own title id", async () => {
@@ -1595,19 +1621,6 @@ test("the drawer's name reads its parts apart and never repeats the surface's ow
   assert.equal(name?.props.name, "glass-atrium-dev-shell", "the name part is the shared agent name");
   const separators = findNodes(title, (n) => n.props?.className === "sr-only" && collectText(n).trim() === ",");
   assert.equal(separators.length, 2, "name, activity and health are read as three parts");
-});
-
-test("the review-flag total sits under a card title in every state, never as a heading-less tile", async () => {
-  const rows = [
-    { name: "loading", state: { status: "loading", data: null, error: null } },
-    { name: "ready", state: { status: "ready", data: { rows: [{ event_date: "2026-09-24", total_count: 20, review_flagged_count: 3 }] }, error: null } },
-  ];
-  for (const row of rows) {
-    const tree = await renderComponent("ReviewFlagTimelineCard", { state: row.state, days: 30, onRetry: () => undefined });
-    const cardHead = findAtoms(tree, "Card")[0];
-    assert.equal(cardHead?.props.title, "Review flags", row.name);
-    assert.match(String(cardHead?.props.sub), /30 days/, row.name);
-  }
 });
 
 // whitespace-normalized: collectText pads node boundaries, and a caption may hold an inline NoWrap token ("7 days")
@@ -1670,7 +1683,6 @@ test("the trend dates are the last seven days any agent reported, oldest first",
 test("caption words render in the sans face, leaving mono to ids and numbers", async () => {
   const rows = [
     { name: "drawer trend", component: "AgentPerformanceSection", props: getPerformanceProps([1, 2], ["2026-09-23", "2026-09-24"]), caption: "Runs per day · last 7 days" },
-    { name: "compatibility", component: "CompatibilityDetailBlock", props: { compatibility: "monitor daemon running" }, caption: "Requires" },
     { name: "matrix legend", component: "SuccessRateLegend", props: {}, caption: "Legend" },
   ];
   for (const row of rows) {
@@ -1776,6 +1788,40 @@ function getBandTile(tree: RenderedNode | string | null, label: string): Rendere
     .filter((n) => labels.every((other) => other === label || !collectText(n).includes(other)))[0] ?? null;
 }
 
+describe("a status stat another surface speaks for reads Not loaded in faint ink, its cause on hover, its context line pointing at that surface", () => {
+  const ready = { status: "ready", data: [], error: null };
+  const failed = { ...ERROR_STATE, busy: false };
+  const rows = [
+    {
+      name: "the page notice covers every failed read",
+      reads: { summaryState: failed, failureState: failed, overageState: failed }, success: failed,
+      labels: ["Unsafe to route", "Failed", "Over tool-use cap", "Needs info"], pointer: "See the notice above.",
+    },
+    {
+      name: "a sibling stat speaks for a read that failed alone",
+      reads: { summaryState: failed, failureState: ready, overageState: ready }, success: ready,
+      labels: ["Needs info"], pointer: "See the agent summary notice.",
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadAgentsScreen();
+      const getFailures = mod.getAgentSourceFailures as (entries: [string, unknown][]) => unknown;
+      const failures = getFailures([["agent summary", row.reads.summaryState], ["failure patterns", row.reads.failureState], ["budget overages", row.reads.overageState], ["success rates", row.success]]);
+      const tree = await renderStatusBand({ failures, days: 30, ...row.reads, failureByAgent: new Map(), overageByAgent: new Map(), onRetry: () => undefined });
+      for (const label of row.labels) {
+        const tile = getBandTile(tree, label);
+        const [value] = findAtoms(tile, "AbsentValue");
+        assert.deepEqual([value?.props.kind, collectText(value)], ["not-loaded", "Not loaded"], `${label}: the faint Not loaded word`);
+        assert.match(String(value?.props.title), /HTTP 500/, `${label}: the cause on hover`);
+        const [context] = findNodes(tile, (n) => n.props?.className === "stat-context");
+        assert.equal(collectText(context).trim(), row.pointer, `${label}: the context line points at the speaker`);
+        assert.equal(findAtoms(tile, "RegionCovered").length, 0, `${label}: no pointer sentence in the value`);
+      }
+    });
+  }
+});
+
 test("the over-cap and needs-context tiles state their rate over runs, and the tone follows the rate rather than presence", async () => {
   const ready = { status: "ready", data: [], error: null };
   const agents = [{ agent_id: "a", runs: 600, needs_context_count: 2 }, { agent_id: "b", runs: 400, needs_context_count: 1 }];
@@ -1799,38 +1845,61 @@ test("the over-cap and needs-context tiles state their rate over runs, and the t
   }
 });
 
-test("the P95 warn cut follows the fleet's upper quartile, so warn stays rare while the 10-minute floor holds", async () => {
-  const mod = await loadAgentsScreen();
-  const getP95WarnSec = mod.getP95WarnSecAg as (agents: unknown[]) => number;
-  const toAgents = (secs: number[]) => secs.map((s, i) => ({ agent_id: `a${i}`, agent_name: `a${i}`, status: "active", runs: 40, success_pct: 100, p95_ms: s * 1000 }));
-  const rows = [
-    { name: "a slow fleet raises the cut to its p75", secs: [300, 700, 800, 900, 1000, 1100, 1150, 1190], cut: 1100 },
-    { name: "a fast fleet keeps the 10-minute floor", secs: [60, 120, 180, 240, 300], cut: 600 },
-    { name: "fewer than four measured agents keep the floor", secs: [900, 1000, 1100], cut: 600 },
-  ];
-  for (const row of rows) {
-    const cut = getP95WarnSec([...toAgents(row.secs), { agent_id: "unmeasured", p95_ms: null }]);
-    assert.equal(cut, row.cut, row.name);
+// §12.4 fixtures (p95 seconds) → the cut and how many rows sit strictly above it.
+const P95_CUT_FIXTURES = [
+  { name: "a spread fleet cuts at twice its nearest-rank median", secs: [2472, 2268, 1985, 1880, 1601, 1449, 1350, 1274, 1142, 1091, 1005, 903, 807, 710, 556, 484, 398, 192, 115], cut: 2182, marked: 2 },
+  { name: "a flat fleet marks no row", secs: [900, 900, 900, 900, 900, 900, 900, 900], cut: 1800, marked: 0 },
+  { name: "a fast fleet keeps the 20-minute floor", secs: [300, 320, 340, 360, 1250], cut: 1200, marked: 1 },
+  { name: "fewer than four measured agents take the floor", secs: [1500, 1500, 1500], cut: 1200, marked: 3 },
+];
+
+function toP95Agents(secs: number[]): Record<string, unknown>[] {
+  return secs.map((s, i) => ({ agent_id: `a${i}`, agent_name: `a${i}`, status: "active", runs: 40, success_pct: 100, p95_ms: s * 1000 }));
+}
+
+function renderP95Table(mod: Record<string, unknown>, agents: Record<string, unknown>[]): RenderedNode | string | null {
+  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
+  return renderScreen(React.createElement(mod.AgentSummaryTable as Component, {
+    agents, pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {},
+  }));
+}
+
+// The P95 cell is the one whose bar is named for the row's p95.
+function getP95Cells(tree: RenderedNode | string | null): RenderedNode[] {
+  return findNodes(tree, (n) => n.type === "td" && findAtoms(n, "Bar").some((bar) => /^p95 /.test(String(bar.props.ariaLabel))));
+}
+
+const isTooSlowWords = (n: RenderedNode) => /\bsr-only\b/.test(String(n.props?.className ?? "")) && collectText(n) === "Too slow";
+
+describe("the P95 too-slow cut", () => {
+  for (const row of P95_CUT_FIXTURES) {
+    test(row.name, async () => {
+      const mod = await loadAgentsScreen({ formatDuration: REAL_UI.formatDuration });
+      const agents = [...toP95Agents(row.secs), { agent_id: "unmeasured", agent_name: "unmeasured", status: "active", runs: 40, success_pct: 100, p95_ms: null }];
+      assert.equal((mod.getP95CutSecAg as (a: unknown[]) => number)(agents), row.cut, "cut");
+      const marked = getP95Cells(renderP95Table(mod, agents)).filter((cell) => findNodes(cell, isTooSlowWords).length > 0);
+      assert.equal(marked.length, row.marked, "rows over the cut");
+    });
   }
 });
 
-test("every ledger row reads the fleet P95 cut, and only a p95 above it takes the warn glyph", async () => {
-  const mod = await loadAgentsScreen();
-  const slowFleetSecs = [300, 700, 800, 900, 1000, 1100, 1150, 1190];
-  const agents = slowFleetSecs.map((s, i) => ({ agent_id: `a${i}`, agent_name: `a${i}`, status: "active", runs: 40, success_pct: 100, p95_ms: s * 1000 }));
-  const React = mod.React as { createElement: (t: unknown, p: unknown) => unknown };
-  const table = renderScreen(React.createElement(mod.AgentSummaryTable as Component, {
-    agents, pseudoAgents: [], days: 30, selectedAgent: null, onSelect: () => {},
-  }));
-  const cuts = findNodes(table, (n) => n.type === "AgentSummaryRow").map((n) => n.props.p95WarnSec);
-  assert.deepEqual(Array.from(new Set(cuts)), [1100], "every ledger row reads the fleet cut");
-  const glyphOf = (sec: number) => {
-    const row = findNodes(table, (n) => n.type === "AgentSummaryRow" && (n.props.agent as { p95_ms: number }).p95_ms === sec * 1000)[0];
-    const cell = findCellByTitle(row, /^p95 latency tier/);
-    return findNodes(cell, (n) => n.type === "span" && n.props?.["aria-hidden"] === "true")[0]?.props.className;
-  };
-  assert.equal(glyphOf(1000), "text-ok", "under the fleet cut reads fast");
-  assert.equal(glyphOf(1150), "text-dim", "above the fleet cut takes the warn glyph");
+test("a row over the P95 cut carries the crit glyph, the Too slow words and the cut in its title, and a row under it carries no glyph", async () => {
+  const mod = await loadAgentsScreen({ formatDuration: REAL_UI.formatDuration });
+  const cells = getP95Cells(renderP95Table(mod, toP95Agents(P95_CUT_FIXTURES[0].secs)));
+  const [slow, fast] = [cells[0], cells[cells.length - 1]];
+  assert.ok(findNodes(slow, (n) => n.props?.["aria-hidden"] === "true" && /\btext-crit\b/.test(String(n.props.className))).length === 1, "crit glyph");
+  assert.equal(findNodes(slow, isTooSlowWords).length, 1, "sr-only words");
+  assert.equal(slow.props.title, `Over 2× the fleet median (cut ${(REAL_UI.formatDuration as (sec: number) => string)(2182)})`);
+  assert.equal(findNodes(fast, (n) => n.props?.["aria-hidden"] === "true").length, 0, "no glyph under the cut");
+  assert.equal(findNodes(fast, isTooSlowWords).length, 0, "no words under the cut");
+});
+
+test("the P95 bar is the row's p95 over the slowest p95 in the response, neutral and uncapped", async () => {
+  const mod = await loadAgentsScreen({ formatDuration: REAL_UI.formatDuration });
+  const secs = P95_CUT_FIXTURES[0].secs;
+  const bars = getP95Cells(renderP95Table(mod, toP95Agents(secs))).map((cell) => findAtoms(cell, "Bar").find((bar) => /^p95 /.test(String(bar.props.ariaLabel))));
+  assert.deepEqual(bars.map((bar) => bar?.props.value), secs.map((s) => s / 2472), "width = p95 / slowest");
+  assert.deepEqual(Array.from(new Set(bars.map((bar) => bar?.props.tone))), ["neutral"], "one neutral fill");
 });
 
 test("the success cell shows the rate alone, its fraction kept in the tooltip", async () => {
@@ -1861,30 +1930,65 @@ test("the failing-pairs limit keeps a solid signal over a worse small sample whi
   assert.equal(out.failingTotal, 2);
 });
 
-test("the failing-pairs header meta counts failing over judged pairs within the 32-character meta cap", async () => {
-  const mod = await loadAgentsScreen();
+test("the failing-pairs header meta counts failing over judged pairs in words, the window left to the page header", async () => {
+  const mod = await loadAgentsScreen({ formatInt: REAL_UI.formatInt });
   const getSub = mod.getFailingPairsSub as (...a: unknown[]) => string;
-  const sub = getSub("ready", 120, 1500, 90);
-  assert.equal(sub, "120 of 1500 ≤ 95% · 90d");
+  const sub = getSub("ready", 17, 69, 30);
+  assert.equal(sub, "17 of 69 pairs at or below 95%");
   assert.ok(sub.length <= 32, `${sub.length} chars`);
 });
 
-test("the review-flag and task-type headers keep their meta within the 32-character cap", async () => {
-  const headers = [
-    ...findAtoms(await renderComponent("ReviewFlagTimelineCard", { state: LOADING_STATE, days: 90, onRetry: () => undefined }), "Card"),
-    ...findAtoms(await renderComponent("TaskTypeFold", { state: LOADING_STATE, days: 90, onRetry: () => undefined }), "Disclosure"),
+describe("a failing-pairs head with no failing pair carries no sub, the body's OK line saying it", () => {
+  const day = (success: number, failure: number) => ({ agent: "glass-atrium-dev-node", task_type: "feature", event_date: "2026-09-01", success_count: success, failure_count: failure, total_count: success + failure });
+  const rows = [
+    { name: "no pair read in the window", rows: [] as Record<string, unknown>[] },
+    { name: "every judged pair above the threshold", rows: [day(40, 0)] },
   ];
-  assert.equal(headers.length, 2, "both headers render");
-  for (const header of headers) {
-    const sub = String(header.props.sub);
-    assert.ok(sub.length <= 32, `${header.props.title}: "${sub}" is ${sub.length} chars`);
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadAgentsScreen({ getSlotRows: REAL_UI.getSlotRows, CARD_SLOTS: REAL_UI.CARD_SLOTS, formatInt: REAL_UI.formatInt });
+      const tree = await renderComponentOf(mod, "TopNFailingAgentsCard", {
+        state: { status: "ready", data: { rows: row.rows }, error: null }, days: 30, onRetry: () => undefined, failureByAgent: new Map(),
+      });
+      assert.equal(findAtoms(tree, "Card")[0]?.props.sub || null, null);
+    });
   }
 });
 
-test("the review-flag card and the task-type fold keep their titles within the 24-character cap", async () => {
+describe("a paired card's foot holds only the show-all toggle, so a list that fits draws no foot", () => {
+  const cards = [
+    {
+      name: "Most-failing pairs", component: "TopNFailingAgentsCard",
+      props: (count: number) => ({ state: { status: "ready", data: { rows: getFailingRows(count) }, error: null }, days: 30, onRetry: () => undefined, failureByAgent: new Map() }),
+    },
+    {
+      name: "No completion record", component: "LifecycleStatsCard",
+      props: (count: number) => ({ state: { status: "ready", data: { rows: getLifecycleRows(count) }, error: null }, days: 30, onSelect: () => undefined, onRetry: () => undefined }),
+    },
+  ];
+  for (const card of cards) {
+    test(card.name, async () => {
+      const mod = await loadAgentsScreen({ getSlotRows: REAL_UI.getSlotRows, CARD_SLOTS: REAL_UI.CARD_SLOTS, formatInt: REAL_UI.formatInt });
+      const footOf = async (count: number) => {
+        const foot = findAtoms(await renderComponentOf(mod, card.component, card.props(count)), "Card")[0]?.props.foot;
+        return foot ? collectText(renderScreen(foot as never)).replace(/\s+/g, " ").trim() : null;
+      };
+      assert.equal(await footOf(1), null, "a list that fits draws no foot");
+      assert.equal(await footOf(17), "Show all 17", "a long list shows the toggle alone");
+    });
+  }
+});
+
+test("the task-type header keeps its meta within the 32-character cap", async () => {
+  const [header] = findAtoms(await renderComponent("TaskTypeFold", { state: LOADING_STATE, days: 90, onRetry: () => undefined }), "Disclosure");
+  const sub = String(header?.props.sub);
+  assert.ok(sub.length <= 32, `${header?.props.title}: "${sub}" is ${sub.length} chars`);
+});
+
+test("the Instrumentation and task-type folds keep their titles within the 24-character cap", async () => {
   const props = { state: LOADING_STATE, days: 90, onRetry: () => undefined };
   const heads = [
-    ...findAtoms(await renderComponent("ReviewFlagTimelineCard", props), "Card"),
+    ...findAtoms(await renderComponent("InstrumentationFold", { reviewState: LOADING_STATE, activationState: LOADING_STATE, onRetry: () => undefined }), "Disclosure"),
     ...findAtoms(await renderComponent("TaskTypeFold", { ...props, failures: undefined }), "Disclosure"),
   ];
   assert.equal(heads.length, 2, "both heads render");
@@ -2048,7 +2152,6 @@ describe("a focused Retry that succeeds leaves focus on its region's card", () =
     const rows = [
       { name: "success rates", component: "SuccessRateMatrixRegion", props: { state: retrying, days: 30, onRetry } },
       { name: "failure rates", component: "TopNFailingAgentsCard", props: { state: retrying, days: 30, onRetry, failureByAgent: new Map() } },
-      { name: "review flags", component: "ReviewFlagTimelineCard", props: { state: retrying, days: 30, onRetry } },
       { name: "lifecycle stats", component: "LifecycleStatsCard", props: { state: retrying, days: 30, onSelect: () => undefined, onRetry } },
     ];
 
@@ -2059,6 +2162,14 @@ describe("a focused Retry that succeeds leaves focus on its region's card", () =
       assert.ok(errorCard.props.focusTargetId, `${row.name}: the Retry names a focus target`);
       assert.equal(getRootHost(tree).props.id, errorCard.props.focusTargetId, `${row.name}: the target is the region's own card`);
     }
+  });
+
+  test("the Instrumentation fold hands its error card's Retry to the chart wrapper that encloses it", async () => {
+    const tree = await renderComponent("InstrumentationFold", { reviewState: retrying, activationState: retrying, onRetry });
+    const [errorCard] = findAtoms(tree, "RegionUnavailable");
+    assert.equal(errorCard?.props.isBusy, true, "the card stays up, busy, through the Retry");
+    const [target] = findNodes(tree, (n) => n.props?.id === errorCard.props.focusTargetId);
+    assert.equal(findAtoms(target, "RegionUnavailable")[0], errorCard, "the target encloses the error card");
   });
 
   test("each drawer section hands its error card's Retry to the section that encloses it", async () => {
@@ -2116,19 +2227,21 @@ test("one failed read gives one error card, and every other region it feeds poin
   const failures = getFailures([["agent summary", failed], ["success rates", ready], ["failure patterns", ready], ["budget overages", ready]]);
   assert.equal(failures.banner, null, "one failed source raises no page banner");
   const onRetry = () => undefined;
+  const band = await renderStatusBand({
+    failures, days: 30, summaryState: failed, failureState: ready, overageState: ready,
+    failureByAgent: new Map(), overageByAgent: new Map(), onRetry,
+  });
   const trees = [
     await renderComponent("AgentAlarmLane", { failures, state: failed, onRetry }),
-    await renderStatusBand({
-      failures, days: 30, summaryState: failed, failureState: ready, overageState: ready,
-      failureByAgent: new Map(), overageByAgent: new Map(), onRetry,
-    }),
+    band,
     await renderComponent("AgentSummaryCard", { failures, state: failed, days: 30, onRetry }),
   ];
   const cards = trees.flatMap((tree) => findAtoms(tree, "RegionUnavailable"));
   assert.deepEqual(cards.map((card) => card.props.source), ["agent summary"], "the summary read speaks once, named by its read");
   assert.equal(typeof cards[0].props.onRetry, "function");
   const covered = trees.flatMap((tree) => findAtoms(tree, "RegionCovered"));
-  assert.equal(covered.length, 3, "the unsafe and needs-context tiles and the ledger point at that card");
+  assert.equal(covered.length, 1, "the ledger points at that card");
+  assert.match(collectText(getBandTile(band, "Needs info")), /See the agent summary notice\./, "the needs-info stat points at that card");
 });
 
 test("the drawer's breakage headline names what it counts and sets the blocked part apart as a compliant halt", async () => {
@@ -2208,32 +2321,30 @@ test("the day tooltip heads its reasons with how many runs have one, the two rea
   assert.match(text, /9 of 20 have a recorded reason/, "a run with no self-check cannot also mismatch its confidence, so the reasons add up");
 });
 
-test("the No record and Unfinished counts state their definitions on the page, where the two cards that differ sit", async () => {
+test("the No record and Unfinished definitions ride each card's info button alone, never a line on the page", async () => {
   const rows = [
     {
-      name: "the ledger defines No record",
+      name: "the ledger's No record",
       component: "AgentSummaryCard",
       props: { state: { status: "ready", data: { agents: [], meta: { total_agents: 0 } }, error: null }, days: 30, onRetry: () => undefined },
-      definition: /No record = launches − runs/,
       info: /Launches minus runs, from the agent summary/,
     },
     {
-      name: "the lifecycle card defines Unfinished",
+      name: "the lifecycle card's Unfinished",
       component: "LifecycleStatsCard",
       props: {
         state: { status: "ready", data: { rows: [{ agent_type: "glass-atrium-dev-shell", start_count: 4, stop_count: 3, completed_count: 3 }] }, error: null },
         days: 30, onSelect: () => undefined, onRetry: () => undefined,
       },
-      definition: /Unfinished = started − completed/,
       info: /SubagentStart events minus completed outcomes/,
     },
   ];
   for (const row of rows) {
     const tree = await renderComponent(row.component, row.props) as RenderedNode;
-    const footText = findNodes(tree, (n) => n.props.foot != null).map((n) => collectText(renderScreen(n.props.foot))).join(" ");
-    assert.match(`${collectText(tree)} ${footText}`.replace(/\s+/g, " "), row.definition, `${row.name}: short form on the page`);
-    const infos = findNodes(tree, (n) => typeof n.props.info === "string").map((n) => String(n.props.info));
-    assert.ok(infos.some((info) => row.info.test(info)), `${row.name}: full definition in the card's info drawer`);
+    const [card] = findAtoms(tree, "Card");
+    assert.equal(card?.props.foot || null, null, `${row.name}: no foot line`);
+    assert.doesNotMatch(collectText(tree), /No record =|Unfinished =/, `${row.name}: no definition on the page`);
+    assert.match(String(card?.props.info), row.info, `${row.name}: the full definition in the card's info drawer`);
   }
 });
 
@@ -2365,12 +2476,19 @@ function getTintedNodes(tree: RenderedNode | string | null): RenderedNode[] {
   return findNodes(tree, (n) => TONE_TINT.test(String(n.props?.className ?? "")) || TONE_TINT.test(JSON.stringify(n.props?.style ?? {})));
 }
 
-test("the compatibility requirement reads on a neutral sunken sub-card, not an info tint", async () => {
-  const tree = await renderComponent("CompatibilityDetailBlock", { compatibility: "monitor daemon running" });
-  const [card] = findAtoms(tree, "SubCard");
-  assert.equal(card?.props.sunken, true, "the requirement sits on the sunken sub-card");
-  assert.match(collectText(card), /monitor daemon running/);
-  assert.deepEqual(getTintedNodes(tree), [], "no tone tint on an explanation block");
+test("the drawer overview states the setup requirement as a Requires field and its config as metadata badges", async () => {
+  const agent = { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", runs: 50, needs_context_count: 0, success_pct: 98, compatibility: "monitor daemon running", origin: "system" };
+  const emptyRows = { status: "ready", data: { rows: [] }, error: null };
+  const tree = await renderComponent("AgentOverviewSection", {
+    agent, drawerAgent: agent.agent_id, summaryState: { status: "ready", data: { agents: [agent] }, error: null },
+    revisionState: emptyRows, reviewByAgentState: emptyRows, onRetry: () => undefined,
+  });
+  const fields = findAtoms(tree, "DetailField").filter((n) => n.props.label === "Requires");
+  assert.deepEqual(fields.map((n) => n.props.value), ["monitor daemon running"]);
+  assert.equal(findAtoms(tree, "SubCard").length + findAtoms(tree, "Pill").length, 0, "no sub-card or pill");
+  const badges = findAtoms(tree, "Badge").filter((n) => /^origin:\s*system$/.test(collectText(n)));
+  assert.deepEqual(badges.map((n) => n.props.role), ["metadata"]);
+  assert.deepEqual(getTintedNodes(tree), [], "no tone tint on an explanation");
 });
 
 test("the delete panel states its warning and its failure as inset alert cards, the failure titled and the cause in the body", async () => {
