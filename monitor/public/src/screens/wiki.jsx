@@ -1080,7 +1080,7 @@ function openOnOwnFocusW(event) {
 	if (event.target === event.currentTarget) event.currentTarget.open = true;
 }
 
-// Status-row peers share one slot → their feet pin to one edge of the stretched row.
+// Status-row peers take one card slot size; the content layout lets each end at its rows.
 const STATUS_CARD_SIZE_W = "S";
 
 // Notes by type — the library's composition as a caption-only table; the card ends at its rows.
