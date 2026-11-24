@@ -1115,9 +1115,13 @@
   - list sources: every firing Status-card stat (Harness health · Task results · Fleet · Spend today) + the install state; a firing stat shows only its value and tone glyph, so its sentence is the row's.
   - Task results row: the tripped line's share in words (`10% of task results failed or blocked in the last 7 days` · `12% of task results have open caveats in the last 7 days`), its count as the detail; the alarm lines stay behind the stat's ⓘ.
   - Fleet row: `N agent(s) is/are suspended` (crit, a streak as the detail) · else `N agent(s) is/are on a failing streak` (warn).
+  - Spend row: the title names the figure its multiple judges — `$842 so far today` or `…, running at $3,310/day over the last 3 hours`; the detail is that figure's multiple of the 7-day average. Cost titles its own figure (§7.9 consumers).
   - Status card: one context line per stat, at a fixed height — loading, held and failed states never grow the card.
   - held line: `Last known` alone; the failed refresh rides the line's `title` and the card's ⓘ · a partly unread harness reads `Last known` or `N not read` the same way.
-  - a stat's Retry sits in `.one-line-box`, a box one context line tall → the 32 control overhangs into the card padding.
+  - an alarm read that could not run: its stat line takes `ToneGlyph tone="unknown"` — the screen's one statement of it beside the freshness stamp; no separate notice.
+  - a stat's Retry: `RetryButton isInline` in `.one-line-box`, on the context line.
+- **Dashboard week panels** (Task results · Runs by hour · Spend per day): one sub-line, `{first day} – today · {n} {noun}`; a payload with no window dates states the count alone (the Status card's labels hold the window).
+  - held panel: one bare line, `AlertCard surface="bare"` `Couldn't refresh.` with its inline Retry · a panel never loaded keeps the `inset` card.
 - The sidebar footer status ("1 PART DOWN") and its dot retire — they repeat the nav badge.
 - Freshness stamp: hidden while fresh; shown as warn text "Stale · 12m" or crit "Not updated" only when it is.
 - Agreement is silence: "Matches saved", "In sync", "Healthy" on every row disappear; only deviations render (warn glyph + "Differs from saved: Sonnet 5.5").
