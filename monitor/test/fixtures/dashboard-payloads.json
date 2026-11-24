@@ -1698,7 +1698,12 @@
    "total_count": 4682,
    "period_start": "2026-08-12",
    "period_end": "2026-08-19",
-   "timezone": "Asia/Seoul"
+   "timezone": "Asia/Seoul",
+   "bucket_dates": {
+    "first": "2026-08-12",
+    "last": "2026-08-19",
+    "count": 8
+   }
   },
   "fetched_at": "2026-08-19T09:03:06.153Z"
  }

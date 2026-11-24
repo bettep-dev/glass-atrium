@@ -413,12 +413,14 @@ describe("Runs by hour day labels at 1440×900", () => {
   };
 
   // a folded "Wed ×2" never widens the label track → the grid starts at one x in every state
+  // the served 8-date window folds Wed; a payload with no window dates folds nothing
   test("the first hour cell starts at one x with or without a folded weekday", async () => {
-    const atRest = await firstCellLeft();
-    overrides[HEATMAP] = { ...heatmap, meta: { ...heatmap.meta, bucket_dates: { first: "2026-08-12", last: "2026-08-19", count: 8 } } };
+    const folded = await firstCellLeft();
+    const { bucket_dates: _dates, ...undated } = heatmap.meta;
+    overrides[HEATMAP] = { ...heatmap, meta: undated };
     try {
-      const folded = await firstCellLeft();
-      assert.ok(Number.isFinite(atRest) && Math.abs(folded - atRest) < 0.5, `rest ${atRest}, folded ${folded}`);
+      const unfolded = await firstCellLeft();
+      assert.ok(Number.isFinite(folded) && Math.abs(folded - unfolded) < 0.5, `folded ${folded}, unfolded ${unfolded}`);
     } finally {
       delete overrides[HEATMAP];
     }
@@ -527,7 +529,7 @@ describe("Runs by hour ramp", () => {
     });
     await page.close();
     const peak = Math.max(...(PAYLOADS["/api/outcomes/heatmap"] as { data: number[][] }).data.flat());
-    assert.match(paint.key, new RegExp(`^01${peak} runs per hour$`), "the key ends on the grid's peak");
+    assert.match(paint.key, new RegExp(`^01${peak} runs per hour · ×2 = two dates summed$`), "the key states the grid's peak, then the served window's fold");
     const isZero = (title: string) => / — 0 runs$/.test(title);
     const zeros = paint.cells.filter((cell) => isZero(cell.title));
     const filled = paint.cells.filter((cell) => !isZero(cell.title));
