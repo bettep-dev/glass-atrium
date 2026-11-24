@@ -814,7 +814,7 @@ function AgentSummaryCard({ failures, state, revisionState, reviewByAgentState, 
   const data = readyData(state);
   const totalAgents = data?.meta?.total_agents ?? 0;
   const subText = data
-    ? `${totalAgents} active`
+    ? formatAgentCountAg(totalAgents)
     : (window.UI.getRegionView(state) === 'loading' ? 'Loading…' : "Couldn't load");
 
   // the sort lives on the column heads → the head's right cluster keeps only the fallback-order note, while there are rows to order
@@ -1641,9 +1641,9 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
         <div className="fs-body text-dim leading-relaxed truncate" title={agent.description}>{agent.description}</div>
       )}
 
-      {/* status + last-run 1 메타 라인. 설명 부재 → 같은 줄 끝에 조용한 em-dash 로 신호 (#4). */}
+      {/* last-run 1 메타 라인 (activity 단어는 drawer head 소유). 설명 부재 → 같은 줄 끝에 조용한 em-dash 로 신호 (#4). */}
       <div className="fs-meta text-dim">
-        {agent.status || 'unknown'} · last run <span title={agent.last_run_at || undefined}>{lastRun}</span>
+        Last run <span title={agent.last_run_at || undefined}>{lastRun}</span>
         {!agent.description && (
           <span className="text-faint" title="No role description in the agent .md frontmatter."> · — no role description</span>
         )}
@@ -1837,7 +1837,7 @@ function AgentLatencyRow({ latency, state, onRetry }) {
 }
 
 // 3. Reliability — Failures + Lifecycle as one section of two sub-blocks
-// (a) Breakages = headline pill + Failed/Blocked 2-col + last breakage + top concerns + keyword classes (muted at the end)
+// (a) Breakages = Failed/Blocked/Rate metrics + last breakage + top concerns + keyword classes (muted at the end)
 // (b) Lifecycle = unfinished pill + Started/Finished 2-col + duration triplet on one line
 function AgentReliabilitySection({ agent, drawerAgent, failureByAgent, failureState, detailState, blockedState, lifecycleState, days, onRetry }) {
   // one separator at the AgentDrawerSection edge — the two sub-blocks split by gap-block spacing only (one divider vocabulary)
@@ -1864,7 +1864,6 @@ function AgentReliabilitySection({ agent, drawerAgent, failureByAgent, failureSt
 
 // (a) Breakages — failure-patterns(필터) 요약 + 기존 MergedBreakageSection(fail/blocked 키워드 분류) 재사용.
 function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, detailState, blockedState, days, onRetry }) {
-  const { Badge } = window.UI;
   const view = window.UI.getRegionView(failureState);
   if (view === 'loading') {
     return <DrawerSectionSkeleton rows={2} label="failures"/>;
@@ -1877,42 +1876,22 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
   // failure-patterns row 의 top_concerns — failureByAgent map 은 미보유 → 원본 rows 에서 직접 조회.
   const raw = (readyData(failureState)?.rows ?? []).find((r) => r.agent === drawerAgent) || null;
   const topConcerns = Array.isArray(raw?.top_concerns) ? raw.top_concerns : [];
-  const split = failure ? getWriterBreakageSplit(failure) : null;
-  const rateText = failure ? formatPctAg(failure.breakage_rate * 100) : '';
-
   return (
     <div className="space-y-block">
       <div>
         <div className="fs-meta text-faint mb-label">Breakages</div>
         {failure && failure.total_breakages > 0 ? (
           <div className="space-y-block">
-            <div className="flex items-center gap-list flex-wrap">
-              <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate)}>
-                {formatIntAg(split.breakages)} failed or blocked{failure.reconstructed > 0 ? '' : ` · ${rateText}`}
-              </Badge>
-              {split.blocked.max > 0 && (
-                <span className="fs-meta text-dim">
-                  of which {split.blocked.min === split.blocked.max ? '' : 'up to '}{formatIntAg(split.blocked.max)} blocked — a compliant halt, not a defect
-                </span>
-              )}
-              {failure.reconstructed > 0 && (
-                <span
-                  className="fs-meta text-faint"
-                  title="Harness-reconstructed records (recovery artifacts) excluded from the writer-emitted breakage headline">
-                  ↺ {formatIntAg(failure.reconstructed)} reconstructed, left out of this count
-                </span>
-              )}
-            </div>
-            {/* rate + Failed/Blocked are all-records figures → captioned apart from the writer-basis headline */}
             <div>
               {failure.reconstructed > 0 && (
                 <div className="fs-meta text-faint">
-                  All records, {formatIntAg(failure.reconstructed)} reconstructed included · {rateText} of outcomes
+                  All records, {formatIntAg(failure.reconstructed)} reconstructed included
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-block">
+              <div className="grid grid-cols-3 gap-block">
                 <DetailMetric label="Failed" value={formatIntAg(failure.fail_count)}/>
                 <DetailMetric label="Blocked" value={formatIntAg(failure.blocked_count)}/>
+                <DetailMetric label="Rate" value={formatPctAg(failure.breakage_rate * 100)}/>
               </div>
             </div>
             <DrawerInfoRow
@@ -1945,22 +1924,6 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
       />
     </div>
   );
-}
-
-/**
- * Writer-emitted breakage headline with its blocked part bounded inside it.
- * The payload does not say which result the reconstructed rows carry → the blocked part is a range:
- * each reconstructed row hides at most one blocked row, and the part never exceeds the headline.
- */
-function getWriterBreakageSplit(failure) {
-  const reconstructed = failure.reconstructed || 0;
-  const breakages = Math.max(0, failure.total_breakages - reconstructed);
-  const blocked = failure.blocked_count || 0;
-
-  return {
-    breakages,
-    blocked: { min: Math.max(0, blocked - reconstructed), max: Math.min(blocked, breakages) },
-  };
 }
 
 // concerns arrive cut mid-sentence → drop the closers, separators and emptied pairs a cut leaves in front; a real opener stays
@@ -2123,36 +2086,31 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
 }
 
 function MergedBreakageBody({ merged, days }) {
-  const { Icon, EmptyState, MachineString } = window.UI;
+  const { EmptyState, MachineString } = window.UI;
   if (!merged || merged.total === 0) {
     return <EmptyState message={`No failed or blocked tasks in the last ${days} days`}/>;
   }
 
   return (
-    <div>
-      <div className="fs-meta text-dim tnum mb-label">
-        Total {formatIntAg(merged.total)} = <span className="inline-flex items-center gap-label-inline"><span className="text-crit inline-flex" aria-hidden="true"><Icon name="x" size={11}/></span>fail {formatIntAg(merged.failTotal)}</span> + <span className="inline-flex items-center gap-label-inline"><span className="text-info inline-flex" aria-hidden="true"><Icon name="info" size={11}/></span>blocked {formatIntAg(merged.blockedTotal)}</span>
-      </div>
-      <div className="space-y-list">
-        {merged.reasons.map((r) => {
-          const pct = merged.total > 0 ? (r.count / merged.total) * 100 : 0;
-          return (
-            <div key={r.category} className="fs-body">
-              <div className="flex justify-between mb-stack">
-                <MachineString>{r.category}</MachineString>
-                <span
-                  className="text-dim tnum"
-                  title={`fail ${r.failCount} + blocked ${r.blockedCount}`}>
-                  {r.count} · {formatPctAg(pct, 0)}
-                </span>
-              </div>
-              <div className="h-1.5 bg-sunken rounded-full overflow-hidden">
-                <div className="h-full bg-data" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}/>
-              </div>
+    <div className="space-y-list">
+      {merged.reasons.map((r) => {
+        const pct = merged.total > 0 ? (r.count / merged.total) * 100 : 0;
+        return (
+          <div key={r.category} className="fs-body">
+            <div className="flex justify-between mb-stack">
+              <MachineString>{r.category}</MachineString>
+              <span
+                className="text-dim tnum"
+                title={`fail ${r.failCount} + blocked ${r.blockedCount}`}>
+                {r.count} · {formatPctAg(pct, 0)}
+              </span>
             </div>
-          );
-        })}
-      </div>
+            <div className="h-1.5 bg-sunken rounded-full overflow-hidden">
+              <div className="h-full bg-data" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}/>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -2178,10 +2136,8 @@ function mergeBreakageReasons(failData, blockedData) {
   addReasons(failData, 'failCount');
   addReasons(blockedData, 'blockedCount');
 
-  const failTotal    = Number(failData?.meta?.total_failures) || 0;
-  const blockedTotal = Number(blockedData?.meta?.total_failures) || 0;
   const reasons = Array.from(byCategory.values()).sort((a, b) => b.count - a.count);
-  return { reasons, failTotal, blockedTotal, total: failTotal + blockedTotal };
+  return { reasons, total: (Number(failData?.meta?.total_failures) || 0) + (Number(blockedData?.meta?.total_failures) || 0) };
 }
 
 // Drawer metric — label over a sans tnum value, flat on its section (no card inside the section card).
@@ -2507,8 +2463,6 @@ function PairedCardFootAg({ total, isShowingAll, onToggle }) {
 }
 
 function TopNFailingAgentsBody({ failures, state, days, onRetry, pairs, failureByAgent }) {
-  const { Badge } = window.UI;
-
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
     return <window.UI.LoadingPlaceholder label="most-failing pairs" minHeight={200}/>;
@@ -2517,16 +2471,7 @@ function TopNFailingAgentsBody({ failures, state, days, onRetry, pairs, failureB
     return <window.UI.RegionFailure source={REGION_FEEDERS.success} region="failure rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.failingPairs} onRetry={onRetry}/>;
   }
   if (pairs.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-label" style={{ minHeight: 180 }}>
-        <Badge role="status" tone="ok" icon>
-          Every (agent, task_type) success_rate &gt; {getOffTargetRateLabelAg()}
-        </Badge>
-        <div className="fs-meta text-faint">
-          Nothing at or below the threshold in the last <window.UI.NoWrap>{days} days</window.UI.NoWrap>
-        </div>
-      </div>
-    );
+    return <window.UI.EmptyState message={`No pair at or below ${getOffTargetRateLabelAg()}.`}/>;
   }
 
   return <TopNFailingAgentsTable pairs={pairs} failureByAgent={failureByAgent} days={days}/>;
@@ -2664,7 +2609,7 @@ function QualityHealthTimeline({ failures, state, onRetry }) {
   }
   const rows = readyData(state)?.rows ?? [];
   if (rows.length === 0) {
-    return <window.UI.EmptyState message="No review_flag data."/>;
+    return <window.UI.EmptyState message="No review flags."/>;
   }
 
   const chartRows = rows.map((r) => ({
