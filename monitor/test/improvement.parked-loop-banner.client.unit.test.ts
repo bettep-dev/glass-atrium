@@ -269,11 +269,11 @@ test("the CTM/EPM row leaves its tone on the glyph", () => {
   );
 });
 
-// an empty page shows no alarm: a count's tone glyph appears only once there is something to count
-describe("a zero count carries no tone glyph, a non-zero count keeps its one glyph", () => {
+// a tone glyph marks a figure over a stated line, and no run-breakdown chip has one → the chip words name each category
+describe("the run breakdown chips carry no tone glyph at any count", () => {
   const rows = [
     { name: "run breakdown at zero", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 0, cycles_generated_not_applied_7d: 0, cycles_nothing_generated_7d: 0 } }), glyphs: 0 },
-    { name: "run breakdown with counts", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 3, cycles_generated_not_applied_7d: 4, cycles_nothing_generated_7d: 5 } }), glyphs: 1 },
+    { name: "run breakdown with counts", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 3, cycles_generated_not_applied_7d: 4, cycles_nothing_generated_7d: 5 } }), glyphs: 0 },
   ];
   const labels = ["Suggested and applied", "Suggested, not applied", "No suggestion"];
   for (const row of rows) {

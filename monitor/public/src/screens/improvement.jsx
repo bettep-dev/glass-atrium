@@ -806,21 +806,20 @@ function TrendCardI({ state, aggregate, failures, onRetry }) {
 
 // counts, never a percentage · each half names its cycle days so neither reads as the all-days total
 function getRejectRatePhraseI(before, after) {
-	if (!after || !after.total) return "No scored cycles yet";
-	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected in the latest ${formatIntI(after.days)} ${after.days === 1 ? "cycle day" : "cycle days"}`;
-	if (!before || !before.total) return recent;
-	return `${recent} (${formatIntI(before.count)} of ${formatIntI(before.total)} in the ${formatIntI(before.days)} before)`;
+	if (!after || !after.total) return { recent: "No scored cycles yet", earlier: null };
+	const recent = `${formatIntI(after.count)} of ${formatIntI(after.total)} rejected, last ${formatIntI(after.days)} ${after.days === 1 ? "cycle day" : "cycle days"}`;
+	if (!before || !before.total) return { recent, earlier: null };
+	return { recent, earlier: `${formatIntI(before.count)} of ${formatIntI(before.total)} in the ${formatIntI(before.days)} before` };
 }
 
+// the recent count leads, the earlier half on a dim line under it
 function RejectRateHeadlineI({ before, after }) {
-	const { LowSampleMark, isLowSample } = window.UI;
-	const trend = failTrendMetaI(before, after);
-	const isMuted = isLowSample(after?.total);
+	const { recent, earlier } = getRejectRatePhraseI(before, after);
+	const isMuted = window.UI.isLowSample(after?.total);
 	return (
-		<span className="inline-flex items-center gap-1.5 fs-meta" title={window.UI.titleOf(trend.hint)}>
-			<window.UI.ToneGlyph tone={trend.tone} label={trend.hint} />
-			<span className={isMuted ? "text-faint" : "text-ink"}>{getRejectRatePhraseI(before, after)}</span>
-			<LowSampleMark n={after?.total} />
+		<span className="flex flex-col fs-meta" title={window.UI.titleOf(getTrendHintI(before, after))}>
+			<span className={isMuted ? "text-faint" : "text-ink"}>{recent}</span>
+			{earlier ? <span className="text-dim">{earlier}</span> : null}
 		</span>
 	);
 }
@@ -840,7 +839,6 @@ function LoopOutputGroupI({
 		<section className="space-y-3 i-loop-output" aria-label="Loop output" id={ANCHOR_ID_I.loopOutput}>
 			<CardHead
 				title="Loop output"
-				sub="Last 7 days"
 				right={
 					<button
 						className="btn ghost sm"
@@ -855,6 +853,7 @@ function LoopOutputGroupI({
 			/>
 			{getRegionView(statsState) === "error" ? (
 				<ErrorBannerI
+					className="px-card-pad"
 					focusTargetId={ANCHOR_ID_I.loopOutput}
 					source="loop stats"
 					error={statsState.error}
@@ -883,39 +882,23 @@ function LoopOutputGroupI({
 }
 
 // 사이클 3-분해 chip stat row — 생성+적용 / 생성-미적용 / 무생성 (≤3 카테고리 → 차트 대신 칩).
-// 세 카운트는 cycle_total_7d 를 정확히 분할 (서버 partition 보장) → 합계 병기.
+// 세 카운트는 cycle_total_7d 를 정확히 분할 (서버 partition 보장).
 function CycleDecompositionRowI({ stats }) {
 	const { Badge } = window.UI;
 	const chips = [
-		[
-			"✓",
-			"text-ok",
-			"Suggested and applied",
-			Number(stats.cycles_generated_applied_7d ?? 0),
-		],
-		[
-			"⚠",
-			"text-warn",
-			"Suggested, not applied",
-			Number(stats.cycles_generated_not_applied_7d ?? 0),
-		],
-		[
-			"ℹ",
-			"text-info",
-			"No suggestion",
-			Number(stats.cycles_nothing_generated_7d ?? 0),
-		],
+		["Suggested and applied", Number(stats.cycles_generated_applied_7d ?? 0)],
+		["Suggested, not applied", Number(stats.cycles_generated_not_applied_7d ?? 0)],
+		["No suggestion", Number(stats.cycles_nothing_generated_7d ?? 0)],
 	];
 
-	// 카테고리 = symbol+tone+label 로 dual-encode(색 단독 아님), 수량 = neutral count Badge(color≠count 규칙).
+	// no chip states a line to judge against → no tone glyph; the words name each category, the neutral Badge its count
 	return (
 		<div className="flex items-center gap-list mt-label px-card-pad flex-wrap">
 			<span className="fs-meta text-dim font-medium">
 				Cycles, 7d
 			</span>
-			{chips.map(([sym, tone, label, count]) => (
+			{chips.map(([label, count]) => (
 				<span key={label} className="fs-meta inline-flex items-center gap-1.5">
-					{count > 0 ? <SymI s={sym} className={tone} size={12} /> : null}
 					<span>{label}</span>
 					<Badge role="count">{formatIntI(count)}</Badge>
 				</span>
@@ -2437,31 +2420,14 @@ function LineCountI({ symbol, tone, count, word, title }) {
 	);
 }
 
-// before→after reject 비율 추이 → 톤 마크 + hint 문구 (낮을수록 좋음 = inverse).
-// 분모 부족(둘 중 하나라도 0) → ℹ 중립 ('—' 비교 불가). 하락=✓ ok · 상승=⚠ warn · 동률=ℹ.
-function failTrendMetaI(before, after) {
-	if (!before.total || !after.total) {
-		return {
-			tone: "info",
-			hint: "Rejected ÷ scored cycles (newer half) — not enough to compare",
-		};
-	}
+// before→after reject share direction, for the headline's hover (lower is better)
+function getTrendHintI(before, after) {
+	if (!before.total || !after.total) return "Rejected ÷ scored cycles (newer half) — not enough to compare";
 	const bRate = before.count / before.total;
 	const aRate = after.count / after.total;
-	if (aRate < bRate)
-		return {
-			tone: "ok",
-			hint: "Rejected ÷ scored cycles (newer half) — reject rate fell",
-		};
-	if (aRate > bRate)
-		return {
-			tone: "warn",
-			hint: "Rejected ÷ scored cycles (newer half) — reject rate rose",
-		};
-	return {
-		tone: "info",
-		hint: "Rejected ÷ scored cycles (newer half) — unchanged",
-	};
+	if (aRate < bRate) return "Rejected ÷ scored cycles (newer half) — reject rate fell";
+	if (aRate > bRate) return "Rejected ÷ scored cycles (newer half) — reject rate rose";
+	return "Rejected ÷ scored cycles (newer half) — unchanged";
 }
 
 // ----- Ranked candidate list (T-IMP-3 · T-IMP-5) -----------------------------
@@ -2682,10 +2648,11 @@ function ToastI({ tone, message }) {
 }
 
 // per-region failure: covered note when the page banner or an earlier slot speaks for this source, else its own card + Retry
-function ErrorBannerI({ source, region, error, onRetry, isBusy, failures, focusTargetId }) {
+function ErrorBannerI({ source, region, error, onRetry, isBusy, failures, focusTargetId, className }) {
 	const { RegionFailure } = window.UI;
 	return (
 		<RegionFailure
+			className={className}
 			source={source}
 			region={region}
 			error={error}
