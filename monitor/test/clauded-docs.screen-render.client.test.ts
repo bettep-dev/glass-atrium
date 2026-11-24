@@ -1451,17 +1451,6 @@ test("the opened row's title alone takes the heavier weight, beside its aria-cur
   assert.deepEqual(titleWeights, [{ isOpened: false, isHeavy: false }, { isOpened: true, isHeavy: true }]);
 });
 
-test("the editor's title, author and body boxes are the shared field controls", async () => {
-  const screen = await loadDocsScreen();
-  const tree = renderScreen((screen.EditorModalCD as Component)({ seed: { id: 9, title: "Doc 9", author: "user" }, onClose: noop, onUpdate: noop }));
-  const fields = findNodes(tree, (n) => n.type === "input" || n.type === "textarea").map((n) => ({ type: n.type, className: n.props.className }));
-  assert.deepEqual(fields, [
-    { type: "input", className: "field" },
-    { type: "input", className: "field" },
-    { type: "textarea", className: "field field--mono doc-editor-textarea" },
-  ]);
-});
-
 describe("a viewer with no rendered document shows its state in place of the body", () => {
   const rows = [
     { name: "idle", state: { status: "idle" }, shown: isAtom("EmptyState") },

@@ -221,8 +221,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		data: null,
 		error: null,
 	});
-	// 편집 진입점만 유지 — 신규 작성은 agent emission (POST /api/clauded-docs) 단일 경로.
-	const [editorOpen, setEditorOpen] = useStateCD(null); // null | { seed }
 	const [pendingDelete, setPendingDelete] = useStateCD(null); // { id, expiresAt }
 	const [refreshTick, setRefreshTick] = useStateCD(0);
 	// 마지막 성공 fetch 시각 — 실패 응답은 갱신하지 않는다 (as-of 가 앞서면 거짓 최신).
@@ -299,8 +297,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			if (
 				!isEditing &&
 				(e.key === "f" || e.key === "F") &&
-				selectedId != null &&
-				!editorOpen
+				selectedId != null
 			) {
 				e.preventDefault();
 				if (isFullscreen) {
@@ -313,7 +310,7 @@ function ScreenClaudedDocs(/* { onNav } */) {
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [isFullscreen, selectedId, editorOpen]);
+	}, [isFullscreen, selectedId]);
 
 	// 검색어 debounce — 250ms 후 적용. AbortController 로 in-flight 취소.
 	useEffectCD(() => {
@@ -462,40 +459,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 			if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
 		},
 		[],
-	);
-
-	// write actions — POST 는 agent emission 단일 진입 (UI create 핸들러 없음) · 사용자 진입점은 PUT (편집) 만.
-
-	const performUpdate = useCallbackCD(
-		async (id, body) => {
-			showToast("info", "Saving…");
-			try {
-				const res = await fetch(`/api/clauded-docs/${encodeURIComponent(id)}`, {
-					method: "PUT",
-					headers: {
-						"Content-Type": "application/json",
-						Accept: "application/json",
-					},
-					body: JSON.stringify(body),
-				});
-				const payload = await res.json().catch(() => null);
-				if (!res.ok) {
-					const reason = describeApiErrorCD(payload, res.status);
-					showToast("crit", `Couldn't save — ${reason}`);
-					return false;
-				}
-				showToast("ok", `Saved #${id}`);
-				setEditorOpen(null);
-				triggerRefresh();
-				// viewer 가 동일 id 면 강제 재조회.
-				if (selectedId === id) loadViewerCD(id);
-				return true;
-			} catch (err) {
-				showToast("crit", `Couldn't save — ${err?.message || err}`);
-				return false;
-			}
-		},
-		[selectedId, showToast, triggerRefresh, loadViewerCD],
 	);
 
 	const performDeleteImpl = useCallbackCD(
@@ -944,8 +907,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         .doc-body-isolation .mermaid svg :is(.node, .cluster) rect { rx: var(--radius-tile); ry: var(--radius-tile); }
         .doc-meta-row { grid-template-columns: 88px 1fr; }
         /* .doc-toast → shared SoT in base.css */
-        /* the HTML body box — a .field grown to an editing area */
-        .doc-editor-textarea { min-height: 320px; max-height: 60vh; resize: vertical; }
         /* (retired) format('H')/audience/format-row/chain 표시 배지 — 전부 canonical window.UI.Badge 로 이전, screen-local CSS 미사용분 제거. */
         /* code viewer (yaml/json/txt) — --doc-code 면 + --doc-line 테두리 + --doc-ink 글자.
            github-dark.min.css 가 .hljs span.hljs-* 토큰 색상 부여 — 본 컨테이너는 chrome (배경/테두리/패딩/폰트) 만 정의. */
@@ -988,7 +949,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
         }
         /* WCAG 2.2 §2.5.8 Target Size (AA) — 24×24 px floor (본 화면 스코프 한정 · padding 보존). */
         .card button.btn.sm,
-        .modal-head button.btn.sm,
         .doc-fs-container button.btn.sm { min-height: 24px; min-width: 24px; }
         /* multi-select + group UI tokens. */
         /* 선택 checkbox column — 항상 노출 (hover-only 시 사용자가 모름 → glass-atrium-design-designer reject). */
@@ -1139,15 +1099,6 @@ function ScreenClaudedDocs(/* { onNav } */) {
 						showToast={showToast}
 					/>
 				</DetailSurface>
-			)}
-
-			{/* 편집 모달 (작성 진입점 폐기 — agent emission 단일 경로). */}
-			{editorOpen && (
-				<EditorModalCD
-					seed={editorOpen.seed}
-					onClose={() => setEditorOpen(null)}
-					onUpdate={performUpdate}
-				/>
 			)}
 
 			{toast && <DocToastCD toast={toast} />}
@@ -2950,182 +2901,7 @@ function PredecessorPanelCD({ predecessorId, currentDoc, onNavigate }) {
 	);
 }
 
-// 편집 전용 모달 (작성 진입점은 폐기 — agent emission POST 단일 경로).
-//   - 작성자 = seed 고정 (편집 중 변경 불가 — server 측 immutable 필드 정합).
-//   - 본문 + content_hash 는 서버에서 강제 재조회 (목록 응답에는 본문 미포함).
-function EditorModalCD({ seed, onClose, onUpdate }) {
-	const { Icon } = window.UI;
-	// 편집 가능 필드 — title · htmlBody (server 측 mutable). doc_type 컬럼 DROP → 편집 필드 제거.
-	const [title, setTitle] = useStateCD(seed?.title || "");
-	const [htmlBody, setHtmlBody] = useStateCD("");
-	// 표시 전용 (immutable) — seed 에서 한 번 캡처 → render 만, 변경 없음.
-	const author = seed?.author || "user";
-	const [busy, setBusy] = useStateCD(false);
-	const [seedFetchState, setSeedFetchState] = useStateCD({ status: "loading" });
-
-	// 본문 + content_hash 를 동기화 위해 서버에서 한 번 더 가져옴 (목록 응답에는 본문이 없음).
-	//   · format query 생략 → 서버 default resolution (rowFormat 자동 감지).
-	useEffectCD(() => {
-		if (!seed?.id) return;
-		const ctrl = new AbortController();
-		fetchJsonCD(`/api/clauded-docs/${encodeURIComponent(seed.id)}`, ctrl.signal)
-			.then((data) => {
-				setHtmlBody(data.body);
-				setSeedFetchState({ status: "ready", expectedHash: data.content_hash });
-			})
-			.catch((err) =>
-				setSeedFetchState({
-					status: "error",
-					error: err?.message || String(err),
-				}),
-			);
-		return () => ctrl.abort();
-	}, [seed?.id]);
-
-	// ESC 닫기.
-	useEffectCD(() => {
-		const onKey = (e) => {
-			if (e.key === "Escape") onClose();
-		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
-	}, [onClose]);
-
-	const canSubmit =
-		title.trim() !== "" &&
-		htmlBody.trim() !== "" &&
-		author.trim() !== "" &&
-		!busy &&
-		seedFetchState.status === "ready";
-
-	const handleSubmit = useCallbackCD(
-		async (e) => {
-			e.preventDefault();
-			if (!canSubmit) return;
-			setBusy(true);
-			const ok = await onUpdate(seed.id, {
-				html_body: htmlBody,
-				expected_hash: seedFetchState.expectedHash,
-				title: title.trim(),
-			});
-			if (!ok) setBusy(false);
-		},
-		[canSubmit, seed?.id, title, htmlBody, seedFetchState, onUpdate],
-	);
-
-	return (
-		<div className="modal-backdrop" onClick={onClose}>
-			<form
-				className="modal"
-				onClick={(e) => e.stopPropagation()}
-				onSubmit={handleSubmit}
-				style={{
-					width: "min(820px, 96vw)",
-					maxWidth: "min(820px, 96vw)",
-					maxHeight: "92vh",
-				}}
-			>
-				<div className="modal-head">
-					<div className="font-semibold fs-title">
-						{`Edit #${seed?.id ?? ""}`}
-					</div>
-					<button
-						type="button"
-						className="btn ghost sm"
-						onClick={onClose}
-						aria-label="Close"
-					>
-						<Icon name="x" size={14} />
-					</button>
-				</div>
-				<div className="modal-body">
-					{seedFetchState.status === "loading" && (
-						<window.UI.LoadingPlaceholder label="the current body" className="mb-block" />
-					)}
-					{seedFetchState.status === "error" && (
-						<ErrorBannerCD
-							title="Couldn't load the current body"
-							detail={seedFetchState.error}
-							className="mb-block"
-						/>
-					)}
-					<div
-						className="grid gap-block"
-						style={{ gridTemplateColumns: "1fr 140px" }}
-					>
-						<label className="flex flex-col gap-label">
-							<span
-								className="field-label"
-							>
-								Title
-							</span>
-							<input
-								type="text"
-								className="field"
-								value={title}
-								onChange={(e) => setTitle(e.target.value)}
-								required
-								maxLength={500}
-								aria-label="Document title"
-							/>
-						</label>
-						<label className="flex flex-col gap-label">
-							<span
-								className="field-label"
-							>
-								Author
-							</span>
-							{/* 편집 모드 — 작성자 immutable (감사 추적 보존). */}
-							<input
-								type="text"
-								className="field"
-								value={author}
-								disabled
-								required
-								maxLength={64}
-								aria-label="Author"
-							/>
-						</label>
-					</div>
-					<label className="flex flex-col gap-label mt-block">
-						<span
-							className="field-label"
-						>
-							HTML body
-						</span>
-						<textarea
-							className="field field--mono doc-editor-textarea"
-							value={htmlBody}
-							onChange={(e) => setHtmlBody(e.target.value)}
-							required
-							spellCheck={false}
-							aria-label="HTML body"
-						/>
-					</label>
-				</div>
-				<div className="modal-foot">
-					<button
-						type="button"
-						className="btn ghost sm"
-						onClick={onClose}
-						disabled={busy}
-					>
-						Cancel
-					</button>
-					<button
-						type="submit"
-						className="btn primary sm"
-						disabled={!canSubmit}
-					>
-						{busy ? "Saving…" : "Save"}
-					</button>
-				</div>
-			</form>
-		</div>
-	);
-}
-
-function ErrorBannerCD({ title, detail, onRetry, className }) {
+function ErrorBannerCD({ title, detail, onRetry }) {
 	const { AlertCard, Icon } = window.UI;
 	const retry = onRetry && (
 		<button type="button" className="btn sm" onClick={onRetry}>
@@ -3133,7 +2909,7 @@ function ErrorBannerCD({ title, detail, onRetry, className }) {
 			Retry
 		</button>
 	);
-	return <AlertCard tone="crit" surface="inset" className={className} title={title} body={detail} actions={retry || undefined} />;
+	return <AlertCard tone="crit" surface="inset" title={title} body={detail} actions={retry || undefined} />;
 }
 
 // asOf advances on successful list reads only · the region carries busy and failed → stamp never reads Fresh mid-read
