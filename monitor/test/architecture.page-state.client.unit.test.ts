@@ -251,7 +251,7 @@ describe("the System parts lead line says why nothing is flagged, and its all-cl
   ];
   for (const row of rows)
     test(row.name, () => {
-      assert.match(sandbox.getAttentionEmptyAR(row.partRows, row.busy, { at: row.at, regions: row.regions, now }), row.expected);
+      assert.match(sandbox.getAttentionEmptyAR(row.partRows, row.busy, { at: row.at, regions: row.regions, now }) ?? "", row.expected);
     });
 
   test("no verdict under a failed read writes no lead, leaving the failure to the alarm row", () => {
@@ -262,7 +262,7 @@ describe("the System parts lead line says why nothing is flagged, and its all-cl
     const okRow = { ...healthRow("a", "ok"), statusLabel: "Healthy" };
     for (const row of rows.filter((candidate) => !candidate.busy && candidate.partRows === judged)) {
       const freshness = { at: row.at, regions: row.regions, now };
-      const text = sandbox.getAttentionEmptyAR(judged, false, freshness);
+      const text = sandbox.getAttentionEmptyAR(judged, false, freshness) ?? "";
       const rowText = sandbox.getPartStatusAR(okRow, freshness).text;
       assert.strictEqual(text.startsWith("Last known"), rowText.startsWith("Last known"), `${row.name}: "${text}" vs "${rowText}"`);
     }
