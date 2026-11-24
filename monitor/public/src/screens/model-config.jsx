@@ -49,12 +49,11 @@ const MODEL_CAP_MC = {
 	"claude-sonnet-4-6": "Balanced — fast turnaround on mid-complexity work",
 	"claude-haiku-4-5": "Fastest / cheapest — simple, repetitive file ops",
 };
-// 도메인 표시 메타 — 라벨/1줄 힌트/전문 설명
+// 도메인 표시 메타 — 라벨/전문 설명
 // (GET 응답에 없는 파생 표시값이라 UI 상수로 유지).
 const DOMAIN_META_MC = {
 	"model.daemon_cycle_worker": {
-		label: "Daemon cycle helper",
-		hint: "Self-improve drafts, pre-verify and wiki compile",
+		label: "Self-improve and wiki compile",
 		desc: "Drafts self-improve proposals, runs pre-verify and summarizes wiki notes",
 		source: "daemon-config.json",
 		editable: true,
@@ -114,18 +113,16 @@ const SYNC_META_MC = {
 	},
 };
 
-// 예산 도메인 표시 메타 — 라벨/평이 설명. key = GET budgets[].domain (BudgetDomainKey).
+// 예산 도메인 표시 메타 — 라벨/전문 설명. key = GET budgets[].domain (BudgetDomainKey).
 // 미지의 key(서버 먼저 확장)는 fallback 메타로 그대로 렌더 (silent drop 금지).
 const BUDGET_META_MC = {
 	"budget.worker_max_usd": {
-		label: "Self-improve + wiki call cap",
-		hint: "Caps one generation or wiki compile call",
+		label: "Generation and wiki compile",
 		desc: "Shared cap: generation + wiki compile",
 		source: "daemon-config.json",
 	},
 	"budget.pre_verify_max_usd": {
-		label: "Self-improve pre-verify call cap",
-		hint: "Caps one self-improve pre-verify call",
+		label: "Pre-verify",
 		desc: "Read by the pre-verify step only",
 		source: "daemon-config.json",
 	},
@@ -135,32 +132,28 @@ const BUDGET_META_MC = {
 // Labels name the self-improve calls only: wiki compile reads neither knob.
 const TIER_META_MC = {
 	"tier.worker_effort": {
-		label: "Self-improve generation effort",
-		hint: "--effort on one self-improve generation call",
+		label: "Generation effort",
 		desc: "Default: no --effort flag",
 		note: "With no flag, the settings or model default governs the call",
 		kind: "effort",
 		source: "daemon-config.json",
 	},
 	"tier.pre_verify_effort": {
-		label: "Self-improve pre-verify effort",
-		hint: "--effort on one self-improve pre-verify call",
+		label: "Pre-verify effort",
 		desc: "Default: no --effort flag",
 		note: "Keep pre-verify at or above the generation level",
 		kind: "effort",
 		source: "daemon-config.json",
 	},
 	"tier.worker_max_output_tokens": {
-		label: "Self-improve generation output cap",
-		hint: "Max output tokens for one generation call",
+		label: "Generation output tokens",
 		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS",
 		note: "The CLI silently lowers a value above the model's own limit",
 		kind: "output-cap",
 		source: "daemon-config.json",
 	},
 	"tier.pre_verify_max_output_tokens": {
-		label: "Self-improve pre-verify output cap",
-		hint: "Max output tokens for one pre-verify call",
+		label: "Pre-verify output tokens",
 		desc: "Sets CLAUDE_CODE_MAX_OUTPUT_TOKENS for pre-verify",
 		note: "Blank = the model default",
 		kind: "output-cap",
@@ -1276,8 +1269,7 @@ function RowHintMC({ hint }) {
 // Full descriptions in one labelled list per section — a note per row repeats one affordance N times.
 function TierNotesMC({ title, rows }) {
 	const { MachineString, SectionLabel } = window.UI;
-	const isDescShown = (meta) => Boolean(meta.desc) && meta.desc !== meta.hint;
-	const notes = rows.filter((meta) => meta && (isDescShown(meta) || meta.savedId));
+	const notes = rows.filter((meta) => meta && (meta.desc || meta.savedId));
 	if (notes.length === 0) return null;
 
 	return (
@@ -1287,7 +1279,7 @@ function TierNotesMC({ title, rows }) {
 				{notes.map((meta) => (
 					<div key={meta.label}>
 						<dt className="text-ink">{meta.label}</dt>
-						{isDescShown(meta) && <dd className="is-wrap">{meta.desc}</dd>}
+						{meta.desc && <dd className="is-wrap">{meta.desc}</dd>}
 						{meta.note && <dd className="is-wrap">{meta.note}</dd>}
 						{/* the select shows the friendly name → the saved id is read here, by keyboard and touch too */}
 						{meta.savedId && <dd>Saved id <MachineString>{meta.savedId}</MachineString></dd>}
@@ -1408,7 +1400,6 @@ function DomainRowMC({
 }) {
 	const meta = DOMAIN_META_MC[d.domain] || {
 		label: d.domain,
-		hint: "",
 		desc: "",
 		editable: d.editable !== false,
 	};
@@ -1421,7 +1412,6 @@ function DomainRowMC({
 		<TableRow view={view} className="is-top-aligned">
 			<TableCell view={view} textRole="label">
 				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
-				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
 			</TableCell>
 			<TableCell view={view} textRole="label">
@@ -1645,7 +1635,7 @@ function budgetPlaceholderMC() {
 function BudgetRowMC({ view, budget: b, departure, value, defaultValue, error, onChange }) {
 	const id = `mc-budget-${b.domain}`;
 	const { TableCell, TableRow } = window.UI;
-	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, hint: "", desc: "" };
+	const meta = BUDGET_META_MC[b.domain] || { label: b.domain, desc: "" };
 	// Save banner points at "the highlighted fields" → the field is marked the moment it is invalid.
 	const showError = Boolean(error);
 
@@ -1653,7 +1643,6 @@ function BudgetRowMC({ view, budget: b, departure, value, defaultValue, error, o
 		<TableRow view={view} className="is-top-aligned">
 			<TableCell view={view} textRole="label">
 				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
-				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
 			</TableCell>
 			<TableCell view={view} textRole="label">
@@ -1768,7 +1757,7 @@ const EFFORT_OPTIONS_MC = ["inherit", ...EFFORT_LEVELS_MC].map((level) =>
  * blank = unset ('inherit'), plus In effect and the saved-value reset.
  */
 function TierRowMC({ view, tier: t, departure, value, defaultValue, error, isFileRead, onChange }) {
-	const meta = TIER_META_MC[t.domain] || { label: t.domain, hint: "", desc: "", kind: "", source: "daemon-config.json" };
+	const meta = TIER_META_MC[t.domain] || { label: t.domain, desc: "", kind: "", source: "daemon-config.json" };
 	const showError = Boolean(error);
 	// absent key = the unset state, not an unread one — unless the file itself was not read
 	const live = t.actual ?? (isFileRead ? CLI_DEFAULT_LABEL_MC : null);
@@ -1780,7 +1769,6 @@ function TierRowMC({ view, tier: t, departure, value, defaultValue, error, isFil
 		<TableRow view={view} className="is-top-aligned">
 			<TableCell view={view} textRole="label">
 				<div className="fs-body font-medium text-ink tbl-first-line">{meta.label}</div>
-				<RowHintMC hint={meta.hint} />
 				<RowHintMC hint={departure} />
 			</TableCell>
 			<TableCell view={view} textRole="label">
@@ -1804,7 +1792,7 @@ function TierRowMC({ view, tier: t, departure, value, defaultValue, error, isFil
 						value={value === "inherit" ? "" : value}
 						placeholder={CLI_DEFAULT_LABEL_MC}
 						onChange={(e) => onChange(e.target.value === "" ? "inherit" : e.target.value)}
-						aria-label={`${meta.label} in tokens`}
+						aria-label={meta.label}
 						aria-invalid={showError ? "true" : undefined}
 						aria-describedby={showError ? `${id}-error` : undefined}
 					/>
