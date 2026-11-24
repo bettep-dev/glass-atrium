@@ -62,7 +62,7 @@ const RULES: Record<string, (source: ScreenSource) => string[]> = {
 // containers — the root's own box is page layout (type only); generated — markup the screen's code or renderer adds (spacing and type)
 const CONTENT_ROOTS: Record<string, { containers: string[]; generated: string[] }> = {
   architecture: { containers: ["#arch-map-canvas", ".arch-mermaid-canvas"], generated: [] },
-  "clauded-docs": { containers: [".doc-body-isolation"], generated: [".doc-code-pre"] },
+  "clauded-docs": { containers: [".doc-body-isolation", ".doc-fs-body-inner > .doc-body-isolation"], generated: [".doc-code-pre"] },
   outcomes: { containers: [".outcome-md"], generated: [] },
 };
 
@@ -76,7 +76,7 @@ const BASELINE: Record<string, BaselineRow[]> = {
     { rule: "style-spacing-type", count: 33, owner: "C3" },
   ],
   "clauded-docs": [
-    { rule: "style-spacing-type", count: 16, owner: "B6" },
+    { rule: "style-spacing-type", count: 14, owner: "B6" },
   ],
   dashboard: [
     { rule: "numeric-spacing", count: 1, owner: "C1" },
@@ -126,6 +126,8 @@ const BOUNDARY_ROWS = [
   { name: "a class that only shares a root's prefix is page chrome", screen: "clauded-docs", css: ".doc-body-isolation-frame p { margin: 0; }", hits: 1 },
   { name: "a root from another screen's table is page chrome here", screen: "outcomes", css: ".doc-body-isolation p { margin: 0; }", hits: 1 },
   { name: "a comma inside a pseudo-class keeps the selector whole", screen: "architecture", css: "#arch-map-canvas :is(text, tspan) { font-size: 12px; }", hits: 0 },
+  { name: "the viewer's document body takes type", screen: "clauded-docs", css: ".doc-fs-body-inner > .doc-body-isolation { line-height: 1.75; }", hits: 0 },
+  { name: "the viewer's document body takes type, not spacing", screen: "clauded-docs", css: ".doc-fs-body-inner > .doc-body-isolation { padding: 8px; }", hits: 1 },
 ];
 
 describe("a screen <style> block takes spacing and type for generated content only", () => {
