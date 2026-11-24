@@ -178,6 +178,7 @@ const STATUS_CARD_STATES: Array<{ name: string; open: () => Promise<Page> }> = [
     },
   },
   {
+    // a held all-clear reads the unknown glyph (sr "Unknown: ") before its Last known
     name: "when two stats are held over failed refreshes on two causes, each with its own Retry",
     open: async () => {
       const page = await openDashboard({ width: 1440, height: 900 });
@@ -185,7 +186,32 @@ const STATUS_CARD_STATES: Array<{ name: string; open: () => Promise<Page> }> = [
       await page.route(/\/api\/cost\/kpi/, (route) => route.fulfill({ status: 502, json: {} }));
       await page.getByRole("button", { name: "Refresh dashboard" }).click();
       await page.waitForFunction(
-        () => Array.from(document.querySelectorAll("#dash-status .stat-context")).filter((el) => /^Last known/.test(el.textContent ?? "")).length >= 2,
+        () => Array.from(document.querySelectorAll("#dash-status .stat-context")).filter((el) => /^Unknown: Last known/.test(el.textContent ?? "")).length >= 2,
+        undefined,
+        { timeout: 30_000 },
+      );
+      return page;
+    },
+  },
+  {
+    name: "when open caveats and a failing streak trip the context lines, each naming its count",
+    open: async () => {
+      const outcomes = PAYLOADS["/api/outcomes/cross-analysis"] as { by_result: Array<{ result: string }> };
+      const agents = PAYLOADS["/api/agents/summary"] as { meta: { circuit_breaker: object } };
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      // 500 of 4,656 writer results open → over the 10% caveat line, breakage under its own; 3 on a streak, none suspended
+      await page.route(/\/api\/outcomes\/cross-analysis/, (route) => route.fulfill({ json: {
+        ...outcomes,
+        by_result: outcomes.by_result.map((row) => (row.result === "done_with_concerns" ? { ...row, writer_open_count: 500 } : row)),
+      } }));
+      await page.route(/\/api\/agents\/summary/, (route) => route.fulfill({ json: {
+        ...agents,
+        meta: { ...agents.meta, circuit_breaker: { ...agents.meta.circuit_breaker, streak_count: 3 } },
+      } }));
+      await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+      await page.waitForFunction(
+        () => Array.from(document.querySelectorAll("#dash-status .stat-context")).map((el) => el.textContent ?? "")
+          .filter((text) => /with open caveats$|on a failing streak$/.test(text)).length === 2,
         undefined,
         { timeout: 30_000 },
       );
@@ -387,12 +413,14 @@ describe("Runs by hour day labels at 1440×900", () => {
   };
 
   // a folded "Wed ×2" never widens the label track → the grid starts at one x in every state
+  // the served 8-date window folds Wed; a payload with no window dates folds nothing
   test("the first hour cell starts at one x with or without a folded weekday", async () => {
-    const atRest = await firstCellLeft();
-    overrides[HEATMAP] = { ...heatmap, meta: { ...heatmap.meta, bucket_dates: { first: "2026-08-12", last: "2026-08-19", count: 8 } } };
+    const folded = await firstCellLeft();
+    const { bucket_dates: _dates, ...undated } = heatmap.meta;
+    overrides[HEATMAP] = { ...heatmap, meta: undated };
     try {
-      const folded = await firstCellLeft();
-      assert.ok(Number.isFinite(atRest) && Math.abs(folded - atRest) < 0.5, `rest ${atRest}, folded ${folded}`);
+      const unfolded = await firstCellLeft();
+      assert.ok(Number.isFinite(folded) && Math.abs(folded - unfolded) < 0.5, `folded ${folded}, unfolded ${unfolded}`);
     } finally {
       delete overrides[HEATMAP];
     }
@@ -451,6 +479,25 @@ describe("Runs by hour layout", () => {
     assertSquareCells(layout.cells);
   });
 
+  test("at 1920 the Runs by hour card is as wide as its grid, and the task results take the rest of the row", async () => {
+    const page = await openDashboard({ width: 1920, height: 1080 });
+    const fit = await page.evaluate(() => {
+      const card = document.querySelector("#dash-week-hours .card") as HTMLElement;
+      const grid = document.querySelector("#dash-week-hours .dash-hour-grid") as HTMLElement;
+      const style = getComputedStyle(card);
+      const inner = card.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const body = card.querySelector(".card-body") as HTMLElement | null;
+      const bodyStyle = body ? getComputedStyle(body) : null;
+      const bodyInset = bodyStyle ? parseFloat(bodyStyle.paddingLeft) + parseFloat(bodyStyle.paddingRight) : 0;
+      return { inner: inner - bodyInset, grid: grid.getBoundingClientRect().width };
+    });
+    const layout = await getWeekLayout(page);
+    await page.close();
+    assert.ok(Math.abs(fit.inner - fit.grid) < 1, `card content ${fit.inner}px vs grid ${fit.grid}px`);
+    assert.ok(layout.results.width > layout.hours.width, "the task results take the rest");
+    assertSquareCells(layout.cells);
+  });
+
   test("at 1024 it stacks Results, Runs by hour, Spend in one column with square capped cells", async () => {
     const page = await openDashboard({ width: 1024, height: 768 });
     const layout = await getWeekLayout(page);
@@ -482,7 +529,7 @@ describe("Runs by hour ramp", () => {
     });
     await page.close();
     const peak = Math.max(...(PAYLOADS["/api/outcomes/heatmap"] as { data: number[][] }).data.flat());
-    assert.match(paint.key, new RegExp(`^01${peak} runs per hour$`), "the key ends on the grid's peak");
+    assert.match(paint.key, new RegExp(`^01${peak} runs per hour · ×2 = two dates summed$`), "the key states the grid's peak, then the served window's fold");
     const isZero = (title: string) => / — 0 runs$/.test(title);
     const zeros = paint.cells.filter((cell) => isZero(cell.title));
     const filled = paint.cells.filter((cell) => !isZero(cell.title));

@@ -123,7 +123,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
   const isWaveBusy = getRegionSummary(waveStates).isBusy;
   const alarmSources = { harness, outcomesState, agentsState, costState, updateState, installKind };
   const alarms = buildAlarms(alarmSources);
-  const alarmReadiness = getAlarmReadiness(alarmSources, alarms);
   const stats = buildStats({ harness, costState, agentsState, outcomesState, isHarnessBusy });
   const weekPanels = [{ source: 'daily spend', error: spendDaysState.error }, { source: 'runs by hour', error: heatmapState.error }];
   const sharedFailure = getPageSharedFailure(stats, weekPanels);
@@ -139,8 +138,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         @keyframes ga-spin { to { transform: rotate(360deg); } }
         .ga-spin { animation: ga-spin 0.9s linear infinite; transform-origin: center; }
         @media (prefers-reduced-motion: reduce) { .ga-spin { animation: none; } }
-        .dash-week-panel { display: flex; flex-direction: column; }
-        .dash-week-panel > .card { flex: 1 1 auto; }
         .dash-strip-track { height: 4rem; position: relative; }
         /* one 1px --line baseline across the strip → each day's segment reaches half the column gap either side */
         .dash-strip-base { position: absolute; bottom: 0; left: calc(var(--gap-label-inline) / -2); right: calc(var(--gap-label-inline) / -2); height: 1px; background: rgb(var(--line)); }
@@ -154,7 +151,7 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         .dash-result-fill { height: 0.5rem; background: currentColor; border-radius: 2px; }
         /* tracks capped at the cell cap → capped cells keep even 2px gaps instead of floating in wider tracks */
         /* one fixed label track, sized to the widest label "Wed ×2" → a folded weekday never shifts the grid */
-        .dash-hour-grid { display: grid; grid-template-columns: 3rem repeat(24, minmax(0, 1.25rem)); justify-content: start; gap: 2px; align-items: center; }
+        .dash-hour-grid { display: grid; grid-template-columns: 3rem repeat(24, minmax(0, 1.25rem)); justify-content: start; align-items: center; }
         /* neutral ink ramp (spec 44084 §4.1) → the lowest run hour clears 3:1 on the card; a zero hour is an outline, never a fill */
         .dash-hour-cell, .dash-hour-swatch { border-radius: 2px; }
         .dash-hour-cell { aspect-ratio: 1; }
@@ -164,7 +161,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="2"] { background: var(--heat-2); }
         :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="3"] { background: var(--heat-3); }
         :is(.dash-hour-cell, .dash-hour-swatch)[data-heat="4"] { background: var(--heat-4); }
-        .dash-hour-steps { display: flex; gap: 2px; }
         .dash-hour-tick { white-space: nowrap; }
       `}</style>
 
@@ -191,7 +187,6 @@ function ScreenDashboard({ onNav, harness, onRetryHarness }) {
         )}
         <AlarmLane
           alarms={alarms}
-          readiness={alarmReadiness}
           onNav={onNav}
           updateState={updateState}
           updateJobState={updateJobState}
@@ -223,9 +218,8 @@ function getPageSharedFailure(stats, panels = []) {
 
 // "Needs you" (spec 44084 §3.3) — one list card of alarm rows, worst first; no alarm → no card, no text, no space
 // the polite region stays mounted so a later row is announced, and it announces each row → no row carries a role
-function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateState, updateJobState, onRefetchJob }) {
-  const isUnread = readiness.status === 'unknown';
-  const isIdle = alarms.length === 0 && !isUnread;
+function AlarmLane({ alarms, onNav, updateState, updateJobState, onRefetchJob }) {
+  const isIdle = alarms.length === 0;
   return (
     <section className={isIdle ? 'dash-lane sr-only' : 'dash-lane'} aria-label="Needs you">
       <div aria-live="polite" className="flex flex-col gap-list">
@@ -240,7 +234,6 @@ function AlarmLane({ alarms, readiness = ALARM_READINESS_LOADING, onNav, updateS
             ))}
           </div>
         )}
-        {isUnread && <UnreadAlarmsCard unread={readiness.unread}/>}
       </div>
     </section>
   );
@@ -258,46 +251,14 @@ function AlarmLaneRow({ alarm, onNav, children }) {
   return <AlarmRow tone={alarm.tone} title={alarm.title} detail={alarm.detail} isHeld={alarm.isHeld} actions={actions}/>;
 }
 
-// a source that settled without an answer is information, not an empty lane → the header Refresh is its action
-function UnreadAlarmsCard({ unread }) {
-  return (
-    <window.UI.AlertCard tone="neutral" hasLiveHost title="Couldn't check for alarms"
-      body={`Couldn't read ${unread.join(' · ')} — more alarms may be hidden.`}/>
-  );
-}
-
-const ALARM_READINESS_LOADING = Object.freeze({ status: 'loading', unread: [] });
-// each source of the lane, in tie order → its readiness label, the one alarm row it can raise and that row's builder;
-// isAnswered → a read payload that still lacks the reading its row is built on is no answer
+// each alarm the lane can raise, in tie order → its row id and builder
 const ALARM_SOURCES = [
-  { key: 'harness', label: 'system parts', alarmId: 'harness', build: buildHarnessAlarm },
-  { key: 'outcomesState', label: 'task results', alarmId: 'outcomes', build: buildOutcomeAlarm },
-  { key: 'agentsState', label: 'agents', alarmId: 'fleet', build: buildFleetAlarm, isAnswered: (source) => getBreakerCounts(source.data) != null },
-  { key: 'costState', label: "today's spend", alarmId: 'spend', build: buildSpendAlarm },
-  { key: 'updateState', label: 'install state', alarmId: 'install', build: buildInstallAlarm },
+  { alarmId: 'harness', build: buildHarnessAlarm },
+  { alarmId: 'outcomes', build: buildOutcomeAlarm },
+  { alarmId: 'fleet', build: buildFleetAlarm },
+  { alarmId: 'spend', build: buildSpendAlarm },
+  { alarmId: 'install', build: buildInstallAlarm },
 ];
-
-/**
- * Whether the lane may claim an all-clear: 'loading' while any source is unsettled,
- * 'unknown' once one settled without an answer, 'read' only when every source answered.
- * @param alarms - the listed rows; a source whose held row is listed hides nothing more
- * @returns unread - labels of the sources that settled without an answer
- */
-function getAlarmReadiness(sources, alarms = []) {
-  const entries = ALARM_SOURCES.map((meta) => ({ ...meta, source: sources[meta.key] }));
-  if (entries.some(({ source }) => !source || source.status === 'loading')) return ALARM_READINESS_LOADING;
-
-  // a held reading whose latest read failed is unread too — its all-clear is stale
-  const heldAlarmIds = new Set(alarms.filter((alarm) => alarm.isHeld).map((alarm) => alarm.id));
-  const unread = entries
-    .filter(({ source, alarmId, isAnswered }) => !isSourceAnswered(source, isAnswered) && !heldAlarmIds.has(alarmId))
-    .map(({ label }) => label);
-  return { status: unread.length > 0 ? 'unknown' : 'read', unread };
-}
-
-function isSourceAnswered(source, isAnswered) {
-  return source.status === 'ready' && source.error == null && (!isAnswered || isAnswered(source));
-}
 
 // the card outlives every recovery → a banner or stat Retry that leaves on success hands focus here
 const DASH_STATUS_ID = 'dash-status';
@@ -320,7 +281,7 @@ function StatusCard({ stats, onRetry, sharedSources = NO_SHARED_SOURCES }) {
 
 // stat model → one StatRow stat; the value is the Link to the owning screen once there is something to link
 function buildStatItem(stat, { onRetry, isRetryShared }) {
-  if (stat.status === 'loading') return { key: stat.id, label: getStatLabel(stat), isLoading: true };
+  if (stat.status === 'loading') return { key: stat.id, label: getStatLabel(stat), isLoading: true, source: stat.source };
   return {
     key: stat.id, label: getStatLabel(stat), value: <StatValue stat={stat}/>, unit: stat.absent ? undefined : stat.unit,
     context: getStatContext(stat, { onRetry, isRetryShared }),
@@ -346,9 +307,9 @@ function getStatContext(stat, { onRetry, isRetryShared }) {
     <>
       {text && <span title={stat.cause ?? text}>{stat.isContextTripped ? <HeadStatus tone={stat.tone}>{line}</HeadStatus> : line}</span>}
       {hasRetry && (
-        // a one-line box → the 32 control overhangs into the card padding, the card never grows
+        // a one-line box → the 24 hit area overhangs the context line, the card never grows
         <span className="one-line-box ml-control">
-          <RetryButton onRetry={() => onRetry(stat.region)} isBusy={stat.isBusy} focusTargetId={DASH_STATUS_ID}/>
+          <RetryButton onRetry={() => onRetry(stat.region)} isBusy={stat.isBusy} isInline focusTargetId={DASH_STATUS_ID}/>
         </span>
       )}
     </>
@@ -373,18 +334,18 @@ function buildStatNote(stat) {
 }
 
 // the week behind the status card → each panel states its own span (the strip 7 days, the results 7 days + today)
-// results | runs by hour pair from xl (both this week's runs; half width keeps the hour cells square and short) → Spend's strip spans the row below
+// results | runs by hour pair from xl (both this week's runs; the hour grid at its content width keeps its cells square) → Spend's strip spans the row below
 function WeekRow({ spendState, outcomesState, heatmapState, onRetrySpend, onRetryHeatmap, sharedSources = NO_SHARED_SOURCES }) {
   return (
     <>
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-section">
+      <window.UI.SplitRow ratio="rest:content">
         <WeekPanel id="dash-week-results" title="Task results" state={outcomesState} source="task results"
           note={`${OUTCOME.COUNTING_NOTE} ${RESULTS_PANEL_NOTE}`} isRetryShared={sharedSources.includes('task results')}
           render={(data) => <ResultPanel panel={buildResultPanel(data)}/>}/>
         <WeekPanel id="dash-week-hours" title="Runs by hour" state={heatmapState} source="runs by hour"
           note={(data) => <HourGridNote grid={data ? buildHourGrid(data) : null}/>} onRetry={onRetryHeatmap} isRetryShared={sharedSources.includes('runs by hour')}
           render={(data) => <HourGrid grid={buildHourGrid(data)}/>}/>
-      </div>
+      </window.UI.SplitRow>
       <WeekPanel id="dash-week-spend" title="Spend per day" state={spendState} source="daily spend" onRetry={onRetrySpend}
         isRetryShared={sharedSources.includes('daily spend')}
         render={(data) => <SpendStrip strip={buildSpendStrip(data.points)}/>}/>
@@ -401,7 +362,7 @@ function WeekPanel({ id, title, state, source, onRetry, render, note = null, isR
   const info = note && (typeof note === 'function' ? note(hasData ? state.data : null) : <p className="fs-body">{note}</p>);
   // a held reading says Last known in plain words beside the title, never a badge (spec 44084 §3)
   return (
-    <section id={id} className="dash-week-panel" aria-label={title} aria-busy={state.busy ? 'true' : undefined}>
+    <section id={id} aria-label={title} aria-busy={state.busy ? 'true' : undefined}>
       <Card title={title} sub={view === 'held' ? window.UI.LAST_KNOWN_TEXT : null} info={info}>
         <Stack gap="list">
           {view === 'loading' && <LoadingPlaceholder label={title.toLowerCase()}/>}
@@ -420,7 +381,7 @@ function getPanelView(state) {
 }
 
 // a failure the page banner carries points up to it → one cause, one Retry
-// held → the head already says Last known, so the body names only the failed refresh
+// held → the head already says Last known and names the panel, so the body is one bare line
 function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
   const { AlertCard, RetryButton, getErrorCopy } = window.UI;
   if (view !== 'error' && view !== 'held') return null;
@@ -428,16 +389,19 @@ function PanelFailure({ id, view, state, source, onRetry, isRetryShared }) {
     const lead = view === 'held' ? "Couldn't refresh" : 'Not loaded';
     return <p className="fs-meta text-dim">{window.UI.getNoticePointer(lead, isRetryShared ? undefined : RESULTS_STAT_POINTER)}</p>;
   }
-  const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>;
   if (view === 'held') {
-    return <AlertCard tone="neutral" surface="inset" title={`Couldn't refresh ${source}.`} actions={retry}/>;
+    const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} isInline focusTargetId={id}/>;
+    return <AlertCard tone="neutral" surface="bare" title="Couldn't refresh." actions={retry}/>;
   }
   const copy = getErrorCopy(state.error, source);
+  const retry = <RetryButton onRetry={onRetry} isBusy={state.busy} focusTargetId={id}/>;
   return <AlertCard tone="crit" surface="inset" title={copy.sentence} body={copy.next} details={copy.detail} actions={retry}/>;
 }
 
 // a week panel's one sub-line: its span, then its count when it has one; the window itself sits in the stat labels
+// no span (a payload without window dates) → the count alone
 function SpanLine({ span, children }) {
+  if (span == null) return <p className="fs-meta text-dim">{children}</p>;
   return <p className="fs-meta text-dim"><window.UI.DayTokens>{span}</window.UI.DayTokens>{children != null && <> · {children}</>}</p>;
 }
 
@@ -535,7 +499,7 @@ function HourGrid({ grid }) {
   return (
     <>
       {subLine}
-      <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid fs-meta text-dim">
+      <div role="img" aria-label={describeHourGrid(grid)} className="dash-hour-grid gap-chart-cell fs-meta text-dim">
         {grid.rows.map((row) => (
           <React.Fragment key={row.day}>
             <span className="whitespace-nowrap leading-none" title={row.fold ?? undefined}>{row.fold ? `${row.day} ×2` : row.day}</span>
@@ -553,7 +517,7 @@ function HourGrid({ grid }) {
         <span>0</span>
         <span className="dash-hour-swatch" data-heat={0}/>
         <span>1</span>
-        <span className="dash-hour-steps">
+        <span className="flex gap-chart-cell">
           {HOUR.STEPS.map((step) => <span key={step} className="dash-hour-swatch" data-heat={step}/>)}
         </span>
         <span>{formatInt(grid.max)} runs per hour{grid.folds.length > 0 && ' · ×2 = two dates summed'}</span>
@@ -600,7 +564,7 @@ function formatHourTick(hour) {
 
 function describeHourGrid(grid) {
   const { peak } = grid;
-  return `Runs by hour, ${grid.span}: busiest ${getRowLabel(peak)} ${formatHour(peak.hour)} with ${formatInt(peak.count)} runs`;
+  return `Runs by hour${grid.span ? `, ${grid.span}` : ''}: busiest ${getRowLabel(peak)} ${formatHour(peak.hour)} with ${formatInt(peak.count)} runs`;
 }
 
 // a plain click routes in-app; a modified or middle click is left to the browser → a new tab
@@ -722,7 +686,7 @@ function UpdateBadge({ availabilityState, jobState, onRefetchJob }) {
     <span
       role={isAlert ? 'alert' : 'status'}
       aria-live={isAlert ? 'assertive' : 'polite'}
-      className="inline-flex items-center gap-1.5">
+      className="inline-flex items-center">
       {cluster}
     </span>
   );
@@ -796,7 +760,7 @@ function mutationErrorMessage(status, data) {
 
 // the lane union — one row per firing Status-card source + the install state; a firing stat shows only its glyph,
 // so its sentence lives here (spec 44084 §9). Learning · Wiki · Models alarms ride their own nav counts
-/** @param sources - the ALARM_SOURCES region states by key, plus the install view's `installKind` */
+/** @param sources - the region states by key (harness, outcomesState, agentsState, costState, updateState), plus `installKind` */
 function buildAlarms(sources) {
   const rows = ALARM_SOURCES.flatMap(({ alarmId, build }) => {
     const row = build(sources);
@@ -911,15 +875,18 @@ function buildStats({ harness, costState, agentsState, outcomesState, isHarnessB
   }));
 }
 
+// a read that could not run leaves its alarm unchecked → the unknown glyph on its line, the lane's one statement of it
+const UNREAD_LINE = Object.freeze({ tone: 'unknown', isContextTripped: true });
+
 // held data whose latest read failed → Last known on the context line + own Retry; its error joins the shared-outage check
-// the failed refresh → the line's title and the card's ⓘ · shared freshness rule → a held warn/crit keeps its alarm, a held all-clear drops to neutral
+// the failed refresh → the line's title and the card's ⓘ · shared freshness rule → a held warn/crit keeps its alarm, a held all-clear reads unknown
 function markHeldStat(stat, state) {
   if (stat.status === 'loading' || stat.status === 'error' || state?.error == null) return stat;
   const { LAST_KNOWN_TEXT, getHeldCause } = window.UI;
   const isAlarm = FIRING_TONES.has(stat.tone);
   const cause = getHeldCause(stat.source);
   return {
-    ...stat, tone: isAlarm ? stat.tone : 'neutral', isHeld: true, error: state.error, canRetry: true, isContextTripped: false,
+    ...stat, ...(isAlarm ? { isContextTripped: false } : UNREAD_LINE), isHeld: true, error: state.error, canRetry: true,
     context: LAST_KNOWN_TEXT, cause, notes: [`${cause}.`, ...stat.notes],
   };
 }
@@ -938,7 +905,7 @@ function buildHarnessStat(harness) {
   }
   if (!harness || harness.status !== 'ready') {
     // not a region fetch error → never joins the page banner, so the stat keeps its own Retry
-    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', context: 'System parts unavailable.', canRetry: true };
+    return { ...base, ...UNREAD_LINE, status: 'unavailable', value: null, absent: 'not-loaded', context: 'System parts unavailable.', canRetry: true };
   }
   return { ...base, ...describeHarnessReading(harness), status: 'ready', error: harness.error ?? null };
 }
@@ -951,10 +918,10 @@ function describeHarnessReading(harness) {
   const partCount = lostCount > 0 ? harness.partsTotal : harness.partsChecked;
   const coverage = describeHarnessCoverage(harness, isPartlyUnread);
   // a known fault keeps crit; otherwise an unread source withholds the healthy verdict
-  const unreadTone = isPartlyUnread ? 'info' : 'ok';
+  const verdict = downCount > 0 ? { tone: 'crit' } : isPartlyUnread ? UNREAD_LINE : { tone: 'ok' };
   // a down part trips the value → the line goes empty, its coverage behind ⓘ
   const reading = {
-    tone: downCount > 0 ? 'crit' : unreadTone,
+    ...verdict,
     value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
     context: downCount > 0 ? null : coverage, notes: downCount > 0 ? [`${coverage}.`] : [], canRetry: isPartlyUnread,
   };
@@ -998,7 +965,7 @@ function buildPendingStat(base, state) {
 function buildFailedStat(base, error) {
   const copy = window.UI.getErrorCopy(error, base.source);
   return {
-    ...base, status: 'error', tone: 'neutral', value: null, absent: 'not-loaded', context: copy.sentence,
+    ...base, ...UNREAD_LINE, status: 'error', value: null, absent: 'not-loaded', context: copy.sentence,
     notes: [copy.next, copy.detail].filter(Boolean), error, canRetry: true,
   };
 }
@@ -1099,7 +1066,7 @@ function buildFleetStat(agentsState) {
   if (pending) return pending;
   const breaker = getBreakerCounts(agentsState.data);
   if (!breaker) {
-    return { ...base, status: 'unavailable', tone: 'neutral', value: null, absent: 'not-loaded', context: 'Suspension state unavailable.' };
+    return { ...base, ...UNREAD_LINE, status: 'unavailable', value: null, absent: 'not-loaded', context: 'Suspension state unavailable.' };
   }
   const { suspended, streak } = breaker;
   const tone = suspended > 0 ? 'crit' : streak > 0 ? 'warn' : 'ok';
@@ -1212,7 +1179,7 @@ function buildResultPanel(data) {
   const start = data?.prior_window?.period_end;
   return {
     rows, writerTotal: window.UI.getWriterTotal(data), agents: getBreakageAgents(data?.by_agent_result),
-    span: start ? `${formatDay(start)} – today` : 'Last 7 days and today',
+    span: start ? `${formatDay(start)} – today` : null,
   };
 }
 
@@ -1251,7 +1218,7 @@ function buildHourGrid(data) {
   return {
     rows, peak, max: peak.count, total: cells.reduce((sum, cell) => sum + cell.count, 0),
     folds: rows.filter((row) => row.fold), dateCount: dates?.count ?? null,
-    span: dates ? `${formatDay(dates.first)} – today` : 'Last 7 days',
+    span: dates ? `${formatDay(dates.first)} – today` : null,
   };
 }
 

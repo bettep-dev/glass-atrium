@@ -75,10 +75,6 @@ const BASELINE: Record<string, BaselineRow[]> = {
     { rule: "numeric-spacing", count: 2, owner: "C3" },
     { rule: "style-spacing-type", count: 33, owner: "C3" },
   ],
-  dashboard: [
-    { rule: "numeric-spacing", count: 1, owner: "C1" },
-    { rule: "style-spacing-type", count: 2, owner: "C1" },
-  ],
   improvement: [
     { rule: "numeric-spacing", count: 40, owner: "C2" },
     { rule: "inline-spacing", count: 1, owner: "C2" },

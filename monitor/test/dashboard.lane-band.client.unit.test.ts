@@ -290,14 +290,14 @@ test("every stat drills to its own screen in a fixed order", () => {
   assert.deepEqual([...stats.map((t) => t.target)], ["architecture", "outcomes", "agents", "cost"]);
 });
 
-test("loading, error and unavailable each read differently and none reads as a value", () => {
+test("loading, error and unavailable each read differently, none reads as a value, and only a finished unread read is unknown", () => {
   // a first read in flight is the loading state, not a value → only a finished, unread read says Not loaded
-  const states: [string, unknown, string, string | null][] = [
-    ["loading", LOADING, "loading", null],
-    ["error", ERRORED, "error", "not-loaded"],
-    ["unavailable", ready({ meta: {} }), "unavailable", "not-loaded"],
+  const states: [string, unknown, string, string | null, string][] = [
+    ["loading", LOADING, "loading", null, "neutral"],
+    ["error", ERRORED, "error", "not-loaded", "unknown"],
+    ["unavailable", ready({ meta: {} }), "unavailable", "not-loaded", "unknown"],
   ];
-  for (const [name, agentsState, expected, absent] of states) {
+  for (const [name, agentsState, expected, absent, tone] of states) {
     const stat = statOf(
       dash.buildStats({ harness: HEALTHY, costState: LOADING, agentsState, outcomesState: LOADING }),
       "fleet",
@@ -305,7 +305,7 @@ test("loading, error and unavailable each read differently and none reads as a v
     assert.equal(stat.status, expected, name);
     assert.equal(stat.value, null, `${name} must not render a number nobody loaded`);
     assert.equal(stat.absent ?? null, absent, `${name}: only a finished, unread read is marked not loaded`);
-    assert.equal(stat.tone, "neutral", `${name} carries no verdict tone`);
+    assert.equal(stat.tone, tone, `${name}: no verdict tone, unknown once the check could not run`);
   }
 });
 
@@ -362,7 +362,7 @@ test("the fleet stat reads unavailable when the breaker state is, never a zero s
     assert.equal(stat.status, "unavailable");
     assert.equal(stat.absent, "not-loaded");
     assert.equal(stat.value, null);
-    assert.equal(stat.tone, "neutral");
+    assert.equal(stat.tone, "unknown");
   }
 });
 
@@ -381,7 +381,7 @@ test("the harness stat is loading exactly while the fold is, and unavailable onl
     assert.equal(stat.status, expected, foldStatus);
     assert.equal(stat.value, null, `${foldStatus} must not render a count nobody polled`);
     assert.equal(stat.absent ?? null, absent, `${foldStatus}: only a lost reading is marked not loaded`);
-    assert.equal(stat.tone, "neutral");
+    assert.equal(stat.tone, foldStatus === "unavailable" ? "unknown" : "neutral", `${foldStatus}: only a lost reading is unknown`);
     assert.equal(stat.canRetry === true, foldStatus === "unavailable", `${foldStatus}: only a lost reading offers Retry`);
   }
 });
@@ -572,7 +572,6 @@ test("stat labels carry no window text — the window is its own field the row j
 
 interface FailureHelpers {
   getPageSharedFailure: (stats: Stat[], panels?: Array<{ source: string; error: string | null }>) => { sources: string[]; error: string } | null;
-  getAlarmReadiness: (sources: Record<string, unknown>, alarms?: Alarm[]) => { status: string; unread: string[] };
 }
 const failure = dash as unknown as FailureHelpers;
 
@@ -613,12 +612,12 @@ test("a region whose refresh failed over held data reads last-known and carries 
       assert.equal(stat.canRetry === true, row.lastKnown, `${row.name}: ${id} Retry`);
     }
   }
-  // a held all-clear never reads healthy: the ok tone drops to neutral, the same rule the page verdicts follow
+  // a held all-clear never reads healthy: the ok tone gives way to unknown
   const heldStats = statsFor(rows[1]);
   for (const id of ids) assert.notEqual(statOf(heldStats, id).tone, "ok", `${id} held after a failed refresh`);
 });
 
-test("a held stat keeps a warn or crit alarm through a failed refresh, and only an all-clear drops to neutral", () => {
+test("a held stat keeps a warn or crit alarm through a failed refresh, and only an all-clear reads unknown on its line", () => {
   const breaker = (suspended: number) => ({ source: "loaded", suspended_count: suspended, streak_count: 0 });
   const fleetOf = (suspended: number) => ready({ meta: { total_agents: 3, circuit_breaker: breaker(suspended) } });
   for (const suspended of [0, 1]) {
@@ -629,7 +628,8 @@ test("a held stat keeps a warn or crit alarm through a failed refresh, and only 
     );
     const isAlarm = fresh.tone === "warn" || fresh.tone === "crit";
     assert.equal(isAlarm, suspended > 0, `${suspended} suspended: a suspension is the alarm under test`);
-    assert.equal(stale.tone, isAlarm ? fresh.tone : "neutral", `${suspended} suspended: fresh ${fresh.tone}`);
+    assert.equal(stale.tone, isAlarm ? fresh.tone : "unknown", `${suspended} suspended: fresh ${fresh.tone}`);
+    assert.equal(stale.isContextTripped, !isAlarm, `${suspended} suspended: the unknown glyph sits on the line, an alarm's on its value`);
     assert.equal(stale.isHeld, true, `${suspended} suspended: the held reading is still flagged`);
   }
 });
@@ -682,7 +682,7 @@ test("a cold harness outage is a failed stat listed in the same banner as the re
 
 test("a harness refresh that failed over held readings reads last-known, keeping a held fault", () => {
   const rows = [
-    { name: "held parts all up", downNames: [] as string[], tone: "info" },
+    { name: "held parts all up", downNames: [] as string[], tone: "unknown" },
     { name: "a held part down", downNames: ["autoagent"], tone: "crit" },
   ];
 
@@ -772,34 +772,16 @@ test("part names keep their hyphens unbreakable wherever the page lists them", (
   }
 });
 
-test("a partly unread harness never reads healthy, and the lane cannot claim an all-clear", () => {
+test("a partly unread harness never reads healthy: its line carries the unknown glyph", () => {
   const harness = unreadFold({ partsOk: 2, partsChecked: 2, uncheckedNames: LOST_PARTS, unreadSources: ["daemon status", "the hook chain"] });
   const stat = statOf(
     dash.buildStats({ harness, costState: kpi(1, 10), agentsState: ready({}), outcomesState: ready({}) }),
     "harness",
   );
-  assert.notEqual(stat.tone, "ok");
+  assert.equal(stat.tone, "unknown");
+  assert.equal(stat.isContextTripped, true, "the glyph rides the line that names the unread parts");
   assert.match(String(stat.cause), /daemon status/);
   assert.equal(stat.canRetry, true, "the harness stat keeps its own Retry when no banner covers it");
-
-  const readiness = failure.getAlarmReadiness({ harness, outcomesState: ready({}), agentsState: ready({}), costState: kpi(1, 10), updateState: ready({}) });
-  assert.equal(readiness.status, "unknown");
-  assert.ok(readiness.unread.includes("system parts"));
-});
-
-describe("a source whose held alarm the list already shows is not announced as unread again", () => {
-  const rows = [
-    { name: "hot spend held over a failed cost read", costState: held(kpi(500, 10), "HTTP 502"), isUnread: false },
-    { name: "calm spend held over a failed cost read", costState: held(kpi(1, 10), "HTTP 502"), isUnread: true },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      const sources = { harness: HEALTHY, outcomesState: ready({}), agentsState: ready({}), costState: row.costState, updateState: ready({}) };
-      const alarms = dash.buildAlarms({ ...sources, installKind: "hidden" });
-      const readiness = failure.getAlarmReadiness(sources, alarms);
-      assert.equal(readiness.unread.includes("today's spend"), row.isUnread, readiness.unread.join(" · "));
-    });
-  }
 });
 
 test("the harness stat dims and reads busy while the shell re-reads it, like a region stat refreshing over held data", () => {

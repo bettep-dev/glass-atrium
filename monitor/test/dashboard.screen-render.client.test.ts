@@ -161,12 +161,24 @@ function renderResultPanel(byResult: Array<{ result: string; count: number }>): 
 }
 
 // spec 44084 §9.1: one noun, one window form → the sub-line says task results, never outcomes
+// a payload with no window dates → the count alone; the Status card's labels hold the window
 test("the results panel counts task results on its sub-line, filled or empty", () => {
   for (const byResult of [[{ result: "done", count: 40 }, { result: "fail", count: 2 }], []]) {
     const [subLine] = findNodes(renderResultPanel(byResult), (n) => n.type === "p");
     const total = byResult.reduce((sum, row) => sum + row.count, 0);
-    assert.equal(collectText(subLine).replace(/\s+/g, " ").trim(), `Last 7 days and today · ${total} task results`);
+    assert.equal(collectText(subLine).replace(/\s+/g, " ").trim(), `${total} task results`);
   }
+});
+
+test("an hour grid with no bucket dates states its run count alone, on the sub-line and the chart label", () => {
+  const data = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0));
+  data[3][9] = 117;
+  const grid = (rateMod.buildHourGrid as (payload: unknown) => unknown)({ data, meta: { total_count: 117 } });
+  const tree = renderScreen(rateMod.React.createElement(rateMod.HourGrid as Component, { grid })) as RenderedNode;
+  const [subLine] = findNodes(tree, (n) => n.type === "p");
+  assert.equal(collectText(subLine).replace(/\s+/g, " ").trim(), "117 runs");
+  const [chart] = findNodes(tree, (n) => n.props.role === "img");
+  assert.match(String(chart.props["aria-label"]), /^Runs by hour: busiest /);
 });
 
 // one count edge per card → the result rows keep an empty cell where each breakage row draws its arrow
@@ -239,7 +251,7 @@ test("the alarm lane, the spend strip and the results panel space by role keys, 
     ["2026-09-22", "2026-09-23"].map((date, i) => ({ date, cost_usd: 12.5 + i, session_count: 1 })),
   );
   const trees = [
-    render("AlarmLane", { alarms: [HARNESS_ALARM], readiness: { status: "unknown", unread: ["today's spend"] }, onNav: () => {} }),
+    render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: () => {} }),
     render("SpendStrip", { strip }),
     renderResultPanel([{ result: "done", count: 40 }, { result: "fail", count: 2 }]),
     render("BreakageAgents", { agents: [{ agent: "glass-atrium-dev-shell", count: 2 }, { agent: "glass-atrium-dev-db", count: 1 }] }),
@@ -371,10 +383,11 @@ test("a failed week panel whose cause the page banner carries points up to it in
   }
 });
 
-describe("a week panel's own failure is one inset alert card carrying its Retry: crit when nothing loaded, neutral over a held reading", () => {
+// a held panel's head already says Last known → its failure is one bare line, never a tinted box inside the card
+describe("a week panel's own failure carries its Retry: an inset crit card when nothing loaded, a bare line with a quiet Retry over a held reading", () => {
   const rows = [
-    { name: "nothing loaded", state: { data: null, error: "HTTP 500", busy: false }, tone: "crit" },
-    { name: "a held reading", state: { data: {}, error: "HTTP 500", busy: false }, tone: "neutral" },
+    { name: "nothing loaded", state: { data: null, error: "HTTP 500", busy: false }, tone: "crit", surface: "inset", isInline: false },
+    { name: "a held reading", state: { data: {}, error: "HTTP 500", busy: false }, tone: "neutral", surface: "bare", isInline: true },
   ];
   for (const row of rows) {
     test(row.name, () => {
@@ -382,12 +395,21 @@ describe("a week panel's own failure is one inset alert card carrying its Retry:
         id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state: row.state, onRetry: () => {}, render: () => null,
       });
       const cards = alertCardsOf(tree);
-      assert.equal(cards.length, 1, "one card");
-      assert.equal(cards[0].props.surface, "inset", "inside the panel");
+      assert.equal(cards.length, 1, "one alert");
+      assert.equal(cards[0].props.surface, row.surface, "surface");
       assert.equal(cards[0].props.tone, row.tone, "tone");
-      assert.equal(findNodes(cards[0], (n) => n.props.atom === "RetryButton").length, 1, "the Retry is the card's action");
+      const retries = findNodes(cards[0], (n) => n.props.atom === "RetryButton");
+      assert.equal(retries.length, 1, "the Retry is the alert's action");
+      assert.equal(Boolean(retries[0].props.isInline), row.isInline, "Retry form");
     });
   }
+});
+
+test("a held panel's failure line reads Couldn't refresh alone, the head already naming the panel", () => {
+  const tree = render("WeekPanel", {
+    id: "dash-week-hours", title: "Runs by hour", source: "runs by hour", state: { data: {}, error: "HTTP 500", busy: false }, onRetry: () => {}, render: () => null,
+  });
+  assert.equal(alertCardsOf(tree)[0].props.title, "Couldn't refresh.");
 });
 
 test("a stat Retry routes the harness region to the shell re-poll and every other region to its own reload", () => {
@@ -448,63 +470,29 @@ describe("the page-wide re-reads also re-poll the shell's harness", async () => 
 });
 
 // an idle lane is no text and no space → it leaves the flow but keeps its polite region for a later card
-test("a lane with no alarm renders no text and leaves the layout, whether its sources are loading or read", () => {
-  for (const status of ["loading", "read"]) {
-    const lane = render("AlarmLane", { alarms: [], readiness: { status, unread: [] }, onNav: () => {} });
-    assert.equal(collectText(lane).trim(), "", `${status}: no text`);
-    assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, `${status}: no loading line`);
-    assert.equal(findNodes(lane, (n) => n.props["aria-live"] === "polite").length, 1, `${status}: the polite region stays mounted`);
-    const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Needs you");
-    assert.ok(classOf(section).split(/\s+/).includes("sr-only"), `${status}: the idle lane is out of flow`);
-    assert.equal(findNodes(lane, (n) => hasClass(n, "dash-alarm-list")).length, 0, `${status}: no list card`);
-  }
+// a read that could not run is stated on its stat line (the unknown glyph), never as a lane notice
+test("a lane with no alarm renders no text and leaves the layout", () => {
+  const lane = render("AlarmLane", { alarms: [], onNav: () => {} });
+  assert.equal(collectText(lane).trim(), "", "no text");
+  assert.equal(alertCardsOf(lane).length, 0, "no notice card");
+  assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "no loading line");
+  assert.equal(findNodes(lane, (n) => n.props["aria-live"] === "polite").length, 1, "the polite region stays mounted");
+  const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Needs you");
+  assert.ok(classOf(section).split(/\s+/).includes("sr-only"), "the idle lane is out of flow");
+  assert.equal(findNodes(lane, (n) => hasClass(n, "dash-alarm-list")).length, 0, "no list card");
 });
 
-test("a lane holding an alarm while another source loads shows only that row, in flow", () => {
-  const lane = render("AlarmLane", { alarms: [HARNESS_ALARM], readiness: { status: "loading", unread: [] }, onNav: () => {} });
+test("a lane holding an alarm shows only that row, in flow", () => {
+  const lane = render("AlarmLane", { alarms: [HARNESS_ALARM], onNav: () => {} });
   const rows = alarmRowsOf(lane);
   assert.equal(rows.length, 1);
-  assert.equal(findNodes(lane, (n) => n.props.atom === "LoadingPlaceholder").length, 0, "no loading line under the row");
   const [section] = findNodes(lane, (n) => n.props["aria-label"] === "Needs you");
   assert.ok(!classOf(section).split(/\s+/).includes("sr-only"));
   assert.equal(collectText(lane), collectText(rows[0]), "the lane carries no text beyond its row");
 });
-describe("an empty alarm lane stays silent once its sources are read, and says it couldn't check when one went unread", () => {
-  const READY = { status: "ready", data: {} };
-  // a fleet read answers only with its breaker summary loaded (the agents route marks it "unavailable" otherwise)
-  const breakerOf = (source: string) => ({ status: "ready", data: { meta: { circuit_breaker: { source, suspended_count: 0, streak_count: 0 } } } });
-  // every source that can raise a row, read → a row overrides one source at a time
-  const ALL_READ = { harness: READY, outcomesState: READY, agentsState: breakerOf("loaded"), costState: READY, updateState: READY };
-  const rows = [
-    { name: "every source read → silent", sources: ALL_READ, status: "read", unread: [] },
-    { name: "a source still loading → loading, even beside a failed one", sources: { ...ALL_READ, harness: { status: "loading" }, costState: { status: "error" } }, status: "loading", unread: [] },
-    { name: "fleet still loading → loading", sources: { ...ALL_READ, agentsState: { status: "loading" } }, status: "loading", unread: [] },
-    { name: "harness fold unavailable → unknown", sources: { ...ALL_READ, harness: { status: "unavailable" } }, status: "unknown", unread: ["system parts"] },
-    { name: "task results read failed → unknown", sources: { ...ALL_READ, outcomesState: { status: "error" } }, status: "unknown", unread: ["task results"] },
-    { name: "fleet read failed → unknown", sources: { ...ALL_READ, agentsState: { status: "error" } }, status: "unknown", unread: ["agents"] },
-    { name: "fleet breaker unavailable → unknown", sources: { ...ALL_READ, agentsState: breakerOf("unavailable") }, status: "unknown", unread: ["agents"] },
-    { name: "spend read failed → unknown", sources: { ...ALL_READ, costState: { status: "error" } }, status: "unknown", unread: ["today's spend"] },
-    { name: "install read failed → unknown", sources: { ...ALL_READ, updateState: { status: "error" } }, status: "unknown", unread: ["install state"] },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      const readiness = (mod.getAlarmReadiness as (s: unknown) => { status: string; unread: string[] })(row.sources);
-      assert.equal(readiness.status, row.status);
-      assert.deepEqual([...readiness.unread], row.unread);
-
-      const lane = render("AlarmLane", { alarms: [], readiness, onNav: () => {} });
-      const cards = alertCardsOf(lane);
-      assert.equal(cards.length, row.status === "unknown" ? 1 : 0, "only an unread source earns a card");
-      if (row.status !== "unknown") return assert.equal(collectText(lane).trim(), "");
-      assert.equal(cards[0].props.tone, "neutral");
-      assert.match(collectText(cards[0]), /Couldn't check for alarms/);
-      for (const source of row.unread) assert.ok(collectText(cards[0]).includes(source), `names the unread source ${source}`);
-    });
-  }
-});
 
 test("alarm rows stack worst first in one list card, with no list roles", () => {
-  const lane = render("AlarmLane", { alarms: [HARNESS_ALARM, { ...HARNESS_ALARM, id: "spend", tone: "warn" }], readiness: { status: "read", unread: [] }, onNav: () => {} });
+  const lane = render("AlarmLane", { alarms: [HARNESS_ALARM, { ...HARNESS_ALARM, id: "spend", tone: "warn" }], onNav: () => {} });
   const lists = findNodes(lane, (n) => hasClass(n, "dash-alarm-list"));
   assert.equal(lists.length, 1, "one card holds every row");
   assert.deepEqual(alarmRowsOf(lists[0]).map((row) => row.props["data-tone"]), ["crit", "warn"]);
@@ -520,8 +508,9 @@ describe("the week block", () => {
       spendState: LOADING, outcomesState: LOADING, heatmapState: LOADING, onRetrySpend: () => {}, onRetryHeatmap: () => {},
     });
     assert.deepEqual(sectionIds(tree), ["dash-week-results", "dash-week-hours", "dash-week-spend"]);
-    const pairs = findNodes(tree, (n) => classOf(n).split(/\s+/).includes("xl:grid-cols-2"));
-    assert.equal(pairs.length, 1, "one two-column row from xl");
+    const pairs = findNodes(tree, (n) => n.props.atom === "SplitRow");
+    assert.equal(pairs.length, 1, "one split row from xl");
+    assert.equal(pairs[0].props.ratio, "rest:content", "Runs by hour at its content width, the results the rest");
     assert.deepEqual(sectionIds(pairs[0]), ["dash-week-results", "dash-week-hours"], "Spend stays out of the paired row");
   });
 
@@ -658,11 +647,11 @@ const READY_STAT = {
   context: "7 of 40 failed or blocked", notes: [] as string[], target: "outcomes", region: "outcomes", source: "task results",
 };
 const FAILED_STAT = {
-  ...READY_STAT, id: "fleet", label: "Fleet", status: "error", tone: "neutral", value: null, absent: "not-loaded",
+  ...READY_STAT, id: "fleet", label: "Fleet", status: "error", tone: "unknown", isContextTripped: true, value: null, absent: "not-loaded",
   context: "Couldn't load the fleet summary.", region: "agents", source: "the fleet summary", error: "HTTP 500", canRetry: true,
   target: "agents",
 };
-interface StatItem { key: string; label: string; value: unknown; unit?: string; context: unknown; href?: string; isLoading?: boolean }
+interface StatItem { key: string; label: string; value: unknown; unit?: string; context: unknown; href?: string; isLoading?: boolean; source?: string }
 
 function renderStatusCard(stats: unknown[], extra: Record<string, unknown> = {}): { tree: RenderedNode; items: StatItem[] } {
   const tree = render("StatusCard", { stats, onRetry: () => {}, ...extra });
@@ -739,6 +728,7 @@ test("a failed stat states its error on the context line with its own Retry; a b
   assert.match(collectText(context), /Couldn't load the fleet summary/);
   const retries = findNodes(context, (n) => n.props.atom === "RetryButton");
   assert.equal(retries.length, 1, "one Retry, on the stat's own line");
+  assert.equal(retries[0].props.isInline, true, "a quiet text action on the context line, never the boxed control");
   (retries[0].props.onRetry as () => void)();
   assert.deepEqual(retried, ["agents"], "the Retry reloads only the stat's own region");
   assert.equal(alertCardsOf(own.tree).length, 0, "no card nests inside the status card");
@@ -802,6 +792,18 @@ test("a failed stat hands the next step and the raw error to the card's one ⓘ,
   const info = collectText(nodeOf(card.props.info)).replace(/\s+/g, " ");
   assert.ok(info.includes(copy.next), `the next step rides ⓘ: ${info}`);
   assert.ok(info.includes(copy.detail), `the raw error rides ⓘ: ${info}`);
+});
+
+// the loader reads "Loading {source}…" (ui.display-atoms.client) → each stat hands the noun its read fetches, never its label
+test("every loading stat names its loader by the noun its read fetches", () => {
+  const unread = { status: "loading", data: null, error: null };
+  const stats = (failMod.buildStats as (args: unknown) => unknown[])({
+    harness: { status: "loading" }, costState: unread, outcomesState: unread, agentsState: unread,
+  });
+  const { items } = renderStatusCard(stats);
+  assert.deepEqual(Array.from(items, (item) => [item.isLoading, item.source]), [
+    [true, "system parts"], [true, "task results"], [true, "agents"], [true, "today's spend"],
+  ]);
 });
 
 describe("a held week panel says Last known once, in its head; its body names the failed refresh only", () => {
