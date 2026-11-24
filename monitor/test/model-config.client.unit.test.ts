@@ -278,7 +278,7 @@ test("validateFormMC: budget out of [0.05, 50.00] bounds â†’ error; in-bounds â†
 });
 
 describe("validateFormMC: a field alert fits the 160 control slot", () => {
-  const rows = [
+  const rows: Array<{ name: string; form: McForm; key: string }> = [
     { name: "empty model", form: { models: { "model.daemon_cycle_worker": "" }, budgets: {} }, key: "model.daemon_cycle_worker" },
     { name: "free-text model off the id pattern", form: { models: { "model.daemon_cycle_worker": "Claude-Custom" }, budgets: {} }, key: "model.daemon_cycle_worker" },
     { name: "cap off the two-decimal form", form: { models: {}, budgets: { "budget.worker_max_usd": "1.234" } }, key: "budget.worker_max_usd" },
