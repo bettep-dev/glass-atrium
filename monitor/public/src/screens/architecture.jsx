@@ -220,7 +220,7 @@ const MAP_PAYLOAD_URL_INDEX = 3;
 // 여기 없으므로 확장 컨트롤도 서지 않음: 빈 영역을 여는 버튼은 읽을 것이 있다고 거짓말함.
 const HEALTH_ROW_DETAILS = {
 	daemon: (row, states) => (
-		<DaemonRunDetail daemon={row.daemonName} state={states.payloadState} />
+		<DaemonRunDetail daemon={row.daemonName} cause={row.cause} state={states.payloadState} />
 	),
 	// 구성과 실패 이력이 한 확장 영역에 같이 옴 — "무엇이 걸렸나" 와 "무엇이 실패했나" 는
 	// 훅 신고 하나를 가르는 두 반쪽이라 떨어뜨려 두면 조작자가 화면 두 곳을 오가며 맞춰야 함.
@@ -1895,7 +1895,7 @@ function DrawerStatusAR({ tone, text }) {
  * 이스케이프하게 함 — 이 경로에 raw-HTML 진입(dangerouslySetInnerHTML)을 들이면 안 됨 (LLM01).
  * 파일의 유일한 raw-HTML 자리는 mermaid 캔버스이고, 그쪽과 이 값은 만나지 않음.
  */
-function DaemonRunDetail({ daemon, state }) {
+function DaemonRunDetail({ daemon, cause, state }) {
 	const { AbsentValue, formatKstDay } = window.UI;
 	const runs = getDaemonRunRows(state, daemon);
 
@@ -1919,7 +1919,8 @@ function DaemonRunDetail({ daemon, state }) {
 	const summary = getRunSummaryAR(runs);
 	return (
 		<div className="flex flex-col gap-list">
-			<span className="fs-meta text-ink">{summary.text}</span>
+			{/* the row's cause already reads the run line → the runs head does not say it twice */}
+			{summary.text !== cause && <span className="fs-meta text-ink">{summary.text}</span>}
 			{summary.failures.length > 0 && (
 		<ul className="flex flex-col gap-list">
 			{summary.failures.map((run) => (

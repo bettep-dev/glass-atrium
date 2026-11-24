@@ -2719,7 +2719,8 @@ test("the expanded region counts the clean runs and lists only the failed run wi
 	const { entries } = getFailingPayload();
 	const cleanCount = entries.filter((entry) => entry.summary.verdict === "ok" && entry.summary.error_signatures.length === 0).length;
 	const runLine = `${cleanCount} of ${entries.length} runs clean`;
-	assert.ok(text.includes(runLine), `the region must count the clean runs against every stored run — read "${text}"`);
+	const row = await page.$eval(`[data-health-row="${DAEMON_PART_ID}"]`, (el) => el.textContent || "");
+	assert.ok(row.includes(runLine), `the row must count the clean runs against every stored run — read "${row}"`);
 	assert.ok(
 		!text.includes(okDay),
 		`a clean run is counted in the summary, never listed — the list names failures only — read "${text}"`,
@@ -2736,11 +2737,13 @@ test("a daemon on schedule with a failed run reads one verdict in the drawer and
 	const runLine = `${cleanCount} of ${entries.length} runs clean`;
 	const drawerRow = await page.$eval(`[data-health-row="${DAEMON_PART_ID}"]`, (el) => el.textContent || "");
 	const partsRow = await page.$eval(`#arch-part-${DAEMON_PART_ID}`, (el) => el.textContent || "");
-	for (const [where, text] of [["drawer", drawerRow], ["System parts", partsRow]])
+	for (const [where, text] of [["drawer", drawerRow], ["System parts", partsRow]]) {
 		assert.ok(
-			text.includes("Needs attention") && text.includes(runLine) && !text.includes("Healthy"),
-			`the ${where} row reads Needs attention with the run line as its reason — read "${text}"`,
+			text.includes("Needs attention") && !text.includes("Healthy"),
+			`the ${where} row reads Needs attention — read "${text}"`,
 		);
+		assert.strictEqual(text.split(runLine).length - 1, 1, `the ${where} row states the run line once — read "${text}"`);
+	}
 });
 
 // the ring and the row carry the same one verdict, and a daemon's run leg outlives another daemon's drawer
