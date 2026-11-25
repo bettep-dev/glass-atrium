@@ -475,7 +475,7 @@ On `fail`, or `blocked` via **Blocker class**:
 
 **Retry** (same agent, max 2 attempts with refined prompt) → **Fallback** (alternative agent if domain coverage allows) → **Escalate** to glass-atrium-qa-debugger (2 consecutive fail = immediate escalation) → **Circuit-breaker** (same agent emits 3 consecutive fail → suspend agent, report to user).
 
-- Outside this chain — a `needs_context` result, a missing gate verdict: `### Resumption and Gate-Verdict Recovery` below.
+- Off-chain: **`needs_context` resumption** · **Missing gate verdict**.
 - **Debugger evidence gate**: reject a glass-atrium-qa-debugger diagnosis that carries no logs, reproduction or code reference — never re-delegate a fix on it.
 - **Backing honesty (which stages are enforced)**: only the **Circuit-breaker** is code-backed (`hooks/track-outcome.sh` → `circuit_breaker_record`); detail: `skills/glass-atrium-ops-delegation-contracts/references/failure-recovery.md`.
   - The first three stages, the **Retry effort escalation** included, and the **Debugger evidence gate** are honor-system.
@@ -713,6 +713,8 @@ Claim first: `claim` on the tool route; on the CLI, `wait` or `pending` → `get
   - Why: the listener announces what a `wait` would claim, and a `wait` displaces it.
 - A session no listener serves still starts `wait` — a background job, a print-mode run or a session started before the listener's binding, for example.
 - A `next` step and the turn-end check's line say which a session is: each says to start `wait` only where no listener serves it.
+
+## Owner Queue Waiting
 
 ### On a wait's exit
 

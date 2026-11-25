@@ -217,7 +217,7 @@ The delegation-size discipline (`skills/glass-atrium-ops-orchestrator-role.md` �
   - The retrospective's durable half is the Outcome Record's `summary` and `concerns` plus the learning-log aggregation (`core-learning-log.md` → Learning Log Auto-Aggregation).
   - A defect class found twice in one target repo → propose it to the user as a note for that repo's anchor file (`scoped/scope-dev.md` → **Anchor file (SECONDARY)**).
 
-#### Review rounds and reviewer prompts
+### Review rounds and reviewer prompts
 
 - Every review round the orchestrator composes, on the manual and the ultracode path alike, follows `skills/glass-atrium-ops-delegation-contracts/references/review-rounds.md`: the non-convergence routing and what a reviewer prompt may carry.
 - Reviewer-side counterpart: `scoped/scope-qa.md` → `## Delegation Bars and Convergence Notes [QA]`.

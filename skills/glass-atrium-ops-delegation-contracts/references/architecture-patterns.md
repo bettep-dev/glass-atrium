@@ -1,6 +1,9 @@
 # Architecture patterns — pipeline combinations and Agent Teams
 
 - **Pointer sites**: `skills/glass-atrium-ops-orchestrator.md` → `#### Explicit Pipeline Combinations [ORCHESTRATOR]` · `#### Agent Teams Hybrid [ORCHESTRATOR]`, which state each trigger.
+  - The close-out, **Clean up idle Teammates immediately**, has two more:
+    - `skills/glass-atrium-ops-orchestrator.md` → **Team termination**, at team end;
+    - `skills/glass-atrium-ops-orchestrator-role.md` → **Delivered-delegation close-out (Monitoring phase)**, once a delegation's result is accepted.
 
 ## Explicit Pipeline Combinations
 
