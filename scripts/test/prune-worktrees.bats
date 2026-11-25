@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # prune-worktrees.bats — the worktree close-out: a linked worktree is removed only under --apply and
 # only when all four safe-test parts pass; every other worktree is kept with its failing part named.
-# Scratch repositories only, under one bare mktemp -d; the lock store is sandboxed per test.
+# Scratch repositories only, under one bare mktemp -d; the lock and live-agent stores are sandboxed per test.
 
 PRUNE_SH="${BATS_TEST_DIRNAME}/../prune-worktrees.sh"
 LOCK_LIB="${BATS_TEST_DIRNAME}/../../hooks/lib/worktree-lock.sh"
@@ -14,6 +14,8 @@ setup() {
   PW_TMP="$(cd -P -- "${PW_TMP}" && pwd -P)"
   REPO="${PW_TMP}/repo"
   export WORKTREE_LOCK_DIR="${PW_TMP}/locks"
+  export GA_DATA_ROOT="${PW_TMP}/ga"
+  LIVE_DIR="${GA_DATA_ROOT}/data/live-children"
   export GA_PRUNE_WORKTREES_TERM_WAIT_SECS=2
   unset WORKTREE_LOCK_TTL_SECS
   STARTED_PIDS=()
@@ -68,6 +70,50 @@ start_inside() {
     sleep 0.1
   done
   INSIDE_PID="${pid}"
+}
+
+# Starts $2... with its cwd in $1 as the child of a stand-in Claude session process, the way an agent's
+# Bash call runs; a symlink keeps the name `claude` in its argv. Sets INSIDE_PID.
+start_under_session() {
+  local wt="${1}"
+  shift
+  mkdir -p "${PW_TMP}/bin"
+  ln -sf "$(command -v bash)" "${PW_TMP}/bin/claude"
+  "${PW_TMP}/bin/claude" -c '(cd -- "$1" && shift 2 && exec "$@") & printf "%s\n" "$!" >"$2"; wait' \
+    _ "${wt}" "${PW_TMP}/child.pid" "$@" </dev/null >/dev/null 2>&1 3>&- &
+  STARTED_PIDS+=("$!")
+  wait_for_child_inside "${wt}"
+}
+
+# Starts $2... with its cwd in $1 detached from every session: its parent exits, so it is reparented.
+start_detached_inside() {
+  local wt="${1}"
+  shift
+  (
+    (cd -- "${wt}" && exec "$@") </dev/null >/dev/null 2>&1 3>&- &
+    printf '%s\n' "$!" >"${PW_TMP}/child.pid"
+  )
+  wait_for_child_inside "${wt}"
+}
+
+wait_for_child_inside() {
+  local tries=0
+  INSIDE_PID=""
+  until [[ -n "${INSIDE_PID}" && "$(lsof -a -p "${INSIDE_PID}" -d cwd -Fn 2>/dev/null)" == *"n${1}"* ]]; do
+    tries=$((tries + 1))
+    ((tries < 50)) || { echo "no child reached ${1}"; return 1; }
+    sleep 0.1
+    [[ -s "${PW_TMP}/child.pid" ]] && INSIDE_PID="$(<"${PW_TMP}/child.pid")"
+  done
+  STARTED_PIDS+=("${INSIDE_PID}")
+  rm -- "${PW_TMP}/child.pid"
+}
+
+# A live-child marker as agent-tracker.sh's SubagentStart arm writes it.
+mark_live_agent() {
+  mkdir -p "${LIVE_DIR}"
+  : >"${LIVE_DIR}/${1}"
+  printf '%s\n' "${LIVE_DIR}/${1}"
 }
 
 is_registered() {
@@ -198,6 +244,59 @@ is_registered() {
   kill -0 "${INSIDE_PID}" || { echo "the survivor was killed"; return 1; }
   [[ "${output}" == *"kept: ${wt}"*"processes: fail"* ]] || { echo "not kept on processes: ${output}"; return 1; }
   [ -d "${wt}" ] || { echo "removed with a survivor inside"; return 1; }
+}
+
+@test "--apply stops nothing and removes nothing while a live agent may own a process inside" {
+  local -a rows=(
+    'live agent, process under a session|live|session|kept'
+    'agent marker past its TTL, process under a session|stale|session|removed'
+    'live agent, process outside every session|live|detached|removed'
+  )
+  local row name agent parent outcome wt marker n=0
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name agent parent outcome <<<"${row}"
+    n=$((n + 1))
+    marker="$(mark_live_agent "agent-${n}")"
+    [[ "${agent}" == live ]] || touch -t 202001010000 "${marker}"
+    wt="$(add_worktree "row${n}")"
+    if [[ "${parent}" == session ]]; then
+      start_under_session "${wt}" sleep 300 || { echo "${name}: not started"; return 1; }
+    else
+      start_detached_inside "${wt}" sleep 300 || { echo "${name}: not started"; return 1; }
+    fi
+
+    run bash "${PRUNE_SH}" --apply "${wt}"
+    [ "${status}" -eq 0 ] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+
+    if [[ "${outcome}" == kept ]]; then
+      kill -0 "${INSIDE_PID}" || { echo "${name}: process stopped: ${output}"; return 1; }
+      [[ "${output}" == *"skipped: "*"pid=${INSIDE_PID}"* ]] || { echo "${name}: skip not reported: ${output}"; return 1; }
+      [[ "${output}" == *"kept: ${wt} — agents: fail"* ]] || { echo "${name}: part not named: ${output}"; return 1; }
+      [ -d "${wt}" ] || { echo "${name}: removed: ${output}"; return 1; }
+    else
+      [[ "${output}" == *"stopped: pid=${INSIDE_PID} "* ]] || { echo "${name}: not stopped: ${output}"; return 1; }
+      [[ "${output}" == *"removed: ${wt}"* ]] || { echo "${name}: not removed: ${output}"; return 1; }
+    fi
+    rm -- "${marker}"
+  done
+}
+
+@test "the cwd listing asks lsof to avoid blocking kernel calls and to keep quiet" {
+  local wt real
+  wt="$(add_worktree feat)"
+  real="$(command -v lsof)"
+  mkdir -p "${PW_TMP}/shim"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nexec "%s" "$@"\n' "${PW_TMP}/lsof.args" "${real}" \
+    >"${PW_TMP}/shim/lsof"
+  chmod +x "${PW_TMP}/shim/lsof"
+
+  PATH="${PW_TMP}/shim:${PATH}" run bash "${PRUNE_SH}" "${wt}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  [[ "${output}" == *"would remove: ${wt}"* ]] || { echo "listing changed: ${output}"; return 1; }
+  [[ -s "${PW_TMP}/lsof.args" ]] || { echo "lsof never called"; return 1; }
+  ! grep -v -e '-b ' "${PW_TMP}/lsof.args" | grep -q . || { echo "a call without -b: $(<"${PW_TMP}/lsof.args")"; return 1; }
+  ! grep -v -e '-w ' "${PW_TMP}/lsof.args" | grep -q . || { echo "a call without -w: $(<"${PW_TMP}/lsof.args")"; return 1; }
 }
 
 @test "a worktree contained only in the --deployed commit passes the containment part" {

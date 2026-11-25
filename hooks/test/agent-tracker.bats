@@ -337,6 +337,8 @@ EOF
   [[ "${output}" == *"ORPHAN-ADV-001"* ]] || { echo "no orphan advisory: ${output}"; return 1; }
   [[ "${output}" == *"pid=${INSIDE_PID} cmd=sleep cwd=${WT}/sub"* ]] || { echo "process line missing: ${output}"; return 1; }
   [[ "${output}" == *"prune-worktrees.sh ${WT}"* ]] || { echo "close-out pointer missing: ${output}"; return 1; }
+  [[ "${output}" == *"may belong to a live agent that holds no lock"*"the close-out script decides"* ]] \
+    || { echo "live-agent caveat missing: ${output}"; return 1; }
   kill -0 "${INSIDE_PID}" || { echo "the listing stopped the process"; return 1; }
   [[ -d "${WT}/sub" ]] || { echo "the listing removed the worktree"; return 1; }
 }

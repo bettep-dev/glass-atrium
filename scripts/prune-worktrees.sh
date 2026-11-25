@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # prune-worktrees.sh — worktree close-out: removes a finished delegation's linked worktree once the
-# four-part safe test passes, and stops the orphaned processes still running inside it.
+# four-part safe test and this script's own live-agent guard pass, and stops the orphaned processes
+# still running inside it.
 # Usage: prune-worktrees.sh [--apply] [--deployed <sha>] <worktree>...
 #        prune-worktrees.sh --list-all     (every linked worktree of the cwd's repository; listing only)
 #
@@ -19,10 +20,18 @@
 #   clean      — git status lists no change and no untracked path; ignored files do not count
 #   lock       — no live writer lock (hooks/lib/worktree-lock.sh → worktree_lock_is_live)
 #   processes  — no process has its cwd inside
-# Dry run by default. Under --apply: a live lock skips the worktree whole, its processes left running;
-# otherwise each process inside gets TERM and a bounded wait, a survivor is reported and never KILLed;
-# then, all four passing, `git worktree remove` without --force — ignored build output does not make
-# git refuse, it goes with the directory. A git refusal is reported and final. No branch is deleted.
+# and a fifth fact, this script's own guard on the process-stop step — stricter than the exception
+# above, never looser:
+#   agents     — no live agent can own a process inside. The harness records which agents are live
+#                (hooks/hook-utils.sh → LIVE_CHILD_DIR markers, LIVE_CHILD_TTL_MIN) but never where:
+#                SubagentStart observes agent_type and agent_id only. An agent's Bash call runs as a
+#                child of its session's claude process, so while any marker is live, a process inside
+#                with a claude process in its ancestry (itself included) fails the fact.
+# Dry run by default. A live lock or a failed agents fact skips the worktree whole: nothing stopped,
+# nothing removed. Otherwise, under --apply, each process inside gets TERM and a bounded wait, a
+# survivor is reported and never KILLed; then, all five passing, `git worktree remove` without --force —
+# ignored build output does not make git refuse, it goes with the directory. A git refusal is
+# reported and final. No branch is deleted.
 #
 # Scope boundary: --list-all refuses --apply, since the exception covers only this session's own
 # worktrees and only the caller can name those. Orphans are found by cwd (hooks/lib/worktree-lock.sh →
@@ -35,7 +44,7 @@
 #   0 = run complete (a kept worktree is a reported outcome, not an error)
 #   2 = usage error
 #   3 = an argument was refused (path guard, not a linked worktree root, the main checkout)
-#   4 = a shared library (scripts/lib/path-guard.sh, hooks/lib/worktree-lock.sh) missing
+#   4 = a shared library (scripts/lib/path-guard.sh, hooks/lib/worktree-lock.sh, hooks/hook-utils.sh) missing
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -44,7 +53,8 @@ SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SELF_DIR
 readonly PATH_GUARD="${SELF_DIR}/lib/path-guard.sh"
 readonly LOCK_LIB="${SELF_DIR}/../hooks/lib/worktree-lock.sh"
-for lib in "${PATH_GUARD}" "${LOCK_LIB}"; do
+readonly HOOK_UTILS="${SELF_DIR}/../hooks/hook-utils.sh"
+for lib in "${PATH_GUARD}" "${LOCK_LIB}" "${HOOK_UTILS}"; do
   if [[ ! -r "${lib}" ]]; then
     printf 'prune-worktrees: FATAL: cannot source the shared library %s\n' "${lib}" >&2
     exit 4
@@ -54,6 +64,8 @@ done
 source "${PATH_GUARD}" || exit 4
 # shellcheck source-path=SCRIPTDIR source=../hooks/lib/worktree-lock.sh
 source "${LOCK_LIB}" || exit 4
+# shellcheck source-path=SCRIPTDIR source=../hooks/hook-utils.sh
+source "${HOOK_UTILS}" || exit 4
 
 TERM_WAIT_SECS="${GA_PRUNE_WORKTREES_TERM_WAIT_SECS:-10}"
 [[ "${TERM_WAIT_SECS}" =~ ^[0-9]+$ ]] || TERM_WAIT_SECS=10
@@ -161,6 +173,12 @@ close_out_worktree() {
   if holder="$(get_live_lock_holder)"; then
     printf '  skipped: live writer lock held by %s\n' "${holder}"
     REPORT_KEPT+=("${wt} — lock: fail (live writer lock held by ${holder})")
+    return 0
+  fi
+  # shellcheck disable=SC2310  # the live-agent verdict is branched on
+  if ! check_live_agents "${wt}"; then
+    printf '  skipped: %s\n' "${PART_FACT}"
+    REPORT_KEPT+=("${wt} — agents: fail (${PART_FACT})")
     return 0
   fi
   ((APPLY == 0)) || stop_processes_inside "${wt}"
@@ -299,6 +317,7 @@ judge_worktree() {
   run_part contained check_contained "${wt}"
   run_part clean check_clean "${wt}"
   run_part lock check_lock
+  run_part agents check_live_agents "${wt}"
   run_part processes check_processes "${wt}"
   if [[ -n "${FAILED_PARTS}" ]]; then
     REPORT_KEPT+=("${wt} — ${FAILED_PARTS}")
@@ -366,6 +385,85 @@ check_lock() {
     return 1
   fi
   PART_FACT='no live writer lock'
+}
+
+check_live_agents() {
+  local live owner
+  # shellcheck disable=SC2310  # an unreadable record store is the failing fact
+  if ! live="$(get_live_agent_count)"; then
+    PART_FACT="cannot read the live-agent records in ${LIVE_CHILD_DIR}"
+    return 1
+  fi
+  if ((live == 0)); then
+    PART_FACT='no live agent recorded'
+    return 0
+  fi
+  # shellcheck disable=SC2310  # the listing verdict is branched on
+  if ! worktree_get_processes "${1}"; then
+    PART_FACT="${live} live agent(s) recorded and process cwds cannot be listed"
+    return 1
+  fi
+  # shellcheck disable=SC2310  # the ownership verdict is branched on
+  if owner="$(get_session_process_inside)"; then
+    PART_FACT="${owner} while ${live} agent(s) are live, and no record says whose it is"
+    return 1
+  fi
+  PART_FACT="${live} live agent(s) recorded; no process inside runs under a Claude session"
+}
+
+# Live-child markers younger than the TTL; rc 1 = the store exists but cannot be read.
+get_live_agent_count() {
+  local listing line count=0
+  [[ -d "${LIVE_CHILD_DIR}" ]] || {
+    printf '0\n'
+    return 0
+  }
+  listing="$(find "${LIVE_CHILD_DIR}" -type f -mmin "-${LIVE_CHILD_TTL_MIN}")" || return 1
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] || count=$((count + 1))
+  done <<<"${listing}"
+  printf '%s\n' "${count}"
+}
+
+# Prints "pid=<p> runs under Claude session pid=<s>" for the first process inside (worktree_processes_out)
+# with a session process in its ancestry; rc 1 = none. This run's own chain is skipped: it is never signalled.
+get_session_process_inside() {
+  local entry pid session
+  for entry in "${worktree_processes_out[@]+"${worktree_processes_out[@]}"}"; do
+    pid="${entry%%"${SEP}"*}"
+    [[ "${ANCESTOR_PIDS}" != *" ${pid} "* ]] || continue
+    # shellcheck disable=SC2310  # the ancestry verdict is branched on
+    if session="$(get_session_ancestor "${pid}")"; then
+      printf 'pid=%s runs under Claude session pid=%s\n' "${pid}" "${session}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# The nearest claude process from $1 up its parent chain, $1 itself included; rc 1 = none.
+get_session_ancestor() {
+  local pid="${1}" line ppid args
+  while [[ "${pid}" =~ ^[0-9]+$ ]] && ((pid > 1)); do
+    line="$(ps -o ppid=,args= -p "${pid}" 2>/dev/null)" || return 1
+    line="${line#"${line%%[![:space:]]*}"}"
+    ppid="${line%%[[:space:]]*}"
+    args="${line#"${ppid}"}"
+    args="${args#"${args%%[![:space:]]*}"}"
+    # shellcheck disable=SC2310  # the name verdict is branched on
+    if is_session_command "${args}"; then
+      printf '%s\n' "${pid}"
+      return 0
+    fi
+    pid="${ppid}"
+  done
+  return 1
+}
+
+# A Claude Code session: the native binary (argv0 `claude`) or the npm package run by node.
+is_session_command() {
+  local argv0="${1%%[[:space:]]*}"
+  [[ "${argv0##*/}" == claude || "${1}" == *'@anthropic-ai/claude-code/'* ]]
 }
 
 check_processes() {

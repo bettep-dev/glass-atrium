@@ -356,7 +356,8 @@ worktree_get_processes() {
   worktree_processes_out=()
   command -v lsof >/dev/null 2>&1 || return 1
   # lsof exits 1 when some process cannot be read; a non-empty listing is still usable.
-  listing="$(cd / && lsof +c 0 -d cwd -Fpcn 2>/dev/null)" || [[ -n "${listing}" ]] || return 1
+  # -b: no kernel call that can block (a dead mount cannot hang a hook) · -w: no warning for what it skipped.
+  listing="$(cd / && lsof -b -w +c 0 -d cwd -Fpcn 2>/dev/null)" || [[ -n "${listing}" ]] || return 1
   while IFS= read -r line; do
     case "${line}" in
       p*) pid="${line#p}" ;;

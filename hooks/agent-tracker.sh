@@ -117,7 +117,7 @@ list_orphan_processes() {
   ((orphan_total > 0)) || return 0
   script="$(cd -P -- "${BASH_SOURCE%/*}/.." && pwd -P)/scripts/prune-worktrees.sh"
   (printf '%s\n' \
-    "[agent-tracker] ORPHAN-ADV-001 ADVISORY ONLY — ${orphan_total} process(es) still run inside the worktree of stopped agent ${agent_id}; nothing was stopped:${orphan_lines}" \
+    "[agent-tracker] ORPHAN-ADV-001 ADVISORY ONLY — ${orphan_total} process(es) still run inside the worktree of stopped agent ${agent_id}; nothing was stopped; a listed process may belong to a live agent that holds no lock, and the close-out script decides:${orphan_lines}" \
     "  close-out (dry run; --apply stops them): ${script} ${orphan_roots[*]}") >&2 || true
 }
 
