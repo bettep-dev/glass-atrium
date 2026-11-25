@@ -335,29 +335,14 @@ has_size_est_token() { has_token "${1}" '[SIZE-EST]'; }
 # discovery). Anchored bracketed literal, PRESENCE only — never the classification's correctness.
 has_plan_subset_token() { has_token "${1}" '[PLAN-SUBSET]'; }
 
-# Prints the units= value of the first [SIZE-EST] line, after the token only; nothing when that line
-# carries no key. Here-string input — no pipe, so the reader's early stop races no writer.
-get_size_est_units() {
-  awk '!done && (i = index($0, "[SIZE-EST]")) {
-    done = 1
-    rest = substr($0, i + 10)
-    if (match(rest, /(^|[ \t])units=[0-9]+/)) {
-      hit = substr(rest, RSTART, RLENGTH)
-      sub(/.*units=/, "", hit)
-      print hit
-    }
-  }' <<<"${1}" 2>/dev/null || true
-}
-
-# Surface 7 emitter — a [SIZE-EST] declaring more than one work-unit.
+# Surface 7 emitter — a [SIZE-EST] declaring more than one work-unit (parser + advice: hook-utils.sh).
 warn_multi_unit_spawn() {
   [[ "${orchestrator_origin}" == true ]] || return 0
-  local units
-  units="$(get_size_est_units "${prompt_full}")"
-  [[ "${units}" =~ ^[0-9]+$ ]] || return 0
-  ((10#${units} > 1)) || return 0
-  (printf '[enforce-verification-gate] DEV spawn of %s carries units=%s work-units — one work-unit per DEV spawn is the default, so split it unless every unit is tiny: tiny units (one file each, no test change) may share a spawn while its [SIZE-EST] stays under the split triggers (skills/glass-atrium-ops-orchestrator-role.md → Spawn Granularity). Advisory only — a prompt to check, not an error.\n' \
-    "${subagent_type}" "${units}") >&2 || true
+  local units advice
+  units="$(hook_get_size_est_units "${prompt_full}")"
+  advice="$(hook_get_multi_unit_advice "${units}")"
+  [[ -n "${advice}" ]] || return 0
+  (printf '[enforce-verification-gate] DEV spawn of %s %s\n' "${subagent_type}" "${advice}") >&2 || true
 }
 
 # Prints each distinct absolute worktree path a `worktree <path> — INDEX OWNER` contract names; a

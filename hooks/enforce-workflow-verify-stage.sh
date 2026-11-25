@@ -230,8 +230,15 @@
 #   Silent → no Tier-B DEV spawn after the fallback, or an `if (!x) … return|throw` between the read
 #     and that spawn. Comment-stripped + string-masked → a quoted or commented fallback never fires.
 #   Not modelled (text pattern, no JS parse) → a destructured or reassigned read, a ternary spanning
-#     lines, a stop scoped to a nested function. Honest limit: a fallback on an unrelated variable of
-#     the same name can fire.
+#     lines, a stop scoped to a nested function, and any stop other than `if (!x)` — `if (x == null)
+#     return` or a stop on a derived value such as `if (!items.length) throw` fires anyway. Honest
+#     limit: a fallback on an unrelated variable of the same name can fire.
+#
+# ELEVENTH ADVISORY PASS (units, advisory — NEVER exit 2): flags a DEV workflow whose [SIZE-EST] lines
+# declare units= above 1 on any spawn — one work-unit per DEV spawn by default, tiny units may share one.
+#   Decided in bash off the raw script (attestation weighting), with the manual gate's parser and advice
+#   (hook-utils.sh → hook_get_size_est_units · hook_get_multi_unit_advice), loaded lazily.
+#   Silent → key absent (optional), units=1, a simple-task entry, no DEV spawn, or the library unreadable.
 #
 # MULTIPLEXED ADVISORY LINE (the helper's TENTH output line, COMPLETION_FLAG): the completion-channel
 # decisions share ONE flag line carrying a value suffix (COMPLETION_ADVISE:<value>), so the output-arity
@@ -585,12 +592,28 @@ print_schema_cap_advisory() {
 # ~40 split trigger ahead of the measured 46-52 truncation band), never a count maintained here.
 print_sizeest_low_advisory() {
   # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
-  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value is BELOW the slot-count floor (implementation slots x 4.5, the empirical per-file tool_use calibration in skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget). Under-declaring is the DANGEROUS direction: it smuggles an oversized delegation past the split discipline, and the sub-agent then truncates mid-work with no [COMPLETION]. Re-estimate UP against the files x 4.5 floor and, if the honest estimate exceeds ~30, SPLIT the delegation instead of re-declaring it smaller. PLAUSIBILITY-ONLY, never estimate correctness — parity with the presence-only [SIZE-EST] gate. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
+  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value is BELOW the slot-count floor (implementation slots x 4.5, the empirical per-file tool_use calibration in skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget). Under-declaring is the DANGEROUS direction: it smuggles an oversized delegation past the split discipline, and the sub-agent then truncates mid-work with no [COMPLETION]. Re-estimate UP against the files x 4.5 floor and, if the honest estimate exceeds ~30, SPLIT the delegation instead of re-declaring it smaller — one work-unit per DEV spawn, each declaring units=1 on its [SIZE-EST]. PLAUSIBILITY-ONLY, never estimate correctness — parity with the presence-only [SIZE-EST] gate. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
 }
 
 print_sizeest_high_advisory() {
   # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
-  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value EXCEEDS the ~40 delegation ceiling (the HARD SECONDARY split trigger in skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget, set ahead of the measured 46-52 truncation band). A delegation this size is expected to run out of budget before its terminal emit: SPLIT it into sequential checkpointed sub-delegations, keeping each implementation together with its NEW tests and peeling off run-full-suite / report-consolidation instead. PLAUSIBILITY-ONLY, never estimate correctness. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
+  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value EXCEEDS the ~40 delegation ceiling (the HARD SECONDARY split trigger in skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget, set ahead of the measured 46-52 truncation band). A delegation this size is expected to run out of budget before its terminal emit: SPLIT it into sequential checkpointed sub-delegations — one work-unit per DEV spawn, each declaring units=1 on its [SIZE-EST] — keeping each implementation together with its NEW tests and peeling off run-full-suite / report-consolidation instead. PLAUSIBILITY-ONLY, never estimate correctness. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
+}
+
+# get_units_advice — the units nudge's advice for the raw script (header -> ELEVENTH ADVISORY PASS);
+# empty when silent. Called in a command substitution → the library's globals stay out of the gate.
+get_units_advice() {
+  local lib="${BASH_SOURCE%/*}/hook-utils.sh" units
+  [[ -r "${lib}" ]] || return 0
+  # shellcheck source=hook-utils.sh
+  source "${lib}" || return 0
+  units="$(hook_get_size_est_units "${script_src}")"
+  hook_get_multi_unit_advice "${units}"
+}
+
+print_units_advisory() {
+  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
+  (printf '[enforce-workflow-verify-stage] ADVISORY (units, non-blocking): a DEV spawn in this workflow %s\n' "${1}") >&2 || true
 }
 
 print_scope_advisory() {
@@ -849,7 +872,7 @@ EOF
 
 Delegation-size self-attestation (ONE [SIZE-EST] token, two modes — DEV mode at every DEV spawn of a plan-referencing script; a simple-task entry owes none):
   --- DEV mode ---
-  log('[SIZE-EST] bundles=N tool_uses~=N — <reason>');
+  log('[SIZE-EST] bundles=N units=N tool_uses~=N — <reason>');
   --- analysis mode (schema-mode NON-DEV researcher/planner/reporter/reviewer spawn) ---
   log('[SIZE-EST] reads~=N fields=N effort=<medium|high> scope=<allowlist|bounded> — <reason>');
   RIGHT-SIZE the analysis spawn: reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high) → SPLIT by
@@ -2690,7 +2713,7 @@ EOF
       trace_tag="block-sizeest"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] WARNING (size-attestation miss): this Workflow spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. Record the pre-spawn size estimate at every DEV spawn of a plan-referencing script: log('[SIZE-EST] bundles=N tool_uses~=N — <reason>'). A genuinely simple script with no plan-reference records [ENTRY-CLASS] simple-task instead and owes no [SIZE-EST]. Under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline); on a borderline count round UP. Placement is not enforced (raw-scanned); existence-only — the estimate correctness is never checked.
+[enforce-workflow-verify-stage] WARNING (size-attestation miss): this Workflow spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. Record the pre-spawn size estimate at every DEV spawn of a plan-referencing script: log('[SIZE-EST] bundles=N units=N tool_uses~=N — <reason>'), units= being the work-units that spawn carries (one by default). A genuinely simple script with no plan-reference records [ENTRY-CLASS] simple-task instead and owes no [SIZE-EST]. Under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline); on a borderline count round UP. Placement is not enforced (raw-scanned); existence-only — the estimate correctness is never checked.
 EOF
       )"
       ;;
@@ -2712,7 +2735,7 @@ EOF
   exit 0
 }
 
-# print_trailing_advisories — the scope, close-token, review-fallback, first-link and implementing
+# print_trailing_advisories — the scope, units, close-token, review-fallback, first-link and implementing
 # nudges; each tags the trace. Reads the globals the verdict helper set (dev_flag, entry_marker,
 # close_token_flag, review_fallback_flag, script_src).
 print_trailing_advisories() {
@@ -2724,6 +2747,15 @@ print_trailing_advisories() {
     && ! printf '%s' "${script_src}" | drain_after grep -qF '[SCOPE]'; then
     print_scope_advisory
     add_advisory "scope"
+  fi
+  # UNITS ADVISORY — header -> ELEVENTH ADVISORY PASS; no units= text → the library is never loaded.
+  if [[ "${dev_flag}" == "yes" && "${entry_marker}" != "ENTRY_SIMPLE" && "${script_src}" == *units=* ]]; then
+    local units_advice
+    units_advice="$(get_units_advice)"
+    if [[ -n "${units_advice}" ]]; then
+      print_units_advisory "${units_advice}"
+      add_advisory "units"
+    fi
   fi
   # CLOSE-TOKEN ADVISORY — the predicate is the helper's (header -> EIGHTH ADVISORY PASS).
   if [[ "${close_token_flag}" == "CLOSE_TOKEN_ADVISE" ]]; then
