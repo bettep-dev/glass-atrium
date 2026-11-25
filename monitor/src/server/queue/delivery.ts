@@ -6,8 +6,10 @@ import { randomUUID } from "node:crypto";
 
 import type { Prisma, QueueItemKind, QueueItemStatus } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
+import { logger } from "../logger.js";
 import { QueueRequestError } from "./errors.js";
 import { type AnsweredCount, type LockedSession, getAnsweredCount, lockSession } from "./registry.js";
+import { secretRequests } from "./scan-approvals.js";
 
 export const PULL = {
   // The session fetches then acks right after a pull → a missed window means the process died mid-turn
@@ -120,17 +122,22 @@ export async function ackItem(itemId: number, sessionId: string, msgId: string):
   });
 }
 
+/** A withdrawn secret-approval item's scan-approval request, pending or approved, is removed once the withdraw commits. */
 export async function withdrawItem(itemId: number, sessionId: string): Promise<void> {
-  await getPrisma().$transaction(async (tx) => {
+  const requestId = await getPrisma().$transaction(async (tx) => {
     await lockOwnSession(tx, sessionId);
-    const { status, kind } = await assertOwnItem(tx, itemId, sessionId);
+    const { status, kind, secretRequestId } = await assertOwnItem(tx, itemId, sessionId);
     if (kind === "message" || kind === "relay") throw new QueueRequestError(409, "not_withdrawable", `a ${kind === "message" ? "owner message" : "relay"} cannot be withdrawn by its session`);
     const moved = await tx.queueItem.updateMany({
       where: { id: BigInt(itemId), status: { in: WITHDRAWABLE } },
       data: { status: "withdrawn" },
     });
     if (moved.count === 0) throw new QueueRequestError(409, "not_withdrawable", `item in state ${status} cannot be withdrawn`);
+    return secretRequestId;
   });
+  if (requestId !== null && secretRequests.delete(requestId)) {
+    logger.info({ itemId, requestId }, "scan approval request withdrawn by its session — removed from the store");
+  }
 }
 
 // Lapsed entries dropped on each write → the map holds only sessions polled within the window
@@ -167,8 +174,8 @@ async function assertOwnItem(
   tx: Prisma.TransactionClient,
   itemId: number,
   sessionId: string,
-): Promise<{ status: QueueItemStatus; kind: QueueItemKind }> {
-  const item = await tx.queueItem.findFirst({ where: { id: BigInt(itemId), sessionId }, select: { status: true, kind: true } });
+): Promise<{ status: QueueItemStatus; kind: QueueItemKind; secretRequestId: string | null }> {
+  const item = await tx.queueItem.findFirst({ where: { id: BigInt(itemId), sessionId }, select: { status: true, kind: true, secretRequestId: true } });
   if (item === null) throw new QueueRequestError(404, "unknown_item", "item not found for this session");
   return item;
 }

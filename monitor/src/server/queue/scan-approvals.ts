@@ -180,12 +180,11 @@ export class SecretRequestRepository {
     return request.lines.map((line) => ({ hash: line.hash, ...getLineDisplay(line.text) }));
   }
 
-  /** Removes every expired request from the store → how many; the queue scheduler's sweep calls it too. */
-  deleteExpired(): number {
-    const now = this.now().getTime();
+  /** Removes every request expired at `now` from the store → how many; the queue scheduler's sweep passes its own clock. */
+  deleteExpired(now: Date = this.now()): number {
     let removed = 0;
     for (const [id, request] of this.requests) {
-      if (request.expiresAt.getTime() > now) continue;
+      if (request.expiresAt.getTime() > now.getTime()) continue;
       this.requests.delete(id);
       removed += 1;
     }
