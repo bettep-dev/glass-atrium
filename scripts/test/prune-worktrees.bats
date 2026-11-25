@@ -316,6 +316,48 @@ is_registered() {
   done
 }
 
+@test "--apply never signals another session's process that starts inside after the ownership check" {
+  local wt
+  wt="$(add_worktree feat)"
+  make_session_launcher
+  export REAL_LSOF RACE_WT="${wt}" RACE_DIR="${PW_TMP}"
+  REAL_LSOF="$(command -v lsof)"
+  mkdir -p "${PW_TMP}/shim"
+  # First cwd listing answered as is; only then does another session's process start inside.
+  cat >"${PW_TMP}/shim/lsof" <<'SHIM'
+#!/usr/bin/env bash
+n=$(($(cat "${RACE_DIR}/lsof.calls" 2>/dev/null || printf 0) + 1))
+printf '%s\n' "${n}" >"${RACE_DIR}/lsof.calls"
+rc=0
+"${REAL_LSOF}" "$@" || rc=$?
+if ((n == 1)); then
+  "${RACE_DIR}/bin/claude" -c '(cd -- "$1" && exec sleep 300) & printf "%s\n" "$!" >"$2"; wait' \
+    _ "${RACE_WT}" "${RACE_DIR}/child.pid" </dev/null >/dev/null 2>&1 3>&- &
+  printf '%s\n' "$!" >"${RACE_DIR}/session.pid"
+  tries=0
+  until [[ -s "${RACE_DIR}/child.pid" \
+    && "$("${REAL_LSOF}" -a -p "$(<"${RACE_DIR}/child.pid")" -d cwd -Fn 2>/dev/null)" == *"n${RACE_WT}"* ]]; do
+    tries=$((tries + 1))
+    ((tries < 50)) || break
+    sleep 0.1
+  done
+fi
+exit "${rc}"
+SHIM
+  chmod +x "${PW_TMP}/shim/lsof"
+
+  PATH="${PW_TMP}/shim:${PATH}" run bash "${PRUNE_SH}" --apply "${wt}"
+  [[ -s "${PW_TMP}/child.pid" ]] || { echo "late process never started: ${output}"; return 1; }
+  INSIDE_PID="$(<"${PW_TMP}/child.pid")"
+  STARTED_PIDS+=("${INSIDE_PID}" "$(<"${PW_TMP}/session.pid")")
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  kill -0 "${INSIDE_PID}" || { echo "another session's process was signalled: ${output}"; return 1; }
+  [[ "${output}" == *"kept: ${wt} — agents: fail (pid=${INSIDE_PID} runs under another Claude session"* ]] \
+    || { echo "reason not printed: ${output}"; return 1; }
+  [ -d "${wt}" ] || { echo "removed: ${output}"; return 1; }
+}
+
 @test "--apply keeps a passing worktree while the live-agent records cannot be read" {
   local wt
   wt="$(add_worktree feat)"

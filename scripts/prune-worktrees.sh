@@ -29,7 +29,9 @@
 #                (hooks/hook-utils.sh → hook_get_live_child_count) — markers say which agents
 #                are live, never where. A process with no claude ancestor is an orphan.
 # Processes --apply can ever signal, TERM only: an orphan, or a process under the caller's own session
-# while no marker is live. Never this run's own chain, never another session's process.
+# while no marker is live. Never this run's own chain, never another session's process. TERM goes only to
+# the listing the agents fact judged; a process that starts inside later is never signalled, and it keeps
+# the worktree with its failing part named.
 # Dry run by default. A live lock or a failed agents fact skips the worktree whole: nothing stopped,
 # nothing removed. Otherwise, under --apply, each process inside gets TERM and a bounded wait, a
 # survivor is reported and never KILLed; then, all five passing, `git worktree remove` without --force —
@@ -187,7 +189,7 @@ close_out_worktree() {
     REPORT_KEPT+=("${wt} — agents: fail (${PART_FACT})")
     return 0
   fi
-  ((APPLY == 0)) || stop_processes_inside "${wt}"
+  ((APPLY == 0)) || stop_processes_inside
   judge_worktree "${wt}"
 }
 
@@ -269,11 +271,11 @@ is_running() {
   [[ -n "${stat}" && "${stat}" != Z* ]]
 }
 
+# Signals only the listing check_live_agents just judged (worktree_processes_out), never a fresh one:
+# a process that starts inside after that judgment gets no signal and keeps the worktree in judge_worktree.
 stop_processes_inside() {
-  local wt="${1}" entry pid
+  local entry pid
   SIGNALLED=()
-  # shellcheck disable=SC2310  # no listing → nothing to stop; the processes part then fails
-  worktree_get_processes "${wt}" || return 0
   for entry in "${worktree_processes_out[@]+"${worktree_processes_out[@]}"}"; do
     pid="${entry%%"${SEP}"*}"
     if [[ "${ANCESTOR_PIDS}" == *" ${pid} "* ]]; then
