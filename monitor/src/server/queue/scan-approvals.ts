@@ -209,6 +209,9 @@ export class SecretRequestRepository {
   }
 }
 
+/** The monitor process's one store → every route, the answer write and the sweep share it. */
+export const secretRequests = new SecretRequestRepository();
+
 /**
  * The one canonical line hash; the hook implements the same spec, both pinned by test/fixtures/scan-approval-vectors.json.
  * - a line: the raw bytes between LF separators of the field the hook scans (content for Write, new_string for Edit)

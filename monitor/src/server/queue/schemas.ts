@@ -122,7 +122,10 @@ const decisionSchema = z
     path: ["recommendedCode"],
   });
 
-export const postItemBodySchema = z.discriminatedUnion("kind", [reportSchema, decisionSchema]);
+// No text of the session's: the server writes the item (items.ts) → a field beyond the two ids is rejected, never stored
+const secretApprovalSchema = z.strictObject({ kind: z.literal("secret-approval"), sessionId, requestId: z.uuid() });
+
+export const postItemBodySchema = z.discriminatedUnion("kind", [reportSchema, decisionSchema, secretApprovalSchema]);
 
 export const emptyBodySchema = z.strictObject({});
 
@@ -197,6 +200,7 @@ export type RegisterBody = z.infer<typeof registerBodySchema>;
 export type NameUpdateBody = z.infer<typeof nameUpdateBodySchema>;
 export type DeregisterBody = z.infer<typeof deregisterBodySchema>;
 export type PostItemBody = z.infer<typeof postItemBodySchema>;
+export type SecretApprovalBody = z.infer<typeof secretApprovalSchema>;
 export type AckBody = z.infer<typeof ackBodySchema>;
 export type AnswerBody = z.infer<typeof answerBodySchema>;
 export type ReplyBody = z.infer<typeof replyBodySchema>;

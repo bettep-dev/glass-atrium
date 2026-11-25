@@ -330,6 +330,43 @@ describe("monitor.queue_items message kind", () => {
   }
 });
 
+describe("monitor.queue_items secret request link", () => {
+  // Raw SQL → the link CHECK reaches Postgres, not the typed client's own checks.
+  const rows: readonly { name: string; change: Prisma.Sql; error?: RegExp }[] = [
+    { name: "accepts a link on an approval-class decision taking no free text", change: Prisma.sql`"approval_class" = true, "free_text_allowed" = false` },
+    { name: "rejects a link on a decision outside the approval class", change: Prisma.sql`"approval_class" = false, "free_text_allowed" = false`, error: /queue_items_secret_request_check/ },
+    { name: "rejects a link on a decision taking free text", change: Prisma.sql`"approval_class" = true, "free_text_allowed" = true`, error: /queue_items_secret_request_check/ },
+    {
+      name: "rejects a link on a report",
+      change: Prisma.sql`"kind" = 'report', "options" = NULL, "recommended_code" = NULL, "approval_class" = true, "free_text_allowed" = false`,
+      error: /queue_items_secret_request_check/,
+    },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const itemId = await createItem(tx, 41041);
+        await tx.$executeRaw`UPDATE "monitor"."queue_items" SET ${row.change}, "secret_request_id" = ${randomUUID()}::uuid WHERE "id" = ${itemId}`;
+      });
+      if (row.error === undefined) await assert.rejects(work, Rollback);
+      else await assert.rejects(work, row.error);
+    });
+  }
+
+  test("a second item linking the same request is rejected", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const { sessionId } = await tx.queueSession.create({ data: buildSession(41042), select: { sessionId: true } });
+        const link = { ...buildDecision(sessionId), isApprovalClass: true, isFreeTextAllowed: false, secretRequestId: randomUUID() };
+        await tx.queueItem.create({ data: link });
+        await tx.queueItem.create({ data: link });
+      }),
+      expectUniqueViolation("queue_items_secret_request_id_key"),
+    );
+  });
+});
+
 interface RelayIds {
   senderId: string;
   recipientId: string;

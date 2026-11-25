@@ -1,0 +1,18 @@
+{
+  "main": {
+    "hook_event_name": "SessionStart",
+    "session_id": "4b0e6c1d-2f3a-4e5b-8c7d-9a0b1c2d3e4f",
+    "source": "startup"
+  },
+  "subagent": {
+    "hook_event_name": "PreToolUse",
+    "session_id": "4b0e6c1d-2f3a-4e5b-8c7d-9a0b1c2d3e4f",
+    "agent_id": "a7c3e9f1d2b4c6e8",
+    "agent_type": "glass-atrium-dev-node",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/owner/project/src/config.ts",
+      "content": "export const retries = 3;\n"
+    }
+  }
+}

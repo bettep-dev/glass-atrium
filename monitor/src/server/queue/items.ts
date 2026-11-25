@@ -7,7 +7,24 @@ import { QueueRequestError } from "./errors.js";
 import { ITEM_IMAGES_ARGS, type SessionImageView, getSessionImageViews } from "./images.js";
 import { DEVIATION_STATUSES, NOT_PROBE_ITEM_FILTER, type RelaySender, type RelaySenderRow, SENDER_ARGS, toRelaySender } from "./owner-views.js";
 import { lockSession } from "./registry.js";
-import type { PostItemBody } from "./schemas.js";
+import { SECRET_REQUEST_LIMIT, secretRequests } from "./scan-approvals.js";
+import type { PostItemBody, SecretApprovalBody } from "./schemas.js";
+
+const APPROVE_LABEL = "Approve this write once";
+
+/** A secret-approval item's fixed text → the owner judges the hook's own capture, shown beside it, never a session's words. */
+const SECRET_APPROVAL_ITEM = {
+  title: "Secret-scan refusal: approve one write?",
+  body:
+    `${APPROVE_LABEL} (R1) lets the write this request names pass the secret-scan hook once: the same lines, file, rule and session, ` +
+    `within ${SECRET_REQUEST_LIMIT.APPROVED_MS / 60_000} minutes of the answer. ` +
+    "Decline (R2) when a line holds a real password or key: the session then writes an environment-variable reference instead.",
+  options: [
+    { code: "R1", label: APPROVE_LABEL, pros: "The refused write lands as written.", cons: "A real secret in a line would be written to the file." },
+    { code: "R2", label: "Decline", pros: "Nothing is written and the request is dropped.", cons: "The session rewrites the line, e.g. as an environment-variable reference." },
+  ],
+  recommendedCode: "R2",
+};
 
 export interface QueueItemView {
   id: number;
@@ -49,7 +66,8 @@ export async function createItem(body: PostItemBody): Promise<{ id: number }> {
     if ((await lockSession(tx, body.sessionId)) === null) {
       throw new QueueRequestError(404, "unknown_session", "session not registered");
     }
-    await assertLinkedDocsExist(tx, body.linkedDocIds);
+    if (body.kind === "secret-approval") await assertSecretRequestLinkable(tx, body);
+    else await assertLinkedDocsExist(tx, body.linkedDocIds);
     const item = await tx.queueItem.create({ data: buildItemRow(body) });
     return { id: Number(item.id) };
   });
@@ -106,7 +124,22 @@ export async function assertLinkedDocsExist(tx: Prisma.TransactionClient, linked
   if (row?.found !== linkedDocIds.length) throw new QueueRequestError(400, "unknown_linked_doc", "every linked doc id must exist");
 }
 
+/** Pending, this session's, unlinked; the caller's session lock serializes its posts → no racing link between read and insert. */
+async function assertSecretRequestLinkable(tx: Prisma.TransactionClient, body: SecretApprovalBody): Promise<void> {
+  const request = secretRequests.find(body.requestId);
+  // another session's request answers the same as a missing one → no existence leak; Postgres uuid ignores letter case
+  if (request === null || request.sessionId.toLowerCase() !== body.sessionId.toLowerCase()) {
+    throw new QueueRequestError(404, "unknown_secret_request", "scan approval request not found for this session");
+  }
+  if (request.state !== "pending") throw new QueueRequestError(409, "secret_request_not_pending", "scan approval request is already approved");
+  const linked = await tx.queueItem.findUnique({ where: { secretRequestId: body.requestId }, select: { id: true } });
+  if (linked !== null) throw new QueueRequestError(409, "secret_request_linked", "scan approval request already has its item");
+}
+
 function buildItemRow(body: PostItemBody): Prisma.QueueItemUncheckedCreateInput {
+  if (body.kind === "secret-approval") {
+    return { ...SECRET_APPROVAL_ITEM, kind: "decision", sessionId: body.sessionId, isFreeTextAllowed: false, isApprovalClass: true, secretRequestId: body.requestId };
+  }
   const shared = {
     kind: body.kind,
     sessionId: body.sessionId,
