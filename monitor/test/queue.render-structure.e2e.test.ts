@@ -401,7 +401,7 @@ const RELAY_STATES: QueueState[] = [
     setUp: async (page) => {
       await askRedaction(page);
       await confirmRedaction(page);
-      await page.getByText("✓ Text redacted: aidl → yoaida and portfolio", { exact: false }).waitFor();
+      await page.locator(".queue-sheet .card-foot", { hasText: "Text redacted." }).waitFor();
     },
   },
   {
@@ -745,10 +745,10 @@ async function openRelayHistory(page: Page): Promise<void> {
   await page.locator("article.queue-relay").first().waitFor();
 }
 
-// Redact text on the hop-1 relay (two copies) → its confirmation
+// Redact text in the foot of the hop-1 relay's sheet (two copies, both ended → a Done row) → its confirmation over the sheet
 async function askRedaction(page: Page): Promise<void> {
-  await openRelayHistory(page);
-  await page.getByRole("article", { name: /^Relay from aidl/ }).getByRole("button", { name: "Redact text" }).click();
+  await selectRow(page, FORWARDED_RELAY[0]!.id);
+  await page.locator(".queue-sheet .card-foot .queue-note").getByRole("button", { name: "Redact text" }).click();
   await page.getByRole("dialog", { name: "Redact this relay's text?" }).waitFor();
 }
 
@@ -1532,7 +1532,7 @@ describe("queue page on the mockup fixtures", () => {
     });
   });
 
-  test("Redact text asks with the focus on Cancel; one copy refused keeps the dialog with its count line and the entry its text and button", async () => {
+  test("Redact text in a relay sheet's foot asks over the sheet with the focus on Cancel; one copy refused keeps the dialog with its count line and the sheet its text and button", async () => {
     harness.fixture = getRelayRecordFixture({ signal: true });
     harness.refusals.clear();
     refuseOneRedaction(harness);
@@ -1541,29 +1541,37 @@ describe("queue page on the mockup fixtures", () => {
     const focused = await page.evaluate(() => document.activeElement?.textContent);
     await confirmRedaction(page);
     await page.getByText(PARTLY_REDACTED_LINE).waitFor();
-    const entry = page.getByRole("article", { name: /^Relay from aidl/ });
-    const kept = { button: await entry.getByRole("button", { name: "Redact text" }).count(), text: (await entry.innerText()).includes("파트너 연동") };
+    const sheet = page.locator(".queue-sheet");
+    const kept = { button: await sheet.locator(".card-foot .queue-note").getByRole("button", { name: "Redact text" }).count(), text: (await sheet.locator(".prose-text--as-sent").innerText()).includes("파트너 연동") };
     await page.close();
     harness.refusals.clear();
 
     assert.deepEqual({ focused, kept }, { focused: "Cancel", kept: { button: 1, text: true } });
   });
 
-  test("a redaction done closes the dialog, says so on the drawer's status line and puts the focus on the entry's head over its Redacted tag", async () => {
+  test("a redaction done closes the dialog, puts the redaction line in the text's place and Text redacted on the foot, the focus on the sheet's title, and the row's title reads Text redacted", async () => {
     harness.fixture = getRelayRecordFixture({ signal: true });
     harness.refusals.clear();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
     await askRedaction(page);
     await confirmRedaction(page);
-    await page.getByText("✓ Text redacted: aidl → yoaida and portfolio", { exact: false }).waitFor();
+    await page.locator(".queue-sheet .card-foot", { hasText: "Text redacted." }).waitFor();
     await page.getByRole("dialog", { name: "Redact this relay's text?" }).waitFor({ state: "detached" });
-    const found = await page.evaluate(() => {
-      const head = document.activeElement;
-      return { isHead: head?.classList.contains("queue-relay-head") ?? false, entry: head?.closest("article")?.getAttribute("aria-label")?.split(",")[0], tag: head?.textContent?.includes("Redacted") ?? false };
-    });
+    const found = await page.evaluate(() => ({
+      focused: document.activeElement?.tagName === "H3" ? document.activeElement.textContent : null,
+      foot: (document.querySelector<HTMLElement>(".queue-sheet .card-foot")?.innerText ?? "").trim(),
+      texts: document.querySelectorAll(".queue-sheet .prose-text--as-sent").length,
+      line: [...document.querySelectorAll<HTMLElement>(".queue-sheet-body p")].some((line) => /^Text redacted \S+ \S+ KST · it was [\d,]+ characters long$/.test(line.innerText)),
+      marker: document.querySelector(".queue-sheet")?.textContent?.includes("relay text redacted by the owner") ?? true,
+    }));
+    await page.getByRole("button", { name: /^Back to the list/ }).click();
+    const title = await page.locator(`#queue-row-${FORWARDED_RELAY[0]!.id} .queue-row-title`).innerText();
     await page.close();
 
-    assert.deepEqual(found, { isHead: true, entry: "Relay from aidl to yoaida and portfolio", tag: true });
+    assert.deepEqual(
+      { ...found, title: title.replace(/\s+/g, " ").trim() },
+      { focused: "Message from aidl (self-named) to 2 sessions", foot: "✓ Text redacted.", texts: 0, line: true, marker: false, title: "→ 2 sessions Text redacted" },
+    );
   });
 
   test("the redaction dialog draws its body at the body size and Cancel then Redact text at the foot's end", async () => {

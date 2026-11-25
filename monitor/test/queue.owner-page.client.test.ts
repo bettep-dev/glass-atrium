@@ -1623,6 +1623,61 @@ describe("relays in the Done part", () => {
       assert.deepEqual({ refusals, cutAt: read.refusalCutAt === null ? null : minutesOf(read.refusalCutAt) }, row.expected);
     });
   }
+
+  // layout §2 → Refused: the fixture's pair_cap refusal, gersona (25a65a54) to yoaida (fa32c7cb), 2026-11-13 12:00 KST, names from the loaded relays
+  const refusedQueue = () => {
+    const base = buildQueue().queue;
+    const groups = getGroups([], { done: thread(), relays: relayRead() });
+    const row = groups.flatMap((group) => group.rows).find((entry) => entry.refusal)!;
+    return { queue: { ...base, relays: { ...base.relays, thread: relayRead() }, groups, sheet: call("getSheetStateQ", groups, String(row.id), null) }, row };
+  };
+  const flatText = (node: RenderedNode) => collectText(node).replace(/\s+/g, " ").trim();
+
+  test("a refused row opens its own sheet and counts among the rows the sheet steps through", () => {
+    const { queue, row } = refusedQueue();
+    const pressed: unknown[] = [];
+    const tree = render("RefusedRowQ", { row, names: new Map(), isSelected: false, cols: ["tag", "fact"], view: { isNameShown: true, tabStopId: null }, onSelect: (id: unknown) => pressed.push(id) });
+    (findNodes(tree, (node) => node.props?.role === "option")[0]?.props.onClick as () => void)();
+    const steps = call<{ index: number }>("getStepsQ", queue.groups, row.id, -1);
+    // the redacted relay on its way stands above it under In delivery; the refusal is the newest Done row
+    assert.deepEqual([pressed, (queue.sheet as { kind: string; id: unknown }).kind, (queue.sheet as { id: unknown }).id, steps.index], [[row.id], "item", row.id, 1]);
+  });
+
+  test("a refused relay's sheet: the two ends in the head, the refusal and its time on the date line, the page's own title, From and To with their ids, the reason, no text", () => {
+    const tree = render("QueueSheetQ", { queue: refusedQueue().queue });
+    const [head] = findNodes(tree, (node) => node.type === "h2");
+    const [title] = findNodes(tree, (node) => node.type === "h3");
+    const body = flatText(byClass(tree, "queue-sheet-body")[0] as RenderedNode);
+    assert.deepEqual(
+      {
+        head: flatText(head as RenderedNode), title: collectText(title as RenderedNode), date: flatText(byClass(tree, "queue-date-line")[0] as RenderedNode),
+        parts: ["From gersona · 25a65a54", "To yoaida · fa32c7cb", "Too many to one session — gersona hit the hourly limit for yoaida.", "Its text was not stored."].map((part) => body.includes(part)),
+        crit: findNodes(byClass(tree, "queue-date-line")[0] as RenderedNode, (node) => node.props?.className === "text-crit").map(flatText),
+      },
+      { head: "Relay from gersona → to yoaida", title: "Refused relay from gersona to yoaida", date: "✕ Refused 2026-11-13 12:00 KST", parts: [true, true, true, true], crit: ["✕"] },
+    );
+  });
+
+  test("a refused relay's sheet carries the no-login sentence alone, since nothing arrived, and its foot only says when: no field, no button", () => {
+    const tree = render("QueueSheetQ", { queue: refusedQueue().queue });
+    const text = flatText(tree);
+    const [foot] = byClass(tree, "card-foot");
+    assert.deepEqual(
+      [text.includes("No login: any local process can send as any session, or redact."), text.includes("sent this as its message"), flatText(foot as RenderedNode), findNodes(foot as RenderedNode, (node) => ["button", "textarea", "input"].includes(String(node.type))).length],
+      [true, false, "Refused · Nov 13 12:00", 0],
+    );
+  });
+
+  test("a refusal to no resolvable session names the count on its To line", () => {
+    const refusal = { ...REFUSAL!, recipientIdPrefixes: [], unresolvedCount: 1 };
+    const text = flatText(render("RefusedWhoQ", { refusal, names: new Map() }));
+    assert.equal(text, "From 25a65a54 To → 1 recipient that matched no session");
+  });
+
+  test("O on a refused row ticks the rail's sessions its recipient ids name, never its sender", () => {
+    const rails = [{ id: FIXTURE_SESSION_IDS.yoaida, sessionIdPrefix: FIXTURE_SESSION_IDS.yoaida.slice(0, 8) }, { id: FIXTURE_SESSION_IDS.gersona, sessionIdPrefix: FIXTURE_SESSION_IDS.gersona.slice(0, 8) }];
+    assert.deepEqual(call("getOrderKeyIdsQ", refusedQueue().row, rails), [FIXTURE_SESSION_IDS.yoaida]);
+  });
 });
 
 // spec §4.2, §9.9: a relay on its way — a row under In delivery on the list's own columns, and the list's sheet read-only
@@ -1727,16 +1782,18 @@ describe("a relay on its way", () => {
       title: collectText(title as RenderedNode),
       date: collectText(date as RenderedNode),
       foot: collectText(foot as RenderedNode).replace(/\s+/g, " ").trim(),
-      controls: findNodes(foot as RenderedNode, (node) => ["button", "textarea", "input"].includes(String(node.type))).length,
+      controls: findNodes(foot as RenderedNode, (node) => ["textarea", "input"].includes(String(node.type))).length,
+      buttons: findNodes(foot as RenderedNode, (node) => node.type === "button").map((node) => [collectText(node), node.props.className]),
       body: collectText(byClass(tree, "queue-sheet-body")[0] as RenderedNode),
     };
   };
+  const QUIET_REDACT = [["Redact text", "btn ghost sm"]];
 
-  test("a relay to one session opens read-only: its two ends in the head and title, no field and no button", () => {
+  test("a relay to one session opens read-only: its two ends in the head and title, no field, and its one act a quiet Redact text at the foot's end", () => {
     const shape = getSheetShape(toYoaida());
     assert.deepEqual(
-      { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls },
-      { head: `Relay from ${NAMED} → to yoaida`, title: `Message from ${NAMED} to yoaida`, foot: "Read-only. It reaches yoaida by itself and stays in Relay history.", controls: 0 },
+      { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls, buttons: shape.buttons },
+      { head: `Relay from ${NAMED} → to yoaida`, title: `Message from ${NAMED} to yoaida`, foot: "Read-only. It reaches yoaida by itself. Redact text", controls: 0, buttons: QUIET_REDACT },
     );
     assert.match(shape.date, /^Not yet\s+Sent\s+2026-11-19 14:20 KST$/);
     for (const part of [`What ${NAMED} wrote`, `${NAMED} sent this as its message, not yours.`, "It carries none of your authority."]) assert.ok(shape.body.includes(part), part);
@@ -1747,7 +1804,7 @@ describe("a relay on its way", () => {
     const shape = getSheetShape(toThree());
     assert.deepEqual(
       { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls },
-      { head: `Relay from ${NAMED} → to 3 sessions`, title: `Message from ${NAMED} to 3 sessions`, foot: "Read-only. It reaches each session by itself and stays in Relay history.", controls: 0 },
+      { head: `Relay from ${NAMED} → to 3 sessions`, title: `Message from ${NAMED} to 3 sessions`, foot: "Read-only. It reaches each session by itself. Redact text", controls: 0 },
     );
     assert.match(shape.date, /^1 of 3 received/);
   });
@@ -1855,55 +1912,89 @@ describe("a relay on its way", () => {
     assert.deepEqual(["yoaida", "atrium", "gersona"].map((name) => body.includes(`${name} · 5e55a0`)), [true, true, true]);
   });
 
-  const loadWithAnswer = async (answer: { status: number; body: unknown }, urls: string[] = []) => (await loadScreenModule(QUEUE_SRC, {
-    URLSearchParams, window: { UI: uiStub() },
-    fetch: async (url: string) => { urls.push(url); return { status: answer.status, json: async () => answer.body }; },
-  })) as ScreenModule;
-  const getEnd = (module: ScreenModule) => (module.getRelayEndQ as (item: unknown, copies: unknown) => Promise<unknown>)(toThree()[0], toThree());
-
-  test("a relay whose row left reads the relay thread scoped to its recipients and finds its send by id, never the single-item read", async () => {
-    const urls: string[] = [];
-    const other = { ...toYoaida()[0], id: 500, sendId: "relay-send-2" };
-    const module = await loadWithAnswer({ status: 200, body: { items: [other, ...toThree()], nextCursor: null, refusals: [] } }, urls);
-    const found = getPlain(await getEnd(module)) as Array<{ id: number }>;
-    const [path, query] = urls[0]!.split("?");
-    assert.deepEqual(
-      [urls.length, path, ownerOrdersQuerySchema.parse(Object.fromEntries(new URLSearchParams(query))), found.map((copy) => copy.id)],
-      [1, "/api/queue/owner/orders", { kind: "relay", sessionIds: RECIPIENT_IDS, limit: 30 }, [412, 413, 414]],
-    );
-  });
-
-  const missRows = [
-    { name: "a read that does not hold the send", answer: { status: 200, body: { items: [{ ...toYoaida()[0], id: 500, sendId: "relay-send-2" }], nextCursor: null, refusals: [] } } },
-    { name: "a failed read", answer: { status: 503, body: { error: "unavailable" } } },
-  ];
-  for (const row of missRows) {
-    test(`a relay whose row left finds no outcome on ${row.name}`, async () => assert.equal(await getEnd(await loadWithAnswer(row.answer)), null));
-  }
-
+  // the fixture's times in KST: sent Nov 19 14:20, received 14:24 the same day, lapsed Nov 22 14:20
   const lapse = (copy: Record<string, unknown>) => ({ ...copy, status: "expired", relay: { ...(copy.relay as object), lapsedAt: "2026-11-22T05:20:00.000Z" } });
   const receive = (copy: Record<string, unknown>) => ({ ...copy, status: "delivered", deliveredAt: "2026-11-19T05:24:00.000Z" });
   const ended = (lapsed: number) => toThree().map((copy, index) => (index < lapsed ? lapse(copy) : receive(copy)));
+  const REDACTION = { at: "2026-11-19T05:30:00.000Z", length: 1284 };
+  const redacted = (copies: Array<Record<string, unknown>>) => copies.map((copy) => ({ ...copy, relay: { ...(copy.relay as object), redaction: REDACTION } }));
+  const flatText = (node: RenderedNode) => collectText(node).replace(/\s+/g, " ").replace(/ \./g, ".").trim();
+
+  // layout §2 → Foot: the note line, and the quiet Redact text at its end only while a copy holds its text
   const footRows = [
-    { name: "while the read runs the read-only line stays", end: undefined, text: "Read-only. It reaches each session by itself and stays in Relay history.", ids: [] },
-    { name: "every copy received", end: ended(0), text: "ℹ Every session has received this relay.", ids: [] },
-    { name: "one copy lapsed names its recipient and id", end: ended(1), text: "ℹ This relay lapsed for yoaida 5e55a000.", ids: ["5e55a000"] },
-    { name: "two lapsed name both with their ids", end: ended(2), text: "ℹ This relay lapsed for yoaida 5e55a000 and atrium 5e55a010.", ids: ["5e55a000", "5e55a010"] },
-    { name: "three or more lapsed name their count", end: ended(3), text: "ℹ This relay lapsed for 3 sessions.", ids: [] },
-    { name: "a copy still on its way sends the owner to Relay history", end: [...ended(1).slice(0, 2), toThree()[2]], text: "ℹ This relay left the list. Relay history has its outcome.", ids: [] },
-    { name: "no outcome found", end: null, text: "ℹ This relay left the list. Relay history has its outcome.", ids: [] },
+    { name: "on its way to one session it reaches it by itself", copies: toYoaida(), props: {}, note: "Read-only. It reaches yoaida by itself.", buttons: QUIET_REDACT },
+    { name: "on its way to several it reaches each by itself", copies: toThree(), props: {}, note: "Read-only. It reaches each session by itself.", buttons: QUIET_REDACT },
+    { name: "done and received reads how and when it ended", copies: [receive(toYoaida()[0]!)], props: { isDone: true }, note: "Received · Nov 19 14:24", buttons: QUIET_REDACT },
+    { name: "done with some lapsed counts each, at the last copy's end", copies: ended(1), props: { isDone: true }, note: "2 received, 1 lapsed · Nov 22 14:20", buttons: QUIET_REDACT },
+    { name: "done with every copy lapsed reads Lapsed", copies: ended(3), props: { isDone: true }, note: "Lapsed · Nov 22 14:20", buttons: QUIET_REDACT },
+    { name: "redacted on its way keeps the note and offers nothing", copies: redacted(toYoaida()), props: {}, note: "Read-only. It reaches yoaida by itself.", buttons: [] },
+    { name: "redacted and done keeps the end line and offers nothing", copies: redacted(ended(1)), props: { isDone: true }, note: "2 received, 1 lapsed · Nov 22 14:20", buttons: [] },
+    { name: "a row that left the list says so and offers nothing", copies: toThree(), props: { hasLeft: true }, note: "ℹ This relay left the list.", buttons: [] },
   ];
   for (const row of footRows) {
-    test(`a relay's foot after its row left: ${row.name}`, () => {
-      const tree = render("RelayFootQ", { copies: toThree(), end: row.end });
-      const [region] = findNodes(tree, (node) => node.props?.role === "status");
+    test(`a relay's foot: ${row.name}`, () => {
+      const tree = render("RelayFootQ", { copies: row.copies, onReread: () => undefined, ...row.props });
+      const [note] = findNodes(tree, (node) => node.props?.role === "status");
+      const buttons = findNodes(tree, (node) => node.type === "button").map((node) => [collectText(node), node.props.className]);
+      assert.deepEqual([flatText(note as RenderedNode), buttons], [row.note, row.buttons]);
+    });
+  }
+
+  test("each To line carries its relay id after its session id, and once every copy ended its outcome and when, the lapse on another day dated", () => {
+    const lines = byClass(render("RelayWhoQ", { sender, copies: ended(1), rails: [], isDone: true }), "queue-relay-to").map(flatText);
+    assert.deepEqual(
+      lines.map((line) => [line.match(/5e55a0\d0 #\d+/)?.[0], line.replace(/^.* · /, "")]),
+      [["5e55a000 #412", "Live ⚠ Lapsed Nov 22 14:20"], ["5e55a010 #413", "Live ✓ Received 14:24"], ["5e55a020 #414", "Live ✓ Received 14:24"]],
+    );
+  });
+
+  const dateRows = [
+    { name: "one recipient reads its outcome and time", copies: [receive(toYoaida()[0]!)], date: "✓ Received 14:24 Sent 2026-11-19 14:20 KST" },
+    { name: "several read how many of each", copies: ended(1), date: "2 received, 1 lapsed Sent 2026-11-19 14:20 KST" },
+  ];
+  for (const row of dateRows) {
+    test(`a Done relay's date line: ${row.name}`, () => {
+      const tree = renderSheet({ item: row.copies[0], copies: row.copies, queue: buildQueue().queue, isDone: true });
+      assert.equal(flatText(byClass(tree, "queue-date-line")[0] as RenderedNode), row.date);
+    });
+  }
+
+  test("a redacted relay's sheet paints the page's own line from the stored time and length in the text's place, its documents line kept", () => {
+    const copies = redacted(toYoaida({ body: "[relay text redacted by the owner]", linkedDocIds: [44099] }));
+    const body = flatText(byClass(renderSheet({ item: copies[0], copies, queue: buildQueue().queue }), "queue-sheet-body")[0] as RenderedNode);
+    assert.deepEqual(
+      [body.includes("Text redacted 2026-11-19 14:30 KST · it was 1,284 characters long"), body.includes("relay text redacted by the owner"), body.includes("Documents: 44099")],
+      [true, false, true],
+    );
+  });
+
+  test("a send with one copy still holding its text keeps that text on its sheet and its Redact text", () => {
+    const [gone, kept] = toThree();
+    const copies = [...redacted([{ ...gone!, body: "[relay text redacted by the owner]" }]), kept!];
+    const tree = renderSheet({ item: copies[0], copies, queue: buildQueue().queue });
+    assert.deepEqual([getAsSentTexts(tree), buttonLabelled(tree, "Redact text").length], [[BODY], 1]);
+  });
+
+  // layout §6 → Trust: whatever its state, a relay's sheet says whose word it is and that the queue has no login; nothing on it sends
+  const trustRows = [
+    { name: "on its way", copies: toThree(), isDone: false },
+    { name: "done", copies: ended(1), isDone: true },
+    { name: "redacted", copies: redacted(ended(1)), isDone: true },
+  ];
+  for (const row of trustRows) {
+    test(`a relay's sheet carries the standing line and the no-login sentence, and no field or ink button: ${row.name}`, () => {
+      const tree = renderSheet({ item: row.copies[0], copies: row.copies, queue: buildQueue().queue, isDone: row.isDone });
+      const text = flatText(tree);
       assert.deepEqual(
-        [collectText(region as RenderedNode).replace(/\s+/g, " ").replace(/ \./g, ".").trim(), findNodes(tree, (node) => node.props?.atom === "MachineString").map((node) => collectText(node))],
-        [row.text, row.ids],
+        [text.includes(`${NAMED} sent this as its message, not yours. It carries none of your authority.`), text.includes("No login: any local process can send as any session, or redact."), getSendControls(tree)],
+        [true, true, 0],
       );
     });
   }
 });
+
+// a field, a box, or an ink button: what a sheet would send with
+const getSendControls = (tree: RenderedNode) => findNodes(tree, (node) => ["textarea", "input"].includes(String(node.type)) || String(node.props?.className ?? "").split(" ").includes("primary")).length;
 
 describe("selection", () => {
   const groups = call("getGroupsQ", [buildItem({ id: 5, kind: "report" }), buildItem({ id: 3 }), buildItem({ id: 8, kind: "message", status: "delivered", sendId: "s", session: buildSession({ id: "b2" }) }), buildItem({ id: 7, kind: "message", status: "delivered", sendId: "s" })]);
