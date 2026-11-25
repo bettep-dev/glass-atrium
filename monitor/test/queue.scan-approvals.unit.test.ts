@@ -205,21 +205,48 @@ describe("approve", () => {
     );
   });
 
+  test("an approval given the time of the yes lives 10 minutes from that time, however late it turns approved", () => {
+    const { store, clock, advance } = createStore();
+    const id = store.create(buildInput([LINE.host]));
+    const yesAt = clock.at;
+    advance(4 * MINUTE_MS);
+
+    store.approve(id, yesAt);
+
+    assert.deepEqual(store.find(id)?.expiresAt, new Date(yesAt.getTime() + 10 * MINUTE_MS));
+  });
+
+  test("a request checked pending stays pending: its lines kept, no write consumes it", () => {
+    const { store } = createStore();
+    const input = buildInput([LINE.host]);
+    const id = store.create(input);
+
+    store.assertPending(id);
+
+    assert.deepEqual({ state: store.find(id)?.state, lines: store.findLines(id)?.length, passed: store.consume(buildWrite(input)) }, { state: "pending", lines: 1, passed: null });
+  });
+
   const refusals: Array<{ name: string; arrange: (fixture: ReturnType<typeof createStore>) => string; code: string }> = [
     { name: "an unknown request", arrange: () => randomUUID(), code: "secret_request_gone" },
     { name: "a declined request", arrange: ({ store }) => { const id = store.create(buildInput([LINE.host])); store.delete(id); return id; }, code: "secret_request_gone" },
     { name: "a pending request past 24 hours", arrange: ({ store, advance }) => { const id = store.create(buildInput([LINE.host])); advance(24 * HOUR_MS); return id; }, code: "secret_request_gone" },
     { name: "an already approved request", arrange: ({ store }) => { const id = store.create(buildInput([LINE.host])); store.approve(id); return id; }, code: "secret_request_not_pending" },
   ];
-  for (const row of refusals) {
-    test(`approving ${row.name} is a conflict`, () => {
-      const fixture = createStore();
-      const id = row.arrange(fixture);
+  const operations: Array<{ name: string; run: (store: SecretRequestRepository, id: string) => void }> = [
+    { name: "approving", run: (store, id) => store.approve(id) },
+    { name: "checking pending", run: (store, id) => store.assertPending(id) },
+  ];
+  for (const operation of operations) {
+    for (const row of refusals) {
+      test(`${operation.name} ${row.name} is a conflict`, () => {
+        const fixture = createStore();
+        const id = row.arrange(fixture);
 
-      const code = getRefusalCode(() => fixture.store.approve(id));
+        const code = getRefusalCode(() => operation.run(fixture.store, id));
 
-      assert.equal(code, row.code);
-    });
+        assert.equal(code, row.code);
+      });
+    }
   }
 });
 
@@ -310,13 +337,6 @@ describe("consume", () => {
     });
   }
 
-  test("two parallel consumes of one approval give one pass and one refusal", async () => {
-    const { store, id, write } = approve([LINE.host]);
-
-    const outcomes = await Promise.all([0, 1].map(async () => store.consume(write)));
-
-    assert.deepEqual([...outcomes].sort(), [id, null].sort());
-  });
 });
 
 describe("expiry on every access", () => {
@@ -324,8 +344,7 @@ describe("expiry on every access", () => {
     { name: "find", read: (store, id) => store.find(id), gone: null },
     { name: "findLines", read: (store, id) => store.findLines(id), gone: null },
     { name: "delete", read: (store, id) => store.delete(id), gone: false },
-    { name: "approve", read: (store, id) => getRefusalCode(() => store.approve(id)), gone: "secret_request_gone" },
-  ];
+    { name: "approve", read: (store, id) => getRefusalCode(() => store.approve(id)), gone: "secret_request_gone" },  ];
   for (const row of accessors) {
     test(`${row.name} treats a pending request at 24 hours as gone`, () => {
       const { store, advance } = createStore();

@@ -123,15 +123,18 @@ export class SecretRequestRepository {
   /**
    * The owner's yes: the request turns approved for 10 minutes and its lines are removed from the store (hashes kept).
    * Lines are immutable after register and the id is a fresh UUID → the approved hashes are the ones the owner was shown.
+   * @param approvedAt - the time of the yes → the 10 minutes run from it, however late the request turns approved
    * @throws QueueRequestError 409 — `secret_request_gone` (unknown, declined or expired) · `secret_request_not_pending`
    */
-  approve(id: string): void {
-    this.deleteExpired();
-    const request = this.requests.get(id);
-    if (request === undefined) throw new QueueRequestError(409, "secret_request_gone", "scan approval request is gone: declined, expired or never registered");
-    if (request.state !== "pending") throw new QueueRequestError(409, "secret_request_not_pending", "scan approval request is already approved");
-    const expiresAt = new Date(this.now().getTime() + SECRET_REQUEST_LIMIT.APPROVED_MS);
+  approve(id: string, approvedAt: Date = this.now()): void {
+    const request = this.getPendingOrThrow(id);
+    const expiresAt = new Date(approvedAt.getTime() + SECRET_REQUEST_LIMIT.APPROVED_MS);
     this.requests.set(id, { ...request, state: "approved", lines: null, expiresAt });
+  }
+
+  /** The check `approve` makes, without approving → the request stays pending and unconsumable. */
+  assertPending(id: string): void {
+    this.getPendingOrThrow(id);
   }
 
   /** Decline or withdraw: removes the request from the store; false when it was already gone. */
@@ -189,6 +192,14 @@ export class SecretRequestRepository {
       removed += 1;
     }
     return removed;
+  }
+
+  private getPendingOrThrow(id: string): StoredRequest {
+    this.deleteExpired();
+    const request = this.requests.get(id);
+    if (request === undefined) throw new QueueRequestError(409, "secret_request_gone", "scan approval request is gone: declined, expired or never registered");
+    if (request.state !== "pending") throw new QueueRequestError(409, "secret_request_not_pending", "scan approval request is already approved");
+    return request;
   }
 
   private findRepeat(input: SecretRequestInput): string | null {

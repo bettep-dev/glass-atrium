@@ -98,16 +98,12 @@ export async function putRedaction(id: number, record: (tx: Prisma.TransactionCl
   });
 }
 
-/**
- * @param onOpenWrite - runs inside the transaction before the guarded write → its throw records no answer
- */
-async function putAnswerRow(id: number, body: AnswerBody, signal: PageOriginSignal, onOpenWrite: () => void = () => {}): Promise<void> {
+async function putAnswerRow(id: number, body: AnswerBody, signal: PageOriginSignal, answeredAt: Date = new Date()): Promise<void> {
   // one transaction → no answer stands without its images, and a failed image claim records no answer
   await getPrisma().$transaction(async (tx) => {
-    onOpenWrite();
     await putOpenTransition(
       id,
-      { status: "answered", answerCode: body.code ?? null, answerText: body.text ?? null, answeredAt: new Date(), answerRoute: "answer", answerSignal: signal },
+      { status: "answered", answerCode: body.code ?? null, answerText: body.text ?? null, answeredAt, answerRoute: "answer", answerSignal: signal },
       tx,
     );
     await putItemImages(tx, [BigInt(id)], body.attachmentIds);
@@ -116,26 +112,25 @@ async function putAnswerRow(id: number, body: AnswerBody, signal: PageOriginSign
 
 /**
  * The owner's answer on a secret-approval item decides its scan-approval request; logs carry ids only.
- * - approve: the request turns approved before the answer's write → a gone or expired request is a 409 and no answer is recorded
- * - an approval whose answer does not commit is removed → never standing without the owner's recorded yes
+ * - approve: the request is checked pending before the answer's write → a gone or expired request is a 409, no answer recorded
+ * - it turns approved only after the answer commits → no write passes while the answer waits, or when it never commits
+ * - the 10 minutes run from the recorded answer time · a request gone by the commit → the answer stands, nothing approved
  * - decline: the request is removed once the answer is recorded
  */
 async function putScanApprovalAnswer(id: number, requestId: string, body: AnswerBody, signal: PageOriginSignal): Promise<void> {
   if (body.code !== SECRET_APPROVAL_CODE.APPROVE) {
     await putAnswerRow(id, body, signal);
-    secretRequests.delete(requestId);
-    logger.info({ itemId: id, requestId }, "scan approval request declined by the owner — removed from the store");
+    if (secretRequests.delete(requestId)) logger.info({ itemId: id, requestId }, "scan approval request declined by the owner — removed from the store");
     return;
   }
-  let isApproved = false;
+  secretRequests.assertPending(requestId);
+  const answeredAt = new Date();
+  await putAnswerRow(id, body, signal, answeredAt);
   try {
-    await putAnswerRow(id, body, signal, () => {
-      secretRequests.approve(requestId);
-      isApproved = true;
-    });
+    secretRequests.approve(requestId, answeredAt);
   } catch (error) {
-    if (isApproved) secretRequests.delete(requestId);
-    throw error;
+    logger.warn({ err: error, itemId: id, requestId }, "scan approval answer recorded but its request left the store before the commit — nothing approved");
+    return;
   }
   logger.info({ itemId: id, requestId }, "scan approval request approved by the owner — lines removed, hashes kept");
 }

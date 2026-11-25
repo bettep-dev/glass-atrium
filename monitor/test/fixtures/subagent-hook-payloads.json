@@ -1,9 +1,4 @@
 {
-  "main": {
-    "hook_event_name": "SessionStart",
-    "session_id": "4b0e6c1d-2f3a-4e5b-8c7d-9a0b1c2d3e4f",
-    "source": "startup"
-  },
   "subagent": {
     "hook_event_name": "PreToolUse",
     "session_id": "4b0e6c1d-2f3a-4e5b-8c7d-9a0b1c2d3e4f",

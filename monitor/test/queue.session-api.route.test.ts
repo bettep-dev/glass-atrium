@@ -611,12 +611,10 @@ describe("post and get by id", () => {
 });
 
 interface HookPayloads {
-  main: { session_id: string };
   subagent: { session_id: string; agent_id: string; agent_type: string; tool_input: { file_path: string } };
 }
 
-// A subagent's PreToolUse payload carries its parent's session_id beside its own agent_id: validate-scope-drift.sh →
-// get_subagent_transcript finds agent-<agent_id>.jsonl under <session_id>/subagents, queue-listener.sh tells a subagent by agent_id alone
+// fixture-only: a hand-written subagent PreToolUse payload, not a capture → which session id a live subagent payload carries is not shown here
 const hookPayloads: HookPayloads = JSON.parse(readFileSync(new URL("./fixtures/subagent-hook-payloads.json", import.meta.url), "utf8"));
 
 describe("secret-approval post", () => {
@@ -643,12 +641,12 @@ describe("secret-approval post", () => {
     );
   };
 
-  test("a subagent's request posted by its parent session becomes an open approval-class decision linked to it, the request still pending", async () => {
-    const parentId = hookPayloads.main.session_id;
-    trackedSessionIds.push(parentId);
-    await seedSession({ sessionId: parentId });
-    const requestId = createRequest(hookPayloads.subagent.session_id);
-    const posted = await send("POST", "/api/queue/items", approvalPost(parentId, requestId));
+  test("a request posted by the session id of the hook payload it was registered from becomes an open approval-class decision linked to it, the request still pending", async () => {
+    const sessionId = hookPayloads.subagent.session_id;
+    trackedSessionIds.push(sessionId);
+    await seedSession({ sessionId });
+    const requestId = createRequest(sessionId);
+    const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
     const item = await findLinkedItem(requestId);
     assert.equal(posted.statusCode, 201, posted.body);
     assert.deepEqual(

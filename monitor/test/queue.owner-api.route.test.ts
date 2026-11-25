@@ -336,6 +336,8 @@ describe("scan-approval answer and withdraw", () => {
     line: string;
   }
 
+  const writePath = "/Users/owner/Desktop/git/glass-atrium/monitor/src/server/config.ts";
+
   /** A request as the hook registers it, and its item as the session's secret-approval post creates it. */
   const postApproval = async (): Promise<PostedApproval> => {
     const sessionId = await seedSession();
@@ -343,7 +345,7 @@ describe("scan-approval answer and withdraw", () => {
     const requestId = secretRequests.create({
       sessionId,
       agent: { id: "a3f9c2d17b4e8f05", type: "glass-atrium-dev-node" },
-      path: "/Users/owner/Desktop/git/glass-atrium/monitor/src/server/config.ts",
+      path: writePath,
       rule: "SEC-013",
       lines: [{ text: line, hash: getLineHash(line) }],
     });
@@ -352,8 +354,27 @@ describe("scan-approval answer and withdraw", () => {
     return { sessionId, requestId, itemId: posted.json().id, line };
   };
   const answer = (itemId: number, code: string) => send("POST", `/api/queue/owner/items/${itemId}/answer`, { code });
+  /** The hook's retry of the refused write: same session, path and rule, the captured line's hash. */
+  const consumeWrite = (posted: PostedApproval) => secretRequests.consume({ sessionId: posted.sessionId, path: writePath, rule: "SEC-013", hashes: [getLineHash(posted.line)] });
 
-  test("the owner's approve turns the request approved until ten minutes after the yes, its line removed and its hash kept", async () => {
+  /** An approve answered while another connection holds the item row; `whileWaiting` runs once the answer waits on it. */
+  const approveAgainstHeldRow = async (itemId: number, whileWaiting: (blocker: Client) => Promise<void>): Promise<LightMyRequestResponse> => {
+    const blocker = new Client({ connectionString: process.env.DATABASE_URL });
+    await blocker.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(`SELECT 1 FROM "monitor"."queue_items" WHERE "id" = $1 FOR UPDATE`, [itemId]);
+      const answering = answer(itemId, SECRET_APPROVAL_CODE.APPROVE);
+      await waitForBlockedBackend(blocker);
+      await whileWaiting(blocker);
+      await blocker.query("COMMIT");
+      return await answering;
+    } finally {
+      await blocker.end();
+    }
+  };
+
+  test("the owner's approve turns the request approved for exactly ten minutes from the recorded yes, its line removed and its hash kept", async () => {
     const { requestId, itemId, line } = await postApproval();
     const response = await answer(itemId, SECRET_APPROVAL_CODE.APPROVE);
     const item = await getItemRow(BigInt(itemId));
@@ -361,9 +382,28 @@ describe("scan-approval answer and withdraw", () => {
     assert.equal(response.statusCode, 200, response.body);
     assert.ok(item.answeredAt !== null && request !== null, "approve recorded no answer or kept no request");
     assert.deepEqual([item.answerCode, request.state, request.hashes, secretRequests.findLines(requestId)], [SECRET_APPROVAL_CODE.APPROVE, "approved", [getLineHash(line)], null]);
-    const lifetimeMs = request.expiresAt.getTime() - item.answeredAt.getTime();
-    assert.ok(lifetimeMs >= SECRET_REQUEST_LIMIT.APPROVED_MS && lifetimeMs < SECRET_REQUEST_LIMIT.APPROVED_MS + 5_000, `approval lifetime ${lifetimeMs} ms`);
+    assert.equal(request.expiresAt.getTime() - item.answeredAt.getTime(), SECRET_REQUEST_LIMIT.APPROVED_MS);
     assert.ok(!response.body.includes(line), "the approve response echoes the captured line");
+  });
+
+  test("a write retried while the approve's answer waits on the item row is refused; once the answer commits it passes", async () => {
+    const posted = await postApproval();
+    let waitingConsume: string | null = "not run";
+    const response = await approveAgainstHeldRow(posted.itemId, async () => {
+      waitingConsume = consumeWrite(posted);
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual([waitingConsume, consumeWrite(posted)], [null, posted.requestId]);
+  });
+
+  test("a request that leaves the store while the approve's answer waits keeps the recorded answer and approves nothing", async () => {
+    const posted = await postApproval();
+    const response = await approveAgainstHeldRow(posted.itemId, async () => {
+      secretRequests.delete(posted.requestId);
+    });
+    const item = await getItemRow(BigInt(posted.itemId));
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual([item.status, item.answerCode, secretRequests.find(posted.requestId), consumeWrite(posted)], ["answered", SECRET_APPROVAL_CODE.APPROVE, null, null]);
   });
 
   test("the owner's decline records the answer and removes the request", async () => {
@@ -383,22 +423,12 @@ describe("scan-approval answer and withdraw", () => {
     assert.equal((await answer(itemId, SECRET_APPROVAL_CODE.DECLINE)).statusCode, 200);
   });
 
-  test("an approve whose answer write loses to a concurrent close leaves no approval standing", async () => {
+  test("an approve whose answer write loses to a concurrent close approves nothing: the request stays pending", async () => {
     const { requestId, itemId } = await postApproval();
-    const blocker = new Client({ connectionString: process.env.DATABASE_URL });
-    await blocker.connect();
-    try {
-      await blocker.query("BEGIN");
-      await blocker.query(`SELECT 1 FROM "monitor"."queue_items" WHERE "id" = $1 FOR UPDATE`, [itemId]);
-      const answering = answer(itemId, SECRET_APPROVAL_CODE.APPROVE);
-      await waitForBlockedBackend(blocker);
+    const response = await approveAgainstHeldRow(itemId, async (blocker) => {
       await blocker.query(`UPDATE "monitor"."queue_items" SET "status" = 'withdrawn' WHERE "id" = $1`, [itemId]);
-      await blocker.query("COMMIT");
-      const response = await answering;
-      assert.deepEqual([response.statusCode, response.json().error, secretRequests.find(requestId)], [409, "not_open", null]);
-    } finally {
-      await blocker.end();
-    }
+    });
+    assert.deepEqual([response.statusCode, response.json().error, secretRequests.find(requestId)?.state], [409, "not_open", "pending"]);
   });
 
   test("the session's withdraw removes its item's request, pending or approved; a refused withdraw keeps it", async () => {
