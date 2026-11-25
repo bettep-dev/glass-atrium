@@ -3,10 +3,11 @@
 # text: (1) an interactive or background main-session turn that called a tool is asked once per turn for its queue
 # record unless its last tool call is a record call and the session's record was written at or after the turn's start
 # entry — a record call is the CLI's record subcommand, or the server's record tool or its post tool flagged as the
-# turn's last act, the turn's one post and alone in its message, unless the session's start found that server shadowed
-# (queue_set_shadow_mark), whose ask names the CLI alone; (2) while an item this session posted awaits the owner and nothing polls the monitor for this Claude
-# process (queue_get_poller), the wait command — a fallback for processes no listener serves. Each turn end also sends
-# the transcript's title as the session's name once it changed (queue_put_session_name).
+# turn's last act, the turn's one post that the server did not refuse and alone in its message, unless the session's
+# start found that server shadowed (queue_set_shadow_mark), whose ask names the CLI alone; (2) while an item this
+# session posted awaits the owner and nothing polls the monitor for this Claude process (queue_get_poller), the wait
+# command — a fallback for processes no listener serves. Each turn end also sends the transcript's title as the
+# session's name once it changed (queue_put_session_name).
 # The record check confirms only that a record was made, never the judgment; the record operation checks its ids.
 # With no CLAUDE_PID in the hook env, the wait lock's own record decides whether a wait runs (queue_get_poller).
 # Disposition reask: stdout {"decision":"block","reason":…} at exit 0 (Stop channel b,
@@ -137,7 +138,7 @@ set_tool_turn() {
   # a Bash command running the CLI's record subcommand, the CLI named by its file name
   pattern="(^|[[:space:]/\"'])${cli//./\\.}[\"']?[[:space:]]+record([[:space:]]|$)"
   if [[ "${is_shadowed}" == false ]]; then tool="mcp__${QUEUE_MCP_SERVER_NAME}__"; fi
-  # the server's record tool, or its post tool flagged as the turn's last act: the turn's one post, sent alone
+  # the server's record tool, or its post tool flagged as the turn's last act: the turn's one unrefused post, sent alone
   found="$(python3 -I "${TURN_READER}" turn "$1" 2>/dev/null \
     | jq -r --arg tool "${tool}" --arg pattern "${pattern}" \
       '[.status, (.turn | strings // ""), (.started | strings // ""), (.tools == true | tostring),

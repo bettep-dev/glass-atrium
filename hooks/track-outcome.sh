@@ -2811,6 +2811,7 @@ emit_error "DATA-070" "info" \
 # precedent (GA_DATA_ROOT-anchored), decoupled from the legacy ~/.claude location.
 CIRCUIT_BREAKER_DIR="${CIRCUIT_BREAKER_DIR:-${HOOK_DATA_DIR}/agent-circuit-breaker}"
 CIRCUIT_BREAKER_THRESHOLD="${CIRCUIT_BREAKER_THRESHOLD:-3}"
+NEEDS_CONTEXT_STREAK_THRESHOLD="${NEEDS_CONTEXT_STREAK_THRESHOLD:-2}"
 OUTCOME_SPOOL_DIR="${OUTCOME_SPOOL_DIR:-${HOOK_DATA_DIR}/outcome-spool}"
 OUTCOME_SPOOL_MAX_ENTRIES="${OUTCOME_SPOOL_MAX_ENTRIES:-100}"
 OUTCOME_SPOOL_MAX_AGE_DAYS="${OUTCOME_SPOOL_MAX_AGE_DAYS:-7}"
@@ -2825,57 +2826,102 @@ circuit_breaker_record() {
   # fails open here (mirrors line ~1541), never errors.
   command -v hook_path_safe_key >/dev/null 2>&1 || return 0
   local agent="${1}" result="${2}"
-  [ -z "${agent}" ] && return 0
+  [[ -z "${agent}" ]] && return 0
   local key counter_file susp_file
   key="$(hook_path_safe_key "${agent}")"
   counter_file="${CIRCUIT_BREAKER_DIR}/${key}.fails"
   susp_file="${CIRCUIT_BREAKER_DIR}/${key}.suspended"
-  if [ "${result}" = "fail" ]; then
-    if [ ! -d "${CIRCUIT_BREAKER_DIR}" ] && ! mkdir -p "${CIRCUIT_BREAKER_DIR}" 2>/dev/null; then
-      emit_error "DATA-078" "warn" \
-        "Circuit-breaker state dir uncreatable — fail counter skipped" \
-        "Circuit-breaker state dir uncreatable — fail counter skipped" \
-        "Check permissions on ${CIRCUIT_BREAKER_DIR}" \
-        "Check permissions on ${CIRCUIT_BREAKER_DIR}"
-      return 0
-    fi
-    local count=0
-    if [ -r "${counter_file}" ]; then
-      count="$(cat "${counter_file}" 2>/dev/null)"
-    fi
-    case "${count}" in
-      '' | *[!0-9]*) count=0 ;;
-    esac
-    count=$((count + 1))
-    printf '%s\n' "${count}" >"${counter_file}" 2>/dev/null || true
-    if [ "${count}" -ge "${CIRCUIT_BREAKER_THRESHOLD}" ]; then
-      if command -v jq >/dev/null 2>&1; then
-        jq -nc --arg agent "${agent}" --argjson fails "${count}" --arg ts "${TIMESTAMP}" \
-          '{agent: $agent, consecutive_fails: $fails, suspended_ts: $ts}' \
-          >"${susp_file}" 2>/dev/null || true
-      else
-        printf '{"agent":"%s","consecutive_fails":%s,"suspended_ts":"%s"}\n' \
-          "${agent}" "${count}" "${TIMESTAMP}" >"${susp_file}" 2>/dev/null || true
-      fi
-      emit_error "DATA-079" "warn" \
-        "Agent circuit-breaker tripped: ${agent} at ${count} consecutive fails" \
-        "Agent circuit-breaker tripped: ${agent} at ${count} consecutive fails" \
-        "Review the agent before re-delegating; a non-fail outcome clears the suspension" \
-        "Review the agent before re-delegating; a non-fail outcome clears the suspension" \
-        "{\"agent\":\"${key}\",\"consecutive_fails\":${count}}"
-    fi
-  else
-    # Non-fail resets to zero. Skip when no state was ever written (happy-path common case).
-    [ -d "${CIRCUIT_BREAKER_DIR}" ] || return 0
-    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
-    if ga_guard_path "${counter_file}"; then
-      rm -f -- "${counter_file:?}"
-    fi || true
-    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
-    if ga_guard_path "${susp_file}"; then
-      rm -f -- "${susp_file:?}"
-    fi || true
+  if [[ "${result}" != "fail" ]]; then
+    streak_clear "${counter_file}" "${susp_file}"
+    return 0
   fi
+  # shellcheck disable=SC2310  # fail-open by design — the helper already warned
+  circuit_breaker_dir_ensure "fail counter" || return 0
+  local count
+  count="$(streak_increment "${counter_file}")"
+  [[ "${count}" -ge "${CIRCUIT_BREAKER_THRESHOLD}" ]] || return 0
+  if command -v jq >/dev/null 2>&1; then
+    jq -nc --arg agent "${agent}" --argjson fails "${count}" --arg ts "${TIMESTAMP}" \
+      '{agent: $agent, consecutive_fails: $fails, suspended_ts: $ts}' \
+      >"${susp_file}" 2>/dev/null || true
+  else
+    printf '{"agent":"%s","consecutive_fails":%s,"suspended_ts":"%s"}\n' \
+      "${agent}" "${count}" "${TIMESTAMP}" >"${susp_file}" 2>/dev/null || true
+  fi
+  emit_error "DATA-079" "warn" \
+    "Agent circuit-breaker tripped: ${agent} at ${count} consecutive fails" \
+    "Agent circuit-breaker tripped: ${agent} at ${count} consecutive fails" \
+    "Review the agent before re-delegating; a non-fail outcome clears the suspension" \
+    "Review the agent before re-delegating; a non-fail outcome clears the suspension" \
+    "{\"agent\":\"${key}\",\"consecutive_fails\":${count}}"
+  return 0
+}
+
+# Per-agent-ID needs_context streak: a teammate resumed by message stops under the same agent id
+# each time, while parallel teammates of one type carry their own ids — so the key is the id, never
+# the type. The fire reaching the threshold advises once; any other result clears the streak.
+# ponytail: a streak file outlives an agent replaced while on needs_context (a few bytes each);
+# add an age prune here if the dir ever grows past a few hundred entries.
+needs_context_streak_record() {
+  command -v hook_path_safe_key >/dev/null 2>&1 || return 0
+  local agent_id="${1}" result="${2}"
+  [[ -z "${agent_id}" ]] && return 0
+  local key streak_file count
+  key="$(hook_path_safe_key "${agent_id}")"
+  streak_file="${CIRCUIT_BREAKER_DIR}/${key}.needs-context"
+  if [[ "${result}" != "needs_context" ]]; then
+    streak_clear "${streak_file}"
+    return 0
+  fi
+  # shellcheck disable=SC2310  # fail-open by design — the helper already warned
+  circuit_breaker_dir_ensure "needs_context streak" || return 0
+  count="$(streak_increment "${streak_file}")"
+  [[ "${count}" -eq "${NEEDS_CONTEXT_STREAK_THRESHOLD}" ]] || return 0
+  emit_error "DATA-081" "warn" \
+    "Agent ${agent_id} returned needs_context ${count} times in a row" \
+    "Agent ${agent_id} returned needs_context ${count} times in a row" \
+    "Replace the agent with a fresh spawn from its progress file; do not continue it" \
+    "Replace the agent with a fresh spawn from its progress file; do not continue it" \
+    "{\"agent_id\":\"${key}\",\"consecutive_needs_context\":${count}}"
+  return 0
+}
+
+# Create the breaker state dir on first use → status 1 (warn naming counter $1) when it cannot be created.
+circuit_breaker_dir_ensure() {
+  [[ -d "${CIRCUIT_BREAKER_DIR}" ]] && return 0
+  mkdir -p "${CIRCUIT_BREAKER_DIR}" 2>/dev/null && return 0
+  emit_error "DATA-078" "warn" \
+    "Circuit-breaker state dir uncreatable — ${1} skipped" \
+    "Circuit-breaker state dir uncreatable — ${1} skipped" \
+    "Check permissions on ${CIRCUIT_BREAKER_DIR}" \
+    "Check permissions on ${CIRCUIT_BREAKER_DIR}"
+  return 1
+}
+
+# Add one to a streak counter file (absent or non-numeric = 0) → the new count on stdout.
+streak_increment() {
+  local counter_file="${1}" count=0
+  if [[ -r "${counter_file}" ]]; then
+    count="$(cat "${counter_file}" 2>/dev/null)"
+  fi
+  case "${count}" in
+    '' | *[!0-9]*) count=0 ;;
+  esac
+  count=$((count + 1))
+  printf '%s\n' "${count}" >"${counter_file}" 2>/dev/null || true
+  printf '%s' "${count}"
+}
+
+# Remove streak state files; no state dir = nothing was ever written (the happy-path common case).
+streak_clear() {
+  [[ -d "${CIRCUIT_BREAKER_DIR}" ]] || return 0
+  local f
+  for f in "$@"; do
+    # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+    if ga_guard_path "${f}"; then
+      rm -f -- "${f:?}"
+    fi || true
+  done
   return 0
 }
 
@@ -3027,6 +3073,7 @@ spool_drain() {
 # T9: fold this recorded outcome into the per-agent circuit-breaker before persistence — the
 # fail/non-fail signal is independent of whether the DB write below succeeds.
 circuit_breaker_record "${AGENT_TYPE}" "${RESULT}"
+needs_context_streak_record "${ENVELOPE_AGENT_ID:-}" "${RESULT}"
 
 # PHASE3-OUTCOME-DUALWRITE-BEGIN
 # Write to PostgreSQL — PG is the single sink; the body_md column carries the full markdown body so

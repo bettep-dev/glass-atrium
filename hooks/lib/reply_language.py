@@ -26,6 +26,8 @@ MARKER = SimpleNamespace(
     # position of the turn start it follows
     TURN=b'"turnPosition":{',
     TOOL_USE=b'"tool_use"',
+    # a tool result the host marks as an error: the call made nothing (measured on refused queue posts)
+    ERROR=b'"is_error":true',
 )
 # Bounds the output only; the hook cleans and caps the quote the model sees.
 PROSE_EXCERPT_CHARS = 500
@@ -56,7 +58,7 @@ def _build_parser():
         "reason=unreadable when the transcript cannot be opened; transcript adds entry (user|queued_command) and "
         "prose, turn adds turn (the turn-start entry's uuid), started (its timestamp), tools (the turn called a tool) "
         "and last_tool (the newest call's name, Bash command and last-act flag, whether its message held no other "
-        "call, and how many calls of its name the turn made).",
+        "call, and how many calls of its name the turn made whose result is no error).",
     )
     commands = parser.add_subparsers(dest="command")
     commands.required = True
@@ -84,15 +86,18 @@ def find_current_turn(path, window, cap):
     A compaction summary is passed over, so tool calls before a mid-turn compaction stay the turn's and the turn keeps
     one id; a transcript that opens on summaries, its turn start left in an earlier file, starts at the oldest."""
     oldest_summary = None
-    # (name, message key) per call, newest first; the host writes each call of one message as its own entry
+    # (name, message key, call id) per call, newest first; the host writes each call of one message as its own entry
     turn_calls = []
+    error_ids = set()
 
     def visit(line, result):
         nonlocal oldest_summary
+        if MARKER.ERROR in line:
+            error_ids.update(_get_error_result_ids(_get_json_object(line)))
         call_entry = _get_json_object(line) if MARKER.TOOL_USE in line else {}
         calls = _get_tool_calls(call_entry)
         message_key = _get_message_id(call_entry) or object()
-        turn_calls.extend((call.get("name"), message_key) for call in reversed(calls))
+        turn_calls.extend((call.get("name"), message_key, call.get("id")) for call in reversed(calls))
         if calls and not result["tools"]:
             result.update(tools=True, last_tool=_get_tool_call_view(calls[-1]))
         entry = _get_json_object(line) if MARKER.TURN in line else {}
@@ -110,9 +115,10 @@ def find_current_turn(path, window, cap):
     if result["status"] == "none":
         result.update(tools=False, last_tool=None)
     elif result["tools"]:
-        name, message_key = turn_calls[0]
-        result["last_tool"].update(alone=sum(key == message_key for _, key in turn_calls) == 1,
-                                   name_calls=sum(other == name for other, _ in turn_calls))
+        name, message_key, _ = turn_calls[0]
+        result["last_tool"].update(alone=sum(key == message_key for _, key, _ in turn_calls) == 1,
+                                   name_calls=sum(other == name and call_id not in error_ids
+                                                  for other, _, call_id in turn_calls))
     if not isinstance(result["started"], str):
         result["started"] = None
     return result
@@ -139,6 +145,14 @@ def _get_tool_calls(entry):
     if not isinstance(content, list):
         return []
     return [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
+
+
+def _get_error_result_ids(entry):
+    content = _get_message_content(entry) if entry.get("type") == "user" else None
+    if not isinstance(content, list):
+        return []
+    return [b.get("tool_use_id") for b in content
+            if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("is_error") is True]
 
 
 def _get_tool_call_view(call):

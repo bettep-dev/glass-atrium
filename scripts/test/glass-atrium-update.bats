@@ -242,6 +242,42 @@ load_skill() {
     = "$(jq -r '.hashes["rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md"]' "${WORK}/manifest.json")" ] || return 1
 }
 
+@test "a run under a caller's umask 077 lands new files 644 and new dirs 755, while a mapped 600 stays 600" {
+  # The updater's own mask decides what it creates; the modes map still decides every row it lists.
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new"
+  seed_file "${NEWSRC}" "scripts/fresh/private.sh" "private"
+  jq -n \
+    --arg tool "$(sha256_of "${NEWSRC}/scripts/tool.sh")" \
+    --arg private "$(sha256_of "${NEWSRC}/scripts/fresh/private.sh")" \
+    '{version: "1.0.0", files: ["scripts/tool.sh", "scripts/fresh/private.sh"],
+      hashes: {"scripts/tool.sh": $tool, "scripts/fresh/private.sh": $private},
+      modes: {"scripts/tool.sh": "644", "scripts/fresh/private.sh": "600"}}' >"${WORK}/manifest.json"
+
+  run bash -c 'umask 077 && exec env \
+    GA_ROOT="$1" AUTOAGENT_REPORTS_DIR="$2/daemon-reports" ATRIUM_UPDATE_STATE_DIR="$2/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="$3" ATRIUM_UPDATE_SRC_MANIFEST="$4" bash "$5"' \
+    _ "${INSTALL}" "${STATE}" "${NEWSRC}" "${WORK}/manifest.json" "${SKILL}"
+
+  [ "${status}" -eq 0 ] || {
+    echo "${output}"
+    return 1
+  }
+  local row name rel want
+  local rows=(
+    "a new file the updater writes|manifest.json|644"
+    "a new release directory|scripts/fresh|755"
+    "a row the modes map sets to 600|scripts/fresh/private.sh|600"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name rel want <<<"${row}"
+    [ "$(mode_of "${INSTALL}/${rel}")" = "${want}" ] || {
+      echo "${name}: ${rel} is $(mode_of "${INSTALL}/${rel}"), want ${want}"
+      return 1
+    }
+  done
+}
+
 # serialize begin + cleanup unwind
 
 @test "serialize_begin acquires the apply-lock; cleanup releases it" {

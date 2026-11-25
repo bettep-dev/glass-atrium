@@ -1034,6 +1034,32 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   assert_trace block-sizeest || return 1
 }
 
+@test "sizeest: the miss remediation teaches the --lint --template DEV-mode token, units= key included" {
+  run bash -c 'bash "$1" --lint --template' _ "${HOOK_SH}"
+  local taught
+  taught="$(printf '%s\n' "${output}" | sed -n "s/.*\(log('\[SIZE-EST\] [^']*tool_uses~=[^']*')\).*/\1/p")"
+  [[ "${taught}" == "log('[SIZE-EST] units=N bundles=N tool_uses~=N — <1-line reason>')" ]] || {
+    echo "template taught: ${taught}"
+    return 1
+  }
+  run_hook "${DECL_TEAM}
+log('plan-ref: clauded-docs/55')
+parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}))
+agent('glass-atrium-dev-nestjs',{goal:'implement'})"
+  [[ "${output}" == *"size-attestation miss"*"${taught}"* ]] || {
+    echo "${output}"
+    return 1
+  }
+}
+
+@test "sizeest: without a readable hook-utils.sh the template names the missing library, never an empty form" {
+  mkdir -p "${BATS_TEST_TMPDIR}/hooks"
+  cp "${HOOK_SH}" "${BATS_TEST_TMPDIR}/hooks/"
+  run bash -c 'bash "$1" --lint --template' _ "${BATS_TEST_TMPDIR}/hooks/enforce-workflow-verify-stage.sh"
+  [[ "${output}" != *"log('');"* ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"log('"*"${BATS_TEST_TMPDIR}/hooks/hook-utils.sh"*"');"* ]] || { echo "${output}"; return 1; }
+}
+
 @test "sizeest: valid declaration WITH [SIZE-EST] present → PASS" {
   run_hook "${DECL_TEAM}
 log('plan-ref: clauded-docs/55')
@@ -1519,6 +1545,220 @@ agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
   assert_outcome pass || return 1
   [[ "${output}" == *"ADVISORY (schema-cap"* ]] || return 1
   assert_trace_empty || return 1
+}
+
+# =====================================================================================================
+# SECTION N4 — REVIEW-FALLBACK ADVISORY (advisory-only, NEVER blocks). A reviewer / sec-guard read that
+#   falls back to an empty value through a conditional, with a DEV spawn after it and no `!<var>` stop
+#   in between, lets the build run unreviewed. Fixtures carry every attestation token, so each row is a
+#   PASS and only the advisory line differs.
+# =====================================================================================================
+
+REVIEW_FALLBACK_PRE="${DECL_TEAM}
+log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+log('[SCOPE] files=src/app.ts')
+log('[PLAN-CLOSE] deferred: the release script')
+await parallel(agent('glass-atrium-qa-code-reviewer',{goal:'verify the plan'}), agent('glass-atrium-dev-nestjs',{goal:'judge feasibility'}))"
+
+@test "review fallback: an empty fallback on a review read before a DEV spawn draws the advisory" {
+  local -a names=(
+    "ternary on a sec-guard agent() read"
+    "|| on a member of a reviewer read through a wrapper agentType"
+    "?? on a review() helper read"
+  )
+  local -a bodies=(
+    "const sx = await agent('glass-atrium-sec-guard', {goal:'read the diff for secrets'})
+const items = sx ? tagged(sx) : []
+await agent('glass-atrium-dev-nestjs', {goal:'fix ' + items.join(', ')})"
+    "const rv = await robustAgent('review', {agentType:'glass-atrium-qa-code-reviewer', goal:'review the diff'})
+const findings = rv?.findings || []
+await agent('glass-atrium-dev-nestjs', {goal:'address ' + findings.length})"
+    "const verdict = await review('the diff')
+const notes = verdict ?? []
+await agent('glass-atrium-dev-nestjs', {goal:'apply ' + notes.length})"
+  )
+  local i
+  for i in "${!names[@]}"; do
+    : >"${TRACE_LOG}"
+    run_hook "${REVIEW_FALLBACK_PRE}
+${bodies[i]}"
+    assert_outcome pass || {
+      echo "row=${names[i]}: ${output}"
+      return 1
+    }
+    [[ "${output}" == *"ADVISORY (review fallback, non-blocking)"* ]] || {
+      echo "row=${names[i]}: ${output}"
+      return 1
+    }
+    grep -q 'advisory=[^[:space:]]*review-fallback' "${TRACE_LOG}" || {
+      echo "row=${names[i]}"
+      cat "${TRACE_LOG}"
+      return 1
+    }
+  done
+}
+
+@test "review fallback: a stop on the empty read, no later DEV spawn, a non-review read or a quoted fallback stay silent" {
+  local -a names=(
+    "explicit if-not return before the fallback"
+    "fallback used for logging after a braced stop"
+    "fallback after the last DEV spawn"
+    "fallback on a non-review agent read"
+    "fallback shape quoted inside a string literal"
+  )
+  local -a bodies=(
+    "const sx = await agent('glass-atrium-sec-guard', {goal:'read the diff'})
+if (!sx) return { status: 'blocked', reason: 'sec read empty' }
+const items = sx ? tagged(sx) : []
+await agent('glass-atrium-dev-nestjs', {goal:'fix ' + items.length})"
+    "const sx = await agent('glass-atrium-sec-guard', {goal:'read the diff'})
+if (!sx) {
+  log('sec read returned nothing')
+  return null
+}
+log('findings: ' + (sx.findings ?? []).length)
+await agent('glass-atrium-dev-nestjs', {goal:'fix the findings'})"
+    "await agent('glass-atrium-dev-nestjs', {goal:'implement'})
+const sx = await agent('glass-atrium-sec-guard', {goal:'read the result'})
+const items = sx ? tagged(sx) : []
+log('sec findings: ' + items.length)"
+    "const plan = await agent('glass-atrium-intel-planner', {goal:'list the steps'})
+const steps = plan ? plan.steps : []
+await agent('glass-atrium-dev-nestjs', {goal:'implement ' + steps.length})"
+    "const sx = await agent('glass-atrium-sec-guard', {goal:'read the diff'})
+log('never write sx ? tagged(sx) : [] or sx || [] in a script')
+await agent('glass-atrium-dev-nestjs', {goal:'implement'})"
+  )
+  local i
+  for i in "${!names[@]}"; do
+    run_hook "${REVIEW_FALLBACK_PRE}
+${bodies[i]}"
+    assert_outcome pass || {
+      echo "row=${names[i]}: ${output}"
+      return 1
+    }
+    [[ "${output}" != *"ADVISORY (review fallback"* ]] || {
+      echo "row=${names[i]}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "review fallback: --lint previews the advisory, exits 0 and writes no trace" {
+  run_lint_exec "${REVIEW_FALLBACK_PRE}
+const sx = await agent('glass-atrium-sec-guard', {goal:'read the diff'})
+const items = sx ? tagged(sx) : []
+await agent('glass-atrium-dev-nestjs', {goal:'fix ' + items.length})"
+  assert_outcome pass || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"ADVISORY (review fallback, non-blocking)"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  assert_trace_empty
+}
+
+# =====================================================================================================
+# SECTION N5 — UNITS ADVISORY (advisory-only, NEVER blocks). One work-unit per DEV spawn by default: a
+#   [SIZE-EST] line declaring units= above 1, on any spawn of the script, is nudged. The key is optional,
+#   so its absence stays silent, as does a simple-task entry or a script with no DEV spawn.
+# =====================================================================================================
+
+UNITS_PRE="${DECL_TEAM}
+log('plan-ref: ${PLAN_REF}')
+log('[SCOPE] files=src/app.ts')
+log('[PLAN-CLOSE] deferred: the release script')
+await parallel(agent('glass-atrium-qa-code-reviewer',{goal:'verify the plan'}), agent('glass-atrium-dev-nestjs',{goal:'judge feasibility'}))"
+UNITS_IMPL="await agent('glass-atrium-dev-nestjs', {goal:'implement'})"
+
+@test "units: the largest units= above 1 on any [SIZE-EST] line draws the advisory" {
+  local -a names=(
+    "units=3 on the only [SIZE-EST]"
+    "a later spawn's units=2 after a units=1 one"
+  )
+  local -a sizes=(
+    "log('[SIZE-EST] units=3 bundles=1 tool_uses~=20 — three fixes')"
+    "log('[SIZE-EST] units=1 bundles=1 tool_uses~=8 — verify')
+log('[SIZE-EST] bundles=1 units=2 tool_uses~=12 — two tiny files')"
+  )
+  local -a wants=(3 2)
+  local i
+  for i in "${!names[@]}"; do
+    : >"${TRACE_LOG}"
+    run_hook "${UNITS_PRE}
+${sizes[i]}
+${UNITS_IMPL}"
+    assert_outcome pass || {
+      echo "row=${names[i]}: ${output}"
+      return 1
+    }
+    [[ "${output}" == *"ADVISORY (units, non-blocking)"*"carries units=${wants[i]} work-units"*"may share a spawn"* ]] || {
+      echo "row=${names[i]}: ${output}"
+      return 1
+    }
+    grep -qE 'advisory=([^[:space:]]*,)?units(,|[[:space:]]|$)' "${TRACE_LOG}" || {
+      echo "row=${names[i]}"
+      cat "${TRACE_LOG}"
+      return 1
+    }
+  done
+}
+
+@test "units: one unit, an absent key, a key off the token line, a simple-task entry or no DEV spawn stay silent" {
+  local -a names=(
+    "units=1"
+    "key absent"
+    "units= on a line without the token"
+    "simple-task entry declaring units=3"
+    "no DEV spawn"
+  )
+  local -a scripts=(
+    "${UNITS_PRE}
+log('[SIZE-EST] units=1 bundles=1 tool_uses~=8 — one fix')
+${UNITS_IMPL}"
+    "${UNITS_PRE}
+log('${SIZE_EST}')
+${UNITS_IMPL}"
+    "${UNITS_PRE}
+log('${SIZE_EST}')
+log('the old brief said units=4')
+${UNITS_IMPL}"
+    "log('[ENTRY-CLASS] simple-task: one file')
+log('[SIZE-EST] units=3 bundles=1 tool_uses~=9 — three files')
+${UNITS_IMPL}"
+    "log('[SIZE-EST] units=3 reads~=10 fields=2 effort=medium scope=bounded — three reads')
+await agent('glass-atrium-intel-reporter', {goal:'summarize'})"
+  )
+  local i
+  for i in "${!names[@]}"; do
+    run_hook "${scripts[i]}"
+    assert_outcome pass || {
+      echo "row=${names[i]}: ${output}"
+      return 1
+    }
+    [[ "${output}" != *"work-units"* ]] || {
+      echo "row=${names[i]}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "units: --lint previews the advisory, exits 0 and writes no trace" {
+  run_lint_exec "${UNITS_PRE}
+log('[SIZE-EST] units=4 bundles=1 tool_uses~=30 — four fixes')
+${UNITS_IMPL}"
+  assert_outcome pass || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"ADVISORY (units, non-blocking)"*"carries units=4 work-units"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  assert_trace_empty
 }
 
 # =====================================================================================================

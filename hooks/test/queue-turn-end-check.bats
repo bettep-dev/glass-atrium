@@ -564,6 +564,7 @@ assert_silent_turn_end() {
     'no final message and no record call|start:t-1 tool result|fresh|none|ask' \
     'another CLI subcommand last|start:t-1 clirecord result clipending result|fresh|yes|ask' \
     'last-act post last|start:t-1 tool result lastpost result|fresh|none|silent' \
+    'last-act post after a refused post of the turn|start:t-1 post refusal lastpost result|fresh|none|silent' \
     'last-act post of an earlier turn|start:t-1 tool result lastpost result|stale|none|ask' \
     'last-act post after another post of the turn|start:t-1 post result lastpost result|fresh|none|ask' \
     'last-act post after a post of an earlier turn|post result start:t-1 tool result lastpost result|fresh|none|silent' \

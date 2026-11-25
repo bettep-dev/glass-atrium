@@ -74,7 +74,7 @@ IFS= read -r -d '' TOOLS <<'JSON' || true # GA-ABSORB[benign]: status 1 at the t
   "linkedDocIds":{"type":"array","items":{"type":"integer"}},
   "options":{"type":"array","description":"a decision's options, codes R1 to R9","items":{"type":"object","additionalProperties":false,
    "required":["code","label","pros","cons"],"properties":{"code":{"type":"string"},"label":{"type":"string"},"pros":{"type":"string"},"cons":{"type":"string"}}}},
-  "recommendedCode":{"type":"string","description":"a decision's recommended option code"},
+  "recommendedCode":{"type":"string","description":"a decision's recommended option code, one of its options' codes: required on a decision"},
   "isApprovalClass":{"type":"boolean","description":"true for a decision that asks the owner to approve one action"},
   "lastAct":{"type":"boolean","description":"true only on the one post of a turn that owes no other, called alone as the turn's last tool call: it also records the turn, form posted with this item's id"}}}},
 {"name":"claim",

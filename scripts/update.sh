@@ -185,6 +185,8 @@
 
 set -Eeuo pipefail
 IFS=$'\n\t'
+# own mask → a caller's 077 never lands created install files 600 / dirs 700; the modes map still re-modes its rows
+umask 022
 
 # bash 5.2+ turns patsub_replacement ON by default, making a bare '&' in a
 # ${var//pat/repl} REPLACEMENT expand to the matched text — that would corrupt the

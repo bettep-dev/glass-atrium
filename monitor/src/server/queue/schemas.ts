@@ -100,7 +100,7 @@ const itemFields = {
   title: requiredText(ITEM_TITLE_MAX),
   body: requiredText(MAX_TEXT),
   linkedDocIds: linkedDocIds(MAX_LINKED_DOCS),
-  isFreeTextAllowed: z.boolean(),
+  isFreeTextAllowed: z.boolean().default(false),
 };
 
 const reportSchema = z.strictObject({ kind: z.literal("report"), ...itemFields });

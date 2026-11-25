@@ -21,6 +21,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:generate": "prisma generate",
+    "db:generate:offline": "DATABASE_URL='postgresql://placeholder-never-connects@localhost/placeholder?host=/nonexistent' SHADOW_DATABASE_URL='postgresql://placeholder-never-connects@localhost/placeholder_shadow?host=/nonexistent' prisma generate",
     "db:status": "prisma migrate status",
     "db:studio": "prisma studio"
   },

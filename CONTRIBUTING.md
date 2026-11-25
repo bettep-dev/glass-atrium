@@ -80,6 +80,7 @@ Typecheck without a database is possible: `prisma generate` never connects,
 but Prisma's config resolves `env()` eagerly, so export dummy `DATABASE_URL`
 and `SHADOW_DATABASE_URL` values first (see the `gate-typecheck` job in
 `.github/workflows/ci.yml` for the exact shape).
+In a fresh checkout or git worktree, `npm --prefix monitor run db:generate:offline` generates the client with placeholder values set inside the script — no credential on the command line, never copy `monitor/src/generated` from another worktree.
 
 ## Testing changes against a live install
 

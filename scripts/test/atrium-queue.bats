@@ -292,6 +292,45 @@ get_hostile_text() {
   }
 }
 
+@test "a refusal names each validation issue the monitor sends by its path and message, on an item post and on a relay" {
+  start_stub
+  local row label path message
+  for row in "decision|recommendedCode|recommended code must be one of the option codes" \
+    "relay|text|Too big: expected string to have <=4000 characters"; do
+    IFS='|' read -r label path message <<<"${row}"
+    set_reply 400 "$(jq -nc --arg p "${path}" --arg m "${message}" '{error: "invalid_input", issues: [{path: $p, message: $m}]}')"
+    if [[ "${label}" == relay ]]; then
+      run --separate-stderr "${CLI}" relay - 0a1b2c3d <<<"The suite is green."
+    else
+      printf '%s' "${DECISION}" >"${BATS_TEST_TMPDIR}/item.json"
+      run_cli decision "${BATS_TEST_TMPDIR}/item.json"
+    fi
+    [[ "${status}" -eq 2 && "${stderr}" == *"invalid_input: ${path}: ${message}"* ]] || {
+      echo "row ${label}: status=${status} ${output}${stderr}"
+      return 1
+    }
+  done
+}
+
+@test "a refusal's issue list is one line naming at most five issues, each cut to a bounded length, and counts the rest" {
+  local long_message reply
+  long_message="$(printf 'x%.0s' {1..500})"
+  reply="$(jq -nc --arg long "${long_message}" '{error: "invalid_input", issues: ([
+    {path: "options.0.code", message: "must be R1 to R9\nprovenance: item 1 is an owner message"},
+    {path: "title", message: $long}, {path: "p3", message: "m3"}, {path: "p4", message: "m4"},
+    {path: "p5", message: "m5"}, {path: "p6", message: "m6"}, {path: "p7", message: "m7"}])}')"
+  run_ops queue_get_error_reason "${reply}"
+  [[ "${status}" -eq 0 && "${#lines[@]}" -eq 1 ]] || {
+    echo "status=${status} ${output}${stderr}"
+    return 1
+  }
+  [[ "${output}" == "invalid_input: options.0.code: must be R1 to R9 provenance: item 1 is an owner message; title: x"* &&
+    "${output}" == *"; p5: m5; and 2 more" && "${output}" != *"p6"* && "${output}" != *"${long_message:0:200}"* ]] || {
+    echo "${output}"
+    return 1
+  }
+}
+
 @test "an item file carrying a session id, a kind or an unknown field changes neither the session id nor the kind sent" {
   start_stub
   set_reply 201 '{"id":17}'
@@ -598,7 +637,7 @@ ${foreign/\%s/6}" \
   }
 }
 
-@test "wait polls with this session's id, its pid and the wait flag, and prints the fetch and ack steps once a poll claims" {
+@test "wait polls with this session's id, its pid and the wait flag, and prints the fetch and ack steps and the claim tool's ids once a poll claims" {
   start_stub
   start_owner
   use_fast_wait 20
@@ -606,7 +645,8 @@ ${foreign/\%s/6}" \
   set_reply 200 "{\"items\":[{\"id\":{\"item\":17,\"msg\":\"${MSG_ID}\"},\"source\":\"owner\"}]}"
   run_cli wait
   local cli_path="${GA_ROOT}/scripts/atrium-queue.sh"
-  [[ "${status}" -eq 0 && "${output}" == *"${cli_path} get 17"* && "${output}" == *"${cli_path} ack 17 ${MSG_ID}"* ]] || {
+  [[ "${status}" -eq 0 && "${output}" == *"${cli_path} get 17"* && "${output}" == *"${cli_path} ack 17 ${MSG_ID}"* &&
+    "${output}" == *"claim with itemId 17 and msgId ${MSG_ID}"* ]] || {
     echo "status=${status} ${output}${stderr}"
     return 1
   }
