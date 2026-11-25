@@ -1,6 +1,6 @@
 # Delegation prompt content (orchestrator only)
 
-- **Pointer site**: `skills/glass-atrium-ops-orchestrator.md` → `### Delegation/Communication Rules [ORCHESTRATOR]`, which states each duty and when it fires.
+- **Pointer sites**: `skills/glass-atrium-ops-orchestrator.md` → `### Delegation/Communication Rules [ORCHESTRATOR]` · `### Brief Lines by Recipient [ORCHESTRATOR]`, which state each duty and when it fires.
 
 ## Resource Budget
 
@@ -48,6 +48,15 @@
 - Never write "suite + guards + lint" into a brief whose spawn is not the final gate.
 - A brief without the line makes its spawn its own job's final gate (that definition), so the omission costs a full pass.
 - Honest backing: honor-system — no gate parses `[VERIFY]` (grep of the tree for the token — no hit).
+
+## Sec-guard input
+
+- **Hand glass-atrium-sec-guard the code it judges**: every sec-guard brief carries the code under judgment, extracted into one file named by path or inline in the brief — never an instruction to locate it.
+  - Why: sec-guard holds no shell and three turns (`maxTurns: 3`), so a search spends the turns its verdict needs.
+- Extract only what the verdict covers: the changed function or hunk, plus the code it calls on the path under judgment.
+- The extract comes inline from a Read, or from a file the change's DEV spawn wrote — the orchestrator writes no scratch file (`skills/glass-atrium-ops-orchestrator-role.md` → `## Orchestrator Identity`).
+- A target too large for one extract is no sec-guard target: route it per `skills/glass-atrium-ops-orchestrator.md` → `#### Audit/Scan Routing Discipline (delegation-size, security lens) [ORCHESTRATOR]`.
+- Honest backing: honor-system — no gate reads a sec-guard brief's content (grep of `hooks/*.sh` for sec-guard: the injection and outcome-record sites only).
 
 ## Read-Extent Discipline
 
