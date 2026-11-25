@@ -4,9 +4,10 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# shellcheck source-path=SCRIPTDIR source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
-  # shellcheck source=lib/pipe-drain.sh
+  # shellcheck source-path=SCRIPTDIR source=lib/pipe-drain.sh
   source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
 else
   # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
@@ -102,8 +103,6 @@ done
 # genuinely worktree-isolated concurrent agent raises this note even though it is the
 # CORRECT configuration; (2) it observes the commit half only, and the ultracode
 # spawn path fires no PreToolUse(Agent) at all, so coverage there is zero.
-readonly LIVE_CHILD_TTL_MIN=360
-live_child_dir="${HOOK_DATA_DIR}/live-children"
 
 # A truncated/killed subagent never fires SubagentStop, so its marker is never
 # removed. Sweep anything older than the TTL before counting — best-effort, and a
@@ -115,19 +114,19 @@ sweep_stale_markers() {
     if ga_guard_path "${marker}"; then
       rm -f -- "${marker:?}"
     fi || true
-  done < <(find "${live_child_dir}" -type f -mmin "+${LIVE_CHILD_TTL_MIN}" -print0 2>/dev/null || true)
+  done < <(find "${LIVE_CHILD_DIR}" -type f -mmin "+${LIVE_CHILD_TTL_MIN}" -print0 2>/dev/null || true)
 }
 
 count_live_children() {
   local n
-  n="$(find "${live_child_dir}" -type f -mmin "-${LIVE_CHILD_TTL_MIN}" 2>/dev/null | grep -c '' || true)"
+  n="$(find "${LIVE_CHILD_DIR}" -type f -mmin "-${LIVE_CHILD_TTL_MIN}" 2>/dev/null | grep -c '' || true)"
   [[ "${n}" =~ ^[0-9]+$ ]] || n=0
   printf '%s' "${n}"
 }
 
 # SC2310: hook_is_subagent and the drain_after reader yield verdicts — set -e disable under `if` intended.
 # shellcheck disable=SC2310
-if [[ -d "${live_child_dir}" ]] \
+if [[ -d "${LIVE_CHILD_DIR}" ]] \
   && printf '%s' "${COMMAND}" | drain_after grep -qE '(^|[^A-Za-z0-9_-])git([[:space:]]+-[^[:space:]]+)*[[:space:]]+commit([^A-Za-z0-9_-]|$)' \
   && ! hook_is_subagent "${INPUT}"; then
   sweep_stale_markers

@@ -86,7 +86,6 @@ IFS=$'\t' read -r HOOK_EVENT AGENT_TYPE AGENT_ID <<<"${LOG_TUPLE}"
 # "is a child live in THIS worktree", and it therefore false-positives on exactly the
 # correctly-isolated configuration the rule encourages. Pure bash by design: the
 # hook's 2-python3-per-fire perf invariant is pinned by agent-tracker.bats.
-live_child_dir="${HOOK_DATA_DIR}/live-children"
 marker_key="$(hook_path_safe_key "${AGENT_ID}")"
 
 # Status 0 once the marker is gone; a refused path or a failed delete counts as kept (DATA-075).
@@ -103,19 +102,19 @@ delete_live_child_marker() {
 if [[ -n "${marker_key}" ]]; then
   case "${HOOK_EVENT}" in
     SubagentStart)
-      if ! { mkdir -p "${live_child_dir}" 2>/dev/null && : >"${live_child_dir}/${marker_key}"; }; then
+      if ! { mkdir -p "${LIVE_CHILD_DIR}" 2>/dev/null && : >"${LIVE_CHILD_DIR}/${marker_key}"; }; then
         emit_error "DATA-074" "warn" \
           "live-child marker write failed — the commit-time live-child advisory will under-report" \
-          "Check permissions/free space on ${live_child_dir}" \
+          "Check permissions/free space on ${LIVE_CHILD_DIR}" \
           "{\"event\":\"${HOOK_EVENT}\",\"marker\":\"${marker_key}\"}"
       fi
       ;;
     SubagentStop)
       # shellcheck disable=SC2310  # the delete's status IS the DATA-075 branch — set -e disable intended
-      if [[ -e "${live_child_dir}/${marker_key}" ]] && ! delete_live_child_marker "${live_child_dir}/${marker_key}"; then
+      if [[ -e "${LIVE_CHILD_DIR}/${marker_key}" ]] && ! delete_live_child_marker "${LIVE_CHILD_DIR}/${marker_key}"; then
         emit_error "DATA-075" "warn" \
           "live-child marker delete failed — a stale marker will over-report until its TTL expires" \
-          "Remove ${live_child_dir}/${marker_key} manually" \
+          "Remove ${LIVE_CHILD_DIR}/${marker_key} manually" \
           "{\"event\":\"${HOOK_EVENT}\",\"marker\":\"${marker_key}\"}"
       fi
       # Release arm of the per-worktree writer lock (lib/worktree-lock.sh; the acquire arm is

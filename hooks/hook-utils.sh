@@ -5,6 +5,7 @@
 
 # Guard against double-sourcing
 if [[ -n "${_HOOK_UTILS_LOADED:-}" ]]; then
+  # shellcheck disable=SC2317  # reached only when the file is executed, not sourced
   return 0 2>/dev/null || true
 fi
 readonly _HOOK_UTILS_LOADED=1
@@ -344,6 +345,12 @@ hook_join_alt() {
 # hooks/ga_paths.py. Default-only change: an exported GA_DATA_ROOT still redirects both roots.
 HOOK_LOG_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/logs"
 HOOK_DATA_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data"
+# One empty file per running subagent (agent-tracker.sh: SubagentStart writes, SubagentStop removes).
+# A truncated agent fires no SubagentStop → a marker older than the TTL counts as dead, not running.
+# shellcheck disable=SC2034  # read by the hooks that source this file
+LIVE_CHILD_DIR="${HOOK_DATA_DIR}/live-children"
+# shellcheck disable=SC2034  # read by the hooks that source this file
+LIVE_CHILD_TTL_MIN=360
 
 # English-only alias for hooks using the 5-param emit_error signature → hook_emit_error.
 emit_error() {

@@ -49,7 +49,7 @@ readonly _WORKTREE_LOCK_LOADED=1
 readonly WORKTREE_LOCK_ROOT="${WORKTREE_LOCK_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/worktree-locks}"
 
 # 360 min — the staleness convention already in force for the live-child markers
-# (enforce-commit-guard.sh LIVE_CHILD_TTL_MIN). Deliberately NOT apply-lock's 1800s default:
+# (hook-utils.sh LIVE_CHILD_TTL_MIN). Deliberately NOT apply-lock's 1800s default:
 # manual-agent hold times can run well past 1800s, so a 1800s TTL would reclaim locks out from under
 # live holders. WORKTREE_LOCK_TTL_SECS overrides.
 readonly WORKTREE_LOCK_TTL_DEFAULT=21600
