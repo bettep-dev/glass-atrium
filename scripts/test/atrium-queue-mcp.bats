@@ -122,6 +122,24 @@ PING='{"jsonrpc":"2.0","id":90,"method":"ping"}'
   done
 }
 
+@test "the post tool says a decision requires recommendedCode, and the relay tool states the monitor's relay text limit" {
+  local limit row name filter
+  limit="$(sed -n 's/^export const RELAY_TEXT_MAX = \([0-9_]*\);$/\1/p' "${GA}/monitor/src/server/queue/schemas.ts" | tr -d _)"
+  [[ "${limit}" =~ ^[0-9]+$ ]] || {
+    echo "no RELAY_TEXT_MAX in the monitor's queue schemas: ${limit}"
+    return 1
+  }
+  run_adapter '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+  for row in "post|.inputSchema.properties.recommendedCode.description | contains(\"required on a decision\")" \
+    "relay|.description | contains(\"at most ${limit} characters\")"; do
+    IFS='|' read -r name filter <<<"${row}"
+    get_response 2 | jq -e --arg n "${name}" ".result.tools[] | select(.name == \$n) | ${filter}" >/dev/null || {
+      echo "row ${name}: $(get_response 2 | jq -c --arg n "${name}" '.result.tools[] | select(.name == $n)')"
+      return 1
+    }
+  done
+}
+
 @test "a session that does not face the owner gets no instructions, lists no tools and has every call refused before the monitor" {
   export CLAUDE_CODE_ENTRYPOINT=sdk-cli
   start_stub

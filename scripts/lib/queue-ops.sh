@@ -33,12 +33,13 @@ readonly QUEUE_SOURCE_SHAPE='^(owner|peer)$'
 # the fields a session sets per kind; the session id and the kind come from the environment and the dispatch
 readonly QUEUE_ITEM_FIELDS='{"report":["body","isFreeTextAllowed","linkedDocIds","title"],
   "decision":["body","isApprovalClass","isFreeTextAllowed","linkedDocIds","options","recommendedCode","title"]}'
-# the adapter's tool descriptions the CLI's usage text shares, by tool name
+# the adapter's tool descriptions the CLI's usage text shares, by tool name; the relay text cap is the monitor's
+# (schemas.ts → RELAY_TEXT_MAX, test-bound)
 # shellcheck disable=SC2034  # read by both front ends
 readonly QUEUE_TOOL_DESCRIPTIONS='{
   "claim":"Fetch and acknowledge what was delivered to this session: everything, or one item by its item id and msg id. A delivered item whose fetch or ack failed is listed under unclaimed with its item id, msg id and failing step: claim it again by those ids.",
   "sessions":"List the peer sessions a relay may reach.",
-  "relay":"Relay a text to peer sessions, each named by a name or id prefix that sessions lists."}'
+  "relay":"Relay a text of at most 4000 characters to peer sessions, each named by a name or id prefix that sessions lists."}'
 
 # JSON on stdin → one compact document per value, every C1 control, U+2028 / U+2029 and the tag brackets as \u escapes;
 # jq escapes C0 → no string can begin a visual line or carry a raw tag, and the values decode unchanged
@@ -115,9 +116,14 @@ queue_get_reply_result() {
   esac
 }
 
-# The monitor's {error, reason} as one control-free line, capped → safe to print to a terminal or transcript.
+# The monitor's {error, reason} and the first five of its validation issues (queue-request.ts → handleParsed), each
+# "path: message", as one control-free line, each part capped → safe to print to a terminal or transcript.
 queue_get_error_reason() {
-  jq -r '[.error, .reason] | map(strings) | join(": ") | gsub("[[:cntrl:]]"; " ") | .[:300]' <<<"$1" 2>/dev/null \
+  jq -r 'def line($max): gsub("[[:cntrl:]]"; " ") | .[:$max];
+    ([.error, .reason] | map(strings) | join(": ") | line(300)) as $head
+    | [.issues | arrays | .[] | objects | [.path, .message] | map(strings | select(. != "")) | join(": ") | line(200)] as $issues
+    | ($issues[:5] + [($issues | length) - 5 | select(. > 0) | "and \(.) more"] | join("; ")) as $named
+    | [$head, $named] | map(select(. != "")) | join(": ")' <<<"$1" 2>/dev/null \
     || printf 'unreadable reply\n'
 }
 
