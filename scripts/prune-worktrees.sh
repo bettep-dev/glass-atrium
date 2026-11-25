@@ -26,7 +26,7 @@
 #                ancestry (itself included): an agent's Bash call runs as a child of its session's
 #                claude process. Another session's process fails the fact whatever the marker count;
 #                one under the caller's own session fails it while any live-agent marker is live
-#                (hooks/hook-utils.sh → LIVE_CHILD_DIR, LIVE_CHILD_TTL_MIN) — markers say which agents
+#                (hooks/hook-utils.sh → hook_get_live_child_count) — markers say which agents
 #                are live, never where. A process with no claude ancestor is an orphan.
 # Processes --apply can ever signal, TERM only: an orphan, or a process under the caller's own session
 # while no marker is live. Never this run's own chain, never another session's process.
@@ -396,7 +396,7 @@ check_lock() {
 check_live_agents() {
   local live owner
   # shellcheck disable=SC2310  # an unreadable record store is the failing fact
-  if ! live="$(get_live_agent_count)"; then
+  if ! live="$(hook_get_live_child_count)"; then
     PART_FACT="cannot read the live-agent records in ${LIVE_CHILD_DIR}"
     return 1
   fi
@@ -415,20 +415,6 @@ check_live_agents() {
   else
     PART_FACT="${live} live agent(s) recorded; no process inside runs under a Claude session"
   fi
-}
-
-# Live-child markers younger than the TTL; rc 1 = the store exists but cannot be read.
-get_live_agent_count() {
-  local listing line count=0
-  [[ -d "${LIVE_CHILD_DIR}" ]] || {
-    printf '0\n'
-    return 0
-  }
-  listing="$(find "${LIVE_CHILD_DIR}" -type f -mmin "-${LIVE_CHILD_TTL_MIN}")" || return 1
-  while IFS= read -r line; do
-    [[ -z "${line}" ]] || count=$((count + 1))
-  done <<<"${listing}"
-  printf '%s\n' "${count}"
 }
 
 # Prints why the first process inside (worktree_processes_out) may have a live owner; rc 1 = none.

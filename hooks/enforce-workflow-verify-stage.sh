@@ -601,13 +601,16 @@ print_sizeest_high_advisory() {
 }
 
 # get_size_est_form — the DEV-mode [SIZE-EST] form (hook-utils.sh → HOOK_SIZE_EST_FORM), read in a
-# command substitution → the library's globals stay out of the gate.
+# command substitution → the library's globals stay out of the gate. Unreadable library → its path in place
+# of the form, so the taught line never reads log('').
 get_size_est_form() {
   local lib="${BASH_SOURCE%/*}/hook-utils.sh"
-  [[ -r "${lib}" ]] || return 0
   # shellcheck source=hook-utils.sh
-  source "${lib}" || return 0
-  printf '%s' "${HOOK_SIZE_EST_FORM}"
+  if [[ -r "${lib}" ]] && source "${lib}"; then
+    printf '%s' "${HOOK_SIZE_EST_FORM}"
+  else
+    printf '[SIZE-EST] form unavailable: cannot read %s' "${lib}"
+  fi
 }
 
 # get_units_advice — the units nudge's advice for the raw script (header -> ELEVENTH ADVISORY PASS);

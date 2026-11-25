@@ -1052,6 +1052,14 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   }
 }
 
+@test "sizeest: without a readable hook-utils.sh the template names the missing library, never an empty form" {
+  mkdir -p "${BATS_TEST_TMPDIR}/hooks"
+  cp "${HOOK_SH}" "${BATS_TEST_TMPDIR}/hooks/"
+  run bash -c 'bash "$1" --lint --template' _ "${BATS_TEST_TMPDIR}/hooks/enforce-workflow-verify-stage.sh"
+  [[ "${output}" != *"log('');"* ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"log('"*"${BATS_TEST_TMPDIR}/hooks/hook-utils.sh"*"');"* ]] || { echo "${output}"; return 1; }
+}
+
 @test "sizeest: valid declaration WITH [SIZE-EST] present → PASS" {
   run_hook "${DECL_TEAM}
 log('plan-ref: clauded-docs/55')

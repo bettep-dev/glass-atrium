@@ -375,10 +375,22 @@ HOOK_LOG_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/logs"
 HOOK_DATA_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data"
 # One empty file per running subagent (agent-tracker.sh: SubagentStart writes, SubagentStop removes).
 # A truncated agent fires no SubagentStop → a marker older than the TTL counts as dead, not running.
-# shellcheck disable=SC2034  # read by the hooks that source this file
 LIVE_CHILD_DIR="${HOOK_DATA_DIR}/live-children"
-# shellcheck disable=SC2034  # read by the hooks that source this file
 LIVE_CHILD_TTL_MIN=360
+
+# Live agents = markers younger than LIVE_CHILD_TTL_MIN; 0 with no store; rc 1 = the store cannot be read.
+hook_get_live_child_count() {
+  local listing line count=0
+  [[ -d "${LIVE_CHILD_DIR}" ]] || {
+    printf '0\n'
+    return 0
+  }
+  listing="$(find "${LIVE_CHILD_DIR}" -type f -mmin "-${LIVE_CHILD_TTL_MIN}" 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] || count=$((count + 1))
+  done <<<"${listing}"
+  printf '%s\n' "${count}"
+}
 
 # English-only alias for hooks using the 5-param emit_error signature → hook_emit_error.
 emit_error() {

@@ -117,20 +117,13 @@ sweep_stale_markers() {
   done < <(find "${LIVE_CHILD_DIR}" -type f -mmin "+${LIVE_CHILD_TTL_MIN}" -print0 2>/dev/null || true)
 }
 
-count_live_children() {
-  local n
-  n="$(find "${LIVE_CHILD_DIR}" -type f -mmin "-${LIVE_CHILD_TTL_MIN}" 2>/dev/null | grep -c '' || true)"
-  [[ "${n}" =~ ^[0-9]+$ ]] || n=0
-  printf '%s' "${n}"
-}
-
 # SC2310: hook_is_subagent and the drain_after reader yield verdicts — set -e disable under `if` intended.
 # shellcheck disable=SC2310
 if [[ -d "${LIVE_CHILD_DIR}" ]] \
   && printf '%s' "${COMMAND}" | drain_after grep -qE '(^|[^A-Za-z0-9_-])git([[:space:]]+-[^[:space:]]+)*[[:space:]]+commit([^A-Za-z0-9_-]|$)' \
   && ! hook_is_subagent "${INPUT}"; then
   sweep_stale_markers
-  live_count="$(count_live_children)"
+  live_count="$(hook_get_live_child_count)" || live_count=0
   if [[ "${live_count}" -gt 0 ]]; then
     emit_error "GIT-ADV-001" "warn" \
       "Committing from the main session while ${live_count} delegated child agent(s) appear to be still live — the orchestrator does not commit another agent's work, and a commit taken before an agent's completion is established can capture a half-written tree." \

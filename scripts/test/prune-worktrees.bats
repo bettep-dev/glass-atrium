@@ -316,6 +316,21 @@ is_registered() {
   done
 }
 
+@test "--apply keeps a passing worktree while the live-agent records cannot be read" {
+  local wt
+  wt="$(add_worktree feat)"
+  mkdir -p "${LIVE_DIR}"
+  chmod 000 "${LIVE_DIR}"
+
+  run bash "${PRUNE_SH}" --apply "${wt}"
+  chmod 755 "${LIVE_DIR}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  [[ "${output}" == *"kept: ${wt} — agents: fail"* ]] || { echo "part not named: ${output}"; return 1; }
+  [[ "${output}" == *"cannot read the live-agent records in ${LIVE_DIR}"* ]] || { echo "fact missing: ${output}"; return 1; }
+  [ -d "${wt}" ] || { echo "removed: ${output}"; return 1; }
+}
+
 @test "the cwd listing asks lsof to avoid blocking kernel calls and to keep quiet" {
   local wt real
   wt="$(add_worktree feat)"
