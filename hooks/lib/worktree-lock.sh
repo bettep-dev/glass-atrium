@@ -211,13 +211,14 @@ _worktree_lock_load_applylock() {
   _WORKTREE_LOCK_APPLYLOCK=1
 }
 
-# Reclaim a lock whose holder is presumed gone: age-gated only (see the TTL-IS-DOMINANT note in the
-# header), then apply-lock's single-winner mv-aside takeover so two racing reclaimers can never both
-# win. rc 0 = the stale dir is gone and the caller may mkdir fresh.
-# Args: $1=lock dir.
-_worktree_lock_reclaim() {
+# Whether a lock dir still holds its worktree: present and not aged past the TTL (see the
+# TTL-IS-DOMINANT note in the header). A lock that cannot be dated counts as held — a missing
+# primitive or a failed stat must never read as a released worktree.
+# Args: $1=lock dir · rc 0 = held · rc 1 = absent or aged past the TTL.
+worktree_lock_is_live() {
   local lock_dir="${1}" ttl age
-  _worktree_lock_load_applylock || return 1
+  [[ -d "${lock_dir}" ]] || return 1
+  _worktree_lock_load_applylock || return 0
   ttl="${WORKTREE_LOCK_TTL_SECS:-${WORKTREE_LOCK_TTL_DEFAULT}}"
   case "${ttl}" in
     '' | *[!0-9]*) ttl="${WORKTREE_LOCK_TTL_DEFAULT}" ;;
@@ -226,8 +227,20 @@ _worktree_lock_reclaim() {
   # _apply_lock_reclaim re-verifies staleness with apply_lock_ttl_secs; aligning that env var keeps
   # both gates on ONE number. Process-local: this hook never acquires the shared apply lock itself.
   ATRIUM_APPLY_LOCK_TTL_SECS="${ttl}"
-  age="$(apply_lock_age_secs "${lock_dir}")" || return 1
-  [[ "${age}" -gt "${ttl}" ]] || return 1
+  age="$(apply_lock_age_secs "${lock_dir}")" || return 0
+  [[ "${age}" -le "${ttl}" ]]
+}
+
+# Reclaim a lock whose holder is presumed gone, then apply-lock's single-winner mv-aside takeover so
+# two racing reclaimers can never both win. rc 0 = the stale dir is gone and the caller may mkdir fresh.
+# Args: $1=lock dir.
+_worktree_lock_reclaim() {
+  local lock_dir="${1}"
+  [[ -d "${lock_dir}" ]] || return 1
+  # shellcheck disable=SC2310  # liveness verdict branched on — a held lock is never reclaimed
+  if worktree_lock_is_live "${lock_dir}"; then
+    return 1
+  fi
   _apply_lock_reclaim "${lock_dir}" || return 1
 }
 

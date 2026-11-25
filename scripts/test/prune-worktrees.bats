@@ -1,0 +1,246 @@
+#!/usr/bin/env bats
+# prune-worktrees.bats — the worktree close-out: a linked worktree is removed only under --apply and
+# only when all four safe-test parts pass; every other worktree is kept with its failing part named.
+# Scratch repositories only, under one bare mktemp -d; the lock store is sandboxed per test.
+
+PRUNE_SH="${BATS_TEST_DIRNAME}/../prune-worktrees.sh"
+LOCK_LIB="${BATS_TEST_DIRNAME}/../../hooks/lib/worktree-lock.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../lib/path-guard.sh"
+
+setup() {
+  PW_TMP="$(mktemp -d)"
+  # Canonical spelling (/private/var on macOS) — the one git and lsof report.
+  PW_TMP="$(cd -P -- "${PW_TMP}" && pwd -P)"
+  REPO="${PW_TMP}/repo"
+  export WORKTREE_LOCK_DIR="${PW_TMP}/locks"
+  export GA_PRUNE_WORKTREES_TERM_WAIT_SECS=2
+  unset WORKTREE_LOCK_TTL_SECS
+  STARTED_PIDS=()
+  git init -q -b main "${REPO}"
+  printf 'build/\n' >"${REPO}/.gitignore"
+  printf 'one\n' >"${REPO}/tracked.txt"
+  git -C "${REPO}" add .gitignore tracked.txt
+  repo_commit "${REPO}" init
+}
+
+teardown() {
+  local pid
+  for pid in "${STARTED_PIDS[@]:-}"; do
+    [[ -n "${pid}" ]] && kill -KILL "${pid}" 2>/dev/null
+  done
+  true
+  if ga_guard_path "${PW_TMP:-}"; then rm -rf -- "${PW_TMP:?}"; fi
+}
+
+repo_commit() {
+  git -C "${1}" -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m "${2}"
+}
+
+# Linked worktree on its own branch at main's tip, so it starts contained and clean.
+add_worktree() {
+  git -C "${REPO}" worktree add -q -b "${1}" "${PW_TMP}/${1}"
+  printf '%s\n' "${PW_TMP}/${1}"
+}
+
+# A writer lock stamped the way the PreToolUse arm stamps it, under the sandboxed store.
+hold_lock() {
+  (
+    # shellcheck source=/dev/null
+    source "${LOCK_LIB}"
+    worktree_lock_dir_for "${1}"
+    mkdir -p -- "${worktree_lock_dir_out}"
+    printf 'agent-live\n' >"${worktree_lock_dir_out}/holder"
+    printf '%s\n' "${worktree_lock_dir_out}"
+  )
+}
+
+# Starts a process whose cwd is $1; $2 = the command. Returns once lsof sees the cwd.
+start_inside() {
+  local wt="${1}" pid tries=0
+  shift
+  (cd -- "${wt}" && exec "$@") </dev/null >/dev/null 2>&1 3>&- &
+  pid=$!
+  STARTED_PIDS+=("${pid}")
+  until [[ "$(lsof -a -p "${pid}" -d cwd -Fn 2>/dev/null)" == *"n${wt}"* ]]; do
+    tries=$((tries + 1))
+    ((tries < 50)) || { echo "process ${pid} never reached ${wt}"; return 1; }
+    sleep 0.1
+  done
+  INSIDE_PID="${pid}"
+}
+
+is_registered() {
+  [[ "$(git -C "${REPO}" worktree list --porcelain)" == *"worktree ${1}"$'\n'* ]]
+}
+
+@test "without --apply a passing worktree is only listed as removable" {
+  local wt
+  wt="$(add_worktree feat)"
+
+  run bash "${PRUNE_SH}" "${wt}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  [[ "${output}" == *"would remove: ${wt}"* ]] || { echo "not listed: ${output}"; return 1; }
+  [ -d "${wt}" ] || { echo "dry run removed the directory"; return 1; }
+  is_registered "${wt}" || { echo "dry run unregistered the worktree"; return 1; }
+}
+
+@test "--apply removes a passing worktree with its ignored build output and keeps its branch" {
+  local wt
+  wt="$(add_worktree feat)"
+  mkdir -p "${wt}/build"
+  printf 'artifact\n' >"${wt}/build/out.bin"
+
+  run bash "${PRUNE_SH}" --apply "${wt}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  [[ "${output}" == *"removed: ${wt}"* ]] || { echo "not reported removed: ${output}"; return 1; }
+  [ ! -e "${wt}" ] || { echo "directory survived: ${output}"; return 1; }
+  ! is_registered "${wt}" || { echo "still registered: ${output}"; return 1; }
+  git -C "${REPO}" rev-parse --verify -q refs/heads/feat >/dev/null || { echo "branch deleted"; return 1; }
+}
+
+@test "--apply keeps each worktree that fails a safe-test part and names that part" {
+  local -a rows=(unmerged dirty untracked locked)
+  local row wt
+  for row in "${rows[@]}"; do
+    wt="$(add_worktree "${row}")"
+    case "${row}" in
+      unmerged) repo_commit "${wt}" "work not in main" ;;
+      dirty) printf 'two\n' >>"${wt}/tracked.txt" ;;
+      untracked) printf 'new\n' >"${wt}/new.txt" ;;
+      locked) hold_lock "${wt}" >/dev/null ;;
+    esac
+  done
+
+  local -a expect=(
+    'unmerged|contained: fail'
+    'dirty|clean: fail'
+    'untracked|clean: fail'
+    'locked|skipped: live writer lock held by agent-live'
+  )
+  local pair reason
+  for pair in "${expect[@]}"; do
+    row="${pair%%|*}"
+    reason="${pair#*|}"
+    wt="${PW_TMP}/${row}"
+    run bash "${PRUNE_SH}" --apply "${wt}"
+    [ "${status}" -eq 0 ] || { echo "${row}: exit ${status}: ${output}"; return 1; }
+    [[ "${output}" == *"${reason}"* ]] || { echo "${row}: reason missing: ${output}"; return 1; }
+    [[ "${output}" == *"kept: ${wt}"* ]] || { echo "${row}: not reported kept: ${output}"; return 1; }
+    [ -d "${wt}" ] || { echo "${row}: removed: ${output}"; return 1; }
+  done
+}
+
+@test "a lock aged past its TTL does not hold the worktree" {
+  local wt lock
+  wt="$(add_worktree feat)"
+  lock="$(hold_lock "${wt}")"
+  touch -t 202001010000 "${lock}"
+  export WORKTREE_LOCK_TTL_SECS=60
+
+  run bash "${PRUNE_SH}" --apply "${wt}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  [[ "${output}" == *"removed: ${wt}"* ]] || { echo "stale lock kept it: ${output}"; return 1; }
+}
+
+@test "without --apply a process inside is listed, left running, and keeps the worktree" {
+  local wt
+  wt="$(add_worktree feat)"
+  start_inside "${wt}" sleep 300
+
+  run bash "${PRUNE_SH}" "${wt}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  [[ "${output}" == *"processes: fail"*"pid=${INSIDE_PID} "* ]] || { echo "not listed: ${output}"; return 1; }
+  [[ "${output}" == *"kept: ${wt}"* ]] || { echo "not kept: ${output}"; return 1; }
+  kill -0 "${INSIDE_PID}" || { echo "dry run stopped the process"; return 1; }
+}
+
+@test "--apply leaves a process inside a live-locked worktree running" {
+  local wt
+  wt="$(add_worktree feat)"
+  hold_lock "${wt}" >/dev/null
+  start_inside "${wt}" sleep 300
+
+  run bash "${PRUNE_SH}" --apply "${wt}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  kill -0 "${INSIDE_PID}" || { echo "process stopped despite the live lock: ${output}"; return 1; }
+  [[ "${output}" == *"skipped: live writer lock"* ]] || { echo "skip not reported: ${output}"; return 1; }
+  [ -d "${wt}" ] || { echo "removed despite the live lock"; return 1; }
+}
+
+@test "--apply stops a process inside with TERM, reports it, then removes the worktree" {
+  local wt
+  wt="$(add_worktree feat)"
+  start_inside "${wt}" sleep 300
+
+  run bash "${PRUNE_SH}" --apply "${wt}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  [[ "${output}" == *"stopped: pid=${INSIDE_PID} "*"cwd=${wt}"* ]] || { echo "stop not reported: ${output}"; return 1; }
+  ! kill -0 "${INSIDE_PID}" 2>/dev/null || { echo "process still running"; return 1; }
+  [[ "${output}" == *"removed: ${wt}"* ]] || { echo "not removed: ${output}"; return 1; }
+}
+
+@test "--apply reports a process that survives TERM, sends no KILL, and keeps the worktree" {
+  local wt
+  wt="$(add_worktree feat)"
+  start_inside "${wt}" perl -e '$SIG{TERM} = "IGNORE"; sleep 300'
+
+  run bash "${PRUNE_SH}" --apply "${wt}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  [[ "${output}" == *"survivor: pid=${INSIDE_PID} "* ]] || { echo "survivor not reported: ${output}"; return 1; }
+  kill -0 "${INSIDE_PID}" || { echo "the survivor was killed"; return 1; }
+  [[ "${output}" == *"kept: ${wt}"*"processes: fail"* ]] || { echo "not kept on processes: ${output}"; return 1; }
+  [ -d "${wt}" ] || { echo "removed with a survivor inside"; return 1; }
+}
+
+@test "a worktree contained only in the --deployed commit passes the containment part" {
+  local wt sha
+  wt="$(add_worktree feat)"
+  repo_commit "${wt}" "deployed but not merged"
+  sha="$(git -C "${wt}" rev-parse HEAD)"
+
+  run bash "${PRUNE_SH}" --apply --deployed "${sha}" "${wt}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  [[ "${output}" == *"removed: ${wt}"* ]] || { echo "deployed leg ignored: ${output}"; return 1; }
+}
+
+@test "the main checkout is never a candidate, as an argument or under --list-all" {
+  local wt
+  wt="$(add_worktree feat)"
+
+  run bash "${PRUNE_SH}" --apply "${REPO}"
+  [ "${status}" -eq 3 ] || { echo "exit ${status}: ${output}"; return 1; }
+  [[ "${output}" == *"refused: ${REPO}: the main checkout"* ]] || { echo "not refused: ${output}"; return 1; }
+  is_registered "${REPO}" || { echo "main checkout touched"; return 1; }
+
+  run bash -c 'cd -- "$1" && bash "$2" --list-all' _ "${REPO}" "${PRUNE_SH}"
+  [ "${status}" -eq 0 ] || { echo "list exit ${status}: ${output}"; return 1; }
+  [[ "${output}" == *"would remove: ${wt}"* ]] || { echo "linked worktree not listed: ${output}"; return 1; }
+  [[ "${output}" != *"worktree: ${REPO}"$'\n'* ]] || { echo "main checkout listed: ${output}"; return 1; }
+}
+
+@test "--list-all refuses --apply" {
+  run bash -c 'cd -- "$1" && bash "$2" --list-all --apply' _ "${REPO}" "${PRUNE_SH}"
+  [ "${status}" -eq 2 ] || { echo "exit ${status}: ${output}"; return 1; }
+}
+
+@test "an argument the path guard refuses is reported and removes nothing" {
+  local wt
+  wt="$(add_worktree feat)"
+  local -a rows=('' 'relative/feat' '/')
+  local row
+  for row in "${rows[@]}"; do
+    run bash "${PRUNE_SH}" --apply "${row}"
+    [ "${status}" -eq 3 ] || { echo "row '${row}': exit ${status}: ${output}"; return 1; }
+    [[ "${output}" == *"refused: "* ]] || { echo "row '${row}': no refusal: ${output}"; return 1; }
+  done
+  [ -d "${wt}" ] || { echo "a refused argument removed a worktree"; return 1; }
+}
