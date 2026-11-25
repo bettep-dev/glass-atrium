@@ -184,23 +184,25 @@ assert_rows() {
 
 @test "the current turn starts at the newest entry with a turn position, whatever its origin, and owns only the tool calls after it, a compaction summary passed over" {
   local row name tokens want got started
-  # Row shape: name|tokens|status|turn|tools|start time (the entry it is read from)|newest tool call (name:command);
-  # an empty value prints as null
+  # Row shape: name|tokens|status|turn|tools|start time (the entry it is read from)|newest tool call (name:command)|
+  # whether the turn holds assistant text; an empty value prints as null
   for row in \
-    'tool turn and its continuation|start:t-1 tool result text feedback tool result|found|t-1|true|start|Bash:make release' \
-    'tool-free turn|start:t-1 text|found|t-1|false|start|null' \
-    'notification turn after a tool turn|start:t-1 tool result text notify:n-1 text|found|n-1|false|notify|null' \
-    'tool call in a notification turn|start:t-1 text notify:n-1 tool result text|found|n-1|true|notify|Bash:make release' \
-    'tool call before a mid-turn compaction|start:t-1 tool result compact:c-1 text|found|t-1|true|start|Bash:make release' \
-    'tool call after a mid-turn compaction|start:t-1 text compact:c-1 tool result text|found|t-1|true|start|Bash:make release' \
-    'tool-free turn compacted mid-turn|start:t-1 text compact:c-1 text|found|t-1|false|start|null' \
-    'transcript opening on a compaction|compact:c-1 tool result text|found|c-1|true|compact|Bash:make release' \
-    'second compaction in a transcript opening on one|compact:c-1 text compact:c-2 tool result|found|c-1|true|compact|Bash:make release' \
-    'assistant messages that are no object|start:t-1 nullmessage stringmessage text|found|t-1|false|start|null' \
-    'record tool after a Bash call|start:t-1 tool result text record result|found|t-1|true|start|mcp__atrium-queue__record:null' \
-    'Bash call after the record tool|start:t-1 record result clipending result|found|t-1|true|start|Bash:<cli> pending' \
-    'tool call of an earlier turn only|start:t-1 record result notify:n-1 text|found|n-1|false|notify|null' \
-    'no turn start|tool result text|none|null|false|null|null'; do
+    'tool turn and its continuation|start:t-1 tool result text feedback tool result|found|t-1|true|start|Bash:make release|true' \
+    'tool-free turn|start:t-1 text|found|t-1|false|start|null|true' \
+    'notification turn after a tool turn|start:t-1 tool result text notify:n-1 text|found|n-1|false|notify|null|true' \
+    'tool call in a notification turn|start:t-1 text notify:n-1 tool result text|found|n-1|true|notify|Bash:make release|true' \
+    'tool call before a mid-turn compaction|start:t-1 tool result compact:c-1 text|found|t-1|true|start|Bash:make release|true' \
+    'tool call after a mid-turn compaction|start:t-1 text compact:c-1 tool result text|found|t-1|true|start|Bash:make release|true' \
+    'tool-free turn compacted mid-turn|start:t-1 text compact:c-1 text|found|t-1|false|start|null|true' \
+    'transcript opening on a compaction|compact:c-1 tool result text|found|c-1|true|compact|Bash:make release|true' \
+    'second compaction in a transcript opening on one|compact:c-1 text compact:c-2 tool result|found|c-1|true|compact|Bash:make release|true' \
+    'assistant messages that are no object|start:t-1 nullmessage stringmessage text|found|t-1|false|start|null|true' \
+    'record tool after a Bash call|start:t-1 tool result text record result|found|t-1|true|start|mcp__atrium-queue__record:null|true' \
+    'Bash call after the record tool|start:t-1 record result clipending result|found|t-1|true|start|Bash:<cli> pending|false' \
+    'text of an earlier turn only|start:t-1 text start:t-2 tool result record result|found|t-2|true|start|mcp__atrium-queue__record:null|false' \
+    'assistant messages that are no object, no text|start:t-1 nullmessage stringmessage record result|found|t-1|true|start|mcp__atrium-queue__record:null|false' \
+    'tool call of an earlier turn only|start:t-1 record result notify:n-1 text|found|n-1|false|notify|null|true' \
+    'no turn start|tool result text|none|null|false|null|null|false'; do
     IFS='|' read -r name tokens want <<<"${row}"
     IFS=' ' read -r -a tokens <<<"${tokens}"
     want="${want//<cli>/${TURN_QUEUE_CLI}}"
@@ -215,9 +217,10 @@ assert_rows() {
     want="${want/|compact|/|${started}|}"
     write_turn_transcript "${RL_TMP}/turn.jsonl" "${tokens[@]}"
     run python3 "${LIB}" turn "${RL_TMP}/turn.jsonl"
-    got="$(jq -r '(keys - ["bytes_read","last_tool","reason","started","status","tools","truncated","turn"]) as $extra
-      | if $extra != [] then "extra keys: \($extra)" else [.status, .turn, .tools, .started,
-          (.last_tool | if . == null then null else "\(.name):\(.command)" end)] | map(tostring) | join("|") end' \
+    got="$(jq -r '(keys - ["bytes_read","has_text","last_tool","reason","started","status","tools","truncated","turn"])
+      as $extra | if $extra != [] then "extra keys: \($extra)" else [.status, .turn, .tools, .started,
+          (.last_tool | if . == null then null else "\(.name):\(.command)" end), .has_text] | map(tostring)
+        | join("|") end' \
       <<<"${output}" 2>/dev/null)" || got="unparsed: ${output}"
     [[ "${status}" -eq 0 && "${got}" == "${want}" ]] || {
       echo "${name}: exit ${status}, got ${got}, want ${want}"

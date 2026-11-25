@@ -203,6 +203,18 @@ assert_record_ask() {
   assert_no_item_text "$1"
 }
 
+# <row name> → one reply ask: the record stands, the reply is owed, and no record form is named again
+assert_reply_ask() {
+  local reason
+  reason="$(get_block_reason)" || reason=""
+  [[ "${status}" -eq 0 && "${output}" != *$'\n'* && "${reason}" == "Queue reply (harness): "* &&
+    "${reason}" != *"record nothing"* ]] || {
+    echo "$1: status=${status} stdout=${output} stderr=${stderr}"
+    return 1
+  }
+  assert_no_item_text "$1"
+}
+
 # <row name> → one record ask naming only the CLI's record forms and the shadowing, never the server's record tool
 assert_cli_record_ask() {
   local reason cli="${GA_ROOT}/scripts/atrium-queue.sh"
@@ -549,24 +561,30 @@ assert_silent_turn_end() {
   }
 }
 
-@test "a tool-using turn ends silently only when its last tool call is a record call and the record was written at or after the turn's start" {
+@test "a tool-using turn ends silently only when its last tool call is a record call and the record was written at or after the turn's start, its reply written" {
   start_stub
   local row name tokens record message expect payload
   # Row shape: name|tokens|record (none, fresh: written after the turn's start, stale: before it)|final message (yes or
-  # none: the end-turn path)|silent or ask
+  # none: the end-turn path)|silent, ask (the record ask) or reply (the reply ask)
   for row in \
     'no record|start:t-1 tool result text|none|yes|ask' \
     'record tool last|start:t-1 tool result text record result|fresh|yes|silent' \
     'CLI record last|start:t-1 tool result clirecord result|fresh|yes|silent' \
-    'record tool last with no final message|start:t-1 tool result record result|fresh|none|silent' \
+    'record tool last with no final message|start:t-1 tool result text record result|fresh|none|silent' \
+    'record tool last with no reply text|start:t-1 tool result record result|fresh|none|reply' \
+    'record tool last, its reply only in the final message|start:t-1 tool result record result|fresh|yes|silent' \
+    'record tool last, its reply before an earlier call|start:t-1 text tool result record result|fresh|none|silent' \
+    'CLI record last with no reply text|start:t-1 tool result clirecord result|fresh|none|silent' \
     'record of an earlier turn|start:t-1 tool result record result|stale|yes|ask' \
     'a tool call after the record|start:t-1 record result tool result text|fresh|yes|ask' \
     'no final message and no record call|start:t-1 tool result|fresh|none|ask' \
     'another CLI subcommand last|start:t-1 clirecord result clipending result|fresh|yes|ask' \
-    'last-act post last|start:t-1 tool result lastpost result|fresh|none|silent' \
+    'last-act post last|start:t-1 tool result text lastpost result|fresh|none|silent' \
+    'last-act post last with no reply text|start:t-1 tool result lastpost result|fresh|none|reply' \
+    'last-act post after a refused post of the turn|start:t-1 post refusal text lastpost result|fresh|none|silent' \
     'last-act post of an earlier turn|start:t-1 tool result lastpost result|stale|none|ask' \
     'last-act post after another post of the turn|start:t-1 post result lastpost result|fresh|none|ask' \
-    'last-act post after a post of an earlier turn|post result start:t-1 tool result lastpost result|fresh|none|silent' \
+    'last-act post after a post of an earlier turn|post result start:t-1 tool result text lastpost result|fresh|none|silent' \
     'last-act post sent in one message with another call|start:t-1 sibling lastpost result result|fresh|none|ask' \
     'post without the last-act flag last|start:t-1 record result post result|fresh|none|ask'; do
     IFS='|' read -r name tokens record message expect <<<"${row}"
@@ -581,11 +599,11 @@ assert_silent_turn_end() {
     if [[ "${message}" == none ]]; then payload="$(jq -c 'del(.last_assistant_message)' <<<"${payload}")"; fi
     : >"${BATS_TEST_TMPDIR}/requests.log"
     run_hook "${payload}"
-    if [[ "${expect}" == silent ]]; then
-      assert_silent_turn_end "row ${name}" || return 1
-    else
-      assert_record_ask "row ${name}" || return 1
-    fi
+    case "${expect}" in
+      silent) assert_silent_turn_end "row ${name}" || return 1 ;;
+      ask) assert_record_ask "row ${name}" || return 1 ;;
+      reply) assert_reply_ask "row ${name}" || return 1 ;;
+    esac
     [[ ! -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
       echo "row ${name}: $(requested_paths)"
       return 1
@@ -689,6 +707,18 @@ assert_silent_turn_end() {
       assert_record_ask "row ${name}" || return 1
     fi
   done
+}
+
+@test "a turn ending on its record with no reply text is asked for the reply once: a later fire of the same turn is silent" {
+  start_stub
+  TURN_STARTED_AT="$(get_utc_ms -60)" && put_record
+  write_turn_transcript "${TRANSCRIPT}" start:t-1 tool result record result
+  local payload
+  payload="$(stop_payload | jq -c 'del(.last_assistant_message)')"
+  run_hook "${payload}"
+  assert_reply_ask "first fire" || return 1
+  run_hook "${payload}"
+  assert_silent_turn_end "second fire" || return 1
 }
 
 @test "an unreadable turn or one whose start has no time ends the turn with one stderr line and no record ask" {

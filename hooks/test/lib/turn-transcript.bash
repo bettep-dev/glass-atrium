@@ -15,9 +15,10 @@ TURN_QUEUE_CLI="${HOME}/.glass-atrium/scripts/atrium-queue.sh"
 # prompt, a task notification) · tool · result · text · bigtext (about 2 KB) · feedback (the isMeta Stop hook feedback
 # entry) · compact:<uuid> (a compaction summary, carrying the turn position of the turn start it follows) ·
 # nullmessage and stringmessage (an assistant entry whose message is no object) · record (the queue server's record
-# tool) · post and lastpost (its post tool, without and with the turn's last-act flag) · sibling (a Bash call sent in
-# one message with the lastpost written after it, the host writing one entry per call) · clirecord and clipending
-# (Bash calls of the queue CLI's record and pending); non-zero on an unknown token
+# tool) · post and lastpost (its post tool, without and with the turn's last-act flag) · refusal (the error result
+# the host writes for a refused post) · sibling (a Bash call sent in one message with the lastpost written after it,
+# the host writing one entry per call) · clirecord and clipending (Bash calls of the queue CLI's record and pending);
+# non-zero on an unknown token
 write_turn_transcript() {
   local path="$1" token big command
   shift
@@ -38,7 +39,8 @@ write_turn_transcript() {
         content: [{type: "tool_use", id: "toolu_1", name: "mcp__atrium-queue__record", input: {form: "nothing"}}]}}' ;;
       post | lastpost) jq -cn --arg token "${token}" '($token == "lastpost") as $isLast
         | {type: "assistant", uuid: "a-8", message: {id: (if $isLast then "msg-last" else "msg-post" end),
-          role: "assistant", content: [{type: "tool_use", id: "toolu_1", name: "mcp__atrium-queue__post",
+          role: "assistant", content: [{type: "tool_use", id: (if $isLast then "toolu_1" else "toolu_3" end),
+            name: "mcp__atrium-queue__post",
             input: ({kind: "report", title: "Build done", body: "All green."}
               + if $isLast then {lastAct: true} else {} end)}]}}' ;;
       sibling) jq -cn '{type: "assistant", uuid: "a-9", message: {id: "msg-last", role: "assistant",
@@ -49,6 +51,9 @@ write_turn_transcript() {
         jq -cn --arg command "${command}" '{type: "assistant", uuid: "a-7", message: {role: "assistant",
           content: [{type: "tool_use", id: "toolu_1", name: "Bash", input: {command: $command}}]}}'
         ;;
+      refusal) jq -cn '{type: "user", uuid: "r-2", toolUseResult: "refused", message: {role: "user",
+        content: [{type: "tool_result", tool_use_id: "toolu_3", is_error: true,
+          content: "{\"error\":\"refused\",\"message\":\"refused (400) on /api/queue/items: invalid_input\"}"}]}}' ;;
       result) jq -cn '{type: "user", uuid: "r-1", message: {role: "user",
         content: [{type: "tool_result", tool_use_id: "toolu_1", content: "build ok"}]}}' ;;
       text) jq -cn '{type: "assistant", uuid: "a-2", message: {role: "assistant",

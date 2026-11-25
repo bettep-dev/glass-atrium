@@ -612,6 +612,7 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
   - A turn that called no tool owes no record.
   - Honest backing: the turn-end check (`hooks/queue-turn-end-check.sh`) confirms only that the turn's last tool call is a record call, made in this turn; else it asks once, and whatever it cannot decide ends the turn.
     - It never confirms the judgment: `nothing` on a turn that owed a post passes.
+    - Tool route: a turn ending on its record with no assistant text anywhere in the turn and no final message is asked once for its reply; what the reply says is unchecked.
     - The record's id check is skipped while the monitor is unreachable.
     - It never asks a headless `claude -p` run for a record.
 - **No repeat in the reply**: the reply of a turn that posted carries only what the queue item does not hold, never the item's body or options.
@@ -633,7 +634,7 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
 | posts nothing, posts two or more items, or calls a tool after its post | `record`, never `lastAct` |
 | gets `isRecorded` false from a `lastAct` post | `record` with its id; no second post |
 
-- Honest backing: the turn-end check takes a `lastAct` post as the record only as the turn's one `post` call, sent alone and last; that the turn owed no other item is unchecked.
+- Honest backing: the turn-end check takes a `lastAct` post as the record only as the turn's one `post` call, sent alone and last; a refused `post` (an error result) is no post and does not count; that the turn owed no other item is unchecked.
 
 ### Answers and messages
 
