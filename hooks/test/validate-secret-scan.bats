@@ -22,9 +22,11 @@
 
 HOOK_SH="${BATS_TEST_DIRNAME}/../validate-secret-scan.sh"
 SCANNER="${BATS_TEST_DIRNAME}/../../scripts/lib/secret-scan.sh"
-# the scanner's exit contract: clean · match (stdout "<code>\t<name>"); every other status is a refusal
+# the scanner's exit contract: clean · match (stdout "<code>\t<name>", or "<line index>\t<code>" rows under the
+# list-all flag); every other status is a refusal
 SCAN_CLEAN=0
 SCAN_MATCH=3
+SCAN_LIST_FLAG="--list-all"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
@@ -143,30 +145,82 @@ pipe_overflow_padding() {
   done
 }
 
+# Each row's text on its own line after a CRLF filler line, then one line carrying two classes and an invalid
+# UTF-8 byte (GNU grep's binary-file notice would replace its rows). Sets LIST_TEXT and LIST_EXPECTED, the sorted
+# "<line index>\t<code>" rows the list-all entry owes.
+set_list_fixture() {
+  local i line=0
+  LIST_TEXT="" LIST_EXPECTED=""
+  for i in "${!ROW_NAMES[@]}"; do
+    LIST_TEXT+="export const filler = ${i}"$'\r\n'"${ROW_TEXTS[${i}]}"$'\n'
+    line=$((line + 2))
+    LIST_EXPECTED+="${line}"$'\t'"${ROW_CODES[${i}]}"$'\n'
+  done
+  LIST_TEXT+="const k = ${AWS_FIXTURE} ${CRED_FIXTURE} "$'\xff'
+  line=$((line + 1))
+  LIST_EXPECTED+="${line}"$'\tSEC-001\n'"${line}"$'\tSEC-013'
+  LIST_EXPECTED="$(sort <<<"${LIST_EXPECTED}")"
+}
+
+@test "scanner list-all entry: every matching line is listed with its LF-counted index and each code, never the text" {
+  set_list_fixture
+  run "${SCANNER}" "${SCAN_LIST_FLAG}" <<<"${LIST_TEXT}"
+  [[ "${status}" -eq "${SCAN_MATCH}" ]] || { echo "status ${status}: ${output}"; return 1; }
+  [[ "$(sort <<<"${output}")" == "${LIST_EXPECTED}" ]] || { echo "${output}"; return 1; }
+}
+
+@test "scanner no-argument entry replies only the first pattern in table order, wherever it sits in the text" {
+  local text="" i
+  for ((i = ${#ROW_TEXTS[@]} - 1; i >= 0; i--)); do text+="${ROW_TEXTS[${i}]}"$'\n'; done
+  run "${SCANNER}" <<<"${text}"
+  [[ "${status}" -eq "${SCAN_MATCH}" && "${output}" == "${ROW_CODES[0]}"$'\t'"${ROW_LABELS[0]}" ]] \
+    || { echo "status ${status}: ${output}"; return 1; }
+}
+
+# Protects the pattern table as a reviewed security contract: a change to it is a decision, never a side effect.
+@test "scanner pattern table is byte-identical to the reviewed table" {
+  local digest
+  digest="$(awk '/^readonly -a PATTERNS=\(/ { on = 1 } on { print } on && /^readonly -a NAMES=\(/ { names = 1 }
+    names && /^\)$/ { exit }' "${SCANNER}" | shasum -a 256)"
+  [[ "${digest%% *}" == "5100262d7912252cb209a23f2fd4a42f54fcfd96f98dc66fdf744adce429afee" ]] \
+    || { echo "${digest}"; return 1; }
+}
+
 @test "scanner stdin entry: text matching no pattern is clean, with no reply" {
-  local short="password" names=() texts=() i
+  local short="password" names=() texts=() flag i
   short="${short}=short12"
   names=("ordinary source" "assignment value under eight characters" "no input")
   texts=("export const answer = 42" "${short}" "")
+  for flag in "" "${SCAN_LIST_FLAG}"; do
+    for i in "${!names[@]}"; do
+      run "${SCANNER}" ${flag:+"${flag}"} <<<"${texts[${i}]}"
+      [[ "${status}" -eq "${SCAN_CLEAN}" && -z "${output}" ]] \
+        || { echo "${flag:-no flag} · ${names[${i}]}: status ${status}: ${output}"; return 1; }
+    done
+  done
+}
+
+@test "scanner refuses every argument but the list-all flag alone, so text is taken from stdin only" {
+  local names=() rows=() args=() i
+  names=("the text as an argument" "the list-all flag beside the text" "an unknown flag")
+  rows=("${AWS_FIXTURE}" "${SCAN_LIST_FLAG}|${AWS_FIXTURE}" "--list")
   for i in "${!names[@]}"; do
-    run "${SCANNER}" <<<"${texts[${i}]}"
-    [[ "${status}" -eq "${SCAN_CLEAN}" && -z "${output}" ]] \
+    IFS='|' read -r -a args <<<"${rows[${i}]}"
+    run "${SCANNER}" "${args[@]}" </dev/null
+    [[ "${status}" -ne "${SCAN_CLEAN}" && "${status}" -ne "${SCAN_MATCH}" && "${output}" != *"${AWS_FIXTURE}"* ]] \
       || { echo "${names[${i}]}: status ${status}: ${output}"; return 1; }
   done
 }
 
-@test "scanner refuses any argument, so text is taken from stdin only" {
-  run "${SCANNER}" "${AWS_FIXTURE}" </dev/null
-  [[ "${status}" -ne "${SCAN_CLEAN}" && "${status}" -ne "${SCAN_MATCH}" ]] || { echo "${output}"; return 1; }
-  [[ "${output}" != *"${AWS_FIXTURE}"* ]] || { echo "${output}"; return 1; }
-}
-
 @test "scanner whose matcher cannot run refuses instead of replying clean" {
-  local bin="${BATS_TEST_TMPDIR}/bin"
+  local bin="${BATS_TEST_TMPDIR}/bin" flag
   mkdir -p "${bin}"
   ln -s "$(command -v cat)" "${bin}/cat"
-  PATH="${bin}" run /bin/bash "${SCANNER}" <<<"export const answer = 42"
-  [[ "${status}" -ne "${SCAN_CLEAN}" && "${status}" -ne "${SCAN_MATCH}" ]] || { echo "${output}"; return 1; }
+  for flag in "" "${SCAN_LIST_FLAG}"; do
+    PATH="${bin}" run /bin/bash "${SCANNER}" ${flag:+"${flag}"} <<<"export const answer = 42"
+    [[ "${status}" -ne "${SCAN_CLEAN}" && "${status}" -ne "${SCAN_MATCH}" ]] \
+      || { echo "${flag:-no flag}: status ${status}: ${output}"; return 1; }
+  done
 }
 
 # A hook copy beside a scanner stand-in. Args: $1=layout root · $2=stand-in body, or "" for no scanner file.
