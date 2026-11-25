@@ -39,6 +39,16 @@
 - **Domain keywords (optional)**: pair the task description with the target agent's matching `domains` terms from `agent-registry.json` (e.g., "Modify user auth logic — nestjs, jwt, passport").
   - Never routing keys — the spawn's typed `agentType` already fixes the agent.
 
+## Verification-scope line
+
+- **Required in every DEV brief**: one `[VERIFY]` line naming the spawn's verification scope, in one of two forms:
+  - `[VERIFY] scope=affected tests=<paths | none> guards=<names | none>` — every work-unit before the job's final gate.
+  - `[VERIFY] scope=final` — the one spawn that closes the job: full suites, every structure guard, lint.
+- Fill `tests=` and `guards=` from `scoped/shared-testing.md` → **Verification scope**; `none` is a valid value, and a small, simple fix carries `guards=none`.
+- Never write "suite + guards + lint" into a brief whose spawn is not the final gate.
+- A brief without the line makes its spawn its own job's final gate (that definition), so the omission costs a full pass.
+- Honest backing: honor-system — no gate parses `[VERIFY]` (grep of the tree for the token — no hit).
+
 ## Read-Extent Discipline
 
 - A read allowlist bounds *which* artifacts a delegation may open, never *how much* of each: a two-entry allowlist of large artifacts passes a no-sweep rule and still charges the whole document to every member of the fan-out.
