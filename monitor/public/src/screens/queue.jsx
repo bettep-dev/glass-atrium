@@ -1989,17 +1989,12 @@ function getRelayEndTagQ(copies) {
 	return { text, word: text.toLowerCase() };
 }
 
-// every copy received, every copy lapsed, or of several how many lapsed
-function getRelayEndWordQ(copies) {
+// every copy received, every copy lapsed, or of several how many lapsed · `isCounted` → the sheet's form, how many of each (`2 received, 1 lapsed`)
+function getRelayEndWordQ(copies, isCounted = false) {
 	const lapsed = copies.filter((copy) => copy.relay.lapsedAt !== null).length;
 	if (lapsed === 0) return RECEIPT_Q.received;
-	return lapsed === copies.length ? RELAY_LAPSED_Q : `${lapsed} lapsed`;
-}
-
-// the sheet's longer form: several that ended both ways → how many of each (`2 received, 1 lapsed`)
-function getRelayEndSummaryQ(copies) {
-	const lapsed = copies.filter((copy) => copy.relay.lapsedAt !== null).length;
-	return lapsed === 0 || lapsed === copies.length ? getRelayEndWordQ(copies) : `${copies.length - lapsed} received, ${lapsed} lapsed`;
+	if (lapsed === copies.length) return RELAY_LAPSED_Q;
+	return isCounted ? `${copies.length - lapsed} received, ${lapsed} lapsed` : `${lapsed} lapsed`;
 }
 
 function getImagesWordQ(item) {
@@ -2211,7 +2206,7 @@ function RelayFootQ({ copies, onReread, hasLeft = false, isDone = false }) {
 function RelayNoteQ({ copies, hasLeft, isRedacted, isDone }) {
 	if (hasLeft) return <ToneLineQ tone="info"><span className="text-dim">This relay left the list.</span></ToneLineQ>;
 	if (isRedacted) return <ToneLineQ tone="ok"><span className="text-dim">Text redacted.</span></ToneLineQ>;
-	if (isDone) return <p className="fs-meta text-dim">{`${getRelayEndSummaryQ(copies)} · ${getEndTimeQ(getRelayEndAtQ(copies))}`}</p>;
+	if (isDone) return <p className="fs-meta text-dim">{`${getRelayEndWordQ(copies, true)} · ${getEndTimeQ(getRelayEndAtQ(copies))}`}</p>;
 	return <p className="fs-meta text-dim">{`Read-only. It reaches ${copies.length > 1 ? "each session" : copies[0].session.name} by itself.`}</p>;
 }
 
@@ -2377,7 +2372,7 @@ function getRedactionLineQ(redaction) {
 
 // a Done relay's date line: one recipient's outcome and time, or of several how many of each
 function RelayEndFactQ({ item, copies }) {
-	return copies.length === 1 ? <RelayOutcomeQ copy={copies[0]} at={item.askedAt} /> : <span className="fs-meta text-dim">{getRelayEndSummaryQ(copies)}</span>;
+	return copies.length === 1 ? <RelayOutcomeQ copy={copies[0]} at={item.askedAt} /> : <span className="fs-meta text-dim">{getRelayEndWordQ(copies, true)}</span>;
 }
 
 /**
