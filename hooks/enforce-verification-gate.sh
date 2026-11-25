@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # enforce-verification-gate.sh — PreToolUse(Agent) verification-gate hook.
 #
-# Six distinct surfaces on a DEV subagent spawn, every one advisory: the hook exits 0 on every path.
+# Eight distinct surfaces on a DEV subagent spawn, every one advisory: the hook exits 0 on every path.
 #   1) reviewer-miss WARNING (emit_error stderr JSON, severity warn, code VGATE-REVIEWER-001) — a
 #      plan-referencing DEV spawn with no qa-code-reviewer recorded this session, surfacing the missing
 #      Stage-2 gate. An orchestrator-origin spawn (agent_id absent) gets the structured warning and a
@@ -17,7 +17,7 @@
 #   Surfaces 1 and 3 exclude each other (plan-reference or none); surface 2 can join either. No
 #      warning ends the hook: every warned spawn still reaches surfaces 4-6.
 #   SIMPLE-TASK ENTRY — a spawn carrying [ENTRY-CLASS] simple-task and NO plan-reference exits 0
-#      silently before surfaces 2-5: it owes no other attestation token and no reviewer.
+#      silently before surfaces 2-5 and 7: it owes no other attestation token and no reviewer.
 #   4) scope-miss ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin DEV spawn whose
 #      prompt carries no bare line-opening [SCOPE] declaration, whatever surfaces 1-3 reported.
 #   5) deep-review ADVISORY (stderr, exit 0 — never a block) — a carried [SCOPE] declaration listing
@@ -31,6 +31,13 @@
 #      list carries the plan until it closes. Another author's document is never named — a stage write
 #      would pin a reporter's standing tracker to that list for good. The hook's only monitor read;
 #      PreToolUse-only (the PostToolUse branch exits first); fails open to silence, verdict unchanged.
+#   7) units ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin [SIZE-EST] declaring
+#      units= above 1: one work-unit per DEV spawn by default, tiny units may share one, so it is a
+#      prompt to check. The key is optional — absent means silence.
+#   8) live-index-owner ADVISORY (stderr, exit 0 — never a block) — a DEV spawn whose prompt carries
+#      the `worktree <path> — INDEX OWNER` contract while another agent's writer lock
+#      (lib/worktree-lock.sh) still holds that worktree. Runs before the simple-task exit: a second
+#      index owner races the one index whatever the entry class.
 #
 # Nested-spawn scope: the inner envelope exposes only an opaque agent id with no parent linkage, so a
 #   spawn-depth predicate would land as a no-op. NESTED spawns therefore remain ungated: they draw no
@@ -218,7 +225,7 @@ fi
 
 # stdin non-interactive → drain once, otherwise fail-open.
 # Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
-export -n input gate_tsv hook_event session_id prompt_b64 prompt_full text scope_line files line scan
+export -n input gate_tsv hook_event session_id agent_id prompt_b64 prompt_full text scope_line files line scan units paths path seen root
 input=""
 if [[ ! -t 0 ]]; then
   input="$(cat 2>/dev/null)" || input=""
@@ -236,13 +243,14 @@ tool_name=""
 tool_name="$(printf '%s' "${input}" | jq -r '.tool_name // ""' 2>/dev/null || true)" || tool_name=""
 [[ "${tool_name}" != "Agent" ]] && exit 0
 
-# Single jq fan-out — hook_event / session_id / subagent_type / prompt at once.
+# Single jq fan-out — hook_event / session_id / subagent_type / agent_id / prompt at once.
 gate_sep=$'\x1f'
 gate_tsv=""
 gate_tsv="$(printf '%s' "${input}" | jq -r --arg sep "${gate_sep}" '[
   (.hook_event_name // ""),
   (.session_id // ""),
   (.tool_input.subagent_type // ""),
+  (.agent_id // ""),
   ((.tool_input.prompt // "") | @base64)
 ] | join($sep)' 2>/dev/null || true)" || gate_tsv=""
 [[ -z "${gate_tsv}" ]] && exit 0
@@ -250,9 +258,10 @@ gate_tsv="$(printf '%s' "${input}" | jq -r --arg sep "${gate_sep}" '[
 hook_event=""
 session_id=""
 subagent_type=""
+agent_id=""
 prompt_b64=""
 {
-  IFS=$'\x1f' read -r hook_event session_id subagent_type prompt_b64
+  IFS=$'\x1f' read -r hook_event session_id subagent_type agent_id prompt_b64
 } <<<"${gate_tsv}"
 
 # session_id absent → marker key impossible → fail-open.
@@ -315,9 +324,9 @@ has_token() {
 has_simple_task_token() { has_token "${1}" '[ENTRY-CLASS] simple-task'; }
 
 # [SIZE-EST] self-attestation token — the orchestrator's per-delegation packing estimate emitted at
-# every DEV spawn not classified simple-task (format `[SIZE-EST] bundles=N tool_uses~=N — <reason>`, skills/glass-atrium-ops-orchestrator-role.md
-# ### Spawn Budget). Anchored bracketed literal (grep -qF, mirrors has_simple_task_token's
-# structured-match discipline) — checks PRESENCE only, never the estimate's correctness (same
+# every DEV spawn not classified simple-task (format `[SIZE-EST] units=N bundles=N tool_uses~=N — <reason>`,
+# units= optional; skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md).
+# Anchored bracketed literal (grep -qF, mirrors has_simple_task_token's structured-match discipline) — checks PRESENCE only, never the estimate's correctness (same
 # existence-only boundary as the [ENTRY-CLASS] entry tokens).
 has_size_est_token() { has_token "${1}" '[SIZE-EST]'; }
 
@@ -325,6 +334,72 @@ has_size_est_token() { has_token "${1}" '[SIZE-EST]'; }
 # predecessor edges classified before spawning (skills/glass-atrium-ops-orchestrator-role.md ### Phase Notes, plan edge
 # discovery). Anchored bracketed literal, PRESENCE only — never the classification's correctness.
 has_plan_subset_token() { has_token "${1}" '[PLAN-SUBSET]'; }
+
+# Prints the units= value of the first [SIZE-EST] line, after the token only; nothing when that line
+# carries no key. Here-string input — no pipe, so the reader's early stop races no writer.
+get_size_est_units() {
+  awk '!done && (i = index($0, "[SIZE-EST]")) {
+    done = 1
+    rest = substr($0, i + 10)
+    if (match(rest, /(^|[ \t])units=[0-9]+/)) {
+      hit = substr(rest, RSTART, RLENGTH)
+      sub(/.*units=/, "", hit)
+      print hit
+    }
+  }' <<<"${1}" 2>/dev/null || true
+}
+
+# Surface 7 emitter — a [SIZE-EST] declaring more than one work-unit.
+warn_multi_unit_spawn() {
+  [[ "${orchestrator_origin}" == true ]] || return 0
+  local units
+  units="$(get_size_est_units "${prompt_full}")"
+  [[ "${units}" =~ ^[0-9]+$ ]] || return 0
+  ((10#${units} > 1)) || return 0
+  (printf '[enforce-verification-gate] DEV spawn of %s carries units=%s work-units — one work-unit per DEV spawn is the default, so split it unless every unit is tiny: tiny units (one file each, no test change) may share a spawn while its [SIZE-EST] stays under the split triggers (skills/glass-atrium-ops-orchestrator-role.md → Spawn Granularity). Advisory only — a prompt to check, not an error.\n' \
+    "${subagent_type}" "${units}") >&2 || true
+}
+
+# Prints each distinct absolute worktree path a `worktree <path> — INDEX OWNER` contract names; a
+# backtick-wrapped path counts, a placeholder such as <path> does not.
+get_index_owner_paths() {
+  local line path seen=$'\n'
+  # shellcheck disable=SC2016  # the backticks are literal pattern text, not a substitution
+  local re='worktree[[:space:]]+`?([/~][^[:space:]`]*)`?[[:space:]]+— INDEX OWNER'
+  while IFS= read -r line; do
+    [[ "${line}" =~ ${re} ]] || continue
+    path="$(hook_normalize_path "${BASH_REMATCH[1]}")"
+    [[ "${seen}" == *$'\n'"${path}"$'\n'* ]] && continue
+    seen+="${path}"$'\n'
+    printf '%s\n' "${path}"
+  done <<<"$(grep -F -- '— INDEX OWNER' <<<"${prompt_full}" || true)"
+}
+
+# Surface 8 emitter — reads each contracted worktree's holder through the shared lock library. The
+# spawner's own lock is no second owner: it is handing its worktree on, and the main session's lock
+# is never released (it fires Stop, not SubagentStop), so warning on it would warn for the whole TTL.
+# SC2310: every lock-library call is a predicate whose miss means silence.
+# SC2154: the worktree_lock_* result globals are assigned inside the sourced library.
+# shellcheck disable=SC2310,SC2154
+warn_live_index_owner() {
+  local paths root holder self lib="${BASH_SOURCE%/*}/lib/worktree-lock.sh"
+  paths="$(get_index_owner_paths)"
+  [[ -n "${paths}" && -r "${lib}" ]] || return 0
+  # shellcheck source=lib/worktree-lock.sh
+  source "${lib}" || return 0
+  worktree_lock_holder_id "${agent_id}"
+  self="${worktree_lock_holder_id_out}"
+  while IFS= read -r root; do
+    [[ -e "${root}/.git" ]] || continue
+    worktree_lock_dir_for "${root}" || continue
+    worktree_lock_is_live "${worktree_lock_dir_out}" || continue
+    worktree_lock_read_holder "${worktree_lock_dir_out}" || continue
+    holder="${worktree_lock_holder_out}"
+    [[ "${holder}" != "${self}" ]] || continue
+    (printf '[enforce-verification-gate] Worktree %s already has a live index owner: %s holds its writer lock, and this spawn of %s names a second INDEX OWNER there. Stop or finish the holder first (an idle agent that still has a queued message can resume editing), or give this track its own worktree. Checked at spawn because the write-time lock warns only on a Write/Edit call: the holder'"'"'s Bash-run writes (a build, a git command) race the one index unseen. Advisory only — a holder that never fired SubagentStop stays listed until the lock TTL (%ss).\n' \
+      "${root}" "${holder}" "${subagent_type}" "${WORKTREE_LOCK_TTL_SECS:-${WORKTREE_LOCK_TTL_DEFAULT}}") >&2 || true
+  done <<<"${paths}"
+}
 
 # Prints the first sensitive prefix matched by the declared paths (empty when none). Read into an
 # array rather than word-split in place: an unquoted expansion would also glob `settings*.json`
@@ -546,6 +621,8 @@ if ! hook_is_subagent "${input}"; then
   orchestrator_origin=true
 fi
 
+warn_live_index_owner
+
 # Simple-task entry — [ENTRY-CLASS] simple-task with no plan-reference. Such a spawn owes no other
 # attestation token, so the [SIZE-EST] check and the [SCOPE] / [PLAN-SUBSET] advisories pass it
 # silently; a plan-reference keeps every token check, whatever classification travels beside it.
@@ -565,6 +642,7 @@ if [[ "${orchestrator_origin}" == true ]] && ! has_size_est_token "${prompt_full
   warn_tripped_check "VGATE-SIZE-001" "${size_reason}" "${size_fix}" \
     "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"size-est-miss\"}" "block-sizeest"
 fi
+warn_multi_unit_spawn
 
 # Entry-decision branch — three mutually exclusive paths:
 #   plan-ref present       → task entered the flow → the reviewer check.

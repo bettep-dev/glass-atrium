@@ -20,6 +20,9 @@
 #        under a sensitive prefix. Also owned by enforce-verification-gate-scope.bats; here it means
 #        a plan-referencing EMPTY-output case must declare a scope UNDER both thresholds, since a
 #        compliant spawn that happens to declare a hooks/ path is legitimately advised.
+#     7) units ADVISORY (stderr, exit 0) — a [SIZE-EST] declaring units= above 1.
+#     8) live-index-owner ADVISORY (stderr, exit 0) — an INDEX OWNER contract naming a worktree whose
+#        writer lock another agent still holds; WORKTREE_LOCK_DIR sandboxes the lock store it reads.
 #   The hook is FAIL-OPEN on its OWN errors (malformed/empty/non-Agent input → exit 0).
 #
 # Channel: STDERR only, exit 0 throughout. bats default `run` MERGES stderr into $output, so every
@@ -52,6 +55,21 @@ setup() {
   # Silence-carrying declaration for every EMPTY-output case — surfaces 4+5 in the header. The
   # leading newline makes it open its own line, the only place the gate reads a declaration.
   SCOPE_DECL=$'\n'"[SCOPE] files=monitor/src/a.ts · deliverable=fix · out=none"
+  # Sandboxed writer-lock store — the live-index-owner check reads it, never the live one.
+  export WORKTREE_LOCK_DIR="${BATS_TEST_TMPDIR}/worktree-locks"
+}
+
+# Takes a worktree's writer lock as $2 through the lock library's own acquire — the state the
+# Write/Edit acquire arm leaves behind. $1=worktree root (created with a .git file).
+seed_worktree_lock() {
+  mkdir -p "${1}"
+  : >"${1}/.git"
+  GA_DATA_ROOT="${BATS_TEST_TMPDIR}" bash -c '
+    source "$1/hook-utils.sh"
+    source "$1/lib/worktree-lock.sh"
+    worktree_lock_dir_for "$2" && worktree_lock_acquire "${worktree_lock_dir_out}" "$3"
+    [[ "${worktree_lock_state}" == acquired ]]
+  ' _ "${HOOKS_DIR}" "${1}" "${2}"
 }
 
 # The ONE Agent-envelope builder. $1=subagent_type $2=prompt; $3=agent_id and $4=hook_event_name
@@ -370,6 +388,71 @@ mint_bad_sink() {
   run_hook "glass-atrium-dev-shell" "[ENTRY-CLASS] simple-task: one-file fix"$'\n'"[SIZE-EST] bundles=1 tool_uses~=3 — one file${SCOPE_DECL}"$'\n'"${filler}"
   assert_status 0
   assert_empty
+}
+
+# (c'') units advisory: one work-unit per DEV spawn by default; the optional units= key above 1 is
+# nudged on the [SIZE-EST] line only, never blocked.
+@test "a [SIZE-EST] declaring more than one work-unit draws the units advisory, one or none stays silent" {
+  local rows=(
+    "three units|[SIZE-EST] units=3 bundles=1 tool_uses~=20 — three fixes|units=3"
+    "two units|[SIZE-EST] units=2 tool_uses~=9 — two tiny files|units=2"
+    "one unit|[SIZE-EST] units=1 bundles=1 tool_uses~=8 — one fix|"
+    "key absent|[SIZE-EST] bundles=1 tool_uses~=8 — one fix|"
+    "units= on another line|[SIZE-EST] bundles=1 tool_uses~=8 — one fix\nthe old brief said units=4|"
+  )
+  local row name prompt want
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name prompt want <<<"${row}"
+    prompt="implement the retry fix ${prompt//'\n'/$'\n'}"
+    run_hook "glass-atrium-dev-shell" "${prompt}"
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status} -- ${output}"; return 1; }
+    if [[ -z "${want}" ]]; then
+      [[ "${output}" != *"work-units"* ]] || { echo "${name}: expected no units advisory -- ${output}"; return 1; }
+    else
+      [[ "${output}" == *"carries ${want} work-units"* && "${output}" == *"may share a spawn"* ]] \
+        || { echo "${name}: expected the ${want} advisory -- ${output}"; return 1; }
+    fi
+  done
+}
+
+# (c''') live index owner: an INDEX OWNER contract naming a worktree another agent's writer lock
+# still holds is advised at spawn — the write-time lock never sees Bash-run writes.
+@test "an INDEX OWNER contract for a worktree another agent holds names the live holder" {
+  local wt="${BATS_TEST_TMPDIR}/wt-held"
+  seed_worktree_lock "${wt}" "a7f3c9e0b1d24f6a" || { echo "lock seeding failed"; return 1; }
+  run_hook "glass-atrium-dev-shell" "fix the retry loop [SIZE-EST] units=1 tool_uses~=8 — one fix"$'\n'"worktree ${wt} — INDEX OWNER: commit your own work"
+  assert_status 0
+  assert_contains "already has a live index owner"
+  assert_contains "a7f3c9e0b1d24f6a"
+  assert_contains "${wt}"
+}
+
+@test "the live-index-owner advisory stays silent unless another live holder meets an INDEX OWNER contract" {
+  local rows=(
+    "no lock taken|free|-|INDEX OWNER|run_hook"
+    "SHARED contract on a held worktree|held|a7f3c9e0b1d24f6a|SHARED|run_hook"
+    "lock aged past its TTL|aged|a7f3c9e0b1d24f6a|INDEX OWNER|run_hook"
+    "spawner holds it (orchestrator)|held|orchestrator|INDEX OWNER|run_hook"
+    "spawner holds it (nested agent)|held|agent-nested-001|INDEX OWNER|run_hook_subagent"
+  )
+  local row name state holder contract runner wt i=0
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name state holder contract runner <<<"${row}"
+    i=$((i + 1))
+    wt="${BATS_TEST_TMPDIR}/wt-${i}"
+    export WORKTREE_LOCK_DIR="${BATS_TEST_TMPDIR}/worktree-locks-${i}"
+    mkdir -p "${wt}"
+    : >"${wt}/.git"
+    if [[ "${state}" != free ]]; then
+      seed_worktree_lock "${wt}" "${holder}" || { echo "${name}: lock seeding failed"; return 1; }
+    fi
+    if [[ "${state}" == aged ]]; then
+      touch -t 202001010000 "${WORKTREE_LOCK_DIR}"/*/.apply-lock
+    fi
+    "${runner}" "glass-atrium-dev-shell" "fix the retry loop [SIZE-EST] units=1 tool_uses~=8 — one fix"$'\n'"worktree ${wt} — ${contract}: commit your own work"
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status} -- ${output}"; return 1; }
+    [[ "${output}" != *"live index owner"* ]] || { echo "${name}: expected silence -- ${output}"; return 1; }
+  done
 }
 
 # (d) ALLOW: non-dev spawn → exit 0 silent (gate only warns on DEV)
