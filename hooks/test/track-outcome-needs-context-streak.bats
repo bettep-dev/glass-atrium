@@ -166,3 +166,24 @@ get_advisory_steps() {
     return 1
   }
 }
+
+@test "an uncreatable state dir warning names the counter that was skipped" {
+  local a="adev-shell-1-4dd2f008f010ab67"
+  printf 'not a dir' >"${NCS_TMP}/blocker"
+  CB_DIR="${NCS_TMP}/blocker/cb"
+  local rows=(
+    "needs_context skips the streak|needs_context|needs_context streak skipped"
+    "fail skips the fail counter|fail|fail counter skipped"
+  )
+  local row name result want
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name result want <<<"${row}"
+    write_transcript "${a}" "${result}"
+    write_payload "${a}"
+    run_hook
+    [[ "${status}" -eq 0 && "${output}" == *"DATA-078"*"${want}"* ]] || {
+      echo "${name}: status ${status}, want [${want}] in: ${output}"
+      return 1
+    }
+  done
+}

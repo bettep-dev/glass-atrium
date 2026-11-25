@@ -2836,7 +2836,7 @@ circuit_breaker_record() {
     return 0
   fi
   # shellcheck disable=SC2310  # fail-open by design — the helper already warned
-  circuit_breaker_dir_ensure || return 0
+  circuit_breaker_dir_ensure "fail counter" || return 0
   local count
   count="$(streak_increment "${counter_file}")"
   [[ "${count}" -ge "${CIRCUIT_BREAKER_THRESHOLD}" ]] || return 0
@@ -2874,7 +2874,7 @@ needs_context_streak_record() {
     return 0
   fi
   # shellcheck disable=SC2310  # fail-open by design — the helper already warned
-  circuit_breaker_dir_ensure || return 0
+  circuit_breaker_dir_ensure "needs_context streak" || return 0
   count="$(streak_increment "${streak_file}")"
   [[ "${count}" -eq "${NEEDS_CONTEXT_STREAK_THRESHOLD}" ]] || return 0
   emit_error "DATA-081" "warn" \
@@ -2886,13 +2886,13 @@ needs_context_streak_record() {
   return 0
 }
 
-# Create the breaker state dir on first use → status 1 (named warn) when it cannot be created.
+# Create the breaker state dir on first use → status 1 (warn naming counter $1) when it cannot be created.
 circuit_breaker_dir_ensure() {
   [[ -d "${CIRCUIT_BREAKER_DIR}" ]] && return 0
   mkdir -p "${CIRCUIT_BREAKER_DIR}" 2>/dev/null && return 0
   emit_error "DATA-078" "warn" \
-    "Circuit-breaker state dir uncreatable — fail counter skipped" \
-    "Circuit-breaker state dir uncreatable — fail counter skipped" \
+    "Circuit-breaker state dir uncreatable — ${1} skipped" \
+    "Circuit-breaker state dir uncreatable — ${1} skipped" \
     "Check permissions on ${CIRCUIT_BREAKER_DIR}" \
     "Check permissions on ${CIRCUIT_BREAKER_DIR}"
   return 1
