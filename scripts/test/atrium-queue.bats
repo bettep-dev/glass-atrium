@@ -1472,6 +1472,47 @@ mark_awaiting() {
   }
 }
 
+@test "a library secret-approval post sends its request id with this session's id alone and awaits the owner's answer" {
+  start_stub
+  set_reply 201 '{"id":19}'
+  local request_id="5e2d8c1b-9a4f-4b3e-8d7c-6f1a0b2c3d4e"
+  run_ops queue_create_item secret-approval "$(jq -nc --arg r "${request_id}" '{kind: "secret-approval", requestId: $r}')"
+  [[ "${status}" -eq 0 && "$(jq -c '[.id, .kind, .isAwaiting, (.next | type)]' <<<"${output}")" == '[19,"secret-approval",true,"string"]' ]] || {
+    echo "status=${status} ${output}${stderr}"
+    return 1
+  }
+  [[ "$(request_body /api/queue/items | jq -Sc .)" == "$(jq -nSc --arg s "${SESSION_ID}" --arg r "${request_id}" '{kind: "secret-approval", sessionId: $s, requestId: $r}')" ]] || {
+    cat "${BATS_TEST_TMPDIR}/requests.log"
+    return 1
+  }
+}
+
+@test "a library secret-approval post carrying any field beside its request id, or no UUID request id, is refused with exit 64 and no request" {
+  start_stub
+  set_reply 201 '{"id":19}'
+  local request_id="5e2d8c1b-9a4f-4b3e-8d7c-6f1a0b2c3d4e" row label item
+  for row in \
+    "title|{\"requestId\":\"${request_id}\",\"title\":\"Approve this write\"}" \
+    "body|{\"requestId\":\"${request_id}\",\"body\":\"the line is a fixture\"}" \
+    "options|{\"requestId\":\"${request_id}\",\"options\":[{\"code\":\"R1\",\"label\":\"Approve\",\"pros\":\"p\",\"cons\":\"c\"}]}" \
+    "session id|{\"requestId\":\"${request_id}\",\"sessionId\":\"${FOREIGN_SESSION_ID}\"}" \
+    "unknown field|{\"requestId\":\"${request_id}\",\"priority\":1}" \
+    "no request id|{\"kind\":\"secret-approval\"}" \
+    "request id not a UUID|{\"requestId\":\"${request_id}x\"}" \
+    "request id with a line break|{\"requestId\":\"${request_id}\\n${request_id}\"}" \
+    "request id a number|{\"requestId\":17}" \
+    "no object|[\"${request_id}\"]"; do
+    IFS='|' read -r label item <<<"${row}"
+    run_ops queue_create_item secret-approval "${item}"
+    # the message names the request id → refused by the form, never by the kind
+    [[ "${status}" -eq 64 && "$(jq -r '.error, .message' <<<"${output}")" == $'invalid\n'*"request id"* && ! -s "${BATS_TEST_TMPDIR}/requests.log" ]] || {
+      echo "row ${label}: status=${status} ${output}${stderr}"
+      cat "${BATS_TEST_TMPDIR}/requests.log"
+      return 1
+    }
+  done
+}
+
 @test "a library result is one JSON line in which peer or item text can neither begin a line nor hold a raw tag" {
   start_stub
   local hostile row label op path reply

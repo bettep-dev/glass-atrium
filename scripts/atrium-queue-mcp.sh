@@ -42,7 +42,7 @@ IFS= read -r -d '' SERVER_INSTRUCTIONS <<'TEXT' || true # GA-ABSORB[benign]: sta
 Atrium owner queue. These tools carry this session's reports and decisions to the owner's Queue page, the owner's answers and messages back to this session, and relays between sessions.
 
 Tools (the main session calls them; a subagent calls none)
-- post: post a report or a decision to the owner. The result's `next` says whether to start a wait. `lastAct` true also writes the turn's record, form `posted` with this item's id alone: set it only as the `lastAct` rule below allows.
+- post: post a report or a decision to the owner, or the `secret-approval` form that answers a secret-scan refusal naming a request id. The result's `next` says whether to start a wait. `lastAct` true also writes the turn's record, form `posted` with this item's id alone: set it only as the `lastAct` rule below allows.
 - claim: fetch and acknowledge what was delivered to this session: everything, or one item by its item id and msg id. Each item comes with `source`, `provenance` and `isFirst`, and with its text only when `isFirst` is true.
 - record: the turn's queue record: form `nothing`, or form `posted` with the id of every item this turn posted.
 - sessions: the peer sessions a relay may reach.
@@ -65,11 +65,12 @@ readonly SERVER_INSTRUCTIONS
 
 IFS= read -r -d '' TOOLS <<'JSON' || true # GA-ABSORB[benign]: status 1 at the text's end
 {"tools":[
-{"name":"post","description":"Post a report or a decision to the owner's Queue page; the result names the item id and whether to start a wait.",
- "inputSchema":{"type":"object","additionalProperties":false,"required":["kind","title","body"],"properties":{
-  "kind":{"type":"string","enum":["report","decision"]},
-  "title":{"type":"string"},
-  "body":{"type":"string"},
+{"name":"post","description":"Post a report or a decision to the owner's Queue page; the result names the item id and whether to start a wait. Kind secret-approval answers a secret-scan refusal that names a request id: send its requestId alone, never the refused line, a title, a body or options — the monitor writes the item from the hook's own capture. On the owner's approve answer, repeat the identical write; the hook decides. A subagent never posts: it returns the request id to its parent and never retries the write before that approve answer.",
+ "inputSchema":{"type":"object","additionalProperties":false,"required":["kind"],"properties":{
+  "kind":{"type":"string","enum":["report","decision","secret-approval"]},
+  "title":{"type":"string","description":"required on a report or a decision"},
+  "body":{"type":"string","description":"required on a report or a decision"},
+  "requestId":{"type":"string","description":"a secret-approval's one field: the request id its secret-scan refusal named"},
   "isFreeTextAllowed":{"type":"boolean","description":"true lets the owner answer in free text"},
   "linkedDocIds":{"type":"array","items":{"type":"integer"}},
   "options":{"type":"array","description":"a decision's options, codes R1 to R9","items":{"type":"object","additionalProperties":false,
@@ -224,12 +225,14 @@ run_tool() {
   esac
 }
 
-# the arguments are the item: the library keeps the kind's named fields and applies the session id and kind
+# the arguments less this tool's own lastAct flag are the item: the library checks its form, keeps the kind's named
+# fields and applies the session id and kind
 call_post() {
-  local kind
+  local kind item
   set_value "$1" '.kind'
   kind="${value}"
-  queue_create_item "${kind}" "$1" "$(jq -r '.lastAct == true' <<<"$1")"
+  item="$(jq -c 'del(.lastAct)' <<<"$1")"
+  queue_create_item "${kind}" "${item}" "$(jq -r '.lastAct == true' <<<"$1")"
 }
 
 call_claim() {

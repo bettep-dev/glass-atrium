@@ -111,7 +111,7 @@ PING='{"jsonrpc":"2.0","id":90,"method":"ping"}'
 @test "each tool's input schema is an object that requires exactly the fields its operation cannot run without" {
   run_adapter '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
   local row name required got
-  for row in "post|[\"body\",\"kind\",\"title\"]" "claim|[]" "record|[\"form\"]" "sessions|[]" "relay|[\"recipients\",\"text\"]"; do
+  for row in "post|[\"kind\"]" "claim|[]" "record|[\"form\"]" "sessions|[]" "relay|[\"recipients\",\"text\"]"; do
     IFS='|' read -r name required <<<"${row}"
     got="$(get_response 2 | jq -c --arg n "${name}" '.result.tools[] | select(.name == $n) | .inputSchema
       | if .type == "object" and (.properties | type) == "object" then (.required // []) | sort else "not an object schema" end')"
@@ -122,7 +122,7 @@ PING='{"jsonrpc":"2.0","id":90,"method":"ping"}'
   done
 }
 
-@test "the post tool says a decision requires recommendedCode, and the relay tool states the monitor's relay text limit" {
+@test "the post tool says what a report or decision requires and when its secret-approval form applies, and the relay tool states the monitor's relay text limit" {
   local limit row name filter
   limit="$(sed -n 's/^export const RELAY_TEXT_MAX = \([0-9_]*\);$/\1/p' "${GA}/monitor/src/server/queue/schemas.ts" | tr -d _)"
   [[ "${limit}" =~ ^[0-9]+$ ]] || {
@@ -131,10 +131,14 @@ PING='{"jsonrpc":"2.0","id":90,"method":"ping"}'
   }
   run_adapter '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
   for row in "post|.inputSchema.properties.recommendedCode.description | contains(\"required on a decision\")" \
+    "post|[.inputSchema.properties.title, .inputSchema.properties.body] | all(.description | contains(\"required on a report or a decision\"))" \
+    "post|.inputSchema.properties.kind.enum == [\"report\",\"decision\",\"secret-approval\"] and .inputSchema.properties.requestId.type == \"string\"" \
+    "post|.description | contains(\"a secret-scan refusal that names a request id\") and contains(\"requestId alone\")" \
+    "post|.description | contains(\"returns the request id to its parent\") and contains(\"never retries the write before that approve answer\")" \
     "relay|.description | contains(\"at most ${limit} characters\")"; do
     IFS='|' read -r name filter <<<"${row}"
     get_response 2 | jq -e --arg n "${name}" ".result.tools[] | select(.name == \$n) | ${filter}" >/dev/null || {
-      echo "row ${name}: $(get_response 2 | jq -c --arg n "${name}" '.result.tools[] | select(.name == $n)')"
+      echo "row ${name} (${filter}): $(get_response 2 | jq -c --arg n "${name}" '.result.tools[] | select(.name == $n)')"
       return 1
     }
   done
@@ -418,6 +422,25 @@ PING='{"jsonrpc":"2.0","id":90,"method":"ping"}'
   }
   [[ "$(request_body /api/queue/items | jq -c 'has("lastAct")' | sort -u)" == false ]] || {
     echo "the flag reached the monitor: $(request_body /api/queue/items)"
+    return 1
+  }
+}
+
+@test "a secret-approval post flagged as the turn's last act sends its request id alone and ends the turn" {
+  start_stub
+  local request_id="5e2d8c1b-9a4f-4b3e-8d7c-6f1a0b2c3d4e" record="${GA_ROOT}/data/queue/awaiting/${SESSION_ID}/.record"
+  set_reply 201 '{"id":22}'
+  run_adapter "$(get_call 3 post "$(jq -nc --arg r "${request_id}" '{kind: "secret-approval", requestId: $r, lastAct: true}')")"
+  [[ "$(get_response 3 | jq -c '[.result.isError, .result._meta]')" == "[false,${END_TURN_META}]" && "$(cut -d'|' -f2- "${record}")" == "posted|22" ]] || {
+    echo "status=${status} ${output} ${stderr} record=$(cat "${record}" 2>/dev/null)"
+    return 1
+  }
+  [[ "$(get_document 3 | jq -c '[.id, .kind, .isAwaiting]')" == '[22,"secret-approval",true]' ]] || {
+    echo "document: $(get_document 3)"
+    return 1
+  }
+  [[ "$(request_body /api/queue/items | jq -Sc .)" == "$(jq -nSc --arg s "${SESSION_ID}" --arg r "${request_id}" '{kind: "secret-approval", sessionId: $s, requestId: $r}')" ]] || {
+    cat "${BATS_TEST_TMPDIR}/requests.log"
     return 1
   }
 }
