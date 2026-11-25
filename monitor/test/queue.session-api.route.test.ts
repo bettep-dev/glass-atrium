@@ -556,6 +556,14 @@ describe("post and get by id", () => {
     assert.equal(foreign.statusCode, 404);
   });
 
+  test("a report posted without its free-text flag is stored as taking no reply", async () => {
+    const sessionId = await seedSession();
+    const posted = await send("POST", "/api/queue/items", { kind: "report", sessionId, title: "Deploy 75 finished", body: "The monitor restarted and every probe passed." });
+    const fetched = await send("GET", `/api/queue/items/${posted.json().id}?sessionId=${sessionId}`);
+    assert.equal(posted.statusCode, 201, posted.body);
+    assert.equal(fetched.json().isFreeTextAllowed, false);
+  });
+
   test("accepts linked doc ids that exist", async () => {
     const doc = await getPrisma().claudedDoc.create({
       data: { title: "Queue fixture doc", author: "queue-test", createdAt: new Date(), contentHash: "0".repeat(64), htmlPath: "queue-fixture.html", indexableText: "fixture" },
@@ -576,6 +584,7 @@ describe("post and get by id", () => {
     const sessionId = await seedSession();
     const rows = [
       { name: "recommended code not among the options", body: decision(sessionId, { recommendedCode: "R3" }), error: "invalid_input" },
+      { name: "decision with no recommended code", body: decision(sessionId, { recommendedCode: undefined }), error: "invalid_input" },
       { name: "duplicate option codes", body: decision(sessionId, { options: [{ code: "R1", label: "a", pros: "", cons: "" }, { code: "R1", label: "b", pros: "", cons: "" }] }), error: "invalid_input" },
       { name: "report carrying options", body: { ...(decision(sessionId) as Record<string, unknown>), kind: "report" }, error: "invalid_input" },
       { name: "unknown linked doc id", body: decision(sessionId, { linkedDocIds: [9_007_199_254_740_000] }), error: "unknown_linked_doc" },
