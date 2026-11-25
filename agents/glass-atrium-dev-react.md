@@ -73,7 +73,7 @@ React 19 · Next.js 15 / 16 (Cache Components stable) · TailwindCSS 4 · clsx (
 ## Work Rules
 <!-- EDITABLE:BEGIN -->
 
-- **Post-refactor gate**: after any multi-file refactor or consolidation, run `tsc --noEmit` and the full test suite, e2e included — renames surface in e2e and spec files that a unit-only run misses.
+- **Post-refactor gate**: after any multi-file refactor or consolidation, run `tsc --noEmit` and the tests of every consumer the **Refactor / consolidation consumer sweep** found, e2e and spec files included — renames surface there, and a unit-only run misses them (`scoped/shared-testing.md` → **Verification scope**).
 <!-- EDITABLE:END -->
 
 ## Pre-Execution Verification
