@@ -1522,6 +1522,120 @@ agent('glass-atrium-dev-nestjs',{goal:'implement',schema:Out})"
 }
 
 # =====================================================================================================
+# SECTION N4 — REVIEW-FALLBACK ADVISORY (advisory-only, NEVER blocks). A reviewer / sec-guard read that
+#   falls back to an empty value through a conditional, with a DEV spawn after it and no `!<var>` stop
+#   in between, lets the build run unreviewed. Fixtures carry every attestation token, so each row is a
+#   PASS and only the advisory line differs.
+# =====================================================================================================
+
+REVIEW_FALLBACK_PRE="${DECL_TEAM}
+log('plan-ref: ${PLAN_REF}')
+log('${SIZE_EST}')
+log('[SCOPE] files=src/app.ts')
+log('[PLAN-CLOSE] deferred: the release script')
+await parallel(agent('glass-atrium-qa-code-reviewer',{goal:'verify the plan'}), agent('glass-atrium-dev-nestjs',{goal:'judge feasibility'}))"
+
+@test "review fallback: an empty fallback on a review read before a DEV spawn draws the advisory" {
+  local -a names=(
+    "ternary on a sec-guard agent() read"
+    "|| on a member of a reviewer read through a wrapper agentType"
+    "?? on a review() helper read"
+  )
+  local -a bodies=(
+    "const sx = await agent('glass-atrium-sec-guard', {goal:'read the diff for secrets'})
+const items = sx ? tagged(sx) : []
+await agent('glass-atrium-dev-nestjs', {goal:'fix ' + items.join(', ')})"
+    "const rv = await robustAgent('review', {agentType:'glass-atrium-qa-code-reviewer', goal:'review the diff'})
+const findings = rv?.findings || []
+await agent('glass-atrium-dev-nestjs', {goal:'address ' + findings.length})"
+    "const verdict = await review('the diff')
+const notes = verdict ?? []
+await agent('glass-atrium-dev-nestjs', {goal:'apply ' + notes.length})"
+  )
+  local i
+  for i in "${!names[@]}"; do
+    : >"${TRACE_LOG}"
+    run_hook "${REVIEW_FALLBACK_PRE}
+${bodies[i]}"
+    assert_outcome pass || {
+      echo "row=${names[i]}: ${output}"
+      return 1
+    }
+    [[ "${output}" == *"ADVISORY (review fallback, non-blocking)"* ]] || {
+      echo "row=${names[i]}: ${output}"
+      return 1
+    }
+    grep -q 'advisory=[^[:space:]]*review-fallback' "${TRACE_LOG}" || {
+      echo "row=${names[i]}"
+      cat "${TRACE_LOG}"
+      return 1
+    }
+  done
+}
+
+@test "review fallback: a stop on the empty read, no later DEV spawn, a non-review read or a quoted fallback stay silent" {
+  local -a names=(
+    "explicit if-not return before the fallback"
+    "fallback used for logging after a braced stop"
+    "fallback after the last DEV spawn"
+    "fallback on a non-review agent read"
+    "fallback shape quoted inside a string literal"
+  )
+  local -a bodies=(
+    "const sx = await agent('glass-atrium-sec-guard', {goal:'read the diff'})
+if (!sx) return { status: 'blocked', reason: 'sec read empty' }
+const items = sx ? tagged(sx) : []
+await agent('glass-atrium-dev-nestjs', {goal:'fix ' + items.length})"
+    "const sx = await agent('glass-atrium-sec-guard', {goal:'read the diff'})
+if (!sx) {
+  log('sec read returned nothing')
+  return null
+}
+log('findings: ' + (sx.findings ?? []).length)
+await agent('glass-atrium-dev-nestjs', {goal:'fix the findings'})"
+    "await agent('glass-atrium-dev-nestjs', {goal:'implement'})
+const sx = await agent('glass-atrium-sec-guard', {goal:'read the result'})
+const items = sx ? tagged(sx) : []
+log('sec findings: ' + items.length)"
+    "const plan = await agent('glass-atrium-intel-planner', {goal:'list the steps'})
+const steps = plan ? plan.steps : []
+await agent('glass-atrium-dev-nestjs', {goal:'implement ' + steps.length})"
+    "const sx = await agent('glass-atrium-sec-guard', {goal:'read the diff'})
+log('never write sx ? tagged(sx) : [] or sx || [] in a script')
+await agent('glass-atrium-dev-nestjs', {goal:'implement'})"
+  )
+  local i
+  for i in "${!names[@]}"; do
+    run_hook "${REVIEW_FALLBACK_PRE}
+${bodies[i]}"
+    assert_outcome pass || {
+      echo "row=${names[i]}: ${output}"
+      return 1
+    }
+    [[ "${output}" != *"ADVISORY (review fallback"* ]] || {
+      echo "row=${names[i]}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "review fallback: --lint previews the advisory, exits 0 and writes no trace" {
+  run_lint_exec "${REVIEW_FALLBACK_PRE}
+const sx = await agent('glass-atrium-sec-guard', {goal:'read the diff'})
+const items = sx ? tagged(sx) : []
+await agent('glass-atrium-dev-nestjs', {goal:'fix ' + items.length})"
+  assert_outcome pass || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${output}" == *"ADVISORY (review fallback, non-blocking)"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  assert_trace_empty
+}
+
+# =====================================================================================================
 # SECTION O — CORPUS (T8): the 3 undeclared originals are missing-declaration BLOCK pins; the 4
 #   declared variants (both declaration forms) are PASS pins. The real archived scripts are the
 #   durable regression anchor.

@@ -220,6 +220,19 @@
 #     checked-and-clean. Siting → after any cause warning, after the first-link walk.
 #   Cost → one read per cited id up to the first planner document, with no count cap of its own.
 #
+# TENTH ADVISORY PASS (review fallback, advisory — NEVER exit 2): flags a reviewer / sec-guard read that
+# falls back to an empty value through a conditional while a DEV spawn follows it unstopped, so a review
+# that returned nothing lets the build run unreviewed (review_fallback_advisory_needed).
+#   Read → a const/let/var bound to a call whose arguments quote glass-atrium-qa-code-reviewer or
+#     glass-atrium-sec-guard, or whose helper is named for the review (review, runReview, secGuard).
+#   Fallback → the first `x ? … : []`, `x || []` or `x ?? []` on that variable or a member of it after
+#     the read, on one line; an empty object counts as empty too.
+#   Silent → no Tier-B DEV spawn after the fallback, or an `if (!x) … return|throw` between the read
+#     and that spawn. Comment-stripped + string-masked → a quoted or commented fallback never fires.
+#   Not modelled (text pattern, no JS parse) → a destructured or reassigned read, a ternary spanning
+#     lines, a stop scoped to a nested function. Honest limit: a fallback on an unrelated variable of
+#     the same name can fire.
+#
 # MULTIPLEXED ADVISORY LINE (the helper's TENTH output line, COMPLETION_FLAG): the completion-channel
 # decisions share ONE flag line carrying a value suffix (COMPLETION_ADVISE:<value>), so the output-arity
 # seam is paid ONCE and each further decision adds a value plus a message case arm, never a line — the
@@ -590,6 +603,15 @@ print_scope_advisory() {
 print_close_token_advisory() {
   cat <<'EOF' >&2
 [enforce-workflow-verify-stage] ADVISORY (close token, non-blocking): this DEV workflow references a plan but carries neither form of the close token, so the flow declares no close for that plan. ONE-EDIT FIX — add ONE line: log('[PLAN-CLOSE] in-script') when the script ends in the terminal Reconcile & Close phase (a glass-atrium-qa-code-reviewer spawn after the last delivering phase), or log('[PLAN-CLOSE] deferred: <the later script or step that closes the plan>') with the placeholder replaced by that script or step. Grammar SoT: skills/glass-atrium-ops-orchestrator-role.md -> Context Handoff Size; phase: skills/glass-atrium-ops-orchestrator.md -> In-script verify-stage (ultracode); scaffold: enforce-workflow-verify-stage.sh --lint --template. PRESENCE-ONLY: whether the form is truthful — a close form with no terminal phase in the script — is never checked here. ADVISORY ONLY, this check NEVER blocks: a multi-script track legitimately closes in a later script, which a block would false-positive on.
+EOF
+  return 0
+}
+
+# print_review_fallback_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
+# decision arrives as the helper's thirteenth line. An external writer → no bash 3.2 EINTR on the write.
+print_review_fallback_advisory() {
+  cat <<'EOF' >&2 || true
+[enforce-workflow-verify-stage] ADVISORY (review fallback, non-blocking): a glass-atrium-qa-code-reviewer or glass-atrium-sec-guard read falls back to an empty value through a conditional (x ? ... : [], x || [], x ?? []) and a DEV spawn follows with no stop on the empty read, so a review that returned nothing lets the build run unreviewed. ONE-EDIT FIX — stop on the missing read before the DEV stage: if (!x) return { status: 'blocked', reason: '<the read that returned nothing>' }. TEXT PATTERN ONLY: a declaration bound to a call whose arguments quote the reviewer or sec-guard name, or whose helper is named for the review (review, secGuard); a destructured or reassigned read, a ternary spanning lines and a stop inside a nested function are not modelled. ADVISORY ONLY, this check NEVER blocks.
 EOF
   return 0
 }
@@ -1292,6 +1314,22 @@ def _chained_catch(struct, close_idx, n):
     return False
 
 
+def match_close(struct, open_idx, opench, closech):
+    # Index of the bracket closing struct[open_idx], or None when unbalanced. struct = string interiors
+    # blanked, so an in-string bracket never counts.
+    depth = 0
+    k, n = open_idx, len(struct)
+    while k < n:
+        if struct[k] == opench:
+            depth += 1
+        elif struct[k] == closech:
+            depth -= 1
+            if depth == 0:
+                return k
+        k += 1
+    return None
+
+
 def resilience_advisory_needed(stripped):
     # ADVISORY-ONLY per-site schema-spawn resilience scan (never alters the verdict; the caller only
     # prints a stderr nudge). Returns True when at least ONE UNHANDLED schema-mode agent-call site
@@ -1318,19 +1356,6 @@ def resilience_advisory_needed(stripped):
         struct = "".join(" " if smask[k] else ch for k, ch in enumerate(stripped))
         n = len(struct)
 
-        def match_close(open_idx, opench, closech):
-            depth = 0
-            k = open_idx
-            while k < n:
-                if struct[k] == opench:
-                    depth += 1
-                elif struct[k] == closech:
-                    depth -= 1
-                    if depth == 0:
-                        return k
-                k += 1
-            return None
-
         # HANDLED-region spans: try blocks + robustAgent-style wrapper bodies, brace-matched over struct.
         # chr(123)/chr(125) keep the heredoc balanced for the bash-3.2 dollar-paren scan.
         handled_spans = []
@@ -1339,13 +1364,13 @@ def resilience_advisory_needed(stripped):
             while k < n and struct[k] in " \t\r\n\f\v":
                 k += 1
             if k < n and struct[k] == chr(123):
-                end = match_close(k, chr(123), chr(125))
+                end = match_close(struct, k, chr(123), chr(125))
                 if end is not None:
                     handled_spans.append((k, end))
         for wm in re.finditer(r"(?<![A-Za-z0-9_$])robustAgent(?![A-Za-z0-9_$])", struct):
             brace = struct.find(chr(123), wm.end())
             if brace != -1:
-                end = match_close(brace, chr(123), chr(125))
+                end = match_close(struct, brace, chr(123), chr(125))
                 if end is not None:
                     handled_spans.append((brace, end))
 
@@ -1360,7 +1385,7 @@ def resilience_advisory_needed(stripped):
         # NAME(...) callee, excluding a member access (leading dot) so a.b() records nothing here.
         for cm in re.finditer(r"(?<![A-Za-z0-9_$.])([A-Za-z_$][A-Za-z0-9_$]*)\s*" + "\\" + chr(40), struct):
             copen = cm.end() - 1
-            cclose = match_close(copen, chr(40), chr(41))
+            cclose = match_close(struct, copen, chr(40), chr(41))
             if cclose is None:
                 continue
             if _chained_catch(struct, cclose, n):
@@ -1370,12 +1395,12 @@ def resilience_advisory_needed(stripped):
             for fm in re.finditer(r"(?<![A-Za-z0-9_$])function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*" + "\\" + chr(40), struct):
                 if fm.group(1) not in catch_callees:
                     continue
-                pclose = match_close(fm.end() - 1, chr(40), chr(41))
+                pclose = match_close(struct, fm.end() - 1, chr(40), chr(41))
                 if pclose is None:
                     continue
                 brace = struct.find(chr(123), pclose)
                 if brace != -1:
-                    end = match_close(brace, chr(123), chr(125))
+                    end = match_close(struct, brace, chr(123), chr(125))
                     if end is not None:
                         handled_spans.append((brace, end))
             # const|let|var NAME = (...) => { ... } | = function (...) { ... } — first brace after '=' is
@@ -1386,7 +1411,7 @@ def resilience_advisory_needed(stripped):
                 brace = struct.find(chr(123), fm.end())
                 if brace == -1:
                     continue
-                end = match_close(brace, chr(123), chr(125))
+                end = match_close(struct, brace, chr(123), chr(125))
                 if end is not None:
                     handled_spans.append((brace, end))
 
@@ -1396,7 +1421,7 @@ def resilience_advisory_needed(stripped):
         # the bash-3.2 dollar-paren scan (mirrors the _agent_open idiom below the try block).
         for am in re.finditer(r"(?<![A-Za-z0-9_$])agent\s*" + "\\" + chr(40), struct):
             open_idx = am.end() - 1
-            close_idx = match_close(open_idx, chr(40), chr(41))
+            close_idx = match_close(struct, open_idx, chr(40), chr(41))
             if close_idx is None:
                 continue
             if not _schema_site_in_span(stripped[open_idx + 1:close_idx]):
@@ -1923,6 +1948,57 @@ CLOSE_TOKEN_FLAG = "CLOSE_TOKEN_SILENT"
 # placeholder, still fires. Hex escapes keep this heredoc balanced for the bash-3.2 dollar-paren scan.
 CLOSE_TOKEN_RE = re.compile(r"\[PLAN-CLOSE\][ \t]+(?:in-script(?![A-Za-z0-9_-])|deferred:[ \t]*[^\s<\w\x29,;\x7d]*\w)")
 
+# REVIEW_FALLBACK_FLAG — the review-fallback nudge, printed as the THIRTEENTH output line (header ->
+# TENTH ADVISORY PASS). Hex escapes and chr() keep this heredoc balanced for the bash-3.2 dollar-paren scan.
+REVIEW_FALLBACK_FLAG = "REVIEW_FALLBACK_SILENT"
+_ROLE_QUOTE = "[" + chr(34) + chr(39) + chr(96) + "]"
+REVIEW_ROLE_RE = re.compile(_ROLE_QUOTE + r"glass-atrium-(?:qa-code-reviewer|sec-guard)" + _ROLE_QUOTE)
+# camelCase-bounded → review / runReview / secGuard match, preview does not
+REVIEW_HELPER_RE = re.compile(r"(?:^review|^secGuard|Review|SecGuard)(?:er)?(?![a-z])")
+REVIEW_ASSIGN_RE = re.compile(
+    r"(?<![\w$])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\x28")
+_EMPTY_VALUE = r"\s*(?:\[\s*\]|\x7b\s*\x7d)"
+
+
+def review_fallback_advisory_needed(stripped, dev_starts):
+    # True when a reviewer / sec-guard read falls back to an empty value and a DEV spawn follows it with
+    # no stop on that read in between. Any parse uncertainty → False: advisory-only, verdict untouched.
+    try:
+        smask = _string_mask(stripped)
+        struct = "".join(" " if smask[k] else ch for k, ch in enumerate(stripped))
+        return any(_fallback_reaches_dev(struct, name, read_end, dev_starts)
+                   for name, read_end in _get_review_reads(stripped, struct))
+    except Exception:
+        return False
+
+
+def _get_review_reads(stripped, struct):
+    # (variable, end of call) per declaration bound to a reviewer / sec-guard call → literal in the
+    # arguments, or a helper named for the review
+    reads = []
+    for m in REVIEW_ASSIGN_RE.finditer(struct):
+        close = match_close(struct, m.end() - 1, chr(40), chr(41))
+        if close is None:
+            continue
+        if REVIEW_HELPER_RE.search(m.group(2)) or REVIEW_ROLE_RE.search(stripped, m.end(), close):
+            reads.append((m.group(1), close))
+    return reads
+
+
+def _fallback_reaches_dev(struct, name, read_end, dev_starts):
+    # First empty fallback on the read → the next DEV spawn after it → an if-not stop before that spawn?
+    var = r"(?<![\w$.])" + re.escape(name) + r"(?:\??\.[\w$]+)*\s*"
+    fallback = re.compile(var + r"(?:\?(?![?.])[^;\n]{0,400}?:" + _EMPTY_VALUE
+                          + r"|(?:\|\||\?\?)" + _EMPTY_VALUE + r")").search(struct, read_end)
+    if fallback is None:
+        return False
+    later = [p for p in dev_starts if p > fallback.end()]
+    if not later:
+        return False
+    stop = re.compile(r"(?<![\w$])if\s*\x28\s*!\s*" + re.escape(name) + r"(?![\w$])[^\n]*?\x29\s*"
+                      r"(?:\x7b[^\x7b\x7d]*?)?(?<![\w$])(?:return|throw)(?![\w$])")
+    return stop.search(struct, read_end, min(later)) is None
+
 
 def impl_slot_count(dev_spawns, verify_types, impl_types, computed_types):
     # Implementation-slot count — a TOTAL function over BOTH dispatch branches, deliberately: the
@@ -2018,6 +2094,7 @@ def emit(verdict, entry_marker):
     print(COMPLETION_FLAG)
     print(sizeest_bounds_flag)
     print(CLOSE_TOKEN_FLAG)
+    print(REVIEW_FALLBACK_FLAG)
     sys.exit(0)
 
 
@@ -2085,6 +2162,8 @@ try:
     # Close-token decision: a plan-referencing DEV workflow carrying neither [PLAN-CLOSE] form (raw scan).
     if dev_present and plan_ref_found and not CLOSE_TOKEN_RE.search(attestation_src):
         CLOSE_TOKEN_FLAG = "CLOSE_TOKEN_ADVISE"
+    if review_fallback_advisory_needed(antigaming_src, [p for (p, _) in dev_spawns]):
+        REVIEW_FALLBACK_FLAG = "REVIEW_FALLBACK_ADVISE"
 
     # ANALYSIS-SIZE advisory (parallel NON-DEV branch) — computed BEFORE the first emit (incl. the
     # `if not dev_present` early PASS at the top of the DEV block) so EVERY emit path carries it on line
@@ -2293,14 +2372,15 @@ except Exception:
 PY
   )"
 
-  # Run the helper. It prints TWELVE lines: line 1 = verdict token, line 2 = entry marker
+  # Run the helper. It prints THIRTEEN lines: line 1 = verdict token, line 2 = entry marker
   # (ENTRY_OK|ENTRY_ADVISORY), line 3 = resilience flag (RESIL_ADVISE|RESIL_SILENT), line 4 =
   # analysis-size flag (ANALYSIS_SIZE_ADVISE|ANALYSIS_SIZE_SILENT), line 5 = schema-cap flag
   # (SCHEMA_CAP_ADVISE[:R<n>]|SCHEMA_CAP_SILENT), line 6 = DEV flag, line 7 = IMPL_SLOTS=<n>, line 8 =
   # size-map flag, line 9 = entry-cardinality flag, line 10 = the MULTIPLEXED completion-channel flag
   # (COMPLETION_ADVISE[:<value>]|COMPLETION_SILENT), line 11 = the [SIZE-EST] plausibility-bounds flag
   # (SIZEEST_BOUNDS_ADVISE[:<value>]|SIZEEST_BOUNDS_SILENT), line 12 = the close-token flag
-  # (CLOSE_TOKEN_ADVISE|CLOSE_TOKEN_SILENT).
+  # (CLOSE_TOKEN_ADVISE|CLOSE_TOKEN_SILENT), line 13 = the review-fallback flag
+  # (REVIEW_FALLBACK_ADVISE|REVIEW_FALLBACK_SILENT).
   # A non-zero exit OR unparseable output → fail-open (PASS + ENTRY_OK + all flags SILENT).
   # The fallback literal below MUST gain a token in LOCKSTEP with emit()
   # and the read group — pinned by a source-structural arity assertion in the bats suite, because a
@@ -2315,10 +2395,10 @@ PY
     # open to PASS without evaluating the verify-stage. Surface the disarm with a named code; the
     # fail-open verdict + exit stay UNCHANGED (advisory — stderr only).
     printf '[enforce-workflow-verify-stage] WFG-VERDICT-FAILOPEN: verdict helper produced no output (python3 crash / interpreter failure) — gate defaulted to fail-open PASS, verify-stage NOT evaluated\n' >&2
-    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT\nSCHEMA_CAP_SILENT\nDEV_NO\nIMPL_SLOTS=0\nSIZE_MAP_SILENT\nENTRY_CARD_SILENT\nCOMPLETION_SILENT\nSIZEEST_BOUNDS_SILENT\nCLOSE_TOKEN_SILENT'
+    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT\nSCHEMA_CAP_SILENT\nDEV_NO\nIMPL_SLOTS=0\nSIZE_MAP_SILENT\nENTRY_CARD_SILENT\nCOMPLETION_SILENT\nSIZEEST_BOUNDS_SILENT\nCLOSE_TOKEN_SILENT\nREVIEW_FALLBACK_SILENT'
   fi
 
-  # Parse the twelve helper lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
+  # Parse the thirteen helper lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
   # EOF on a short (legacy / fail-open) output from tripping the fail-open ERR trap; each field is then
   # normalized to a known value so a stray/absent line collapses to the safe default.
   verdict="PASS"
@@ -2331,6 +2411,7 @@ PY
   local completion_flag="COMPLETION_SILENT"
   local sizeest_bounds_flag="SIZEEST_BOUNDS_SILENT"
   local close_token_flag="CLOSE_TOKEN_SILENT"
+  local review_fallback_flag="REVIEW_FALLBACK_SILENT"
   {
     IFS= read -r verdict
     IFS= read -r entry_marker
@@ -2344,6 +2425,7 @@ PY
     IFS= read -r completion_flag
     IFS= read -r sizeest_bounds_flag
     IFS= read -r close_token_flag
+    IFS= read -r review_fallback_flag
   } <<<"${helper_out}" || true
   [[ -z "${verdict}" ]] && verdict="PASS"
   [[ "${entry_marker}" == "ENTRY_ADVISORY" || "${entry_marker}" == "ENTRY_SIMPLE" ]] || entry_marker="ENTRY_OK"
@@ -2378,6 +2460,7 @@ PY
     sizeest_bounds_flag="SIZEEST_BOUNDS_SILENT"
   fi
   [[ "${close_token_flag}" == "CLOSE_TOKEN_ADVISE" ]] || close_token_flag="CLOSE_TOKEN_SILENT"
+  [[ "${review_fallback_flag}" == "REVIEW_FALLBACK_ADVISE" ]] || review_fallback_flag="REVIEW_FALLBACK_SILENT"
 
   # INSTRUMENTATION FIELDS (never a verdict input) — normalize to the safe reading on any stray or
   # short helper output, mirroring the flag normalization above. A non-integer slot count records as
@@ -2629,8 +2712,9 @@ EOF
   exit 0
 }
 
-# print_trailing_advisories — the scope, close-token, first-link and implementing nudges; each tags the
-# trace. Reads the globals the verdict helper set (dev_flag, entry_marker, close_token_flag, script_src).
+# print_trailing_advisories — the scope, close-token, review-fallback, first-link and implementing
+# nudges; each tags the trace. Reads the globals the verdict helper set (dev_flag, entry_marker,
+# close_token_flag, review_fallback_flag, script_src).
 print_trailing_advisories() {
   # SCOPE ADVISORY — runs after the cause warning has printed, so a fault here cannot mask it.
   # Ordered before emit_trace so the tag rides the trace line.
@@ -2645,6 +2729,11 @@ print_trailing_advisories() {
   if [[ "${close_token_flag}" == "CLOSE_TOKEN_ADVISE" ]]; then
     print_close_token_advisory
     add_advisory "close-token"
+  fi
+  # REVIEW-FALLBACK ADVISORY — the predicate is the helper's (header -> TENTH ADVISORY PASS).
+  if [[ "${review_fallback_flag}" == "REVIEW_FALLBACK_ADVISE" ]]; then
+    print_review_fallback_advisory
+    add_advisory "review-fallback"
   fi
   # FIRST-LINK ADVISORY — the two monitor walks are the only network reads here; the cheap conjuncts
   # are ordered ahead of the walk, so a compliant or plan-ref-less workflow issues zero chain GETs.
