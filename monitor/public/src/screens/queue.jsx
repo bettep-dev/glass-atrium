@@ -454,13 +454,9 @@ function getRefusalRowQ(refusal) {
 	return { id: `refusal:${refusal.at}:${refusal.senderIdPrefix}:${refusal.recipientIdPrefixes.join(",")}`, refusal, item: null, copies: [] };
 }
 
-/**
- * No gap (layout §1): each read's frontier is its oldest loaded row, none once whole, and a cut refusal list ends where its listing does
- * → a row older than the newest of them waits undrawn.
- */
+// no gap (layout §1): each read's frontier is its oldest loaded row, none once whole → a row older than the newer of them waits undrawn
 function getDoneFloorQ(reads) {
-	const cutAt = reads.relays.refusalCutAt ? Date.parse(reads.relays.refusalCutAt) : null;
-	return Math.max(-Infinity, ...[getFrontierQ(reads.done), getFrontierQ(reads.relays), cutAt].filter((floor) => floor !== null));
+	return Math.max(-Infinity, ...[getFrontierQ(reads.done), getFrontierQ(reads.relays)].filter((floor) => floor !== null));
 }
 
 // a history cursor names its oldest row's time in epoch microseconds → milliseconds, the precision every loaded time carries; whole → null
@@ -802,7 +798,7 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	// an act that ends an item → the done part reads with the list, so the item moves to Done Today at that read (spec §4.6)
 	const reloadWithDone = useCallbackQ(() => { reload(); done.reread(); }, [reload, done.reread]);
 	// a redaction → both list parts read again, settled before the sheet takes the focus back (layout §2)
-	const rereadLists = useCallbackQ(() => Promise.all([readList({ isFresh: true }), done.reread(), relays.reread()]), [readList, done.reread, relays.reread]);
+	const rereadLists = useCallbackQ(() => getListsRereadQ(readList, done.reread, relays.reread), [readList, done.reread, relays.reread]);
 	const actions = useQueueActionsQ({ groups, setList, setDrafts, setStatus, openItem, closeSheet, reload: reloadWithDone, onRetryHarness });
 	const orders = useOrdersQ({ selectedIds: sessions.selectedIds, sendAction: actions.send, setStatus, reload });
 	const ticks = usePageTickQ({ readList, readResumes, sessions, orders, done, relays, setStatus, onReadQueueCount });
@@ -815,6 +811,30 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	return {
 		list, done, relays, resumes, readResumes, sessions, orders, drafts, setDraft, setImages, filter, setFilter, reload, rereadLists, loadMore, groups, sheet, steps,
 		selectedId: currentId, selectRow, setSeen, back: closeSheet, openOrderRow, status, keys, ...actions, ...ticks,
+	};
+}
+
+/**
+ * The open list and both Done reads read again as one set: the open list leaves a redacted copy out and the relay read brings it back,
+ * so each answer waits for the other two → one render takes all three, and a row on its way never drops between them.
+ */
+function getListsRereadQ(readList, rereadDone, rereadRelays) {
+	const land = getLandingQ(3);
+	return Promise.all([readList({ isFresh: true, land }), rereadDone({ land }), rereadRelays({ land })]);
+}
+
+/**
+ * A meeting point for `count` reads: each read's answer calls `land()` and awaits it, and all resume in one microtask run once the last
+ * answer arrives → React batches their state into one render.
+ */
+function getLandingQ(count) {
+	let arrived = 0;
+	let release = () => undefined;
+	const all = new Promise((resolve) => { release = resolve; });
+	return () => {
+		arrived += 1;
+		if (arrived === count) release();
+		return all;
 	};
 }
 
@@ -884,8 +904,8 @@ function useListReadQ(list, setList) {
 	const latestList = useRefQ(list);
 	latestList.current = list;
 	const flight = useRefQ(null);
-	return useCallbackQ(({ isFresh = false } = {}) => {
-		const start = () => getListQ({ setList, getList: () => latestList.current });
+	return useCallbackQ(({ isFresh = false, land } = {}) => {
+		const start = () => getListQ({ setList, getList: () => latestList.current, land });
 		return getJoinedReadQ(flight, start, isFresh);
 	}, [setList]);
 }
@@ -1278,17 +1298,19 @@ function useThreadQ({ selectedIds, kind = "order", profile = "" }) {
 	const read = useCallbackQ(() => getThreadQ({ ...scope, before: null }), [key]);
 	useEffectQ(() => { read(); }, [read]);
 	const showEarlier = useCallbackQ(() => getThreadQ({ ...scope, before: thread.nextCursor }), [key, thread.nextCursor]);
-	const reread = useCallbackQ(() => getThreadQ({ ...scope, before: null, limit: getReadLimitQ(getFoldedRowsQ(latestThread.current.items).length, ORDERS_Q.PAGE, ORDERS_Q.MAX), isQuiet: true }), [key]);
+	const reread = useCallbackQ(({ land } = {}) => getThreadQ({ ...scope, before: null, limit: getReadLimitQ(getFoldedRowsQ(latestThread.current.items).length, ORDERS_Q.PAGE, ORDERS_Q.MAX), isQuiet: true, land }), [key]);
 	return { thread, read, showEarlier, reread };
 }
 
 /**
  * One page of the history read (getReadThreadQ says how it joins the thread).
  * @param isQuiet - the page's own re-read: no loading state, a failure keeps the thread as it stands, and no loaded order leaves
+ * @param land - a set of reads' meeting point (getLandingQ): the answer waits there before it joins the thread
  */
-async function getThreadQ({ ids, before, setThread, isCurrent = () => true, limit = ORDERS_Q.PAGE, isQuiet = false, kind = "order", profile = "" }) {
+async function getThreadQ({ ids, before, setThread, isCurrent = () => true, limit = ORDERS_Q.PAGE, isQuiet = false, kind = "order", profile = "", land }) {
 	if (!isQuiet) setThread((prev) => ({ ...prev, status: "loading" }));
 	const answer = await sendOwnerRequestQ(`/orders?${getOrdersQueryQ({ ids, before, limit, kind, profile })}`);
+	await land?.();
 	if (!isCurrent()) return;
 	if (isOkAnswerQ(answer) && Array.isArray(answer.data?.items)) {
 		return setThread((prev) => ({ status: "ready", hasRead: true, ...getReadThreadQ(prev, answer.data, before, isQuiet), error: null }));
@@ -1297,7 +1319,7 @@ async function getThreadQ({ ids, before, setThread, isCurrent = () => true, limi
 }
 
 // an earlier page joins the thread, the page's own re-read merges into it, any other first page replaces it · the relay
-// thread's refusals (its page's time span) join, merge or replace the same way, and the newest cut page ends the list (getRefusalCutAtQ)
+// thread's refusals (its page's time span) join, merge or replace the same way, and the newest cut page's hole is kept (getRefusalCutAtQ)
 // ponytail: a re-read sets no cut of its own — the span below its cut was listed by the pages that loaded it; upgrade = refusals by their own cursor
 function getReadThreadQ(prev, page, before, isQuiet) {
 	const refusals = page.refusals ?? [];
@@ -1308,7 +1330,7 @@ function getReadThreadQ(prev, page, before, isQuiet) {
 	return { items: page.items, nextCursor: page.nextCursor ?? null, refusals, refusalCutAt: getRefusalCutAtQ(page) };
 }
 
-// the server lists a page's newest refusals up to its bound (isRefusalListCut) → the oldest one listed is as far as the record reaches
+// the server lists a page's newest refusals up to its bound (isRefusalListCut) → its refusals older than the oldest listed, down to its frontier, are missing
 function getRefusalCutAtQ(page) {
 	const ats = (page.refusals ?? []).map((refusal) => refusal.at);
 	if (page.isRefusalListCut !== true || ats.length === 0) return null;
@@ -1393,11 +1415,13 @@ function useFilterQ() {
  * One read of the list, merged by item id into the list as it stands when the answer lands (getMergedDataQ).
  * A failure with rows loaded keeps them and their read time; with none loaded it is the list's error state.
  * @param getList - the list now; absent → nothing loaded
+ * @param land - a set of reads' meeting point (getLandingQ): the answer waits there before it lands
  * @returns `{ isGood, arrived, turned }` — `arrived` the items this read tracks as arrivals, in server order; `turned` as getMergedDataQ
  */
-async function getListQ({ setList, getList = () => EMPTY_LIST_Q }) {
+async function getListQ({ setList, getList = () => EMPTY_LIST_Q, land }) {
 	if (getList().data === null) setList((prev) => ({ ...prev, status: "loading" }));
 	const answer = await sendOwnerRequestQ(`/items?limit=${getReadLimitQ(getList().data?.items.length ?? 0, LIST_Q.LIMIT, LIST_Q.MAX)}`);
+	await land?.();
 	const prev = getList();
 	if (isOkAnswerQ(answer) && Array.isArray(answer.data?.items)) {
 		const { data, arrived, turned } = getMergedDataQ(prev.data, answer.data);
@@ -1671,23 +1695,25 @@ function ListEndQ({ queue }) {
 }
 
 /**
- * The Done part's end (layout §1 → Reads and Show more): a failed read's warning, whose Retry reads each failed read again; the list's end at a
- * refusal cut; past the cap a line that only the newest show; else Show more on the read whose frontier is newer.
+ * The Done part's end (layout §1 → Reads and Show more): a failed read's warning, whose Retry reads each failed read again; else a refusal
+ * cut's line, then past the cap a line that only the newest show, else Show more on the read whose frontier is newer.
  * @param count - the Done rows drawn: a send on its way counts nowhere, so a page of them leaves Show more in place
  */
 function getDoneEndQ({ done, relays }, count) {
 	const failed = [done, relays].filter((read) => read.thread.status === "error");
 	if (failed.length > 0) return <DoneWarningQ text="Done items could not be read." onRetry={() => { for (const read of failed) read.read(); }} />;
-	if (isDoneCutQ(done.thread, relays.thread)) return <DoneWarningQ text="The list ends here: some refused relays could not be listed." />;
+	const { refusalCutAt } = relays.thread;
+	const more = getDoneMoreQ(done, relays, count);
+	if (!refusalCutAt) return more;
+	return <><DoneWarningQ text={`Some refused relays before ${getEndTimeQ(refusalCutAt)} could not be listed.`} />{more}</>;
+}
+
+// past the cap a line that only the newest show, else Show more; both reads whole → null
+function getDoneMoreQ(done, relays, count) {
 	const next = getNextDoneReadQ(done, relays);
 	if (next === null) return null;
 	if (count >= DONE_Q.MAX) return <span className="fs-meta text-dim">{`Showing the ${DONE_Q.MAX} most recent`}</span>;
 	return <ShowMoreQ count={count} isBusy={next.thread.status === "loading"} onMore={next.showEarlier} />;
-}
-
-// the cut is the floor: no read's frontier stands above it, so no page either read could load draws a row
-function isDoneCutQ(done, relays) {
-	return Boolean(relays.refusalCutAt) && getDoneFloorQ({ done, relays }) === Date.parse(relays.refusalCutAt);
 }
 
 // Show more pages the read whose frontier is newer; both whole → null

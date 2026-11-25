@@ -684,6 +684,56 @@ describe("relay refusals and redaction", () => {
       { glyphs: [], text: "" },
     ]);
   });
+
+  // layout §2 → Foot: the open list leaves a redacted copy out and the relay read brings it back → the two land together or the row drops for a render
+  test("a redaction's re-read lands the list and both Done reads at once: a relay on its way keeps its row and its sheet while the relay read is late", async () => {
+    const redacted = fixture.items.find((item) => item.id === 415)!;
+    const kept = { ...redacted, relay: { ...redacted.relay!, redaction: null } };
+    let isRedacted = false;
+    let releaseRelays: () => void = () => undefined;
+    const relaysLate = new Promise<void>((resolve) => { releaseRelays = resolve; });
+    const answer = (body: unknown) => ({ status: 200, json: async () => body });
+    const stateful = createStatefulReact();
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      React: stateful.react, URLSearchParams, window: { UI: uiStub(), location: { hash: "#queue" }, history: { replaceState: () => undefined } },
+      fetch: async (url: string) => {
+        const isAfter = isRedacted;
+        if (url.includes("kind=relay")) {
+          if (isAfter) await relaysLate;
+          return answer({ items: [isAfter ? redacted : kept], nextCursor: null, refusals: [] });
+        }
+        if (url.includes("kind=item")) return answer({ items: [], nextCursor: null, refusals: [] });
+        return answer({ items: isAfter ? [] : [kept], nextCursor: null });
+      },
+    })) as ScreenModule;
+    type Reread = (options?: unknown) => Promise<unknown>;
+    type Thread = { thread: unknown; read: Reread; reread: Reread };
+    const run = () => {
+      stateful.resetCursor();
+      const [list, setList] = (stateful.react.useState as (initial: unknown) => [{ data: { items: unknown[] } | null }, unknown])({ status: "loading", data: null, error: null, readAt: null, newIds: [] });
+      const readList = (module.useListReadQ as (list: unknown, setList: unknown) => Reread)(list, setList);
+      const useThread = module.useThreadQ as (scope: unknown) => Thread;
+      return { list, readList, done: useThread({ selectedIds: [], kind: "item" }), relays: useThread({ selectedIds: [], kind: "relay" }) };
+    };
+    const held = { item: kept, copies: [kept] };
+    const getShown = () => {
+      const { list, done, relays } = run();
+      const groups = call<Array<{ rows: Array<{ id: number; copies: Array<{ relay: { redaction: unknown } }> }> }>>("getListGroupsQ", getPlain(list.data?.items ?? []), getPlain({ done: done.thread, relays: relays.thread }), { profile: "" }, []);
+      const row = groups.flatMap((group) => group.rows).find((one) => one.id === 415);
+      return [call<{ kind: string }>("getSheetStateQ", groups, "415", held).kind, row?.copies.some((copy) => copy.relay.redaction !== null) ?? null];
+    };
+    const seeded = run();
+    await Promise.all([seeded.readList({ isFresh: true }), seeded.done.read(), seeded.relays.read()]);
+    const before = getShown();
+    isRedacted = true;
+    const reads = run();
+    const reread = (module.getListsRereadQ as (readList: Reread, rereadDone: Reread, rereadRelays: Reread) => Promise<unknown>)(reads.readList, reads.done.reread, reads.relays.reread);
+    await new Promise((resolve) => setImmediate(resolve));
+    const whileLate = getShown();
+    releaseRelays();
+    await reread;
+    assert.deepEqual([before, whileLate, getShown()], [["item", false], ["item", false], ["item", true]]);
+  });
 });
 
 describe("screen", () => {
@@ -1355,7 +1405,7 @@ describe("relays in the Done part", () => {
     { name: "both reads whole → every row", done: {}, relays: {}, expected: [["refused pair_cap", 806, 412], [398, 812]] },
     { name: "the relay read has more → item rows older than its oldest send wait", done: {}, relays: { items: relays.items.filter((copy) => copy.id >= 412), nextCursor: cursorAt(240, 412) }, expected: [["refused pair_cap", 806, 412]] },
     { name: "the item read has more → relay rows older than its oldest item wait", done: { items: [ended(806, 200)], nextCursor: cursorAt(200, 806) }, relays: {}, expected: [["refused pair_cap", 806]] },
-    { name: "the relay read cut its refusals → rows older than its oldest listed refusal wait", done: {}, relays: { refusalCutAt: REFUSAL!.at }, expected: [["refused pair_cap"]] },
+    { name: "the relay read cut its refusals → the cut holds no row back, the hole being in the refusals alone", done: {}, relays: { refusalCutAt: REFUSAL!.at }, expected: [["refused pair_cap", 806, 412], [398, 812]] },
   ];
   for (const row of frontiers) {
     test(`the merge: ${row.name}`, () => assert.deepEqual(getDoneBands([], { done: doneRead(row.done), relays: relayRead(row.relays) }), row.expected));
@@ -1447,6 +1497,8 @@ describe("relays in the Done part", () => {
     return { more: getPlain(calls), text: collectText(tree).replace(/\s+/g, " ") };
   };
   const manyEnded = Array.from({ length: 199 }, (_, index) => ended(index + 1, index + 1));
+  // the fixture's refusal at 2026-11-13 12:00 KST is the oldest the cut page listed
+  const CUT_LINE = "⚠ Some refused relays before Nov 13 12:00 could not be listed.";
   const ends = [
     { name: "the item read's frontier is newer → Show more reads the item read", done: doneRead({ items: [ended(806, 200)], nextCursor: cursorAt(200, 806) }), relays: relayRead({ nextCursor: cursorAt(1620, 398) }), expected: { more: [["moreDone"]], text: "Show more" } },
     { name: "the relay read's frontier is newer → Show more reads the relay read", done: doneRead({ nextCursor: cursorAt(1800, 812) }), relays: relayRead({ items: relays.items.filter((copy) => copy.id >= 412), nextCursor: cursorAt(240, 412) }), expected: { more: [["moreRelays"]], text: "Show more" } },
@@ -1454,7 +1506,9 @@ describe("relays in the Done part", () => {
     { name: "a send on its way counts nowhere → 199 Done rows beside it still offer Show more", done: thread({ items: manyEnded, nextCursor: cursorAt(199, 1) }), relays: thread({ items: relays.items.filter((copy) => copy.id >= 415) }), expected: { more: [["moreDone"]], text: "Show more" } },
     { name: "the relay read failed → the Done warning and a Retry that reads the relay read", done: doneRead(), relays: thread({ status: "error", error: FAILURE }), expected: { more: [["readRelays"]], text: "⚠ Done items could not be read. Retry" } },
     { name: "both reads failed → one warning, whose Retry reads both", done: thread({ status: "error", error: FAILURE }), relays: thread({ status: "error", error: FAILURE }), expected: { more: [["readDone"], ["readRelays"]], text: "⚠ Done items could not be read. Retry" } },
-    { name: "the relay read cut its refusals → the list ends at the cut and says so", done: doneRead(), relays: relayRead({ refusalCutAt: REFUSAL!.at, nextCursor: cursorAt(1620, 398) }), expected: { more: [], text: "⚠ The list ends here: some refused relays could not be listed." } },
+    { name: "the relay read cut its refusals and has more → the cut line, then Show more reads the relay read", done: doneRead(), relays: relayRead({ refusalCutAt: REFUSAL!.at, nextCursor: cursorAt(1620, 398) }), expected: { more: [["moreRelays"]], text: CUT_LINE + " Show more" } },
+    { name: "the relay read cut its refusals and the item read has a cursor behind the cut → the cut line, then Show more reads the item read", done: doneRead({ items: [ended(806, 200)], nextCursor: cursorAt(200, 806) }), relays: relayRead({ refusalCutAt: REFUSAL!.at }), expected: { more: [["moreDone"]], text: CUT_LINE + " Show more" } },
+    { name: "the relay read cut its refusals and both reads are whole → the cut line alone", done: doneRead(), relays: relayRead({ refusalCutAt: REFUSAL!.at }), expected: { more: [], text: CUT_LINE } },
   ];
   for (const row of ends) test(`the list's end: ${row.name}`, () => assert.deepEqual(endOf(row.done, row.relays), row.expected));
 
@@ -1464,7 +1518,7 @@ describe("relays in the Done part", () => {
     { name: "a re-read takes its span's refusals and keeps the loaded ones older than its span", page: { items: [], nextCursor: cursorAt(200, 1), refusals: [{ at: atMinutes(50) }] }, before: null, isQuiet: true, expected: { refusals: [50, 300], cutAt: null } },
     { name: "a whole re-read takes every refusal from the read", page: { items: [], nextCursor: null, refusals: [{ at: atMinutes(50) }] }, before: null, isQuiet: true, expected: { refusals: [50], cutAt: null } },
     { name: "a cut re-read keeps the loaded refusals older than its oldest listed one", page: { items: [], nextCursor: cursorAt(200, 1), refusals: [{ at: atMinutes(50) }, { at: atMinutes(90) }], isRefusalListCut: true }, before: null, isQuiet: true, expected: { refusals: [50, 90, 100, 300], cutAt: null } },
-    { name: "a cut first page ends the list at its oldest listed refusal", page: { items: [], nextCursor: cursorAt(200, 1), refusals: [{ at: atMinutes(50) }, { at: atMinutes(90) }], isRefusalListCut: true }, before: null, isQuiet: false, expected: { refusals: [50, 90], cutAt: 90 } },
+    { name: "a cut first page marks the cut at its oldest listed refusal", page: { items: [], nextCursor: cursorAt(200, 1), refusals: [{ at: atMinutes(50) }, { at: atMinutes(90) }], isRefusalListCut: true }, before: null, isQuiet: false, expected: { refusals: [50, 90], cutAt: 90 } },
     { name: "an earlier page keeps the newer cut", page: { items: [], nextCursor: null, refusals: [{ at: atMinutes(500) }], isRefusalListCut: true }, before: cursorAt(400, 1), isQuiet: false, prev: { ...prev, refusalCutAt: atMinutes(90) }, expected: { refusals: [100, 300, 500], cutAt: 90 } },
   ];
   const minutesOf = (iso: string) => Math.round((FIXTURE_NOW - Date.parse(iso)) / 60_000);
