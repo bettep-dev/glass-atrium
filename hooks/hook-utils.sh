@@ -340,6 +340,11 @@ hook_join_alt() {
   printf '%s' "$*"
 }
 
+# DEV-mode [SIZE-EST] form every gate remediation teaches → one spelling for authors; units= stays
+# optional to the parser below (skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md).
+# shellcheck disable=SC2034  # read by the gates that source this file
+HOOK_SIZE_EST_FORM='[SIZE-EST] units=N bundles=N tool_uses~=N — <1-line reason>'
+
 # Largest units= value across the [SIZE-EST] lines of $1, read after the token only; nothing when no
 # token line carries the key. Here-string input — no pipe, so the reader's early stop races no writer.
 # Shared by the manual and workflow verification gates → one parser of the optional key.

@@ -1038,7 +1038,7 @@ agent('glass-atrium-dev-nestjs',{goal:'implement'})"
   run bash -c 'bash "$1" --lint --template' _ "${HOOK_SH}"
   local taught
   taught="$(printf '%s\n' "${output}" | sed -n "s/.*\(log('\[SIZE-EST\] [^']*tool_uses~=[^']*')\).*/\1/p")"
-  [[ "${taught}" == "log('[SIZE-EST] bundles=N units=N tool_uses~=N — <reason>')" ]] || {
+  [[ "${taught}" == "log('[SIZE-EST] units=N bundles=N tool_uses~=N — <1-line reason>')" ]] || {
     echo "template taught: ${taught}"
     return 1
   }

@@ -415,6 +415,23 @@ mint_bad_sink() {
   done
 }
 
+# Both gates teach one [SIZE-EST] form, so an author never meets two spellings of the token.
+@test "the size-miss and entry-miss remediations teach the workflow template's [SIZE-EST] form" {
+  local taught
+  taught="$(bash "${HOOKS_DIR}/enforce-workflow-verify-stage.sh" --lint --template \
+    | sed -n "s/.*log('\(\[SIZE-EST\] [^']*tool_uses~=[^']*\)').*/\1/p")"
+  [[ "${taught}" == *"units=N"* ]] || { echo "workflow template taught: ${taught}"; return 1; }
+  run_hook "glass-atrium-dev-nestjs" "implement the auth refactor across the service layer"
+  local code line warning
+  for code in VGATE-SIZE-001 VGATE-ENTRY-001; do
+    warning=""
+    while IFS= read -r line; do
+      [[ "${line}" != *"${code}"* ]] || warning="${line}"
+    done <<<"${output}"
+    [[ "${warning}" == *"${taught}"* ]] || { echo "${code} teaches another form -- ${output}"; return 1; }
+  done
+}
+
 # (c''') live index owner: an INDEX OWNER contract naming a worktree another agent's writer lock
 # still holds is advised at spawn — the write-time lock never sees Bash-run writes.
 @test "an INDEX OWNER contract for a worktree another agent holds names the live holder" {

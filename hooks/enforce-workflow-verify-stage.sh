@@ -600,6 +600,16 @@ print_sizeest_high_advisory() {
   (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value EXCEEDS the ~40 delegation ceiling (the HARD SECONDARY split trigger in skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget, set ahead of the measured 46-52 truncation band). A delegation this size is expected to run out of budget before its terminal emit: SPLIT it into sequential checkpointed sub-delegations — one work-unit per DEV spawn, each declaring units=1 on its [SIZE-EST] — keeping each implementation together with its NEW tests and peeling off run-full-suite / report-consolidation instead. PLAUSIBILITY-ONLY, never estimate correctness. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
 }
 
+# get_size_est_form — the DEV-mode [SIZE-EST] form (hook-utils.sh → HOOK_SIZE_EST_FORM), read in a
+# command substitution → the library's globals stay out of the gate.
+get_size_est_form() {
+  local lib="${BASH_SOURCE%/*}/hook-utils.sh"
+  [[ -r "${lib}" ]] || return 0
+  # shellcheck source=hook-utils.sh
+  source "${lib}" || return 0
+  printf '%s' "${HOOK_SIZE_EST_FORM}"
+}
+
 # get_units_advice — the units nudge's advice for the raw script (header -> ELEVENTH ADVISORY PASS);
 # empty when silent. Called in a command substitution → the library's globals stay out of the gate.
 get_units_advice() {
@@ -846,7 +856,8 @@ EOF
 
 # print_lint_template — --lint --template output: the full author self-attestation scaffold assembled
 # from the SAME scaffold emitters the gate's block remediations use (so the taught template is exactly
-# what the gate accepts). The [SIZE-EST] line mirrors the BLOCK_SIZEEST remediation format.
+# what the gate accepts). The DEV-mode [SIZE-EST] line and the BLOCK_SIZEEST remediation both print
+# get_size_est_form.
 #
 # FOURTH SECTION (completion channel) — CONDITIONAL, and the intro says so: the schema scaffold applies
 # to a schema-mode spawn only. A DEV verify stage returns a prose verdict and is deliberately text-mode
@@ -857,6 +868,8 @@ EOF
 # FIFTH SECTION (close token) — plan-referencing scripts only. It teaches the phase SHAPE and points at the
 # skill for RECONCILE_GOAL rather than copying the goal text, so the skill skeleton stays its one home.
 print_lint_template() {
+  local size_est_form
+  size_est_form="$(get_size_est_form)"
   cat <<'EOF'
 [enforce-workflow-verify-stage] --lint --template: canonical author self-attestation scaffold for a DEV-spawning Workflow script. Paste ONE entry token. A plan-referencing script also needs ONE [AGENT-COMPOSITION] form in a /* */ block comment and the [SIZE-EST] token; an [ENTRY-CLASS] simple-task script with no plan-reference needs neither. Then preview with: enforce-workflow-verify-stage.sh --lint <file> (exit 0 = no warning · exit 1 = a WARNING line names what to fix). The fourth section is CONDITIONAL rather than universal — it applies to a schema-mode spawn only, and a DEV verify stage is deliberately text-mode, declares no schema and needs none of it. The fifth section applies to a plan-referencing script: ONE close-token form, plus the terminal phase when the script closes the plan itself.
 
@@ -872,7 +885,9 @@ EOF
 
 Delegation-size self-attestation (ONE [SIZE-EST] token, two modes — DEV mode at every DEV spawn of a plan-referencing script; a simple-task entry owes none):
   --- DEV mode ---
-  log('[SIZE-EST] bundles=N units=N tool_uses~=N — <reason>');
+EOF
+  printf "  log('%s');\n" "${size_est_form}"
+  cat <<'EOF'
   --- analysis mode (schema-mode NON-DEV researcher/planner/reporter/reviewer spawn) ---
   log('[SIZE-EST] reads~=N fields=N effort=<medium|high> scope=<allowlist|bounded> — <reason>');
   RIGHT-SIZE the analysis spawn: reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high) → SPLIT by
@@ -2711,11 +2726,8 @@ EOF
       ;;
     BLOCK_SIZEEST)
       trace_tag="block-sizeest"
-      reason="$(
-        cat <<'EOF'
-[enforce-workflow-verify-stage] WARNING (size-attestation miss): this Workflow spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. Record the pre-spawn size estimate at every DEV spawn of a plan-referencing script: log('[SIZE-EST] bundles=N units=N tool_uses~=N — <reason>'), units= being the work-units that spawn carries (one by default). A genuinely simple script with no plan-reference records [ENTRY-CLASS] simple-task instead and owes no [SIZE-EST]. Under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline); on a borderline count round UP. Placement is not enforced (raw-scanned); existence-only — the estimate correctness is never checked.
-EOF
-      )"
+      size_est_form="$(get_size_est_form)"
+      reason="[enforce-workflow-verify-stage] WARNING (size-attestation miss): this Workflow spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. Record the pre-spawn size estimate at every DEV spawn of a plan-referencing script: log('${size_est_form}'), units= being the work-units that spawn carries (one by default). A genuinely simple script with no plan-reference records [ENTRY-CLASS] simple-task instead and owes no [SIZE-EST]. Under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline); on a borderline count round UP. Placement is not enforced (raw-scanned); existence-only — the estimate correctness is never checked."
       ;;
     *) ;;
   esac

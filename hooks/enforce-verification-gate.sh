@@ -324,8 +324,7 @@ has_token() {
 has_simple_task_token() { has_token "${1}" '[ENTRY-CLASS] simple-task'; }
 
 # [SIZE-EST] self-attestation token — the orchestrator's per-delegation packing estimate emitted at
-# every DEV spawn not classified simple-task (format `[SIZE-EST] units=N bundles=N tool_uses~=N — <reason>`,
-# units= optional; skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md).
+# every DEV spawn not classified simple-task (format: hook-utils.sh → HOOK_SIZE_EST_FORM, units= optional).
 # Anchored bracketed literal (grep -qF, mirrors has_simple_task_token's structured-match discipline) — checks PRESENCE only, never the estimate's correctness (same
 # existence-only boundary as the [ENTRY-CLASS] entry tokens).
 has_size_est_token() { has_token "${1}" '[SIZE-EST]'; }
@@ -623,7 +622,7 @@ fi
 # shellcheck disable=SC2310
 if [[ "${orchestrator_origin}" == true ]] && ! has_size_est_token "${prompt_full}"; then
   size_reason="Spawning DEV agent '${subagent_type}' from the orchestrator with NO [SIZE-EST] self-attestation token — a DEV spawn that is not an [ENTRY-CLASS] simple-task entry MUST declare its delegation-size estimate (skills/glass-atrium-ops-orchestrator-role.md ### Spawn Budget)."
-  size_fix="Record [SIZE-EST] bundles=N tool_uses~=N — <1-line reason> in the prompt: bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into THIS delegation, tool_uses~=N = your rough pre-spawn estimate. On a borderline count, round up: an under-estimate hides an oversized delegation from the split discipline. A genuinely simple task with no plan-reference records [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> instead: that alone clears this gate and every other token check."
+  size_fix="Record ${HOOK_SIZE_EST_FORM} in the prompt: units = the work-units THIS delegation carries (one by default), bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into it, tool_uses~=N = your rough pre-spawn estimate. On a borderline count, round up: an under-estimate hides an oversized delegation from the split discipline. A genuinely simple task with no plan-reference records [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> instead: that alone clears this gate and every other token check."
   warn_tripped_check "VGATE-SIZE-001" "${size_reason}" "${size_fix}" \
     "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"size-est-miss\"}" "block-sizeest"
 fi
@@ -670,7 +669,7 @@ else
   # 5. Entry-miss — no plan-reference AND no [ENTRY-CLASS] simple-task classification (the silent
   # entry-miss): DEV ∧ !references_plan ∧ !has_simple_task_token; the simple-task token exited above.
   entry_reason="Spawning DEV agent '${subagent_type}' with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — sizable DEV work MUST enter the Document-Driven Workflow (author a plan first)."
-  entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scoped/maintainers/scope-dev.md -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> in the prompt to silence this check. NOTE: a plan-referencing spawn must ALSO carry a [SIZE-EST] bundles=N tool_uses~=N — <1-line> delegation-size token (checked separately by VGATE-SIZE-001); a simple-task spawn needs no other token."
+  entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scoped/maintainers/scope-dev.md -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> in the prompt to silence this check. NOTE: a plan-referencing spawn must ALSO carry a ${HOOK_SIZE_EST_FORM} delegation-size token (checked separately by VGATE-SIZE-001); a simple-task spawn needs no other token."
   warn_tripped_check "VGATE-ENTRY-001" "${entry_reason}" "${entry_fix}" \
     "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"entry-miss\"}" "block-entry"
 fi
