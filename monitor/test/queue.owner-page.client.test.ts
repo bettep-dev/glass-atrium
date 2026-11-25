@@ -137,6 +137,7 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
       done: { thread: { status: "ready", hasRead: true, items: [], nextCursor: null, error: null, refusals: [] }, read: record("readDone"), showEarlier: record("moreDone"), reread: record("rereadDone") },
       relays: { thread: { status: "ready", hasRead: true, items: [], nextCursor: null, error: null, refusals: [], refusalCutAt: null }, read: record("readRelays"), showEarlier: record("moreRelays"), reread: record("rereadRelays") },
       steps: { index: 0, count: 1, prevId: null, nextId: null },
+      sheet: { kind: "none", id: null },
       ...overrides,
     },
   };
@@ -1087,18 +1088,22 @@ describe("list groups", () => {
     call<Array<{ key: string; label: string; rows: Array<{ id: number; copies: Array<{ id: number }> }> }>>("getGroupsQ", items)
       .map((group) => ({ key: group.key, rows: group.rows.map((row) => [row.id, row.copies.map((copy) => copy.id)]) }));
 
-  test("open decisions, then open reports, then everything else, each in server order, and an empty group is left out", () => {
+  // layout §6 → Order: In delivery reads newest post first like the Done bands; the open bands keep the server's queue order
+  test("open decisions, then open reports, each in server order, then In delivery newest post first, and an empty group is left out", () => {
+    const at = (minutesAgo: number) => new Date(Date.parse("2026-11-13T06:00:00.000Z") - minutesAgo * 60_000).toISOString();
     const items = [
       buildItem({ id: 1, kind: "report" }),
-      buildItem({ id: 2, status: "answered" }),
-      buildItem({ id: 3 }),
-      buildItem({ id: 4, kind: "report", status: "answered" }),
-      buildItem({ id: 5 }),
+      buildItem({ id: 2, status: "answered", askedAt: at(42) }),
+      buildItem({ id: 3, askedAt: at(9) }),
+      buildItem({ id: 4, kind: "report", status: "answered", askedAt: at(3) }),
+      buildItem({ id: 5, askedAt: at(2) }),
+      buildItem({ id: 6, kind: "relay", status: "answered", askedAt: at(120), sendId: "s-6" }),
+      buildItem({ id: 7, kind: "message", status: "delivered", askedAt: at(2), sendId: "s-7" }),
     ];
     assert.deepEqual(getShape(items), [
       { key: "decisions", rows: [[3, [3]], [5, [5]]] },
       { key: "reports", rows: [[1, [1]]] },
-      { key: "inDelivery", rows: [[2, [2]], [4, [4]]] },
+      { key: "inDelivery", rows: [[7, [7]], [4, [4]], [2, [2]], [6, [6]]] },
     ]);
     assert.deepEqual(getShape([buildItem({ id: 9, kind: "report" })]).map((group) => group.key), ["reports"]);
   });
@@ -1498,7 +1503,7 @@ describe("relays in the Done part", () => {
   };
   const manyEnded = Array.from({ length: 199 }, (_, index) => ended(index + 1, index + 1));
   // the fixture's refusal at 2026-11-13 12:00 KST is the oldest the cut page listed
-  const CUT_LINE = "⚠ Some refused relays before Nov 13 12:00 could not be listed.";
+  const CUT_LINE = "⚠ Refusals before Nov 13 12:00 not listed.";
   const ends = [
     { name: "the item read's frontier is newer → Show more reads the item read", done: doneRead({ items: [ended(806, 200)], nextCursor: cursorAt(200, 806) }), relays: relayRead({ nextCursor: cursorAt(1620, 398) }), expected: { more: [["moreDone"]], text: "Show more" } },
     { name: "the relay read's frontier is newer → Show more reads the relay read", done: doneRead({ nextCursor: cursorAt(1800, 812) }), relays: relayRead({ items: relays.items.filter((copy) => copy.id >= 412), nextCursor: cursorAt(240, 412) }), expected: { more: [["moreRelays"]], text: "Show more" } },
@@ -1506,8 +1511,8 @@ describe("relays in the Done part", () => {
     { name: "a send on its way counts nowhere → 199 Done rows beside it still offer Show more", done: thread({ items: manyEnded, nextCursor: cursorAt(199, 1) }), relays: thread({ items: relays.items.filter((copy) => copy.id >= 415) }), expected: { more: [["moreDone"]], text: "Show more" } },
     { name: "the relay read failed → the Done warning and a Retry that reads the relay read", done: doneRead(), relays: thread({ status: "error", error: FAILURE }), expected: { more: [["readRelays"]], text: "⚠ Done items could not be read. Retry" } },
     { name: "both reads failed → one warning, whose Retry reads both", done: thread({ status: "error", error: FAILURE }), relays: thread({ status: "error", error: FAILURE }), expected: { more: [["readDone"], ["readRelays"]], text: "⚠ Done items could not be read. Retry" } },
-    { name: "the relay read cut its refusals and has more → the cut line, then Show more reads the relay read", done: doneRead(), relays: relayRead({ refusalCutAt: REFUSAL!.at, nextCursor: cursorAt(1620, 398) }), expected: { more: [["moreRelays"]], text: CUT_LINE + " Show more" } },
-    { name: "the relay read cut its refusals and the item read has a cursor behind the cut → the cut line, then Show more reads the item read", done: doneRead({ items: [ended(806, 200)], nextCursor: cursorAt(200, 806) }), relays: relayRead({ refusalCutAt: REFUSAL!.at }), expected: { more: [["moreDone"]], text: CUT_LINE + " Show more" } },
+    { name: "the relay read cut its refusals and has more → Show more in its own place reads the relay read, then the cut line", done: doneRead(), relays: relayRead({ refusalCutAt: REFUSAL!.at, nextCursor: cursorAt(1620, 398) }), expected: { more: [["moreRelays"]], text: "Show more " + CUT_LINE } },
+    { name: "the relay read cut its refusals and the item read has a cursor behind the cut → Show more in its own place reads the item read, then the cut line", done: doneRead({ items: [ended(806, 200)], nextCursor: cursorAt(200, 806) }), relays: relayRead({ refusalCutAt: REFUSAL!.at }), expected: { more: [["moreDone"]], text: "Show more " + CUT_LINE } },
     { name: "the relay read cut its refusals and both reads are whole → the cut line alone", done: doneRead(), relays: relayRead({ refusalCutAt: REFUSAL!.at }), expected: { more: [], text: CUT_LINE } },
   ];
   for (const row of ends) test(`the list's end: ${row.name}`, () => assert.deepEqual(endOf(row.done, row.relays), row.expected));
@@ -1811,20 +1816,27 @@ describe("a relay on its way", () => {
     });
   }
 
-  // spec §12.7's words; the parent's send on another day than this send → dated
+  // the designer's read → one short painted line, both names keeping their self-named mark; spec §12.7's sentence in its title and to a reader;
+  // the parent's send on another day than this send → dated
+  const hopSentence = `Hop 1 · sent after ${NAMED} received relay #398 from atrium (self-named) at 2026-11-18 12:00`;
   const hopRows = [
     {
-      name: "a relay passed on names its parent's relay id, sender and send time",
+      name: "a relay passed on paints its parent's relay id, sender and send time in one short line, the full sentence in its title and to a reader",
       facts: { hop: 1, parent: { id: 398, sender: { ...sender, sessionIdPrefix: "e8923338", selfDeclaredName: "atrium" }, sentAt: "2026-11-18T03:00:00.000Z" } },
-      lines: [`Hop 1 · sent after ${NAMED} received relay #398 from atrium (self-named) at 2026-11-18 12:00`],
+      lines: [{ shown: "Hop 1 · passed on from #398 · atrium (self-named) · 2026-11-18 12:00", title: hopSentence, spoken: hopSentence }],
     },
     { name: "a relay sent first has none", facts: {}, lines: [] },
   ];
   for (const row of hopRows) {
     test(`the hop line on a relay's sheet: ${row.name}`, () => {
       const copies = toYoaida({}, row.facts);
-      const paragraphs = findNodes(render("RelayBlockQ", { item: copies[0], copies, rails: [] }), (node) => node.type === "p");
-      assert.deepEqual(paragraphs.map((node) => collectText(node).replace(/\s+/g, " ").trim()).filter((text) => text.startsWith("Hop")), row.lines);
+      const paragraphs = findNodes(render("RelayBlockQ", { item: copies[0], copies, rails: [] }), (node) => node.type === "p" && collectText(node).trim().startsWith("Hop"));
+      const textOf = (node: RenderedNode, isPart: (part: RenderedNode) => boolean) => findNodes(node, isPart).map((part) => collectText(part).replace(/\s+/g, " ").trim()).join("");
+      assert.deepEqual(paragraphs.map((node) => ({
+        shown: textOf(node, (part) => part.props?.["aria-hidden"] === "true"),
+        title: node.props.title,
+        spoken: textOf(node, (part) => part.props?.className === "sr-only"),
+      })), row.lines);
     });
   }
 
@@ -1833,6 +1845,21 @@ describe("a relay on its way", () => {
     const queue = withList(buildQueue().queue, [buildItem({ id: 3 })]);
     const body = collectText(byClass(render("QueueSheetQ", { queue: { ...queue, sheet: { kind: "left", id: 412, item: copies[0], copies } } }), "queue-sheet-body")[0] as RenderedNode).replace(/\s+/g, " ");
     assert.deepEqual(["yoaida", "atrium", "gersona"].map((name) => body.includes(`${name} · 5e55a0`)), [true, true, true]);
+  });
+
+  // the designer's read: a relay gone from the list has no place to step from → its arrows dim, and neither a press nor J / K steps
+  test("a relay whose row left draws its step arrows aria-disabled and steps nowhere, by press or by key", () => {
+    const copies = toThree();
+    const { calls, queue } = buildQueue({ steps: { index: -1, count: 3, prevId: 5, nextId: 7 } });
+    const left = { ...withList(queue, [buildItem({ id: 3 })]), sheet: { kind: "left", id: 412, item: copies[0], copies } };
+    const [head] = byClass(render("QueueSheetQ", { queue: left }), "card-head");
+    const arrows = findNodes(head as RenderedNode, (node) => node.type === "button" && / item$/.test(String(node.props["aria-label"])));
+    for (const arrow of arrows) (arrow.props.onClick as (() => void) | undefined)?.();
+    for (const key of ["ArrowDown", "ArrowUp"]) call("putSteppedRowQ", { queue: left }, key);
+    assert.deepEqual(
+      [arrows.map((arrow) => [arrow.props["aria-label"], arrow.props["aria-disabled"], Boolean(arrow.props.disabled)]), getPlain(calls)],
+      [[["Previous item", true, false], ["Next item", true, false]], []],
+    );
   });
 
   // the fixture's times in KST: sent Nov 19 14:20, received 14:24 the same day, lapsed Nov 22 14:20
@@ -1882,12 +1909,12 @@ describe("a relay on its way", () => {
     });
   }
 
-  test("a redacted relay's sheet paints the page's own line from the stored time and length in the text's place, its documents line kept", () => {
+  test("a redacted relay's sheet paints the page's own line from the stored time and length in the text's place, under its label with no shown-as-sent cue, its documents line kept", () => {
     const copies = redacted(toYoaida({ body: "[relay text redacted by the owner]", linkedDocIds: [44099] }));
     const body = flatText(byClass(renderSheet({ item: copies[0], copies, queue: buildQueue().queue }), "queue-sheet-body")[0] as RenderedNode);
     assert.deepEqual(
-      [body.includes("Text redacted 2026-11-19 14:30 KST · it was 1,284 characters long"), body.includes("relay text redacted by the owner"), body.includes("Documents: 44099")],
-      [true, false, true],
+      [body.includes("Text redacted 2026-11-19 14:30 KST · it was 1,284 characters long"), body.includes("relay text redacted by the owner"), body.includes("Documents: 44099"), / wrote/.test(body), body.includes("shown as sent")],
+      [true, false, true, true, false],
     );
   });
 

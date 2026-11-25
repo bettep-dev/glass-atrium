@@ -1031,6 +1031,7 @@ label.ctl-checkbox-hit {
 	gap: var(--space-2);
 	min-height: calc(var(--row-h-compact) + 2 * var(--space-1_5));
 	padding: var(--space-1_5) var(--card-pad);
+	white-space: nowrap;
 }
 /* a row (spec §4.2): one 20 line between 12 paddings → 44 — name 80 · title · tag 80 · fact 64 · age 32 · chevron 16;
    8 between columns, the title's 4 margins making its 12 on either side. 80 holds "12 sessions" whole.
@@ -1345,6 +1346,28 @@ label.ctl-checkbox-hit {
 	margin-top: var(--space-1);
 	font-size: var(--fs-control);
 	line-height: var(--lh-row);
+}
+/* a relay's To line (layout §2 → Who): one line — pre keeps the separators' spaces at the flex items' edges; only the place gives way, cut */
+.queue-relay-to {
+	display: flex;
+	align-items: baseline;
+	white-space: pre;
+}
+.queue-relay-to > * {
+	flex: none;
+}
+.queue-relay-to > .queue-relay-place {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+/* the redact confirm (layout §2 → Redaction): the sheet's own act → the dialog centres on the sheet's column, the scrim the viewport's */
+.queue-confirm-place {
+	display: contents;
+}
+.queue-confirm-place > .detail-confirm {
+	padding-inline: var(--queue-sheet-start, 0px) var(--queue-sheet-end, 0px);
 }
 /* the composer: one pattern on every pane's foot — label, the box with its buttons, one reserved note line */
 .queue-sheet > .card-foot,

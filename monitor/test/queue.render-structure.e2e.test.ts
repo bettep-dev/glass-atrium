@@ -25,7 +25,7 @@ import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, ty
 import {
   buildSentCopies, DONE_IDS, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getDoneOnlyFixture, getDoneRelaysFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
-  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneListFixture, getOneReceivedFixture, getOrderFirstFixture, getProseFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
+  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneListFixture, getOneReceivedFixture, getOrderFirstFixture, getProseFixture, getHiddenSessionsFixture, getRailFixture, getRelayListFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, RELAY_ROW_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 import { deleteTempDirectory } from "./lib/remove-dir.js";
@@ -591,7 +591,9 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
     const query = ownerOrdersQuerySchema.parse(request.query);
     const { relays } = harness.fixture;
     if (query.kind === "item") return getOrderPage(getAccountItems(harness.fixture.done ?? [], query.profile), query, getFixtureDoneRows);
-    return query.kind === "relay" ? { ...getOrderPage(relays.items, query), refusals: relays.refusals } : getOrderPage(harness.fixture.orders, query);
+    return query.kind === "relay"
+      ? { ...getOrderPage(relays.items, query), refusals: relays.refusals, isRefusalListCut: relays.isRefusalListCut === true }
+      : getOrderPage(harness.fixture.orders, query);
   });
   app.get<{ Params: { id: string } }>("/api/queue/owner/images/:id", async (request, reply) => {
     const image = FIXTURE_IMAGES.get(request.params.id) ?? EDGE_FIXTURE_IMAGES.get(request.params.id);
@@ -1494,13 +1496,101 @@ describe("queue page on the mockup fixtures", () => {
     })));
   });
 
-  test("Redact text in a relay sheet's foot asks over the sheet with the focus on Cancel; one copy refused keeps the dialog with its count line and the sheet its text and button", async () => {
+  // layout §2 → Who: a To line is one line ending in its whole outcome; the place gives way first, its full text in its title
+  test("every To line on a relay sheet, on its way, Done or refused, is one line at 1280, 1440 and 1568, its state and outcome whole at its end and a cut place whole in its title", async () => {
+    harness.fixture = getRelayListFixture();
+    const sheets = [
+      { row: `#queue-row-${RELAY_ROW_IDS.several}`, title: "to 3 sessions" },
+      { row: `#queue-row-${FORWARDED_RELAY[0]!.id}`, title: "to 2 sessions" },
+      { row: '.queue-row[aria-label^="Refused relay"]', title: "Refused relay from" },
+    ];
+    const found = [];
+    for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
+      // an open sheet takes the list's place at 1280 → each sheet from a fresh page
+      for (const sheet of sheets) {
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        await waitForDoneBands(page);
+        await page.locator(sheet.row).click();
+        await page.locator(".queue-sheet-title", { hasText: sheet.title }).waitFor();
+        const lines = await page.locator(".queue-sheet .queue-relay-to").evaluateAll((tos) => tos.map((to) => {
+          const lineHeight = Number.parseFloat(getComputedStyle(to).lineHeight);
+          const place = to.querySelector<HTMLElement>(".queue-relay-place");
+          // the line's last part: the recipient's state and its outcome, or a refused end's id
+          const end = to.lastElementChild as HTMLElement;
+          return {
+            isOneLine: to.getBoundingClientRect().height <= lineHeight + 0.5,
+            isEndWhole: end.scrollWidth <= end.getBoundingClientRect().width + 0.5 && end.getBoundingClientRect().right <= to.getBoundingClientRect().right + 0.5,
+            isPlaceTitled: place === null || place.scrollWidth <= place.clientWidth + 0.5 || place.title === place.textContent,
+          };
+        }));
+        await page.close();
+        found.push({ width: viewport.width, title: sheet.title, lines });
+      }
+    }
+
+    const counts = new Map([["to 3 sessions", 3], ["to 2 sessions", 2], ["Refused relay from", 1]]);
+    assert.deepEqual(found, [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW].flatMap(({ width }) => sheets.map(({ title }) => ({
+      width, title, lines: Array.from({ length: counts.get(title)! }, () => ({ isOneLine: true, isEndWhole: true, isPlaceTitled: true })),
+    }))));
+  });
+
+  // layout §6 → Order: In delivery reads newest first by its age key, a relay's send, the redacted relay from the relay read among them
+  test("In delivery runs newest first by each row's age, the redacted relay from the relay read in its time's place", async () => {
+    harness.fixture = getRelayListFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await waitForDoneBands(page);
+    const rows = await page.locator('.queue-listbox [role="group"]', { has: page.locator(".queue-band", { hasText: "In delivery" }) })
+      .evaluate((band) => [...band.querySelectorAll(".queue-row")].map((row) => ({
+        at: row.querySelector(".queue-row-age")?.getAttribute("title") ?? "",
+        isRedacted: row.querySelector(".queue-row-title")?.textContent?.includes("Text redacted") === true,
+      })));
+    await page.close();
+
+    const ats = rows.map((row) => row.at);
+    assert.deepEqual(ats, [...ats].sort().reverse());
+    assert.deepEqual([rows.length > 2, rows.filter((row) => row.isRedacted).length], [true, 1]);
+  });
+
+  // layout §1 → Reads and Show more: Show more keeps one place at the list's end, a refusal cut's one short line after it
+  test("Show more keeps its place and one line at the list's end beside a refusal cut's one short line, at 1280, 1440 and 1568", async () => {
+    const found = [];
+    for (const isRefusalListCut of [false, true]) {
+      harness.fixture = getRelayListFixture(isRefusalListCut);
+      for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        await waitForDoneBands(page);
+        const end = await page.locator(".queue-list-end").evaluate((line) => {
+          const button = line.querySelector("button") as HTMLElement;
+          return {
+            text: line.textContent,
+            height: Math.round(line.getBoundingClientRect().height),
+            inset: Math.round(button.getBoundingClientRect().left - line.getBoundingClientRect().left),
+            buttonHeight: Math.round(button.getBoundingClientRect().height),
+          };
+        });
+        await page.close();
+        found.push({ width: viewport.width, ...end });
+      }
+    }
+
+    const widths = [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW].map(({ width }) => width);
+    assert.deepEqual(found, ["Show more", "Show more⚠ Refusals before Nov 13 12:00 not listed."].flatMap((text) => widths.map((width) => ({ width, text, height: 44, inset: 16, buttonHeight: 32 }))));
+  });
+
+  test("Redact text in a relay sheet's foot asks over the sheet, centred on its column, with the focus on Cancel; one copy refused keeps the dialog with its count line and the sheet its text and button", async () => {
     harness.fixture = getRelayRecordFixture();
     harness.refusals.clear();
     refuseOneRedaction(harness);
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
     await askRedaction(page);
-    const focused = await page.evaluate(() => document.activeElement?.textContent);
+    // the designer's read: the dialog is the sheet's own act → centred on the sheet's column, not on the viewport
+    const asked = await page.evaluate(() => {
+      const getCentre = (selector: string) => {
+        const box = document.querySelector(selector)!.getBoundingClientRect();
+        return Math.round(box.left + box.width / 2);
+      };
+      return { focused: document.activeElement?.textContent, offCentre: getCentre('[role="dialog"]') - getCentre(".queue-sheet") };
+    });
     await confirmRedaction(page);
     await page.getByText(PARTLY_REDACTED_LINE).waitFor();
     const sheet = page.locator(".queue-sheet");
@@ -1508,7 +1598,7 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
     harness.refusals.clear();
 
-    assert.deepEqual({ focused, kept }, { focused: "Cancel", kept: { button: 1, text: true } });
+    assert.deepEqual({ ...asked, kept }, { focused: "Cancel", offCentre: 0, kept: { button: 1, text: true } });
   });
 
   test("a redaction done closes the dialog, puts the redaction line in the text's place and Text redacted on the foot, the focus on the sheet's title, and the row's title reads Text redacted", async () => {

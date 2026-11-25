@@ -665,6 +665,8 @@ export function getNotListeningFixture(): QueueFixture {
 export interface RelayThreadFixture {
   items: OwnerItemView[];
   refusals: RelayRefusalView[];
+  /** the server's page cut its refusals at their bound (owner-views.ts → getRefusalPage) */
+  isRefusalListCut?: boolean;
 }
 
 interface RelaySend {
@@ -807,6 +809,15 @@ export function getHiddenSessionsFixture(rest: QueueFixture = getRestFixture()):
  */
 export function getDoneRelaysFixture(): QueueFixture {
   return { ...getDoneFixture(), relays: getRelayThreadFixture() };
+}
+
+/**
+ * Every relay state in one list: the two relays on their way under In delivery beside the redacted one from the relay read,
+ * the relay thread's Done sends and refusal among the many done items, so Show more stands at the list's end.
+ * @param isRefusalListCut - the relay read answers that its refusals were cut → the cut line at the list's end
+ */
+export function getRelayListFixture(isRefusalListCut = false): QueueFixture {
+  return { ...getRelayRowFixture(), done: getManyDoneFixture().done, relays: { ...getRelayThreadFixture(), isRefusalListCut } };
 }
 
 /** The rest state with the relay thread fixture's sends and refusal in the relay read. */
