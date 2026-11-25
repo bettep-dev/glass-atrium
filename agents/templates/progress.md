@@ -21,5 +21,6 @@ last_updated: {timestamp}
 
 ## Context Snapshot
 - Start time: {timestamp}
+- Stamps: copy each from `date '+%Y-%m-%dT%H:%M'`, never hand-write one; `~/.glass-atrium/scripts/progress-tracker.sh progress_update <slug>` refreshes `last_updated`
 - Related files: (list)
 - Key decisions: (record)
