@@ -779,8 +779,6 @@ function QueueFreshnessQ({ list, failedChecks = 0 }) {
 function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const [list, setList] = useStateQ(EMPTY_LIST_Q);
 	const [resumes, readResumes] = useRecentResumesQ();
-	const [relaySignal, readRelaySignal] = useRelaySignalQ();
-	const relayHistory = useRelayHistoryQ();
 	const [drafts, setDrafts] = useStoredStateQ(DRAFT_STORE_Q.ITEMS, {}, getKeptDraftsQ);
 	const [filter, setFilter] = useFilterQ();
 	const [status, setStatus] = useStateQ("");
@@ -795,10 +793,9 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const reload = useCallbackQ(() => {
 		readList({ isFresh: true });
 		readResumes();
-		readRelaySignal();
 		sessions.read();
 		onReadQueueCount?.();
-	}, [readList, readResumes, readRelaySignal, sessions.read, onReadQueueCount]);
+	}, [readList, readResumes, sessions.read, onReadQueueCount]);
 	const loadMore = useCallbackQ(() => getMoreQ({ list, setList }), [list]);
 	useEffectQ(() => { reload(); }, [reload]);
 	// an act that ends an item → the done part reads with the list, so the item moves to Done Today at that read (spec §4.6)
@@ -815,7 +812,7 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const selectRow = useCallbackQ((id) => { openItem(id); setSeen(id); }, [openItem, setSeen]);
 	const openOrderRow = useOrderRowQ({ list, setCurrentId, sessions, orders });
 	return {
-		list, done, relays, resumes, readResumes, relaySignal, relayHistory, sessions, orders, drafts, setDraft, setImages, filter, setFilter, reload, rereadLists, loadMore, groups, sheet, steps,
+		list, done, relays, resumes, readResumes, sessions, orders, drafts, setDraft, setImages, filter, setFilter, reload, rereadLists, loadMore, groups, sheet, steps,
 		selectedId: currentId, selectRow, setSeen, back: closeSheet, openOrderRow, status, keys, ...actions, ...ticks,
 	};
 }
@@ -1371,13 +1368,6 @@ function getResumesQ({ setResumes }) {
 	return getRegionReadQ(setResumes, "/resumes", (data) => (Array.isArray(data?.resumes) ? data.resumes : null));
 }
 
-// the relay signal in its own region → a failed read leaves the list and the foot's other button in place
-function useRelaySignalQ() {
-	const [signal, setSignal] = useStateQ(window.UI.INITIAL_REGION_STATE);
-	const readRelaySignal = useCallbackQ(() => getRegionReadQ(setSignal, "/relays/signal", (data) => (typeof data?.hasRecord === "boolean" ? data : null)), []);
-	return [signal, readRelaySignal];
-}
-
 /**
  * One owner read into a region: the request stamp, then the picked data or the failure.
  * @param getData - the region's data from the answer body; null → the answer is a failure
@@ -1390,14 +1380,6 @@ async function getRegionReadQ(setRegion, path, getData) {
 	const data = isOkAnswerQ(answer) ? getData(answer.data) : null;
 	if (data !== null) return setRegion((state) => putRegionData(state, request, data));
 	setRegion((state) => putRegionFailure(state, request, answer.status === 0 ? answer.error : new Error(getAnswerDetailQ(answer))));
-}
-
-/** The relay record (spec §9.9): read on each opening of its drawer, never on the tick; Show earlier pages back by cursor. */
-function useRelayHistoryQ() {
-	const [thread, setThread] = useStateQ(EMPTY_THREAD_Q);
-	const read = useCallbackQ(() => getThreadQ({ ids: [], before: null, setThread, kind: "relay" }), []);
-	const showEarlier = useCallbackQ(() => getThreadQ({ ids: [], before: thread.nextCursor, setThread, kind: "relay" }), [thread.nextCursor]);
-	return { thread, read, showEarlier };
 }
 
 function useFilterQ() {
@@ -2430,7 +2412,7 @@ function getTextFormQ(item, { isOwnText = false, isInDelivery = false } = {}) {
 function ItemProseQ({ item, text = item.body, isCompact = false, isOwnText = false, isInDelivery = false }) {
 	const { ProseText } = window.UI;
 	const form = getTextFormQ(item, { isOwnText, isInDelivery });
-	if (form === "asSent") return <p dir="auto" className={`prose-text prose-text--as-sent${isCompact ? " prose-text--compact" : ""}`}>{text}</p>;
+	if (form === "asSent") return <p dir="auto" className="prose-text prose-text--as-sent">{text}</p>;
 	return <ProseText text={text} linkedDocIds={isOwnText ? [] : item.linkedDocIds} isCompact={isCompact} canFoldCode={form === "folded"} />;
 }
 
@@ -3175,7 +3157,7 @@ function getAimedEntryIdQ(entries, copyId) {
 	return entries.find((entry) => entry.copies.some((copy) => copy.id === copyId))?.id ?? null;
 }
 
-// an order's day is its send; a relay's its askedAt (getRelayAtQ); a day before yesterday labelled by getOlderLabel
+// an order's day is its send; a day before yesterday labelled by getOlderLabel
 function getDayGroupsQ(entries, now = new Date(), getAt = (entry) => entry.item.answeredAt, getOlderLabel = (day) => day) {
 	const groups = [];
 	for (const entry of entries) {
@@ -3209,7 +3191,7 @@ function OrderEntryQ({ entry, busy, onResend, onOpenImage }) {
 				{item.kind === "report" && <span className="queue-order-re">{`Re: ${item.title}`}</span>}
 				<time dateTime={item.answeredAt}>{formatKstTime(item.answeredAt)}</time>
 			</p>
-			<OrderBubbleQ item={item} text={getOrderTextQ(item)} isOwnText images={item.attachments ?? []} onOpenImage={onOpenImage} />
+			<OrderBubbleQ item={item} text={getOrderTextQ(item)} images={item.attachments ?? []} onOpenImage={onOpenImage} />
 			<RecipientsQ copies={copies} busy={busy} onResend={onResend} />
 		</article>
 	);
@@ -3217,19 +3199,16 @@ function OrderEntryQ({ entry, busy, onResend, onOpenImage }) {
 
 /**
  * More than 12 written lines → clamped under `Show all N lines`; a long line that only wraps is not counted; the images stay in view under the clamp.
- * A text as sent (Relay history's, a record read as evidence) has no fill: the filled bubble is the owner's own word.
- * @param isOwnText - the owner's order or reply, never a relay's text
  */
-function OrderBubbleQ({ item, text = item.body, isOwnText = false, images = [], onOpenImage }) {
+function OrderBubbleQ({ item, text = item.body, images = [], onOpenImage }) {
 	const { DisclosureChevron } = window.UI;
 	const [isFull, setFull] = useStateQ(false);
 	const count = text.split("\n").length;
 	const isLong = count > ORDERS_Q.CLAMP_LINES;
-	const isPlain = getTextFormQ(item, { isOwnText }) === "asSent";
 	return (
 		<>
-			<div className={`queue-bubble${isPlain ? " is-plain" : ""}${isLong && !isFull ? " is-clamped" : ""}`} style={{ "--queue-clamp-lines": ORDERS_Q.CLAMP_LINES }}>
-				<ItemProseQ item={item} text={text} isOwnText={isOwnText} isCompact />
+			<div className={`queue-bubble${isLong && !isFull ? " is-clamped" : ""}`} style={{ "--queue-clamp-lines": ORDERS_Q.CLAMP_LINES }}>
+				<ItemProseQ item={item} text={text} isOwnText isCompact />
 				{images.length > 0 && <ImageRowQ images={images} onOpenImage={onOpenImage} />}
 			</div>
 			{isLong && (
@@ -3681,7 +3660,6 @@ function RailFootQ({ queue }) {
 	const hasMore = sessions.region.data?.hasMore === true;
 	return (
 		<>
-			<RelayHistoryQ signal={queue.relaySignal} history={queue.relayHistory} />
 			<RecentResumesQ region={queue.resumes} onRead={queue.readResumes} />
 			{hasMore && <span className="fs-meta text-dim">{`Showing the ${sessions.region.data.sessions.length} most recent`}</span>}
 		</>
@@ -3725,54 +3703,9 @@ function RecentResumeListQ({ resumes }) {
 	);
 }
 
-const RELAY_HEAD_ID_PREFIX_Q = "queue-relay-head-";
 const RELAY_REDACTED_Q = "Text redacted";
 // the queue's honest backing (plan 44099), said on every relay sheet, where a relay is read as evidence
 const RELAY_NO_LOGIN_Q = "No login: any local process can send as any session, or redact.";
-
-// spec §9.9 → the drawer's foot: what a person tracing a cause must hold about every entry, said once
-const RELAY_LOG_FOOT_Q = "Names are self-declared, and the queue has no login. Any local process can send as any session, or redact. Read this as evidence, not proof.";
-
-/**
- * `Relay history` in the rail foot (spec §9.9): drawn while the record holds any relay or refusal; each opening reads it again.
- * @param signal - the relay signal region (getRelaySignalQ's read)
- */
-function RelayHistoryQ({ signal, history }) {
-	const { DetailSurface, TONE_GLYPH } = window.UI;
-	const [isOpen, setOpen] = useStateQ(false);
-	const redaction = useRelayRedactionQ(history.read, (target) => `${RELAY_HEAD_ID_PREFIX_Q}${target.id}`);
-	if (signal.data?.hasRecord !== true) return null;
-	const counts = getRelaySignalCountsQ(signal.data.count);
-	const sub = counts.length > 0 ? <><span className="text-warn">{TONE_GLYPH.warn}</span>{` Last 24 hours: ${counts.join(" · ")}`}</> : undefined;
-	return (
-		<>
-			<RelayHistoryButtonQ counts={counts} onPress={() => { setOpen(true); history.read(); }} />
-			<DetailSurface open={isOpen} onClose={() => setOpen(false)} title="Relay history" sub={sub} footer={<p className="fs-meta text-dim">{RELAY_LOG_FOOT_Q}</p>}>
-				<p role="status" className="fs-meta">{redaction.status}</p>
-				<RelayLogQ history={history} onRedact={redaction.ask} />
-			</DetailSurface>
-			{redaction.target !== null && <RedactConfirmQ redaction={redaction} />}
-		</>
-	);
-}
-
-// the signal (spec §9.9): `⚠` before the label while something happened in the last 24 hours → the name carries the words, never colour alone
-function RelayHistoryButtonQ({ counts, onPress }) {
-	const label = counts.length > 0 ? `Relay history — ${counts.join(", ")} in the last 24 hours` : undefined;
-	return (
-		<button type="button" className="btn ghost sm" aria-label={label} title={label} onClick={onPress}>
-			{label && <span className="text-warn">{window.UI.TONE_GLYPH.warn}</span>}
-			Relay history
-		</button>
-	);
-}
-
-// `1 refused`, `1 passed on`, `1 redacted` in this order, a count at zero left out
-function getRelaySignalCountsQ(count) {
-	return RELAY_SIGNAL_WORDS_Q.filter(([key]) => count?.[key] > 0).map(([key, word]) => `${count[key]} ${word}`);
-}
-
-const RELAY_SIGNAL_WORDS_Q = [["refused", "refused"], ["forwarded", "passed on"], ["redacted", "redacted"]];
 
 /**
  * The one act on a relay (spec §9.9): asked on its sheet, confirmed in a dialog, sent per copy; partly done keeps the dialog open.
@@ -3781,14 +3714,14 @@ const RELAY_SIGNAL_WORDS_Q = [["refused", "refused"], ["forwarded", "passed on"]
  */
 function useRelayRedactionQ(onDone, getFocusId) {
 	const [target, setTarget] = useStateQ(null);
-	const [state, setState] = useStateQ({ isBusy: false, error: null, status: "", isRedacted: false });
+	const [state, setState] = useStateQ({ isBusy: false, error: null, isRedacted: false });
 	const ask = useCallbackQ((entry) => { setTarget(entry); setState((prev) => ({ ...prev, error: null })); }, []);
 	const cancel = useCallbackQ(() => setTarget(null), []);
 	const confirm = useCallbackQ(async () => {
 		setState((prev) => ({ ...prev, isBusy: true, error: null }));
 		const { error } = getRedactionOutcomeQ(await putRelayRedactionQ(target.copies));
 		const isRedacted = error === null;
-		setState({ isBusy: false, error, status: isRedacted ? `✓ Text redacted: ${getRelayPairQ(target)}, ${window.UI.formatKstTime(getRelayAtQ(target))}` : "", isRedacted });
+		setState({ isBusy: false, error, isRedacted });
 		if (isRedacted) setTarget(null);
 		await onDone();
 		// after the re-read → the dialog's own focus return has run
@@ -3810,11 +3743,6 @@ function getRedactionOutcomeQ(answers) {
 	if (failed.length === 0) return { error: null };
 	if (failed.length < answers.length) return { error: `${failed.length} of ${answers.length} copies ${failed.length === 1 ? "was" : "were"} not redacted. Redact text again.` };
 	return { error: getOutageStepQ(failed[0]) ?? `Refused: ${getAnswerDetailQ(failed[0])}.` };
-}
-
-// `aidl → yoaida and sixmon`
-function getRelayPairQ(entry) {
-	return `${getSenderNameQ(entry.item.relay.sender)} → ${getNameListQ(entry.copies.map((copy) => copy.session.name))}`;
 }
 
 /** The confirmation over the sheet: no outside close, focus on Cancel, the commit last; the error slot holds its line. */
@@ -3839,40 +3767,6 @@ function RedactConfirmQ({ redaction }) {
 			</p>
 		</DetailSurface>
 	);
-}
-
-/** The record in the Orders thread's form: oldest at the top, day labels, one entry per send; not scoped by the ticks. */
-function RelayLogQ({ history, onRedact }) {
-	const { LoadingPlaceholder, RegionUnavailable } = window.UI;
-	const { thread } = history;
-	const entries = getRelayLogEntriesQ(thread);
-	const names = getRelayNamesQ(thread.items);
-	if (thread.status === "error") return <RegionUnavailable source="relay history" error={thread.error?.detail ?? thread.error} onRetry={history.read} />;
-	if (thread.status === "loading" && entries.length === 0) return <LoadingPlaceholder label="relay history" />;
-	return (
-		<div className="queue-relay-log" tabIndex={0}>
-			{thread.nextCursor !== null && <ShowEarlierQ isBusy={thread.status === "loading"} onShow={history.showEarlier} busyLabel="Loading earlier…" />}
-			{getDayGroupsQ(entries, new Date(), (entry) => entry.at).map((group) => (
-				<div key={group.day} className="queue-day-group">
-					<p className="queue-day">{group.label}</p>
-					<ul className="queue-relay-list">
-						{group.entries.map((entry) => <li key={entry.id}>{entry.refusal ? <RefusedRelayQ refusal={entry.refusal} names={names} /> : <RelayEntryQ entry={entry} onRedact={onRedact} />}</li>)}
-					</ul>
-				</div>
-			))}
-		</div>
-	);
-}
-
-function getRelayAtQ(entry) {
-	return entry.item.askedAt;
-}
-
-// the sends folded oldest first, the refusals set between them by time
-function getRelayLogEntriesQ(thread) {
-	const sends = getThreadEntriesQ(thread.items).map((entry) => ({ ...entry, at: getRelayAtQ(entry) }));
-	const refusals = (thread.refusals ?? []).map((refusal, index) => ({ id: `refusal-${index}-${refusal.at}`, at: refusal.at, refusal }));
-	return [...sends, ...refusals].sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
 }
 
 // a refusal record holds id prefixes only → the names the loaded relays carry for them; an unknown prefix stays a bare id
@@ -3905,43 +3799,6 @@ function getRelayRefusalLineQ(reason, names) {
 	const known = Object.hasOwn(RELAY_REFUSAL_Q, reason) ? RELAY_REFUSAL_Q[reason] : null;
 	if (known === null) return { name: "Refused", sentence: "The queue gave the reason", code: reason };
 	return { name: known[0], sentence: known[1](names) };
-}
-
-/** A relay the queue refused: the head, one reason line, one row per resolved recipient; the queue stored no text. */
-function RefusedRelayQ({ refusal, names }) {
-	const { MachineString, formatKstDate, formatKstTime } = window.UI;
-	const sender = names.get(refusal.senderIdPrefix) ?? refusal.senderIdPrefix;
-	const recipients = refusal.recipientIdPrefixes.map((prefix) => ({ prefix, name: names.get(prefix) ?? null }));
-	const line = getRelayRefusalLineQ(refusal.reason, { sender, recipient: recipients[0]?.name ?? recipients[0]?.prefix ?? "" });
-	const unresolved = refusal.unresolvedCount ?? 0;
-	const to = getNameListQ([...recipients.map((recipient) => recipient.name ?? recipient.prefix), ...(unresolved > 0 ? [getUnresolvedTextQ(unresolved)] : [])]);
-	return (
-		<article tabIndex={-1} className="queue-relay" aria-label={`Refused relay from ${sender} to ${to}, ${formatKstDate(refusal.at)} ${formatKstTime(refusal.at)}`}>
-			<p className="queue-relay-head">
-				<time dateTime={refusal.at} title={getDatedTimeQ(refusal.at)}>{formatKstTime(refusal.at)}</time>
-				{names.has(refusal.senderIdPrefix) && <span className="queue-relay-name">{sender}</span>}
-				<MachineString>{refusal.senderIdPrefix}</MachineString>
-				<span className="queue-relay-slot" title="The queue refused this relay. Its text was not stored.">
-					<span aria-hidden="true" className="text-crit">✕</span>
-					<span className="font-medium">{" Refused"}</span>
-				</span>
-			</p>
-			<p className="fs-meta">
-				<span className="queue-relay-name">{line.name}</span>
-				<span className="text-dim">{` — ${line.sentence}`}{line.code !== undefined && <>{" "}<MachineString>{line.code}</MachineString>{"."}</>}</span>
-			</p>
-			<ul className="queue-relay-copies" aria-label="Recipients">
-				{recipients.map((recipient) => (
-					<li key={recipient.prefix} className="queue-relay-copy">
-						<span aria-hidden="true" className="text-dim">→</span>
-						{recipient.name !== null && <span className="queue-relay-name">{recipient.name}</span>}
-						<MachineString>{recipient.prefix}</MachineString>
-					</li>
-				))}
-				{unresolved > 0 && <li className="queue-relay-copy"><span aria-hidden="true" className="text-dim">→</span>{getUnresolvedTextQ(unresolved)}</li>}
-			</ul>
-		</article>
-	);
 }
 
 /**
@@ -4009,40 +3866,6 @@ function getUnresolvedTextQ(count) {
 	return `${count} ${count === 1 ? "recipient" : "recipients"} that matched no session`;
 }
 
-/** One send: the head, the text, the documents, a row per copy, the hop line at hop 1 or 2. */
-function RelayEntryQ({ entry, onRedact }) {
-	const { Badge, MachineString, formatKstTime } = window.UI;
-	const { item, copies } = entry;
-	const { sender } = item.relay;
-	// redacted only once every copy is → until then the text and the button stay (route-rows verdict, per-copy route)
-	const kept = copies.find((copy) => copy.relay.redaction === null);
-	const at = getRelayAtQ(entry);
-	const names = getNameListQ(copies.map((copy) => copy.session.name));
-	const headId = `${RELAY_HEAD_ID_PREFIX_Q}${entry.id}`;
-	const place = getSessionPlaceQ(sender);
-	return (
-		<article tabIndex={-1} className="queue-relay" aria-label={`Relay from ${getSenderNameQ(sender)} to ${names}, sent ${window.UI.formatKstDate(at)} ${formatKstTime(at)}`}>
-			<p id={headId} tabIndex={-1} className="queue-relay-head" title={place} aria-describedby={`${headId}-place`}>
-				<time dateTime={at} title={`Sent ${getDatedTimeQ(at)}`}>{formatKstTime(at)}</time>
-				<span className="queue-relay-name">{getSenderNameQ(sender)}</span>
-				<MachineString>{sender.sessionIdPrefix}</MachineString>
-				<span className="queue-relay-slot">
-					{kept === undefined
-						? <Badge fill="tag">Redacted</Badge>
-						: <button type="button" className="btn ghost sm" onClick={() => onRedact?.(entry)}>Redact text</button>}
-				</span>
-			</p>
-			{kept === undefined
-				? <p className="fs-meta text-dim">{getRedactionLineQ(item.relay.redaction)}</p>
-				: <OrderBubbleQ item={kept} />}
-			<DocumentsLineQ item={item} />
-			<ul className="queue-relay-copies" aria-label="Recipients">{copies.map((copy) => <RelayCopyQ key={copy.id} copy={copy} at={at} />)}</ul>
-			<RelayHopLineQ relay={item.relay} at={at} />
-			<span id={`${headId}-place`} hidden>{place}</span>
-		</article>
-	);
-}
-
 // only a relay passed on (hop 1 or 2), in spec §12.7's words: `Hop 1 · sent after aidl (self-named) received relay #398 from atrium (self-named) at 17:02`
 function RelayHopLineQ({ relay, at }) {
 	const { MachineString } = window.UI;
@@ -4071,21 +3894,6 @@ function getSenderLabelQ(sender) {
 // account + start-directory tail → tells two same-named sessions apart
 function getSessionPlaceQ(session) {
 	return `${session.profileLabel} · ${session.cwdTail}`;
-}
-
-/** One copy: `→`, the recipient, its id, the relay id, its outcome (a glyph and a word, or the tag badge). */
-function RelayCopyQ({ copy, at }) {
-	const { Badge, MachineString } = window.UI;
-	const outcome = getRelayOutcomeQ(copy);
-	return (
-		<li className="queue-relay-copy" aria-label={`${copy.session.name}: ${outcome ? `${outcome.word.toLowerCase()}, ${getEntryTimeQ(outcome.at, at)}` : "not yet"}`}>
-			<span aria-hidden="true" className="text-dim">→</span>
-			<span className="queue-relay-name">{copy.session.name}</span>
-			<MachineString>{copy.session.sessionIdPrefix}</MachineString>
-			<MachineString>{`#${copy.id}`}</MachineString>
-			{outcome === null ? <Badge fill="tag">{RECEIPT_Q.notYet}</Badge> : <RelayOutcomeQ copy={copy} at={at} />}
-		</li>
-	);
 }
 
 // an ended copy → `✓ Received 14:52` · `⚠ Lapsed Nov 16 17:21`: the glyph is the word's picture, so hidden
