@@ -30,6 +30,12 @@ Corpus-maintenance companion to `scoped/shared-testing.md`: its readers, backing
 | **Qualifier on the last row (the deliberate-break exception)** | every agent — the `feature` bar's exception | `core-outcome-record.md` → the `feature` note |
 | **Incremental commits** | every agent — the commit rule's which-tests-when half; index owners reach it through **Who commits** | `core-git-workflow.md` → `## Commits` |
 | `## 3-Tier Test Hierarchy` · **Incremental commits** | glass-atrium-dev-shell — which tests each commit needs | `agents/glass-atrium-dev-shell.md` → `### Bats + test-run discipline` |
+| **Verification scope** | every agent — the scope of the `feature` and `refactor` bars | `core-outcome-record.md` → the `feature` · `refactor` verification-scope note |
+| **Verification scope** | every agent — job and final gate behind the commit rule | `core-git-workflow.md` → `## Commits` |
+| **Verification scope** | any agent running `/verify` — the `changed` scope's affected set | `skills/glass-atrium-ops-verify-gate/SKILL.md` → `### Scope argument` |
+| **Verification scope** | glass-atrium-dev-node — the tests a spawn's end needs | `agents/glass-atrium-dev-node.md` → **Local test pass** |
+| **Verification scope** | glass-atrium-dev-react — the post-refactor test set | `agents/glass-atrium-dev-react.md` → **Post-refactor gate** |
+| **Verification scope** | the orchestrator, filling a DEV brief's `[VERIFY]` line | `skills/glass-atrium-ops-delegation-contracts/references/delegation-prompt.md` → `## Verification-scope line` |
 | `## Mechanical Success Metrics` | every agent — the `grader_verdict` presence-signal line | `core-outcome-record.md` → Automatic Verification Criteria |
 | **Depth follows risk** | every DEV agent sizing its tests | `scoped/scope-dev.md` → **YAGNI applies to tests too** |
 | **Depth follows risk** | the DEV body that carries a local test-size line | `agents/glass-atrium-dev-nestjs.md` → **Tests** |
