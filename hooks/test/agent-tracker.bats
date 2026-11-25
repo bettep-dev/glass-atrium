@@ -100,6 +100,65 @@ setup() {
     skip "${EPH_SKIP}"
   fi
   export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR:?}/pg-connect.log"
+  STARTED_PIDS=()
+}
+
+teardown() {
+  local pid
+  for pid in "${STARTED_PIDS[@]:-}"; do
+    [[ -n "${pid}" ]] && kill -KILL "${pid}" 2>/dev/null
+  done
+  true
+}
+
+# Scratch repo with one linked worktree, both under the test tmpdir; sets REPO and WT (canonical
+# spelling, the one lsof reports) and sandboxes the writer-lock store the hook reads.
+_make_worktree() {
+  local tmp
+  tmp="$(cd -P -- "${BATS_TEST_TMPDIR}" && pwd -P)"
+  REPO="${tmp}/repo"
+  WT="${tmp}/wt"
+  export WORKTREE_LOCK_DIR="${tmp}/locks"
+  git init -q -b main "${REPO}"
+  git -C "${REPO}" -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m init
+  git -C "${REPO}" worktree add -q -b feat "${WT}"
+  mkdir -p "${WT}/sub"
+}
+
+# The writer lock on worktree root $1 for holder $2, taken by the PreToolUse arm's own acquire.
+_hold_lock() {
+  (
+    # shellcheck source=/dev/null
+    source "${BATS_TEST_DIRNAME}/../lib/worktree-lock.sh"
+    worktree_lock_dir_for "${1}"
+    worktree_lock_acquire "${worktree_lock_dir_out}" "${2}"
+    [[ "${worktree_lock_state}" == "acquired" ]]
+  )
+}
+
+# Starts `sleep` with its cwd at $1; returns once lsof sees that cwd.
+_start_inside() {
+  local dir="${1}" pid tries=0
+  (cd -- "${dir}" && exec sleep 300) </dev/null >/dev/null 2>&1 3>&- &
+  pid=$!
+  STARTED_PIDS+=("${pid}")
+  until [[ "$(lsof -a -p "${pid}" -d cwd -Fn 2>/dev/null)" == *"n${dir}"* ]]; do
+    tries=$((tries + 1))
+    ((tries < 50)) || { echo "process ${pid} never reached ${dir}"; return 1; }
+    sleep 0.1
+  done
+  INSIDE_PID="${pid}"
+}
+
+# Fires SubagentStop for $1 and prints the hook's stderr only.
+_stop_agent_stderr() {
+  local stdin_json
+  stdin_json="$(printf '{"hook_event_name":"SubagentStop","agent_id":"%s","agent_type":"%s"}' \
+    "${1}" "${EPH_ATYPE}")"
+  # shellcheck disable=SC2016  # $1/$2 expand in the child shell
+  env PATH="${EPH_SHIMDIR}:${PATH}" HOME="${EPH_HOME}" GA_DATA_ROOT="${EPH_HOME}/.glass-atrium" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
+    PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" \
+    bash -c 'printf "%s" "$1" | "$2" 2>&1 >/dev/null' _ "${stdin_json}" "${EPH_HOOK_SH}"
 }
 
 # Query the EPHEMERAL cluster (explicit -h/-p override any ambient env).
@@ -265,4 +324,58 @@ EOF
     echo "isolation check status ${status}, want 1 for a fire the recorder never saw: ${output}"
     return 1
   }
+}
+
+@test "SubagentStop lists a process still running in the stopped agent's worktree and stops nothing" {
+  _make_worktree || return 1
+  _hold_lock "${WT}" "${EPH_AID}" || return 1
+  _start_inside "${WT}/sub" || return 1
+
+  run _stop_agent_stderr "${EPH_AID}"
+
+  [[ "${status}" -eq 0 ]] || { echo "status ${status}: ${output}"; return 1; }
+  [[ "${output}" == *"ORPHAN-ADV-001"* ]] || { echo "no orphan advisory: ${output}"; return 1; }
+  [[ "${output}" == *"pid=${INSIDE_PID} cmd=sleep cwd=${WT}/sub"* ]] || { echo "process line missing: ${output}"; return 1; }
+  [[ "${output}" == *"prune-worktrees.sh ${WT}"* ]] || { echo "close-out pointer missing: ${output}"; return 1; }
+  kill -0 "${INSIDE_PID}" || { echo "the listing stopped the process"; return 1; }
+  [[ -d "${WT}/sub" ]] || { echo "the listing removed the worktree"; return 1; }
+}
+
+@test "the orphan listing shows at most ten processes and counts the rest" {
+  _make_worktree || return 1
+  _hold_lock "${WT}" "${EPH_AID}" || return 1
+  local lines
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    _start_inside "${WT}" || return 1
+  done
+
+  run _stop_agent_stderr "${EPH_AID}"
+
+  lines="$(grep -c '^  pid=' <<<"${output}" || true)"
+  [[ "${lines}" -eq 10 ]] || { echo "${lines} process lines, want 10: ${output}"; return 1; }
+  [[ "${output}" == *"and 2 more"* ]] || { echo "the remainder is not counted: ${output}"; return 1; }
+}
+
+@test "SubagentStop lists nothing when the stopped agent holds no linked-worktree lock" {
+  _make_worktree || return 1
+  _start_inside "${WT}" || return 1
+  _start_inside "${REPO}" || return 1
+  local row rows=(
+    "lock held by another agent|${WT}|other-agent"
+    "lock on the main checkout|${REPO}|${EPH_AID}"
+    "no lock at all||"
+  )
+  for row in "${rows[@]}"; do
+    local name root holder
+    IFS='|' read -r name root holder <<<"${row}"
+    rm -rf -- "${WORKTREE_LOCK_DIR:?}"
+    if [[ -n "${root}" ]]; then
+      _hold_lock "${root}" "${holder}" || { echo "${name}: lock not taken"; return 1; }
+    fi
+
+    run _stop_agent_stderr "${EPH_AID}"
+
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status}: ${output}"; return 1; }
+    [[ "${output}" != *"ORPHAN-ADV-001"* ]] || { echo "${name}: listed: ${output}"; return 1; }
+  done
 }

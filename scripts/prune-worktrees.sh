@@ -25,7 +25,8 @@
 # git refuse, it goes with the directory. A git refusal is reported and final. No branch is deleted.
 #
 # Scope boundary: --list-all refuses --apply, since the exception covers only this session's own
-# worktrees and only the caller can name those. Orphans are found by cwd (lsof -d cwd), not by
+# worktrees and only the caller can name those. Orphans are found by cwd (hooks/lib/worktree-lock.sh →
+# worktree_get_processes, the same listing agent-tracker.sh's SubagentStop advisory reads), not by
 # lib/ga-daemons.sh → clear_unmanaged_pg_orphan's socket / :5432 lookup, which finds the install's
 # server: a scratch cluster's postmaster runs with its cwd in its data dir, so the cwd test finds one
 # inside the worktree, and it gets TERM (postgres smart shutdown) like any other process here.
@@ -235,33 +236,6 @@ get_live_lock_holder() {
   return 1
 }
 
-# Sets INSIDE: one "pid<SEP>cwd" entry per process whose cwd is the worktree or below it.
-# rc 1 = the cwd listing is unavailable, so no verdict on processes is possible.
-get_inside_processes() {
-  local wt="${1}" listing="" line pid=""
-  INSIDE=()
-  command -v lsof >/dev/null 2>&1 || return 1
-  # lsof exits 1 when some process cannot be read; a non-empty listing is still usable.
-  listing="$(lsof -d cwd -Fpn 2>/dev/null)" || [[ -n "${listing}" ]] || return 1
-  while IFS= read -r line; do
-    case "${line}" in
-      p*) pid="${line#p}" ;;
-      n*)
-        if [[ "${line#n}" == "${wt}" || "${line#n}" == "${wt}/"* ]]; then
-          INSIDE+=("${pid}${SEP}${line#n}")
-        fi
-        ;;
-      *) ;;
-    esac
-  done <<<"${listing}"
-}
-
-get_command() {
-  local cmd
-  cmd="$(ps -o comm= -p "${1}" 2>/dev/null)" || cmd='(gone)'
-  printf '%s\n' "${cmd:-(gone)}"
-}
-
 # A zombie still answers kill -0 until its parent reaps it, yet it runs nothing.
 is_running() {
   local stat
@@ -275,14 +249,13 @@ stop_processes_inside() {
   local wt="${1}" entry pid
   SIGNALLED=()
   # shellcheck disable=SC2310  # no listing → nothing to stop; the processes part then fails
-  get_inside_processes "${wt}" || return 0
-  for entry in "${INSIDE[@]+"${INSIDE[@]}"}"; do
+  worktree_get_processes "${wt}" || return 0
+  for entry in "${worktree_processes_out[@]+"${worktree_processes_out[@]}"}"; do
     pid="${entry%%"${SEP}"*}"
     if [[ "${ANCESTOR_PIDS}" == *" ${pid} "* ]]; then
       printf '  not stopped: pid=%s (this run is its descendant)\n' "${pid}"
       continue
     fi
-    entry="${entry}${SEP}$(get_command "${pid}")"
     if kill -TERM "${pid}" 2>/dev/null; then
       SIGNALLED+=("${entry}")
     fi
@@ -396,20 +369,20 @@ check_lock() {
 }
 
 check_processes() {
-  local entry pid
+  local entry pid cwd cmd
   # shellcheck disable=SC2310  # the listing verdict is branched on
-  if ! get_inside_processes "${1}"; then
+  if ! worktree_get_processes "${1}"; then
     PART_FACT='cannot list process cwds (lsof missing or failed)'
     return 1
   fi
-  if ((${#INSIDE[@]} == 0)); then
+  if ((${#worktree_processes_out[@]} == 0)); then
     PART_FACT='none inside'
     return 0
   fi
-  PART_FACT="${#INSIDE[@]} inside:"
-  for entry in "${INSIDE[@]}"; do
-    pid="${entry%%"${SEP}"*}"
-    PART_FACT+=" pid=${pid} cmd=$(get_command "${pid}") cwd=${entry#*"${SEP}"}"
+  PART_FACT="${#worktree_processes_out[@]} inside:"
+  for entry in "${worktree_processes_out[@]}"; do
+    IFS="${SEP}" read -r pid cwd cmd <<<"${entry}"
+    PART_FACT+=" pid=${pid} cmd=${cmd} cwd=${cwd}"
   done
   return 1
 }

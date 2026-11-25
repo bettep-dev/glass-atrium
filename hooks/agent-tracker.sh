@@ -99,6 +99,59 @@ delete_live_child_marker() {
   return 1
 }
 
+readonly ORPHAN_LIST_MAX=10
+
+# ORPHAN-ADV-001 — listing only: nothing is signalled or removed, the stop being the orchestrator's
+# close-out act (scripts/prune-worktrees.sh). The stopped agent's worktrees are the writer locks it held;
+# an agent that held none (Bash-only writes, read-only work, a lock past its TTL) gets no listing rather
+# than a machine-wide scan.
+# Args: $1=agent id, then the worktree roots its locks named · stderr only, exit status ignored by the caller.
+list_orphan_processes() {
+  local agent_id="${1}" script
+  shift
+  get_orphan_roots "$@"
+  ((${#orphan_roots[@]} > 0)) || return 0
+  # shellcheck disable=SC2310  # no cwd listing → no advisory
+  worktree_get_processes "${orphan_roots[@]}" || return 0
+  build_orphan_lines
+  ((orphan_total > 0)) || return 0
+  script="$(cd -P -- "${BASH_SOURCE%/*}/.." && pwd -P)/scripts/prune-worktrees.sh"
+  (printf '%s\n' \
+    "[agent-tracker] ORPHAN-ADV-001 ADVISORY ONLY — ${orphan_total} process(es) still run inside the worktree of stopped agent ${agent_id}; nothing was stopped:${orphan_lines}" \
+    "  close-out (dry run; --apply stops them): ${script} ${orphan_roots[*]}") >&2 || true
+}
+
+# Sets orphan_roots: the canonical spelling (the one lsof reports) of each LINKED worktree among $@ —
+# a main checkout also holds the session's own processes, which are no orphans.
+get_orphan_roots() {
+  local root canonical
+  orphan_roots=()
+  for root in "$@"; do
+    [[ -f "${root}/.git" ]] || continue
+    canonical="$(cd -P -- "${root}" 2>/dev/null && pwd -P)" || continue
+    orphan_roots+=("${canonical}")
+  done
+}
+
+# Sets orphan_lines (one "  pid= cmd= cwd=" line each, at most ORPHAN_LIST_MAX, then "and N more") and
+# orphan_total from worktree_processes_out. This hook's own chain ($$, its parent, the session) is skipped.
+build_orphan_lines() {
+  local entry pid cwd cmd
+  orphan_lines=""
+  orphan_total=0
+  for entry in "${worktree_processes_out[@]+"${worktree_processes_out[@]}"}"; do
+    IFS=$'\x1f' read -r pid cwd cmd <<<"${entry}"
+    case " $$ ${PPID} ${CLAUDE_PID:-} " in
+      *" ${pid} "*) continue ;;
+      *) ;;
+    esac
+    orphan_total=$((orphan_total + 1))
+    ((orphan_total <= ORPHAN_LIST_MAX)) || continue
+    orphan_lines+=$'\n'"  pid=${pid} cmd=${cmd} cwd=${cwd}"
+  done
+  ((orphan_total <= ORPHAN_LIST_MAX)) || orphan_lines+=$'\n'"  and $((orphan_total - ORPHAN_LIST_MAX)) more"
+}
+
 if [[ -n "${marker_key}" ]]; then
   case "${HOOK_EVENT}" in
     SubagentStart)
@@ -136,6 +189,9 @@ if [[ -n "${marker_key}" ]]; then
           "Remove the holder-matching lock dir under ${WORKTREE_LOCK_ROOT} manually" \
           "{\"event\":\"${HOOK_EVENT}\",\"agent_key\":\"${marker_key}\"}"
       fi
+      # shellcheck disable=SC2310  # advisory only: a failed listing prints nothing and never costs the lifecycle row
+      list_orphan_processes "${AGENT_ID}" \
+        "${worktree_lock_released_roots[@]+"${worktree_lock_released_roots[@]}"}" || true
       ;;
     *) ;; # main-session events (Stop/PreCompact/SessionStart) hold no live-child marker
   esac
