@@ -29,9 +29,7 @@
 #                (hooks/hook-utils.sh → hook_get_live_child_count) — markers say which agents
 #                are live, never where. A process with no claude ancestor is an orphan.
 # Processes --apply can ever signal, TERM only: an orphan, or a process under the caller's own session
-# while no marker is live. Never this run's own chain, never another session's process. TERM goes only to
-# the listing the agents fact judged; a process that starts inside later is never signalled, and it keeps
-# the worktree with its failing part named.
+# while no marker is live. Never this run's own chain, never another session's process.
 # Dry run by default. A live lock or a failed agents fact skips the worktree whole: nothing stopped,
 # nothing removed. Otherwise, under --apply, each process inside gets TERM and a bounded wait, a
 # survivor is reported and never KILLed; then, all five passing, `git worktree remove` without --force —

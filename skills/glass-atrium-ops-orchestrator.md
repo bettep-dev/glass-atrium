@@ -431,7 +431,7 @@ This is the single list the turn-0 `[WORKFLOW PRE-FLIGHT]` reminder and the Pre-
 - **① entry token** — a plan-ref (sizable) or `[ENTRY-CLASS] simple-task: <reason>` (simple), in the canonical home (`log()` / `meta.description`).
   - Backstop: the entry-miss warning (`block-entry`).
   - Detail: "Entry-class token placement" below.
-- **② `[SIZE-EST]` token** — `[SIZE-EST] units=N bundles=N tool_uses~=N — <1-line reason>` at every `dev-*` spawn, same canonical home (sibling to `[ENTRY-CLASS]`).
+- **② `[SIZE-EST]` token** — at every `dev-*` spawn, same canonical home (sibling to `[ENTRY-CLASS]`).
   - Backstop: the size-est-miss warning (`block-sizeest`), presence-only.
   - Detail: "[SIZE-EST] token placement" below; format + honesty framing = `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token**.
 - **③ verify-stage** — a `{glass-atrium-qa-code-reviewer, DEV}` verify-stage preceding the first `dev-*` implementation spawn, gated on `pass`+`feasible`.
