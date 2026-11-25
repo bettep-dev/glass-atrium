@@ -1396,6 +1396,11 @@ describe("done items in the one list", () => {
     test(`the one list: ${row.name}`, () => assert.deepEqual(getBody(bodyOf(listQueue(row.items, row.thread, {}, row.relays).queue)), row.expected));
   }
 
+  test("the empty queue's hint names every kind the list holds, relays included, and the page's check interval", () => {
+    const [empty] = findNodes(bodyOf(listQueue([], {}).queue), (node) => node.props?.atom === "EmptyState");
+    assert.equal(empty?.props.hint, "Reports, decisions and relays from sessions show here. The page checks every 15 seconds.");
+  });
+
   test("the head counts the open items alone: 0 waiting while only done rows show", () => {
     const [card] = findNodes(render("QueueListQ", { queue: listQueue([], { items: [doneReport()] }).queue }), (node) => node.props?.atom === "Card");
     assert.equal(card?.props.sub, "0 waiting");
@@ -1476,10 +1481,13 @@ describe("relays in the Done part", () => {
 
   // one send, one row: the open part draws it first, and a send with a copy on its way is never in Done
   const onWay = relays.items.map((copy) => (copy.id === 413 ? { ...copy, status: "answered", relay: { ...copy.relay!, lapsedAt: null } } : copy));
+  // the owner list leaves a redacted copy out → the sends it would hold, the fixture's redacted one on its way set apart
+  const kept = (items: typeof relays.items) => items.filter((copy) => copy.relay!.redaction === null);
   const sends = [
-    { name: "a send with a copy on its way is drawn in the open part alone", open: onWay.filter((copy) => copy.id === 413), relayItems: onWay, expected: [[false, "forwarded"], [true, "received"]] },
-    { name: "an ended send the open read still holds stays in the open part", open: relays.items.filter((copy) => copy.id === 412), relayItems: relays.items, expected: [[false, "forwarded"], [true, "received"]] },
-    { name: "a send on its way that the open read leaves out has no Done row", open: [], relayItems: relays.items, expected: [[true, "forwarded"], [true, "received"]] },
+    { name: "a send with a copy on its way is drawn in the open part alone", open: onWay.filter((copy) => copy.id === 413), relayItems: kept(onWay), expected: [[false, "forwarded"], [true, "received"]] },
+    { name: "an ended send the open read still holds stays in the open part", open: relays.items.filter((copy) => copy.id === 412), relayItems: kept(relays.items), expected: [[false, "forwarded"], [true, "received"]] },
+    { name: "a send on its way that the open read leaves out has no row", open: [], relayItems: kept(onWay), expected: [[true, "received"]] },
+    { name: "a redacted send on its way, which the open list leaves out, is drawn under In delivery from the relay read", open: [], relayItems: relays.items, expected: [[false, "redacted"], [true, "forwarded"], [true, "received"]] },
   ];
   const sendNames = new Map(relays.items.map((copy) => [copy.sendId, copy.id >= 415 ? "redacted" : copy.id >= 412 ? "forwarded" : "received"]));
   for (const row of sends) {
@@ -1510,6 +1518,71 @@ describe("relays in the Done part", () => {
   ];
   for (const row of ticks) {
     test(`ticks: ${row.name}`, () => assert.deepEqual(getDoneBands([], { done: thread(), relays: relayRead() }, row.ids), row.expected));
+  }
+
+  test("a send with one copy redacted is one In delivery row holding the open list's copy and the relay read's redacted one", () => {
+    const [redacted] = relays.items.filter((copy) => copy.id === 415);
+    const other = { ...redacted!, id: 416, session: { ...redacted!.session, id: FIXTURE_SESSION_IDS.yoaida, sessionIdPrefix: FIXTURE_SESSION_IDS.yoaida.slice(0, 8), name: "yoaida" }, relay: { ...redacted!.relay!, redaction: null } };
+    const open = getGroups([other], { done: thread(), relays: relayRead({ items: [redacted, other], refusals: [] }) }).filter((group) => !group.isDone);
+    assert.deepEqual(open.map((group) => group.rows.map((row) => (row.copies as Array<{ id: number }>).map((copy) => copy.id))), [[[415, 416]]]);
+  });
+
+  const cellOf = (tree: RenderedNode, name: string) => {
+    const [cell] = byClass(tree, name);
+    return cell === undefined ? null : collectText(cell).replace(/\s+/g, " ").trim();
+  };
+  const getDoneRowShape = (tree: RenderedNode) => {
+    const [row] = findNodes(tree, (node) => node.props?.role === "option");
+    return {
+      who: cellOf(tree, "queue-row-who"), title: cellOf(tree, "queue-row-title"), tag: cellOf(tree, "queue-row-tag"), fact: cellOf(tree, "queue-row-fact"),
+      badges: findNodes(tree, (node) => node.props?.atom === "Badge").length,
+      label: String(row?.props["aria-label"]).replace(/, (sent )?\S+ ago$/, ""), tip: row?.props.title ?? null,
+    };
+  };
+
+  // how a Done relay ended (layout §1, §5): plain words in its tag column, said after its title in its accessible name; its fact Relay
+  const sendOf = (sendId: string | null) => relays.items.filter((copy) => copy.sendId === sendId);
+  const [RECEIVED, FORWARDED] = [sendOf(relays.items.find((copy) => copy.id === 398)!.sendId), sendOf(relays.items.find((copy) => copy.id === 412)!.sendId)];
+  const lapse = (copy: (typeof relays.items)[number]) => ({ ...copy, status: "withdrawn", deliveredAt: null, relay: { ...copy.relay!, lapsedAt: atMinutes(60) } });
+  const endings = [
+    {
+      name: "every copy received reads Received", copies: RECEIVED,
+      shape: { who: "atrium (self-named)", title: `→ gersona ${RECEIVED[0]!.title}`, tag: "Received", fact: "Relay", badges: 0, label: `Relay from atrium (self-named) to gersona: ${RECEIVED[0]!.title}, received`, tip: "Relay" },
+    },
+    {
+      name: "of several, some lapsed reads how many, and a relay passed on says its hop", copies: FORWARDED,
+      shape: { who: "aidl (self-named)", title: `→ 2 sessions ${FORWARDED[0]!.title}`, tag: "1 lapsed", fact: "Relay", badges: 0, label: `Relay from aidl (self-named) to 2 sessions: ${FORWARDED[0]!.title}, 1 lapsed, passed on, hop 1`, tip: "Relay · passed on, hop 1" },
+    },
+    {
+      name: "every copy lapsed reads Lapsed", copies: FORWARDED.map(lapse),
+      shape: { who: "aidl (self-named)", title: `→ 2 sessions ${FORWARDED[0]!.title}`, tag: "Lapsed", fact: "Relay", badges: 0, label: `Relay from aidl (self-named) to 2 sessions: ${FORWARDED[0]!.title}, lapsed, passed on, hop 1`, tip: "Relay · passed on, hop 1" },
+    },
+  ];
+  for (const row of endings) {
+    test(`a Done relay's row: ${row.name}`, () => {
+      const tree = render("QueueRowQ", { row: { id: row.copies[0]!.id, item: row.copies[0], copies: row.copies, isDone: true }, isSelected: false, cols: ["tag", "fact"], view: { isNameShown: true, isAccountShown: false, tabStopId: null }, onSelect: () => undefined, onOrder: () => undefined });
+      assert.deepEqual(getDoneRowShape(tree), row.shape);
+    });
+  }
+
+  // a refused relay's row (layout §1, §5): its sender, `→` its recipients and the reason's name; a name by id prefix from the loaded relays, else the rail's rows, else the id
+  const GERSONA = FIXTURE_SESSION_IDS.gersona.slice(0, 8);
+  const YOAIDA = FIXTURE_SESSION_IDS.yoaida.slice(0, 8);
+  const railRows = [{ sessionIdPrefix: GERSONA, name: "gersona" }, { sessionIdPrefix: YOAIDA, name: "yoaida" }];
+  const refusedRows = [
+    { name: "named by the loaded relays", refusal: REFUSAL, items: relays.items, rail: [], shape: { who: "gersona", title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" } },
+    { name: "named by the rail's rows when no loaded relay names them", refusal: REFUSAL, items: [], rail: railRows, shape: { who: "gersona", title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" } },
+    { name: "named by neither → its ids", refusal: REFUSAL, items: [], rail: [], shape: { who: GERSONA, title: `→ ${YOAIDA} Too many to one session`, label: `Refused relay from ${GERSONA} to ${YOAIDA}: Too many to one session` } },
+    { name: "to several → their count", refusal: { ...REFUSAL!, recipientIdPrefixes: [YOAIDA, GERSONA] }, items: relays.items, rail: [], shape: { who: "gersona", title: "→ 2 sessions Too many to one session", label: "Refused relay from gersona to 2 sessions: Too many to one session" } },
+    { name: "to no resolvable session → the unknown count", refusal: { ...REFUSAL!, reason: "sender_cap", recipientIdPrefixes: [], unresolvedCount: 1 }, items: relays.items, rail: [], shape: { who: "gersona", title: "→ 1 unknown recipient Too many from one session", label: "Refused relay from gersona to 1 unknown recipient: Too many from one session" } },
+  ];
+  for (const row of refusedRows) {
+    test(`a refused relay's row: ${row.name}, Refused its tag and Relay its fact, no badge`, () => {
+      const { queue } = buildQueue({ relays: { thread: thread({ items: row.items }) }, sessions: { region: { data: { sessions: row.rail } } } });
+      const group = { key: "done-today", label: "Today", isDone: true, rows: [call("getRefusalRowQ", row.refusal)] };
+      const shape = getDoneRowShape(render("QueueGroupQ", { group, queue, view: { isNameShown: true, isAccountShown: false, tabStopId: null } }));
+      assert.deepEqual(shape, { ...row.shape, tag: "Refused", fact: "Relay", badges: 0, tip: null });
+    });
   }
 
   const FAILURE = { sentence: "The queue could not be read.", next: "Retry.", detail: "503" };

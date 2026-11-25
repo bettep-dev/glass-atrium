@@ -24,7 +24,7 @@ import type { OwnerItemView } from "../src/server/queue/owner-views.js";
 import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
   buildSentCopies, DONE_IDS, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
-  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getDoneOnlyFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
+  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getDoneOnlyFixture, getDoneRelaysFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
   getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneListFixture, getOneReceivedFixture, getOrderFirstFixture, getProseFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, RELAY_ROW_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
@@ -2832,6 +2832,35 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(reads.map((query) => Object.fromEntries(query)), [{ limit: "30", kind: "item" }]);
     });
 
+    // layout §1, §6 → Mark: a relay row's title leads with `→` and its recipient; a Done relay says how it ended in plain words with no badge,
+    // among the day's decisions and reports by the time of its send; a relay on its way holds no element but its receipt counts
+    test("Done and refused relays stand among the day's decisions and reports, titled from the arrow and the recipient, how they ended in plain words and no badge; the redacted relay on its way stands under In delivery", async () => {
+      const { page } = await openDonePage(getDoneRelaysFixture());
+      const shown = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".queue-listbox [role='group']")].map((band) => ({
+        band: band.getAttribute("aria-label") ?? band.querySelector(".queue-band")?.firstChild?.textContent,
+        kinds: [...band.querySelectorAll(".queue-row")].map((row) => row.querySelector(".queue-row-fact")?.textContent),
+        relays: [...band.querySelectorAll(".queue-row")].filter((row) => /^(Refused relay|Relay) from/.test(row.getAttribute("aria-label") ?? "")).map((row) => ({
+          to: row.querySelector(".queue-row-title")?.textContent?.match(/^→ (\d+ sessions|\d+ unknown recipients?|\S+) /)?.[1] ?? null,
+          tag: row.classList.contains("queue-row--done") ? row.querySelector(".queue-row-tag")?.textContent : "on its way",
+          // a Done row's every pill · a row on its way, the pills outside its receipt counts
+          pills: [...row.querySelectorAll(".pill")].filter((pill) => row.classList.contains("queue-row--done") || pill.closest(".queue-row-tag") === null).length,
+        })),
+      })));
+      const redacted = await page.locator(".queue-row", { hasText: "Text redacted" }).evaluate((row) => [row.closest("[role='group']")?.querySelector(".queue-band")?.firstChild?.textContent, row.querySelector(".queue-row-title")?.textContent]);
+      await page.close();
+
+      // an open band's kinds are the open list's; a Done band's run newest last act first
+      const bands = shown.filter((band) => band.relays.length > 0 || String(band.band).startsWith("Done"))
+        .map(({ band, kinds, relays }) => (String(band).startsWith("Done") ? { band, kinds, relays } : { band, relays }));
+      assert.deepEqual(bands, [
+        { band: "In delivery", relays: [{ to: "atrium", tag: "on its way", pills: 0 }] },
+        { band: "Done, Today", kinds: ["Decision", "Report", "Relay", "Relay"], relays: [{ to: "yoaida", tag: "Refused", pills: 0 }, { to: "2 sessions", tag: "1 lapsed", pills: 0 }] },
+        { band: "Done, Yesterday", kinds: ["Decision", "Relay", "Report"], relays: [{ to: "gersona", tag: "Received", pills: 0 }] },
+        { band: "Done, Nov 9", kinds: ["Decision"], relays: [] },
+      ]);
+      assert.deepEqual(redacted, ["In delivery", "→ atrium Text redacted"]);
+    });
+
     test("ticking a session scopes the done read on the server, and both parts hold that session alone", async () => {
       const { page, reads } = await openDonePage();
       await tickSessions(page, ["atrium"]);
@@ -3270,8 +3299,8 @@ describe("queue page on the mockup fixtures", () => {
     // cell keeping its width; a column a band leaves out gives the title its width (tag 88, fact 72); under 160 of title (1280, names shown,
     // tag drawn) the fact column is left out, and the 1280 title still holds about 12 Hangul.
     // The edge fixture's 100-character session is one recipient of a seven-session order → the name fixture sends one open item from it;
-    // the Done bands (spec §4.6) and relays on their way (spec §9.9) follow the same rule
-    test("with nothing ticked every list row, open, done or a relay on its way, is one 44 line on its band's columns at 1280, 1440 and 1568: tag and fact drawn only in a band whose rows fill them, each drawn column at one x in every band, the title taking a left-out column's width, at least 200 of it at 1280, a 100-character name cut inside its 80", async () => {
+    // the Done bands (spec §4.6), relays on their way (spec §9.9) and Done and refused relays beside decisions and reports (layout §6 → Shared x) follow the same rule
+    test("with nothing ticked every list row, open, done, a relay on its way, a Done relay or a refused one, is one 44 line on its band's columns at 1280, 1440 and 1568: tag and fact drawn only in a band whose rows fill them, each drawn column at one x in every band, the title taking a left-out column's width, at least 200 of it at 1280, a 100-character name cut inside its 80", async () => {
       // each cell's x from the row's start and its width; a cell the band does not draw → `-`
       const getLayout = (width: number, cols: string) => {
         const isTagShown = cols.split(" ").includes("tag");
@@ -3288,7 +3317,7 @@ describe("queue page on the mockup fixtures", () => {
       };
       const shown = [];
       for (const { viewport } of DESK_WIDTHS.slice(0, 3)) {
-        for (const [fixture, isDone] of [[getNameColumnFixture(), false], [getEdgeFixture(), false], [getDoneFixture(), true], [getRelayRowFixture(), false]] as const) {
+        for (const [fixture, isDone] of [[getNameColumnFixture(), false], [getEdgeFixture(), false], [getDoneRelaysFixture(), true], [getRelayRowFixture(), false]] as const) {
           harness.fixture = fixture;
           const page = await openQueuePage(harness, viewport, getRestReadyText(fixture));
           if (isDone) await waitForDoneBands(page);

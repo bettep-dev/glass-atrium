@@ -803,6 +803,14 @@ export function getHiddenSessionsFixture(rest: QueueFixture = getRestFixture()):
   return { ...rest, sessions: [...rest.sessions, ...hidden] };
 }
 
+/**
+ * The done fixture with the relay history fixture's sends in the relay read: under Done Today a decision, a report, a refusal and a relay
+ * with one copy lapsed; under Done Yesterday a received relay beside a decision and a report; the redacted relay on its way under In delivery.
+ */
+export function getDoneRelaysFixture(): QueueFixture {
+  return { ...getDoneFixture(), relays: getRelayHistoryFixture() };
+}
+
 /** The rest state with relays on record: the history fixture's, the signal on (`signal: true`) or off (all older than 24 hours). */
 export function getRelayRecordFixture({ signal }: { signal: boolean }): QueueFixture {
   const relays = getRelayHistoryFixture();

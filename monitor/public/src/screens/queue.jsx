@@ -399,8 +399,18 @@ function getFoldKeyQ(item) {
  * @param reads - the Done part's threads: `done` the item thread, `relays` the relay thread
  */
 function getListGroupsQ(items, reads, filter, ids) {
-	const visible = getVisibleItemsQ(items, filter, ids);
+	const visible = getVisibleItemsQ(getOpenItemsQ(items, reads.relays.items), filter, ids);
 	return [...getGroupsQ(visible), ...getDoneGroupsQ(getDoneRowsQ(reads, visible, { filter, ids }))];
+}
+
+// the open list leaves a redacted copy out → a send on its way holding one takes its missing copies from the relay read, in queue order (layout §1)
+function getOpenItemsQ(items, relays) {
+	const ids = new Set(items.map((item) => item.id));
+	const added = getFoldedRowsQ(relays)
+		.filter((row) => row.copies.some((copy) => copy.relay.redaction !== null) && row.copies.some((copy) => getRelayOutcomeQ(copy) === null))
+		.flatMap((row) => row.copies)
+		.filter((copy) => !ids.has(copy.id));
+	return added.length === 0 ? items : [...items, ...added].sort((left, right) => left.queuePosition - right.queuePosition);
 }
 
 /**
@@ -1655,7 +1665,7 @@ function isThreadSettledQ(thread) {
 // nothing in either part (spec §10): the empty queue, the account filter's no-match, or the ticked sessions' nothing
 function ListEmptyQ({ queue, items }) {
 	const { EmptyState } = window.UI;
-	if (items.length === 0) return <EmptyState message="Nothing is waiting for you" hint={`Sessions post reports and decisions here. The page checks every ${POLL_Q.MS / 1000} seconds.`} />;
+	if (items.length === 0) return <EmptyState message="Nothing is waiting for you" hint={`Reports, decisions and relays from sessions show here. The page checks every ${POLL_Q.MS / 1000} seconds.`} />;
 	if (queue.filter.profile) return <EmptyState kind="no-results" message="No items match these filters." onReset={() => queue.setFilter(DEFAULT_FILTER_Q)} />;
 	return <EmptyState message={getTickedEmptyQ(queue.sessions)} action={<button type="button" className="btn ghost sm" onClick={queue.sessions.clear}>Show all sessions</button>} />;
 }
@@ -1746,7 +1756,7 @@ function QueueGroupQ({ group, queue, view }) {
 	const bandId = `queue-band-${group.key}`;
 	const name = group.isDone ? { "aria-label": `${DONE_Q.LABEL}, ${group.label}` } : { "aria-labelledby": bandId };
 	const cols = getBandColsQ(group.rows);
-	const names = group.rows.some((row) => row.refusal) ? getRelayNamesQ(queue.relays.thread.items) : null;
+	const names = group.rows.some((row) => row.refusal) ? getRefusalNamesQ(queue) : null;
 	return (
 		<div role="group" data-cols={cols.join(" ")} {...name}>
 			<div id={bandId} className="queue-band">
@@ -1759,6 +1769,12 @@ function QueueGroupQ({ group, queue, view }) {
 			))}
 		</div>
 	);
+}
+
+// a refusal holds id prefixes alone → names from the loaded relays, a session none of them names from the rail's rows (layout §1)
+function getRefusalNamesQ(queue) {
+	const rail = (queue.sessions.region.data?.sessions ?? []).map((session) => [session.sessionIdPrefix, session.name]);
+	return new Map([...rail, ...getRelayNamesQ(queue.relays.thread.items)]);
 }
 
 // the column rule (spec §4.2): a band draws the tag and the fact column while one of its loaded rows fills it → then on every row of the band
@@ -1927,8 +1943,10 @@ function getPauseGlyphQ() {
 function getRowCellsQ(row, isAccountShown) {
 	if (row.refusal) return { tags: [{ text: "Refused" }], fact: DONE_KIND_Q.relay, extras: [] };
 	const { item, copies } = row;
-	const extras = [isAccountShown && item.session.profileLabel, copies.length === 1 && item.session.isNameRegistered === false && "start directory", getImagesWordQ(item)].filter(Boolean);
-	if (row.isDone) return { tags: item.kind === "relay" ? [] : [getEndQ(item)], fact: DONE_KIND_Q[item.kind], extras };
+	const extras = [
+		isAccountShown && item.session.profileLabel, copies.length === 1 && item.session.isNameRegistered === false && "start directory", getImagesWordQ(item), item.relay?.hop > 0 && `passed on, hop ${item.relay.hop}`,
+	].filter(Boolean);
+	if (row.isDone) return { tags: [item.kind === "relay" ? getRelayEndTagQ(copies) : getEndQ(item)], fact: DONE_KIND_Q[item.kind], extras };
 	if (item.status === "open" && item.kind === "decision") {
 		const count = (item.options ?? []).length;
 		return { tags: item.isApprovalClass ? [{ text: "Approval", badge: "tag" }] : [], fact: `${count} ${count === 1 ? "option" : "options"}`, extras };
@@ -1947,6 +1965,19 @@ function getEndQ(item) {
 	if (item.answeredAt) return { text: item.answer?.code ? `Answer ${item.answer.code}` : "Answered", title: ANSWER_ROUTE_LABEL_Q[item.answerRecord?.route] };
 	if (item.status === "withdrawn") return { text: "Withdrawn", title: "The session withdrew it." };
 	return { text: "Read" };
+}
+
+// how a Done relay ended (layout §1), said in lower case in its accessible name (`word`)
+function getRelayEndTagQ(copies) {
+	const text = getRelayEndWordQ(copies);
+	return { text, word: text.toLowerCase() };
+}
+
+// every copy received, every copy lapsed, or of several how many lapsed
+function getRelayEndWordQ(copies) {
+	const lapsed = copies.filter((copy) => copy.relay.lapsedAt !== null).length;
+	if (lapsed === 0) return RECEIPT_Q.received;
+	return lapsed === copies.length ? RELAY_LAPSED_Q : `${lapsed} lapsed`;
 }
 
 function getImagesWordQ(item) {
@@ -1994,7 +2025,7 @@ function getReceiptQ(item) {
 function getRowLabelQ(row, cells, isNameShown) {
 	const { item } = row;
 	const kind = getRowKindQ(row);
-	const tags = cells.tags.map((tag) => tag.text ?? tag.word);
+	const tags = cells.tags.map((tag) => tag.word ?? tag.text);
 	const age = `${getAgeVerbQ(row)} ${window.UI.formatRelativeTime(getRowAtQ(row))}`;
 	const title = item.kind === "relay" ? getRelayTitleQ(item) : item.title;
 	const cellWords = [...tags, cells.fact].filter((word) => word !== kind);
