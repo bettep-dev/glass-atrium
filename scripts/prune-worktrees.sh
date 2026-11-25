@@ -22,11 +22,14 @@
 #   processes  — no process has its cwd inside
 # and a fifth fact, this script's own guard on the process-stop step — stricter than the exception
 # above, never looser:
-#   agents     — no live agent can own a process inside. The harness records which agents are live
-#                (hooks/hook-utils.sh → LIVE_CHILD_DIR markers, LIVE_CHILD_TTL_MIN) but never where:
-#                SubagentStart observes agent_type and agent_id only. An agent's Bash call runs as a
-#                child of its session's claude process, so while any marker is live, a process inside
-#                with a claude process in its ancestry (itself included) fails the fact.
+#   agents     — no process inside may have a live owner. Owner = the nearest claude process in its
+#                ancestry (itself included): an agent's Bash call runs as a child of its session's
+#                claude process. Another session's process fails the fact whatever the marker count;
+#                one under the caller's own session fails it while any live-agent marker is live
+#                (hooks/hook-utils.sh → LIVE_CHILD_DIR, LIVE_CHILD_TTL_MIN) — markers say which agents
+#                are live, never where. A process with no claude ancestor is an orphan.
+# Processes --apply can ever signal, TERM only: an orphan, or a process under the caller's own session
+# while no marker is live. Never this run's own chain, never another session's process.
 # Dry run by default. A live lock or a failed agents fact skips the worktree whole: nothing stopped,
 # nothing removed. Otherwise, under --apply, each process inside gets TERM and a bounded wait, a
 # survivor is reported and never KILLed; then, all five passing, `git worktree remove` without --force —
@@ -79,6 +82,7 @@ IS_LIST_ALL=0
 DEPLOYED=""
 IS_REFUSED=0
 ANCESTOR_PIDS=" "
+OWN_SESSION_PID=""
 TARGETS=()
 REPORT_STOPPED=()
 REPORT_SURVIVORS=()
@@ -101,6 +105,8 @@ main() {
   parse_args "$@"
   ((IS_LIST_ALL == 0)) || get_linked_worktrees
   get_ancestor_pids
+  # shellcheck disable=SC2310  # no claude ancestor → empty: every session process inside is another's
+  OWN_SESSION_PID="$(get_session_ancestor "$$")" || OWN_SESSION_PID=""
   # From / on: no child of this run (lsof, git, ps) holds a cwd inside a worktree it inspects.
   cd /
   local target
@@ -394,21 +400,21 @@ check_live_agents() {
     PART_FACT="cannot read the live-agent records in ${LIVE_CHILD_DIR}"
     return 1
   fi
-  if ((live == 0)); then
-    PART_FACT='no live agent recorded'
-    return 0
-  fi
   # shellcheck disable=SC2310  # the listing verdict is branched on
   if ! worktree_get_processes "${1}"; then
-    PART_FACT="${live} live agent(s) recorded and process cwds cannot be listed"
+    PART_FACT='process cwds cannot be listed, so none inside is cleared of another Claude session'
     return 1
   fi
   # shellcheck disable=SC2310  # the ownership verdict is branched on
-  if owner="$(get_session_process_inside)"; then
-    PART_FACT="${owner} while ${live} agent(s) are live, and no record says whose it is"
+  if owner="$(get_owned_process_inside "${live}")"; then
+    PART_FACT="${owner}"
     return 1
   fi
-  PART_FACT="${live} live agent(s) recorded; no process inside runs under a Claude session"
+  if ((live == 0)); then
+    PART_FACT='no live agent recorded; no process inside runs under another Claude session'
+  else
+    PART_FACT="${live} live agent(s) recorded; no process inside runs under a Claude session"
+  fi
 }
 
 # Live-child markers younger than the TTL; rc 1 = the store exists but cannot be read.
@@ -425,16 +431,23 @@ get_live_agent_count() {
   printf '%s\n' "${count}"
 }
 
-# Prints "pid=<p> runs under Claude session pid=<s>" for the first process inside (worktree_processes_out)
-# with a session process in its ancestry; rc 1 = none. This run's own chain is skipped: it is never signalled.
-get_session_process_inside() {
-  local entry pid session
+# Prints why the first process inside (worktree_processes_out) may have a live owner; rc 1 = none.
+# Owner = nearest claude ancestor: another session's always counts, the caller's own only while $1 > 0
+# agents are live (markers record no main session). No claude ancestor = orphan. This run's chain is skipped.
+get_owned_process_inside() {
+  local live="${1}" entry pid session
   for entry in "${worktree_processes_out[@]+"${worktree_processes_out[@]}"}"; do
     pid="${entry%%"${SEP}"*}"
     [[ "${ANCESTOR_PIDS}" != *" ${pid} "* ]] || continue
     # shellcheck disable=SC2310  # the ancestry verdict is branched on
-    if session="$(get_session_ancestor "${pid}")"; then
-      printf 'pid=%s runs under Claude session pid=%s\n' "${pid}" "${session}"
+    session="$(get_session_ancestor "${pid}")" || continue
+    if [[ "${session}" != "${OWN_SESSION_PID}" ]]; then
+      printf 'pid=%s runs under another Claude session pid=%s\n' "${pid}" "${session}"
+      return 0
+    fi
+    if ((live > 0)); then
+      printf 'pid=%s runs under this Claude session pid=%s while %s agent(s) are live, and no record says whose it is\n' \
+        "${pid}" "${session}" "${live}"
       return 0
     fi
   done

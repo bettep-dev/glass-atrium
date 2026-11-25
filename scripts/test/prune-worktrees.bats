@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # prune-worktrees.bats — the worktree close-out: a linked worktree is removed only under --apply and
-# only when all four safe-test parts pass; every other worktree is kept with its failing part named.
+# only when all five parts pass; every other worktree is kept with its failing part named.
 # Scratch repositories only, under one bare mktemp -d; the lock and live-agent stores are sandboxed per test.
 
 PRUNE_SH="${BATS_TEST_DIRNAME}/../prune-worktrees.sh"
@@ -77,12 +77,35 @@ start_inside() {
 start_under_session() {
   local wt="${1}"
   shift
-  mkdir -p "${PW_TMP}/bin"
-  ln -sf "$(command -v bash)" "${PW_TMP}/bin/claude"
+  make_session_launcher
   "${PW_TMP}/bin/claude" -c '(cd -- "$1" && shift 2 && exec "$@") & printf "%s\n" "$!" >"$2"; wait' \
     _ "${wt}" "${PW_TMP}/child.pid" "$@" </dev/null >/dev/null 2>&1 3>&- &
   STARTED_PIDS+=("$!")
   wait_for_child_inside "${wt}"
+}
+
+make_session_launcher() {
+  mkdir -p "${PW_TMP}/bin"
+  ln -sf "$(command -v bash)" "${PW_TMP}/bin/claude"
+}
+
+# Runs prune --apply on $1 from a stand-in Claude session that also holds $2... with its cwd in $1, so the
+# process inside runs under the caller's own session; child.pid names that process.
+prune_in_own_session() {
+  local wt="${1}"
+  shift
+  make_session_launcher
+  "${PW_TMP}/bin/claude" -c '
+    (cd -- "$1" && shift 3 && exec "$@") </dev/null >/dev/null 2>&1 3>&- &
+    printf "%s\n" "$!" >"$2"
+    tries=0
+    until [[ "$(lsof -a -p "$!" -d cwd -Fn 2>/dev/null)" == *"n$1"* ]]; do
+      tries=$((tries + 1))
+      ((tries < 50)) || exit 99
+      sleep 0.1
+    done
+    bash "$3" --apply "$1"
+    exit "$?"' _ "${wt}" "${PW_TMP}/child.pid" "${PRUNE_SH}" "$@"
 }
 
 # Starts $2... with its cwd in $1 detached from every session: its parent exits, so it is reparented.
@@ -246,26 +269,38 @@ is_registered() {
   [ -d "${wt}" ] || { echo "removed with a survivor inside"; return 1; }
 }
 
-@test "--apply stops nothing and removes nothing while a live agent may own a process inside" {
+@test "--apply stops nothing and removes nothing while another session or a live agent may own a process inside" {
   local -a rows=(
-    'live agent, process under a session|live|session|kept'
-    'agent marker past its TTL, process under a session|stale|session|removed'
-    'live agent, process outside every session|live|detached|removed'
+    'live agent, process under the caller own session|live|own|kept'
+    'agent marker past its TTL, process under the caller own session|stale|own|removed'
+    'live agent, process under no session|live|none|removed'
+    'agent marker past its TTL, process under another session|stale|other|kept'
+    'live agent, process under another session|live|other|kept'
   )
-  local row name agent parent outcome wt marker n=0
+  local row name agent session outcome wt marker n=0
   for row in "${rows[@]}"; do
-    IFS='|' read -r name agent parent outcome <<<"${row}"
+    IFS='|' read -r name agent session outcome <<<"${row}"
     n=$((n + 1))
     marker="$(mark_live_agent "agent-${n}")"
     [[ "${agent}" == live ]] || touch -t 202001010000 "${marker}"
     wt="$(add_worktree "row${n}")"
-    if [[ "${parent}" == session ]]; then
-      start_under_session "${wt}" sleep 300 || { echo "${name}: not started"; return 1; }
-    else
-      start_detached_inside "${wt}" sleep 300 || { echo "${name}: not started"; return 1; }
-    fi
-
-    run bash "${PRUNE_SH}" --apply "${wt}"
+    case "${session}" in
+      own)
+        run prune_in_own_session "${wt}" sleep 300
+        [[ -s "${PW_TMP}/child.pid" ]] || { echo "${name}: not started: ${output}"; return 1; }
+        INSIDE_PID="$(<"${PW_TMP}/child.pid")"
+        STARTED_PIDS+=("${INSIDE_PID}")
+        rm -- "${PW_TMP}/child.pid"
+        ;;
+      other)
+        start_under_session "${wt}" sleep 300 || { echo "${name}: not started"; return 1; }
+        run bash "${PRUNE_SH}" --apply "${wt}"
+        ;;
+      none)
+        start_detached_inside "${wt}" sleep 300 || { echo "${name}: not started"; return 1; }
+        run bash "${PRUNE_SH}" --apply "${wt}"
+        ;;
+    esac
     [ "${status}" -eq 0 ] || { echo "${name}: exit ${status}: ${output}"; return 1; }
 
     if [[ "${outcome}" == kept ]]; then
