@@ -4,6 +4,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 
+import { INVISIBLE_CHARACTER } from "./envelope.js";
 import { QueueRequestError } from "./errors.js";
 
 /** Per-request, per-session and per-machine bounds; past any of them the hook refuses as it does without the store. */
@@ -241,10 +242,12 @@ export function getLineDisplay(line: string): LineDisplay {
   return { segments: getSegments(line), value: getLineValue(line) };
 }
 
-// controls, format characters (zero-width, bidi, tags), line/paragraph separators, lone surrogates, non-ASCII spaces,
-// Hangul fillers, Khmer inherent vowels, the grapheme joiner, Mongolian and Unicode variation selectors
-const MARKED =
-  /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}   -   　ᅟᅠㅤﾠ឴឵͏᠋-᠏︀-️\u{E0100}-\u{E01EF}]/u;
+// controls, lone surrogates, line/paragraph separators, every space but U+0020 + the format and default-ignorable set
+// (Hangul fillers, Khmer inherent vowels, grapheme joiner, Mongolian and Unicode variation selectors among it)
+const MARKED = new RegExp(
+  String.raw`[\p{Cc}\p{Cs}\p{Zl}\p{Zp}\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]|${INVISIBLE_CHARACTER.source}`,
+  "u",
+);
 const LONE_SURROGATE = /\p{Cs}/u;
 const QUOTES = new Set(["\"", "'", "`"]);
 const CUE_ORDER: readonly ValueCue[] = ["literal", "identifier", "member", "environment"];

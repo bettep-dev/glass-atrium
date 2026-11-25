@@ -8,6 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import { QueueRequestError } from "../src/server/queue/errors.js";
 import {
@@ -393,14 +394,38 @@ describe("owner display", () => {
     });
   }
 
-  // the ruling's extra code points, then each C0/C1, zero-width, bidi and tag range at its ends
+  const toMark = (codePoint: number): string => `U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
+  const isShownAsMark = (codePoint: number): boolean =>
+    isDeepStrictEqual(getLineDisplay(`a${String.fromCodePoint(codePoint)}b`).segments, [{ text: "a" }, { mark: toMark(codePoint) }, { text: "b" }]);
+  const expandRanges = (ranges: ReadonlyArray<readonly [number, number]>): number[] =>
+    ranges.flatMap(([first, last]) => Array.from({ length: last - first + 1 }, (_, index) => first + index));
+
+  // non-ASCII spaces, Hangul fillers, Khmer inherent vowels, grapheme joiner, Mongolian and Unicode variation selectors
+  const namedMarkRanges = [
+    [0x00a0, 0x00a0], [0x1680, 0x1680], [0x2000, 0x200a], [0x202f, 0x202f], [0x205f, 0x205f], [0x3000, 0x3000],
+    [0x115f, 0x1160], [0x3164, 0x3164], [0xffa0, 0xffa0], [0x17b4, 0x17b5], [0x034f, 0x034f], [0x180b, 0x180f],
+    [0xfe00, 0xfe0f], [0xe0100, 0xe01ef],
+  ] as const;
+
+  test("every control, format, surrogate, separator and named invisible or look-alike code point is shown as a mark", () => {
+    const markedCategory = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
+    const categoryMembers = expandRanges([[0, 0x10ffff]]).filter((codePoint) => markedCategory.test(String.fromCodePoint(codePoint)));
+    const members = [...categoryMembers, ...expandRanges(namedMarkRanges)];
+
+    assert.deepEqual(members.filter((codePoint) => !isShownAsMark(codePoint)).map(toMark), []);
+  });
+
+  // the ruling's extra code points, each C0/C1, zero-width, bidi and tag range at its ends, then each named non-ASCII
+  // space, each Mongolian selector and each variation selector range at its ends
   const marked = [
     0x00ad, 0x034f, 0x061c, 0x115f, 0x1160, 0x17b4, 0x17b5, 0x180e, 0x2028, 0x2029, 0xfeff, 0xfff9, 0xfffa, 0xfffb,
     0x0000, 0x0009, 0x000d, 0x001f, 0x007f, 0x0080, 0x009f, 0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x2060, 0x2064,
     0x202a, 0x202e, 0x2066, 0x2069, 0x00a0, 0x3000, 0x3164, 0xffa0, 0xfe0f, 0xe0001, 0xe0041, 0xe007f,
+    0x1680, ...expandRanges([[0x2000, 0x200a]]), 0x202f, 0x205f, ...expandRanges([[0x180b, 0x180f]]).filter((codePoint) => codePoint !== 0x180e),
+    0xfe00, 0xe0100, 0xe01ef,
   ];
   for (const codePoint of marked) {
-    const mark = `U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
+    const mark = toMark(codePoint);
     test(`${mark} inside a line is shown as a visible mark`, () => {
       const display = getLineDisplay(`dbHost = "a${String.fromCodePoint(codePoint)}b"`);
 

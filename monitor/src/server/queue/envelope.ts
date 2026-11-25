@@ -34,7 +34,7 @@ const RESUME_PREAMBLE = [
 ].join("\n");
 
 const ENVELOPE_HEADER_LEAD = "[atrium-";
-const INVISIBLE_CHARACTER = /[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
+export const INVISIBLE_CHARACTER = /[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
 
 /** Compatibility-normalized text with format and zero-width characters stripped, case kept: a credential's fixed upper-case part survives. */
 export function getStrippedText(text: string): string {
