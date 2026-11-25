@@ -26,7 +26,7 @@ const FILTER_AXES_Q = ["profile"];
 const DEFAULT_FILTER_Q = Object.freeze({ profile: "" });
 // the done items' loaded cap (spec §4.6); a page is the history read's own (ORDERS_Q.PAGE)
 const DONE_Q = { MAX: 200, LABEL: "Done" };
-const DONE_KIND_Q = { decision: "Decision", report: "Report" };
+const DONE_KIND_Q = { decision: "Decision", report: "Report", relay: "Relay" };
 // every key the page keeps in its hash → one writer merges them all; an old link's session= or view= is left out at the first write
 const HASH_KEYS_Q = ["profile", "item", "to"];
 const LIST_GROUPS_Q = {
@@ -137,7 +137,7 @@ const DESK_KEY_LIST_Q = [
 const ORDERS_Q = { PAGE: 30, MAX: 100, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text" };
 // the middle pane's parts: the list body whose scroll the sheet keeps (a hidden box does not keep its own), the sheet body, the list's tab stop
 const PANE_Q = { LIST_BODY: ".queue-list > .card-body", SHEET_BODY: ".queue-sheet > .card-body", TAB_STOP: '.queue-listbox [tabindex="0"]' };
-const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor: null, error: null, refusals: [] });
+const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor: null, error: null, refusals: [], refusalCutAt: null });
 const SESSION_STATE_LABEL_Q = { live: "Live" };
 const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", replaced: "Replaced" };
 
@@ -395,19 +395,77 @@ function getFoldKeyQ(item) {
 
 /**
  * The one list's bands (spec §4.6): the open bands as getGroupsQ draws them, then the Done bands. Both parts in the ticks' and the account's scope;
- * an item both reads return is drawn once, in its open band.
+ * an item or a send both parts hold is drawn once, in its open band.
+ * @param reads - the Done part's threads: `done` the item thread, `relays` the relay thread
  */
-function getListGroupsQ(items, doneItems, filter, ids) {
+function getListGroupsQ(items, reads, filter, ids) {
 	const visible = getVisibleItemsQ(items, filter, ids);
-	const openIds = new Set(visible.map((item) => item.id));
-	const done = getVisibleItemsQ(doneItems, filter, ids).filter((item) => !openIds.has(item.id));
-	return [...getGroupsQ(visible), ...getDoneGroupsQ(done)];
+	return [...getGroupsQ(visible), ...getDoneGroupsQ(getDoneRowsQ(reads, visible, { filter, ids }))];
 }
 
-/** The Done bands: a band per day of the item's end, rows in the read's order (newest end first), one item a row. */
-function getDoneGroupsQ(items, now = new Date()) {
-	const rows = items.map((item) => ({ ...getSingleRowQ(item), isDone: true }));
-	return getDayGroupsQ(rows, now, (row) => row.item.closedAt, getMonthDayQ).map((group) => ({ key: `done-${group.day}`, label: group.label, rows: group.entries, isDone: true }));
+/**
+ * The Done part's rows, newest last act first (layout §1): ended decisions and reports, relay sends whose every copy has ended, refusals.
+ * A send with a copy on its way, or one the open part draws, has no Done row and counts nowhere; a row below the floor waits undrawn.
+ */
+function getDoneRowsQ(reads, open, scope) {
+	const openKeys = new Set(open.map(getFoldKeyQ));
+	const isClosed = (row) => !openKeys.has(getFoldKeyQ(row.item));
+	const items = getVisibleItemsQ(reads.done.items, scope.filter, scope.ids).map(getSingleRowQ).filter(isClosed);
+	const sends = getFoldedRowsQ(getVisibleItemsQ(reads.relays.items, scope.filter, scope.ids)).filter((row) => isClosed(row) && row.copies.every((copy) => getRelayOutcomeQ(copy) !== null));
+	const accounts = getSessionAccountsQ([...open, ...reads.done.items, ...reads.relays.items]);
+	const refusals = (reads.relays.refusals ?? []).filter((refusal) => isRefusalShownQ(refusal, scope, accounts)).map(getRefusalRowQ);
+	const floor = getDoneFloorQ(reads);
+	return [...items, ...sends, ...refusals]
+		.filter((row) => Date.parse(getDoneAtQ(row)) >= floor)
+		.sort((left, right) => Date.parse(getDoneAtQ(right)) - Date.parse(getDoneAtQ(left)));
+}
+
+// each session's account by its id prefix, from the loaded items: a copy's session, a relay's sender
+function getSessionAccountsQ(items) {
+	const accounts = new Map();
+	for (const item of items) {
+		accounts.set(item.session.sessionIdPrefix, item.session.profileLabel);
+		if (item.relay) accounts.set(item.relay.sender.sessionIdPrefix, item.relay.sender.profileLabel);
+	}
+	return accounts;
+}
+
+// a refusal holds id prefixes only: in the ticks by either end · under an account, once a loaded item places either end in it
+function isRefusalShownQ(refusal, { filter, ids }, accounts) {
+	const ends = [refusal.senderIdPrefix, ...refusal.recipientIdPrefixes];
+	const isTicked = ids.length === 0 || ids.some((id) => ends.includes(id.slice(0, SESSION_PREFIX_LENGTH_Q)));
+	return isTicked && (!filter.profile || ends.some((prefix) => accounts.get(prefix) === filter.profile));
+}
+
+// a refusal has no item → its row is keyed by its time and both ends
+function getRefusalRowQ(refusal) {
+	return { id: `refusal:${refusal.at}:${refusal.senderIdPrefix}:${refusal.recipientIdPrefixes.join(",")}`, refusal, item: null, copies: [] };
+}
+
+/**
+ * No gap (layout §1): each read's frontier is its oldest loaded row, none once whole, and a cut refusal list ends where its listing does
+ * → a row older than the newest of them waits undrawn.
+ */
+function getDoneFloorQ(reads) {
+	const cutAt = reads.relays.refusalCutAt ? Date.parse(reads.relays.refusalCutAt) : null;
+	return Math.max(-Infinity, ...[getFrontierQ(reads.done), getFrontierQ(reads.relays), cutAt].filter((floor) => floor !== null));
+}
+
+// a history cursor names its oldest row's time in epoch microseconds → milliseconds, the precision every loaded time carries; whole → null
+function getFrontierQ(thread) {
+	return thread.nextCursor ? Math.floor(Number(thread.nextCursor.split(":")[0]) / 1000) : null;
+}
+
+// a Done row's last act: a refusal's time, a relay's send, a decision's or report's end
+function getDoneAtQ(row) {
+	if (row.refusal) return row.refusal.at;
+	return row.item.kind === "relay" ? row.item.askedAt : row.item.closedAt;
+}
+
+/** The Done bands: a band per day of each row's last act, rows in the merge's order (newest first). */
+function getDoneGroupsQ(rows, now = new Date()) {
+	const done = rows.map((row) => ({ ...row, isDone: true }));
+	return getDayGroupsQ(done, now, getDoneAtQ, getMonthDayQ).map((group) => ({ key: `done-${group.day}`, label: group.label, rows: group.entries, isDone: true }));
 }
 
 /** The row the hash's item opens on the sheet: a loaded row of the list as it stands that has a sheet; none, or an order's row → null. */
@@ -415,9 +473,9 @@ function getSelectedIdQ(groups, hashItemId) {
 	return getSheetRowsQ(groups).find((row) => String(row.id) === hashItemId)?.id ?? null;
 }
 
-// every row but an order's opens on a sheet (spec §4.2) → the rows stepping and the position count
+// every row but an order's opens on a sheet (spec §4.2) → the rows stepping and the position count; a refusal holds no item to open
 function getSheetRowsQ(groups) {
-	return getRowsQ(groups).filter((row) => getRowKindQ(row) !== "Order");
+	return getRowsQ(groups).filter((row) => !row.refusal && getRowKindQ(row) !== "Order");
 }
 
 // the bands' rows in list order
@@ -622,7 +680,9 @@ function putSteppedRowQ({ queue, target, root }, key) {
 // the list row holding the element, null off the list
 function getRowIdQ(target) {
 	const id = target?.closest?.('[role="option"]')?.id;
-	return id?.startsWith(ROW_ID_PREFIX_Q) ? Number(id.slice(ROW_ID_PREFIX_Q.length)) : null;
+	if (!id?.startsWith(ROW_ID_PREFIX_Q)) return null;
+	const rowId = id.slice(ROW_ID_PREFIX_Q.length);
+	return /^\d+$/.test(rowId) ? Number(rowId) : rowId;
 }
 
 // Enter on a row: its sheet in the list's place · an order's row → its entry in Orders, the list staying
@@ -713,7 +773,8 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const [status, setStatus] = useStateQ("");
 	const sessions = useSessionsStateQ(filter.profile, setStatus);
 	const done = useThreadQ({ selectedIds: sessions.selectedIds, kind: "item", profile: filter.profile });
-	const groups = getListGroupsQ(list.data?.items ?? [], done.thread.items, filter, sessions.selectedIds);
+	const relays = useThreadQ({ selectedIds: sessions.selectedIds, kind: "relay" });
+	const groups = getListGroupsQ(list.data?.items ?? [], { done: done.thread, relays: relays.thread }, filter, sessions.selectedIds);
 	const { sheet, steps, currentId, setCurrentId, openItem, closeSheet } = useSheetQ(groups, sessions.selectedIds);
 	const keys = useKeysSwitchQ();
 	const readList = useListReadQ(list, setList);
@@ -731,7 +792,7 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const reloadWithDone = useCallbackQ(() => { reload(); done.reread(); }, [reload, done.reread]);
 	const actions = useQueueActionsQ({ groups, setList, setDrafts, setStatus, openItem, closeSheet, reload: reloadWithDone, onRetryHarness });
 	const orders = useOrdersQ({ selectedIds: sessions.selectedIds, sendAction: actions.send, setStatus, reload });
-	const ticks = usePageTickQ({ readList, readResumes, readRelaySignal, sessions, orders, done, setStatus, onReadQueueCount });
+	const ticks = usePageTickQ({ readList, readResumes, sessions, orders, done, relays, setStatus, onReadQueueCount });
 	const setDraft = useCallbackQ((id, patch) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } })), []);
 	const setImages = useCallbackQ((id, update) => setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], images: update(prev[id]?.images ?? []) } })), []);
 	// opening a row, focusing it or its row showing in the list is the owner seeing it → the arrival ends (spec §4.4)
@@ -739,7 +800,7 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	const selectRow = useCallbackQ((id) => { openItem(id); setSeen(id); }, [openItem, setSeen]);
 	const openOrderRow = useOrderRowQ({ list, setCurrentId, sessions, orders });
 	return {
-		list, done, resumes, readResumes, relaySignal, relayHistory, sessions, orders, drafts, setDraft, setImages, filter, setFilter, reload, loadMore, groups, sheet, steps,
+		list, done, relays, resumes, readResumes, relaySignal, relayHistory, sessions, orders, drafts, setDraft, setImages, filter, setFilter, reload, loadMore, groups, sheet, steps,
 		selectedId: currentId, selectRow, setSeen, back: closeSheet, openOrderRow, status, keys, ...actions, ...ticks,
 	};
 }
@@ -817,23 +878,23 @@ function useListReadQ(list, setList) {
 }
 
 /** The page's own tick (getPageReadQ) on its cadence, and the checks failed in a row the header line words its interval from. */
-function usePageTickQ({ readList, readResumes, readRelaySignal, sessions, orders, done, setStatus, onReadQueueCount }) {
+function usePageTickQ({ readList, readResumes, sessions, orders, done, relays, setStatus, onReadQueueCount }) {
 	const [failedChecks, setFailedChecks] = useStateQ(0);
 	const tick = useCallbackQ(
-		() => getPageReadQ({ readList, readResumes, readRelaySignal, sessions, orders, done, setStatus, onReadQueueCount }),
-		[readList, readResumes, readRelaySignal, sessions, orders, done, setStatus, onReadQueueCount],
+		() => getPageReadQ({ readList, readResumes, sessions, orders, done, relays, setStatus, onReadQueueCount }),
+		[readList, readResumes, sessions, orders, done, relays, setStatus, onReadQueueCount],
 	);
 	useAutoReadQ(tick, setFailedChecks);
 	return { failedChecks };
 }
 
 /**
- * One tick (spec §4.4): the items, the sessions, the nav count, the thread (always on screen), the done items' loaded pages, the resume
- * record and the relay signal, whose foot buttons have no other read to keep them current. An arrival is said on the open list's status line.
+ * One tick (spec §4.4): the items, the sessions, the nav count, the thread (always on screen), both Done reads' loaded pages and the resume
+ * record, whose foot button has no other read to keep it current. An arrival is said on the open list's status line.
  * @returns true when the list read landed
  */
-async function getPageReadQ({ readList, readResumes, readRelaySignal, sessions, orders, done, setStatus, onReadQueueCount }) {
-	const [read] = await Promise.all([readList(), sessions.read(), onReadQueueCount?.(), orders.reread(), done.reread(), readResumes(), readRelaySignal()]);
+async function getPageReadQ({ readList, readResumes, sessions, orders, done, relays, setStatus, onReadQueueCount }) {
+	const [read] = await Promise.all([readList(), sessions.read(), onReadQueueCount?.(), orders.reread(), done.reread(), relays.reread(), readResumes()]);
 	setReadStatusQ(read, setStatus);
 	return read.isGood;
 }
@@ -1189,7 +1250,8 @@ async function putResendsQ(ids, sendAction, read) {
 // first page on mount and on every tick change; a read for ticks since changed is dropped
 // ponytail: a send, a resend or a tick change reads the first page again → loaded earlier pages go; the page's tick (reread) keeps them
 /**
- * A history read kept current: the orders (the Orders thread) or the done items (kind `item`, spec §4.6), scoped by the ticks and the account.
+ * A history read kept current: the orders (the Orders thread), the done items (kind `item`, spec §4.6) or the relays (kind `relay`, layout §1),
+ * scoped by the ticks and, for kind `item`, the account.
  */
 function useThreadQ({ selectedIds, kind = "order", profile = "" }) {
 	const [thread, setThread] = useStateQ(EMPTY_THREAD_Q);
@@ -1222,12 +1284,29 @@ async function getThreadQ({ ids, before, setThread, isCurrent = () => true, limi
 }
 
 // an earlier page joins the thread, the page's own re-read merges into it, any other first page replaces it · the relay
-// thread's refusals (its page's time span) join or replace the same way
+// thread's refusals (its page's time span) join, merge or replace the same way, and the newest cut page ends the list (getRefusalCutAtQ)
+// ponytail: a re-read sets no cut of its own — the span below its cut was listed by the pages that loaded it; upgrade = refusals by their own cursor
 function getReadThreadQ(prev, page, before, isQuiet) {
 	const refusals = page.refusals ?? [];
-	if (before !== null) return { items: putEarlierPageQ(prev.items, page.items), nextCursor: page.nextCursor ?? null, refusals: [...refusals, ...(prev.refusals ?? [])] };
-	if (isQuiet) return getKeptBeyondQ(prev, page, () => true);
-	return { items: page.items, nextCursor: page.nextCursor ?? null, refusals };
+	if (before !== null) {
+		return { items: putEarlierPageQ(prev.items, page.items), nextCursor: page.nextCursor ?? null, refusals: [...refusals, ...(prev.refusals ?? [])], refusalCutAt: prev.refusalCutAt ?? getRefusalCutAtQ(page) };
+	}
+	if (isQuiet) return { ...getKeptBeyondQ(prev, page, () => true), refusals: [...refusals, ...getRefusalsBeyondQ(prev.refusals ?? [], page)], refusalCutAt: prev.refusalCutAt ?? null };
+	return { items: page.items, nextCursor: page.nextCursor ?? null, refusals, refusalCutAt: getRefusalCutAtQ(page) };
+}
+
+// the server lists a page's newest refusals up to its bound (isRefusalListCut) → the oldest one listed is as far as the record reaches
+function getRefusalCutAtQ(page) {
+	const ats = (page.refusals ?? []).map((refusal) => refusal.at);
+	if (page.isRefusalListCut !== true || ats.length === 0) return null;
+	return ats.reduce((oldest, at) => (Date.parse(at) < Date.parse(oldest) ? at : oldest));
+}
+
+// the loaded refusals a re-read's span leaves out: older than its oldest listed one when cut, else than its cursor; a whole read spans all
+function getRefusalsBeyondQ(refusals, page) {
+	const cutAt = getRefusalCutAtQ(page);
+	const bound = cutAt === null ? getFrontierQ(page) : Date.parse(cutAt);
+	return bound === null ? [] : refusals.filter((refusal) => Date.parse(refusal.at) < bound);
 }
 
 /**
@@ -1245,7 +1324,7 @@ function getReadLimitQ(loaded, page, max) {
 	return Math.min(Math.max(page, loaded), max);
 }
 
-// no tick → the orders to every session · kind relay → the relay record, never scoped by the ticks · the account scopes kind item alone
+// no tick → every session's history · the account scopes kind item alone (the server refuses it on the folded threads)
 function getOrdersQueryQ({ ids, before, limit, kind, profile }) {
 	const query = new URLSearchParams({ limit: String(limit) });
 	if (kind !== "order") query.set("kind", kind);
@@ -1368,7 +1447,7 @@ async function getMoreQ({ list, setList }) {
  */
 function useQueueActionsQ({ groups, setList, setDrafts, setStatus, openItem, closeSheet, reload, onRetryHarness }) {
 	const { busy, send } = useSendQ({ setDrafts, reload, onRetryHarness });
-	const items = getRowsQ(groups).map((row) => row.item);
+	const items = getSheetRowsQ(groups).map((row) => row.item);
 	const settle = useCallbackQ(async (id, action, body) => {
 		const nextId = getNextAwaitingIdQ(items, id);
 		if (!(await send(id, action, body))) return false;
@@ -1451,7 +1530,7 @@ function QueueListQ({ queue }) {
 	const visible = getVisibleItemsQ(items, queue.filter, ids);
 	const offView = useOffViewNewQ(queue.list.newIds, queue.sheet.kind !== "none", queue.setSeen);
 	const scope = getScopeTitleQ(queue.sessions.region.data?.sessions ?? [], ids);
-	const loaded = [...items, ...queue.done.thread.items];
+	const loaded = [...items, ...queue.done.thread.items, ...queue.relays.thread.items];
 	return (
 		<Card className="queue-pane queue-list" title={<span title={scope}>{scope}</span>} sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
 			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts" infoTitle="Keyboard shortcuts"
@@ -1554,15 +1633,15 @@ function isAccountAxisShownQ(items, filter) {
 	return Boolean(filter.profile) || new Set(items.map((item) => item.session.profileLabel)).size > 1;
 }
 
-// the open read failed with nothing loaded → Retry reads both parts · the first load ends once both first reads settle (spec §4.6 → States)
+// the open read failed with nothing loaded → Retry reads both parts · the first load ends once every first read settles (spec §4.6 → States)
 function ListBodyQ({ queue, items }) {
 	const { LoadingPlaceholder } = window.UI;
-	const { done } = queue;
-	if (queue.list.status === "error") return <QueueFailureQ failure={queue.list.error} onRetry={() => { queue.reload(); done.read(); }} />;
-	if (queue.list.data === null || !isThreadSettledQ(done.thread)) return <div className="queue-loading"><LoadingPlaceholder label="the queue" /></div>;
+	const { done, relays } = queue;
+	if (queue.list.status === "error") return <QueueFailureQ failure={queue.list.error} onRetry={() => { queue.reload(); done.read(); relays.read(); }} />;
+	if (queue.list.data === null || !isThreadSettledQ(done.thread) || !isThreadSettledQ(relays.thread)) return <div className="queue-loading"><LoadingPlaceholder label="the queue" /></div>;
 	return (
 		<>
-			{queue.groups.length > 0 ? <QueueListboxQ queue={queue} items={[...items, ...done.thread.items]} /> : <ListEmptyQ queue={queue} items={items} />}
+			{queue.groups.length > 0 ? <QueueListboxQ queue={queue} items={[...items, ...done.thread.items, ...relays.thread.items]} /> : <ListEmptyQ queue={queue} items={items} />}
 			<ListEndQ queue={queue} />
 		</>
 	);
@@ -1582,30 +1661,52 @@ function ListEmptyQ({ queue, items }) {
 }
 
 /**
- * The list's end, one line after the last row (spec §4.6): the open read's next page while it has one, then the done read's —
- * pressed, never loaded on reaching the end; its failure, or past the cap a line that only the newest show; nothing more → no line.
+ * The list's end, one line after the last row (spec §4.6): the open read's next page while it has one, then the Done part's —
+ * pressed, never loaded on reaching the end; nothing more → no line.
  */
 function ListEndQ({ queue }) {
-	const { list, done } = queue;
+	const { list } = queue;
 	const content = list.data.nextCursor !== null
 		? <ShowMoreQ count={list.data.items.length} isBusy={list.status === "loading"} onMore={queue.loadMore} />
-		: getDoneEndQ(done);
+		: getDoneEndQ(queue, getRowsQ(queue.groups.filter((group) => group.isDone)).length);
 	return content && <div className="queue-list-end">{content}</div>;
 }
 
-function getDoneEndQ({ thread, read, showEarlier }) {
+/**
+ * The Done part's end (layout §1 → Reads and Show more): a failed read's warning, whose Retry reads each failed read again; the list's end at a
+ * refusal cut; past the cap a line that only the newest show; else Show more on the read whose frontier is newer.
+ * @param count - the Done rows drawn: a send on its way counts nowhere, so a page of them leaves Show more in place
+ */
+function getDoneEndQ({ done, relays }, count) {
+	const failed = [done, relays].filter((read) => read.thread.status === "error");
+	if (failed.length > 0) return <DoneWarningQ text="Done items could not be read." onRetry={() => { for (const read of failed) read.read(); }} />;
+	if (isDoneCutQ(done.thread, relays.thread)) return <DoneWarningQ text="The list ends here: some refused relays could not be listed." />;
+	const next = getNextDoneReadQ(done, relays);
+	if (next === null) return null;
+	if (count >= DONE_Q.MAX) return <span className="fs-meta text-dim">{`Showing the ${DONE_Q.MAX} most recent`}</span>;
+	return <ShowMoreQ count={count} isBusy={next.thread.status === "loading"} onMore={next.showEarlier} />;
+}
+
+// the cut is the floor: no read's frontier stands above it, so no page either read could load draws a row
+function isDoneCutQ(done, relays) {
+	return Boolean(relays.refusalCutAt) && getDoneFloorQ({ done, relays }) === Date.parse(relays.refusalCutAt);
+}
+
+// Show more pages the read whose frontier is newer; both whole → null
+function getNextDoneReadQ(done, relays) {
+	const [itemAt, relayAt] = [getFrontierQ(done.thread), getFrontierQ(relays.thread)];
+	if (itemAt === null && relayAt === null) return null;
+	return (relayAt ?? -Infinity) > (itemAt ?? -Infinity) ? relays : done;
+}
+
+function DoneWarningQ({ text, onRetry }) {
 	const { TONE_GLYPH } = window.UI;
-	if (thread.status === "error") {
-		return (
-			<>
-				<span className="fs-meta"><span aria-hidden="true" className="text-warn">{`${TONE_GLYPH.warn} `}</span>Done items could not be read.</span>
-				<button type="button" className="btn ghost sm" onClick={read}>Retry</button>
-			</>
-		);
-	}
-	if (thread.nextCursor === null) return null;
-	if (thread.items.length >= DONE_Q.MAX) return <span className="fs-meta text-dim">{`Showing the ${DONE_Q.MAX} most recent`}</span>;
-	return <ShowMoreQ count={thread.items.length} isBusy={thread.status === "loading"} onMore={showEarlier} />;
+	return (
+		<>
+			<span className="fs-meta"><span aria-hidden="true" className="text-warn">{`${TONE_GLYPH.warn} `}</span>{text}</span>
+			{onRetry && <button type="button" className="btn ghost sm" onClick={onRetry}>Retry</button>}
+		</>
+	);
 }
 
 // spec §10 → List, sessions ticked and nothing from them
@@ -1645,14 +1746,16 @@ function QueueGroupQ({ group, queue, view }) {
 	const bandId = `queue-band-${group.key}`;
 	const name = group.isDone ? { "aria-label": `${DONE_Q.LABEL}, ${group.label}` } : { "aria-labelledby": bandId };
 	const cols = getBandColsQ(group.rows);
+	const names = group.rows.some((row) => row.refusal) ? getRelayNamesQ(queue.relays.thread.items) : null;
 	return (
 		<div role="group" data-cols={cols.join(" ")} {...name}>
 			<div id={bandId} className="queue-band">
 				{group.isDone ? DONE_Q.LABEL : group.label}
 				{group.isDone ? <span className="queue-band-day">{group.label}</span> : <BandCountQ count={group.rows.length} hasMore={queue.list.data.nextCursor !== null} />}
 			</div>
-			{group.rows.map((row) => (
-				<QueueRowQ key={row.id} row={row} isSelected={row.id === queue.selectedId} isNew={queue.list.newIds.includes(row.id)} cols={cols} view={view} onSelect={queue.selectRow} onOrder={queue.openOrderRow} onSeen={queue.setSeen} />
+			{group.rows.map((row) => (row.refusal
+				? <RefusedRowQ key={row.id} row={row} names={names} cols={cols} view={view} />
+				: <QueueRowQ key={row.id} row={row} isSelected={row.id === queue.selectedId} isNew={queue.list.newIds.includes(row.id)} cols={cols} view={view} onSelect={queue.selectRow} onOrder={queue.openOrderRow} onSeen={queue.setSeen} />
 			))}
 		</div>
 	);
@@ -1688,6 +1791,34 @@ function QueueRowQ({ row, isSelected, isNew = false, cols, view, onSelect, onOrd
 			<Icon name="chevR" size={16} className="queue-row-chevron" />
 		</div>
 	);
+}
+
+/** A refused relay's Done row (layout §1) on the band's columns: its sender, `→` its recipients and the reason's name; the queue stored no text. */
+function RefusedRowQ({ row, names, cols, view }) {
+	const { Icon, formatKstDateTime, formatRelativeTime } = window.UI;
+	const { refusal } = row;
+	const cells = getRowCellsQ(row, false);
+	const sender = names.get(refusal.senderIdPrefix) ?? refusal.senderIdPrefix;
+	const to = getRefusalToQ(refusal, names);
+	const reason = getRelayRefusalLineQ(refusal.reason, { sender, recipient: to }).name;
+	return (
+		<div id={`${ROW_ID_PREFIX_Q}${row.id}`} role="option" aria-selected={false} tabIndex={row.id === view.tabStopId ? 0 : -1}
+			aria-label={`Refused relay from ${sender} to ${to}: ${reason}, ${formatRelativeTime(refusal.at)}`} className="queue-row queue-row--done">
+			{view.isNameShown && <span className="queue-row-who"><span className="queue-row-name" title={sender}>{sender}</span></span>}
+			<span className="queue-row-title">{!view.isNameShown && sender}<span className="font-normal text-dim">{view.isNameShown ? "→ " : " → "}</span>{`${to} `}<span className="font-normal text-dim">{reason}</span></span>
+			{cols.includes("tag") && <span className="queue-row-tag"><RowTagsQ tags={cells.tags} /></span>}
+			{cols.includes("fact") && <span className="queue-row-fact">{cells.fact}</span>}
+			<span className="queue-row-age" title={formatKstDateTime(refusal.at)}>{getRowAgeQ(refusal.at)}</span>
+			<Icon name="chevR" size={16} className="queue-row-chevron" />
+		</div>
+	);
+}
+
+// `yoaida`, `3 sessions`, or with none resolved `1 unknown recipient`
+function getRefusalToQ(refusal, names) {
+	const [first, ...rest] = refusal.recipientIdPrefixes;
+	if (first === undefined) return `${refusal.unresolvedCount ?? 0} unknown ${refusal.unresolvedCount === 1 ? "recipient" : "recipients"}`;
+	return rest.length > 0 ? `${rest.length + 1} sessions` : names.get(first) ?? first;
 }
 
 // one cut line, the whole name in its tooltip
@@ -1794,9 +1925,10 @@ function getPauseGlyphQ() {
  * `extras` — the account, a start directory's mark and an order's or an answer's images, in the row's title and accessible name only.
  */
 function getRowCellsQ(row, isAccountShown) {
+	if (row.refusal) return { tags: [{ text: "Refused" }], fact: DONE_KIND_Q.relay, extras: [] };
 	const { item, copies } = row;
 	const extras = [isAccountShown && item.session.profileLabel, copies.length === 1 && item.session.isNameRegistered === false && "start directory", getImagesWordQ(item)].filter(Boolean);
-	if (row.isDone) return { tags: [getEndQ(item)], fact: DONE_KIND_Q[item.kind], extras };
+	if (row.isDone) return { tags: item.kind === "relay" ? [] : [getEndQ(item)], fact: DONE_KIND_Q[item.kind], extras };
 	if (item.status === "open" && item.kind === "decision") {
 		const count = (item.options ?? []).length;
 		return { tags: item.isApprovalClass ? [{ text: "Approval", badge: "tag" }] : [], fact: `${count} ${count === 1 ? "option" : "options"}`, extras };
@@ -1876,13 +2008,13 @@ function getLabelEndsQ(row, isNameShown) {
 }
 
 function getAgeVerbQ(row) {
-	if (row.isDone) return "ended";
-	return row.item.kind === "relay" ? "sent" : "posted";
+	if (row.item.kind === "relay") return "sent";
+	return row.isDone ? "ended" : "posted";
 }
 
-// a done row's time is its end, every other row's its post
+// a done row's time is its last act, every other row's its post
 function getRowAtQ(row) {
-	return row.isDone ? row.item.closedAt : row.item.askedAt;
+	return row.isDone ? getDoneAtQ(row) : row.item.askedAt;
 }
 
 // a done row names its kind; on the open list a decision or report out of open is an answer or an order on its way
@@ -2003,8 +2135,8 @@ async function getRelayEndQ(item, copies) {
 }
 
 function getSheetFootQ({ item, copies, end, draft, queue, isBusy, error, hasLeft, isDone }) {
+	if (item.kind === "relay") return <RelayFootQ copies={copies} end={isDone ? copies : end} />;
 	if (isDone) return <EndLineQ item={item} />;
-	if (item.kind === "relay") return <RelayFootQ copies={copies} end={end} />;
 	if (hasLeft) return <LeftQueueLineQ />;
 	return <SheetFootQ item={item} draft={draft} queue={queue} isBusy={isBusy} error={error} />;
 }
@@ -2020,7 +2152,7 @@ function EndLineQ({ item }) {
 /**
  * A relay's foot (spec §9.9): one line, no field and no button — nothing on it is the owner's to send.
  * Once its row left, how its copies ended in place of the read-only line (Part 3), said once.
- * @param end - useRelayEndQ's answer
+ * @param end - how its copies ended: a Done row's own copies, or useRelayEndQ's answer
  */
 function RelayFootQ({ copies, end }) {
 	const to = copies.length > 1 ? "each session" : copies[0].session.name;

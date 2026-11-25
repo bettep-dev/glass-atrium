@@ -14,7 +14,7 @@ import { imageUploadQuerySchema, messageBodySchema, ownerOrdersQuerySchema, repl
 import { getImageFacts } from "../src/server/queue/image-format.js";
 import { IMAGE_BYTES_MAX } from "../src/server/queue/images.js";
 import { collectText, createEffectReact, createFakeDocument, createStatefulReact, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
-import { getRelayHistoryFixture } from "./lib/queue-render-fixtures.js";
+import { FIXTURE_NOW, FIXTURE_SESSION_IDS, getRelayHistoryFixture } from "./lib/queue-render-fixtures.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const QUEUE_SRC = resolve(__dirname, "../public/src/screens/queue.jsx");
@@ -137,6 +137,7 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
       back: record("back"),
       list: { status: "ready", data: { items: [], nextCursor: null }, newIds: [] },
       done: { thread: { status: "ready", hasRead: true, items: [], nextCursor: null, error: null, refusals: [] }, read: record("readDone"), showEarlier: record("moreDone"), reread: record("rereadDone") },
+      relays: { thread: { status: "ready", hasRead: true, items: [], nextCursor: null, error: null, refusals: [], refusalCutAt: null }, read: record("readRelays"), showEarlier: record("moreRelays"), reread: record("rereadRelays") },
       steps: { index: 0, count: 1, prevId: null, nextId: null },
       ...overrides,
     },
@@ -584,20 +585,20 @@ describe("recent automatic resumes", () => {
   });
 
   // spec §4.4: the foot button's count and ⚠ follow the page's own tick, as the list does
-  test("the page's tick reads the resume record and the relay signal beside the list, the sessions, the count, the thread and the done items", async () => {
+  test("the page's tick reads the resume record beside the list, the sessions, the count, the thread and both Done reads", async () => {
     const reads: string[] = [];
     const read = (name: string, answer: unknown = undefined) => async () => { reads.push(name); return answer; };
     const isGood = await (screen.getPageReadQ as (deps: unknown) => Promise<boolean>)({
       readList: read("list", { isGood: true, arrived: [], turned: [] }),
       readResumes: read("resumes"),
-      readRelaySignal: read("relay signal"),
       sessions: { read: read("sessions") },
       orders: { reread: read("thread") },
       done: { reread: read("done items") },
+      relays: { reread: read("done relays") },
       onReadQueueCount: read("count"),
       setStatus: () => undefined,
     });
-    assert.deepEqual([isGood, [...reads].sort()], [true, ["count", "done items", "list", "relay signal", "resumes", "sessions", "thread"]]);
+    assert.deepEqual([isGood, [...reads].sort()], [true, ["count", "done items", "done relays", "list", "resumes", "sessions", "thread"]]);
   });
 
   test("the record is read from the resume route, whatever the owner list holds", async () => {
@@ -1226,7 +1227,8 @@ describe("done items in the one list", () => {
       doneReport({ id: 2, closedAt: "2026-11-16T10:00:00.000Z" }),
       doneReport({ id: 1, closedAt: "2026-11-16T09:00:00.000Z" }),
     ];
-    const groups = call<Array<{ label: string; rows: Array<{ id: number; copies: unknown[]; isDone: boolean }> }>>("getDoneGroupsQ", items, new Date("2026-11-19T06:00:00.000Z"));
+    const rows = items.map((item) => call("getSingleRowQ", item));
+    const groups = call<Array<{ label: string; rows: Array<{ id: number; copies: unknown[]; isDone: boolean }> }>>("getDoneGroupsQ", rows, new Date("2026-11-19T06:00:00.000Z"));
     assert.deepEqual(groups.map((group) => [group.label, group.rows.map((row) => [row.id, row.copies.length, row.isDone])]), [
       ["Today", [[5, 1, true], [4, 1, true]]],
       ["Yesterday", [[3, 1, true]]],
@@ -1280,7 +1282,7 @@ describe("done items in the one list", () => {
   const portfolio = buildSession({ id: "d4", name: "portfolio", profileLabel: "personal" });
   const open = (id: number, overrides: Record<string, unknown> = {}) => buildItem({ id, ...overrides });
   const getGroups = (items: unknown[], done: unknown[], filter: Record<string, string> = { profile: "" }, ids: string[] = []) =>
-    call<Array<{ key: string; isDone?: boolean; label: string; rows: Array<{ id: number; item: { status: string } }> }>>("getListGroupsQ", items, done, filter, ids);
+    call<Array<{ key: string; isDone?: boolean; label: string; rows: Array<{ id: number; item: { status: string } }> }>>("getListGroupsQ", items, { done: { items: done, nextCursor: null }, relays: { items: [], refusals: [], nextCursor: null } }, filter, ids);
 
   test("every open band stands above every Done band, and an item both reads return is drawn once, in its open band", () => {
     const items = [open(1, { kind: "report" }), open(2), open(3, { status: "answered", ...answered })];
@@ -1362,10 +1364,11 @@ describe("done items in the one list", () => {
   });
 
   // the queue as useQueueStateQ hands it to the list: its open read, its done read, and the one list's bands
-  const listQueue = (items: unknown[], thread: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => {
+  const listQueue = (items: unknown[], thread: Record<string, unknown> = {}, extra: Record<string, unknown> = {}, relayThread: Record<string, unknown> = {}) => {
     const { queue, calls } = buildQueue({ loadMore: () => calls.push(["loadMore"]) });
     const done = { ...queue.done, thread: { ...queue.done.thread, ...thread } };
-    const base = { ...withList(queue, items), done, ...extra };
+    const relays = { ...queue.relays, thread: { ...queue.relays.thread, ...relayThread } };
+    const base = { ...withList(queue, items), done, relays, ...extra };
     const groups = getGroups(items, done.thread.items as unknown[]);
     return { queue: { ...base, groups, sheet: getSheet(groups, ""), selectedId: null }, calls };
   };
@@ -1387,9 +1390,10 @@ describe("done items in the one list", () => {
     { name: "a later done read in flight → the rows stay", items: [open(1)], thread: { status: "loading", items: [doneReport()] }, expected: { rows: [1, 806], loading: [], empty: [], failures: 0 } },
     { name: "nothing in either part → the empty queue", items: [], thread: {}, expected: { rows: [], loading: [], empty: ["Nothing is waiting for you"], failures: 0 } },
     { name: "the done read failed → the open rows stay", items: [open(1)], thread: { status: "error", hasRead: undefined, error: FAILURE }, expected: { rows: [1], loading: [], empty: [], failures: 0 } },
+    { name: "the first relay read in flight → the queue loading, though both other reads are in", items: [open(1)], thread: { items: [doneReport()] }, relays: { status: "loading", hasRead: undefined }, expected: { rows: [], loading: ["the queue"], empty: [], failures: 0 } },
   ];
   for (const row of states) {
-    test(`the one list: ${row.name}`, () => assert.deepEqual(getBody(bodyOf(listQueue(row.items, row.thread).queue)), row.expected));
+    test(`the one list: ${row.name}`, () => assert.deepEqual(getBody(bodyOf(listQueue(row.items, row.thread, {}, row.relays).queue)), row.expected));
   }
 
   test("the head counts the open items alone: 0 waiting while only done rows show", () => {
@@ -1401,7 +1405,7 @@ describe("done items in the one list", () => {
     const { queue, calls } = listQueue([], {}, { list: { status: "error", data: null, error: FAILURE, readAt: null, newIds: [] } });
     const [failure] = findNodes(bodyOf(queue), (node) => node.type === "QueueFailureQ");
     (failure?.props.onRetry as () => void)();
-    assert.deepEqual(getPlain(calls), [["reload"], ["readDone"]]);
+    assert.deepEqual(getPlain(calls), [["reload"], ["readDone"], ["readRelays"]]);
   });
 
   // spec §4.6 → More handled items: one line after the last row — the open read's next page first, then the done read's 30
@@ -1409,7 +1413,7 @@ describe("done items in the one list", () => {
     { name: "the open read has more → Show more reads its next page", nextCursor: 9, thread: { items: [doneReport()], nextCursor: "1:1" }, expected: { more: [["loadMore"]], text: "Show more" } },
     { name: "the open read whole, the done read has more → Show more reads the next done page", nextCursor: null, thread: { items: [doneReport()], nextCursor: "1:1" }, expected: { more: [["moreDone"]], text: "Show more" } },
     { name: "a done page in progress → Loading…", nextCursor: null, thread: { status: "loading", items: [doneReport()], nextCursor: "1:1" }, expected: { more: [], text: "Loading…" } },
-    { name: "200 done items loaded with more behind them → only the newest show", nextCursor: null, thread: { items: Array.from({ length: 200 }, (_, index) => doneReport({ id: index + 1 })), nextCursor: "1:1" }, expected: { more: [], text: "Showing the 200 most recent" } },
+    { name: "200 done items loaded with more behind them → only the newest show", nextCursor: null, thread: { items: Array.from({ length: 200 }, (_, index) => doneReport({ id: index + 2 })), nextCursor: "1:1" }, expected: { more: [], text: "Showing the 200 most recent" } },
     { name: "the done read failed → its warning and a Retry that reads it again", nextCursor: null, thread: { status: "error", error: FAILURE }, expected: { more: [["readDone"]], text: "⚠ Done items could not be read. Retry" } },
     { name: "both reads whole → no line", nextCursor: null, thread: { items: [doneReport()] }, expected: { more: [], text: "" } },
   ];
@@ -1443,6 +1447,107 @@ describe("done items in the one list", () => {
         [collectText(foot as RenderedNode), findNodes(foot as RenderedNode, (node) => node.type === "button" || node.type === "ComposerQ").length, collectText(kind as RenderedNode), collectText(tree).includes("Your answer")],
         [row.foot, 0, row.kind, row.hasAnswer],
       );
+    });
+  }
+});
+
+// layout §1, §6 → Order, Ticks: the Done part merges the item thread and the relay thread, each paged by its own cursor
+describe("relays in the Done part", () => {
+  const relays = getRelayHistoryFixture();
+  const [REFUSAL] = relays.refusals;
+  const atMinutes = (minutes: number) => new Date(FIXTURE_NOW - minutes * 60_000).toISOString();
+  // a history cursor: its row's time in epoch microseconds, then its id
+  const cursorAt = (minutes: number, id: number) => `${(FIXTURE_NOW - minutes * 60_000) * 1000}:${id}`;
+  const ended = (id: number, minutes: number, kind = "report") => buildItem({ id, kind, status: "seen", options: [], closedAt: atMinutes(minutes) });
+  const thread = (overrides: Record<string, unknown> = {}) => ({ status: "ready", hasRead: true, items: [], refusals: [], nextCursor: null, refusalCutAt: null, error: null, ...overrides });
+  // a report ended 200 minutes ago and a decision 30 hours ago, beside the fixture's sends (4 h and 27 h ago, one at 2 h still on its way) and its refusal (3 h ago)
+  const doneRead = (overrides: Record<string, unknown> = {}) => thread({ items: [ended(806, 200), ended(812, 30 * 60, "decision")], ...overrides });
+  const relayRead = (overrides: Record<string, unknown> = {}) => thread({ items: relays.items, refusals: relays.refusals, ...overrides });
+  type Row = { id: number | string; refusal?: { reason: string }; item?: { sendId: string | null }; copies: unknown[] };
+  const getGroups = (open: unknown[], reads: Record<string, unknown>, ids: string[] = []) =>
+    call<Array<{ isDone?: boolean; rows: Row[] }>>("getListGroupsQ", open, reads, { profile: "" }, ids);
+  const named = (row: Row) => (row.refusal ? `refused ${row.refusal.reason}` : row.id);
+  const getDoneBands = (open: unknown[], reads: Record<string, unknown>, ids: string[] = []) =>
+    getGroups(open, reads, ids).filter((group) => group.isDone).map((group) => group.rows.map(named));
+
+  test("Done rows run newest last act first across both reads, banded by the day of that act: an item's end, a send's send, a refusal's time", () => {
+    assert.deepEqual(getDoneBands([], { done: doneRead(), relays: relayRead() }), [["refused pair_cap", 806, 412], [398, 812]]);
+  });
+
+  // one send, one row: the open part draws it first, and a send with a copy on its way is never in Done
+  const onWay = relays.items.map((copy) => (copy.id === 413 ? { ...copy, status: "answered", relay: { ...copy.relay!, lapsedAt: null } } : copy));
+  const sends = [
+    { name: "a send with a copy on its way is drawn in the open part alone", open: onWay.filter((copy) => copy.id === 413), relayItems: onWay, expected: [[false, "forwarded"], [true, "received"]] },
+    { name: "an ended send the open read still holds stays in the open part", open: relays.items.filter((copy) => copy.id === 412), relayItems: relays.items, expected: [[false, "forwarded"], [true, "received"]] },
+    { name: "a send on its way that the open read leaves out has no Done row", open: [], relayItems: relays.items, expected: [[true, "forwarded"], [true, "received"]] },
+  ];
+  const sendNames = new Map(relays.items.map((copy) => [copy.sendId, copy.id >= 415 ? "redacted" : copy.id >= 412 ? "forwarded" : "received"]));
+  for (const row of sends) {
+    test(`one send, one row: ${row.name}`, () => {
+      const drawn = getGroups(row.open, { done: thread(), relays: relayRead({ items: row.relayItems, refusals: [] }) })
+        .flatMap((group) => group.rows.map((entry) => [group.isDone === true, sendNames.get(entry.item!.sendId)]));
+      assert.deepEqual(drawn, row.expected);
+    });
+  }
+
+  // no gap: a read's frontier is its oldest loaded row, none once whole; a row older than the newer frontier waits undrawn
+  const frontiers = [
+    { name: "both reads whole → every row", done: {}, relays: {}, expected: [["refused pair_cap", 806, 412], [398, 812]] },
+    { name: "the relay read has more → item rows older than its oldest send wait", done: {}, relays: { items: relays.items.filter((copy) => copy.id >= 412), nextCursor: cursorAt(240, 412) }, expected: [["refused pair_cap", 806, 412]] },
+    { name: "the item read has more → relay rows older than its oldest item wait", done: { items: [ended(806, 200)], nextCursor: cursorAt(200, 806) }, relays: {}, expected: [["refused pair_cap", 806]] },
+    { name: "the relay read cut its refusals → rows older than its oldest listed refusal wait", done: {}, relays: { refusalCutAt: REFUSAL!.at }, expected: [["refused pair_cap"]] },
+  ];
+  for (const row of frontiers) {
+    test(`the merge: ${row.name}`, () => assert.deepEqual(getDoneBands([], { done: doneRead(row.done), relays: relayRead(row.relays) }), row.expected));
+  }
+
+  // a relay is in scope by either end, a refusal too (the relay read takes the ticks as sessionIds and matches either end)
+  const ticks = [
+    { name: "only the sender ticked shows its relay", ids: [FIXTURE_SESSION_IDS.aidl], expected: [[412]] },
+    { name: "only one of its recipients ticked shows it", ids: [FIXTURE_SESSION_IDS.portfolio], expected: [[412]] },
+    { name: "a third session ticked hides it", ids: [FIXTURE_SESSION_IDS.atrium], expected: [[398]] },
+    { name: "a refusal shows by its sender, beside a relay to that session", ids: [FIXTURE_SESSION_IDS.gersona], expected: [["refused pair_cap"], [398]] },
+  ];
+  for (const row of ticks) {
+    test(`ticks: ${row.name}`, () => assert.deepEqual(getDoneBands([], { done: thread(), relays: relayRead() }, row.ids), row.expected));
+  }
+
+  const FAILURE = { sentence: "The queue could not be read.", next: "Retry.", detail: "503" };
+  const endOf = (done: Record<string, unknown>, relayThread: Record<string, unknown>) => {
+    const { queue, calls } = buildQueue();
+    const reads = { done: { ...queue.done, thread: done }, relays: { ...queue.relays, thread: relayThread } };
+    const groups = getGroups([], { done, relays: relayThread });
+    const tree = render("ListEndQ", { queue: { ...withList(queue, []), ...reads, groups } });
+    for (const button of findNodes(tree, (node) => node.type === "button")) (button.props.onClick as (() => void) | undefined)?.();
+    return { more: getPlain(calls), text: collectText(tree).replace(/\s+/g, " ") };
+  };
+  const manyEnded = Array.from({ length: 199 }, (_, index) => ended(index + 1, index + 1));
+  const ends = [
+    { name: "the item read's frontier is newer → Show more reads the item read", done: doneRead({ items: [ended(806, 200)], nextCursor: cursorAt(200, 806) }), relays: relayRead({ nextCursor: cursorAt(1620, 398) }), expected: { more: [["moreDone"]], text: "Show more" } },
+    { name: "the relay read's frontier is newer → Show more reads the relay read", done: doneRead({ nextCursor: cursorAt(1800, 812) }), relays: relayRead({ items: relays.items.filter((copy) => copy.id >= 412), nextCursor: cursorAt(240, 412) }), expected: { more: [["moreRelays"]], text: "Show more" } },
+    { name: "200 Done rows across both reads with more behind them → only the newest show", done: thread({ items: manyEnded, nextCursor: cursorAt(199, 1) }), relays: thread({ refusals: [{ ...REFUSAL!, at: atMinutes(0) }] }), expected: { more: [], text: "Showing the 200 most recent" } },
+    { name: "a send on its way counts nowhere → 199 Done rows beside it still offer Show more", done: thread({ items: manyEnded, nextCursor: cursorAt(199, 1) }), relays: thread({ items: relays.items.filter((copy) => copy.id >= 415) }), expected: { more: [["moreDone"]], text: "Show more" } },
+    { name: "the relay read failed → the Done warning and a Retry that reads the relay read", done: doneRead(), relays: thread({ status: "error", error: FAILURE }), expected: { more: [["readRelays"]], text: "⚠ Done items could not be read. Retry" } },
+    { name: "both reads failed → one warning, whose Retry reads both", done: thread({ status: "error", error: FAILURE }), relays: thread({ status: "error", error: FAILURE }), expected: { more: [["readDone"], ["readRelays"]], text: "⚠ Done items could not be read. Retry" } },
+    { name: "the relay read cut its refusals → the list ends at the cut and says so", done: doneRead(), relays: relayRead({ refusalCutAt: REFUSAL!.at, nextCursor: cursorAt(1620, 398) }), expected: { more: [], text: "⚠ The list ends here: some refused relays could not be listed." } },
+  ];
+  for (const row of ends) test(`the list's end: ${row.name}`, () => assert.deepEqual(endOf(row.done, row.relays), row.expected));
+
+  // the relay thread pages refusals by time span: each record lands on one page, cut past the server's page bound
+  const prev = { items: [], nextCursor: cursorAt(400, 1), refusals: [{ at: atMinutes(100) }, { at: atMinutes(300) }], refusalCutAt: null };
+  const refusalReads = [
+    { name: "a re-read takes its span's refusals and keeps the loaded ones older than its span", page: { items: [], nextCursor: cursorAt(200, 1), refusals: [{ at: atMinutes(50) }] }, before: null, isQuiet: true, expected: { refusals: [50, 300], cutAt: null } },
+    { name: "a whole re-read takes every refusal from the read", page: { items: [], nextCursor: null, refusals: [{ at: atMinutes(50) }] }, before: null, isQuiet: true, expected: { refusals: [50], cutAt: null } },
+    { name: "a cut re-read keeps the loaded refusals older than its oldest listed one", page: { items: [], nextCursor: cursorAt(200, 1), refusals: [{ at: atMinutes(50) }, { at: atMinutes(90) }], isRefusalListCut: true }, before: null, isQuiet: true, expected: { refusals: [50, 90, 100, 300], cutAt: null } },
+    { name: "a cut first page ends the list at its oldest listed refusal", page: { items: [], nextCursor: cursorAt(200, 1), refusals: [{ at: atMinutes(50) }, { at: atMinutes(90) }], isRefusalListCut: true }, before: null, isQuiet: false, expected: { refusals: [50, 90], cutAt: 90 } },
+    { name: "an earlier page keeps the newer cut", page: { items: [], nextCursor: null, refusals: [{ at: atMinutes(500) }], isRefusalListCut: true }, before: cursorAt(400, 1), isQuiet: false, prev: { ...prev, refusalCutAt: atMinutes(90) }, expected: { refusals: [100, 300, 500], cutAt: 90 } },
+  ];
+  const minutesOf = (iso: string) => Math.round((FIXTURE_NOW - Date.parse(iso)) / 60_000);
+  for (const row of refusalReads) {
+    test(`refusal pages: ${row.name}`, () => {
+      const read = call<{ refusals: Array<{ at: string }>; refusalCutAt: string | null }>("getReadThreadQ", row.prev ?? prev, row.page, row.before, row.isQuiet);
+      const refusals = read.refusals.map((refusal) => minutesOf(refusal.at)).sort((left, right) => left - right);
+      assert.deepEqual({ refusals, cutAt: read.refusalCutAt === null ? null : minutesOf(read.refusalCutAt) }, row.expected);
     });
   }
 });
@@ -2552,7 +2657,7 @@ describe("the ticks as the one selection", () => {
   }
 
   test("a relay with its sender and a recipient ticked is one row", () => {
-    const groups = call<Array<{ rows: Array<{ id: number; copies: unknown[] }> }>>("getListGroupsQ", relayItems, [], { profile: "" }, [SENDER_ID, relayEnds.yoaida.id]);
+    const groups = call<Array<{ rows: Array<{ id: number; copies: unknown[] }> }>>("getListGroupsQ", relayItems, { done: { items: [], nextCursor: null }, relays: { items: [], refusals: [], nextCursor: null } }, { profile: "" }, [SENDER_ID, relayEnds.yoaida.id]);
     assert.deepEqual(groups.flatMap((group) => group.rows).map((row) => [row.id, row.copies.length]), [[412, 2]]);
   });
 
