@@ -108,15 +108,11 @@ jobs:
   # ---------------------------------------------------------------------------
   # Monitor typecheck WITHOUT a live database. `tsc --noEmit` needs the
   # generated Prisma client (git-ignored at monitor/src/generated/prisma, so
-  # ABSENT on a fresh checkout) — but `prisma generate` does NOT need a live DB
-  # (it never connects). It DOES need config load to succeed, and Prisma 7's
-  # config `env()` helper resolves EAGERLY at config-load time: it fails the
-  # load if ANY referenced env var is unresolvable, whether or not a connecting
-  # command runs. prisma.config.ts references BOTH env("DATABASE_URL") and
-  # env("SHADOW_DATABASE_URL") (datasource + shadowDatabaseUrl), so BOTH must be
-  # present as harmless dummies — generate never dereferences the values.
-  # This keeps the fast-gate service-free. Sequence is load-bearing:
-  #   npm ci  →  npx prisma generate  →  npm run typecheck
+  # ABSENT on a fresh checkout) — but `prisma generate` never connects, so the
+  # monitor's db:generate:offline script (shared with local lanes) produces it
+  # with placeholder connection values. This keeps the fast-gate service-free.
+  # Sequence is load-bearing:
+  #   npm ci  →  npm run db:generate:offline  →  npm run typecheck
   # npm ci first so the prisma CLI + generated-client deps exist; generate lands
   # the client at src/generated/prisma; then tsc consumes it.
   # ---------------------------------------------------------------------------
@@ -141,16 +137,9 @@ jobs:
         working-directory: monitor
         run: npm ci
 
-      # Generate the Prisma client offline. Both dummies exist ONLY so config
-      # load succeeds — Prisma 7's config env() resolves eagerly, so an absent
-      # DATABASE_URL or SHADOW_DATABASE_URL fails the load before generate runs.
-      # Neither value is ever dereferenced, since no connecting command runs.
       - name: Generate Prisma client (no DB)
         working-directory: monitor
-        env:
-          DATABASE_URL: postgresql://dummy@localhost/dummy?host=/tmp
-          SHADOW_DATABASE_URL: postgresql://dummy@localhost/dummy_shadow?host=/tmp
-        run: npx prisma generate
+        run: npm run db:generate:offline
 
       - name: Typecheck
         working-directory: monitor
