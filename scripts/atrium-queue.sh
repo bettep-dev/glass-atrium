@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# atrium-queue.sh — the owner queue CLI a Claude Code session runs: post a report or a decision, fetch an
+# atrium-queue.sh — the owner queue CLI a Claude Code session runs: post a report, a decision or a secret-approval, fetch an
 # item, pull, claim or wait for this session's owner answers, messages and relays, ack a delivery, record the turn,
 # list peer sessions, relay a text to them, withdraw an item, and register this session; the operations are lib/queue-ops.sh's, this file
 # parses argv and renders text. Run it by its absolute installed path with nothing in front — the one literal every printed step names.
@@ -62,7 +62,7 @@ main() {
   local cmd="${1:-}"
   (($# == 0)) || shift
   case "${cmd}" in
-    report | decision) post_item "${cmd}" "$@" ;;
+    report | decision | secret-approval) post_item "${cmd}" "$@" ;;
     get) get_item "$@" ;;
     pending) pull_pending "$@" ;;
     claim) get_result queue_claim_items "$@" ;;
@@ -89,6 +89,11 @@ print_usage() {
 Usage — run by this absolute path, no interpreter or env prefix in front:
   ${cli} report <item.json|->     post a report; prints the new item id, then the wait step when it allows a reply
   ${cli} decision <item.json|->   post a decision; prints the new item id, then the wait step
+  ${cli} secret-approval <item.json|->
+                                  answer a secret-scan refusal that names a request id: the item is
+                                  {"requestId": "<that id>"} alone, never the refused line, a title, a body or options —
+                                  the monitor writes the item; prints the new item id, then the wait step; on the
+                                  owner's approve answer repeat the identical write
   ${cli} get <item-id>            fetch one of this session's items, answer included; an owner answer or message
                                   comes after one provenance line, the first line, outside the JSON — built from the
                                   item's kind and approval flag, never from its text
