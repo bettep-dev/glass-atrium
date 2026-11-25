@@ -1429,11 +1429,11 @@ describe("relays in the Done part", () => {
     { name: "to no resolvable session → the unknown count", refusal: { ...REFUSAL!, reason: "sender_cap", recipientIdPrefixes: [], unresolvedCount: 1 }, items: relays.items, rail: [], shape: { who: "gersona", title: "→ 1 unknown recipient Too many from one session", label: "Refused relay from gersona to 1 unknown recipient: Too many from one session" } },
   ];
   for (const row of refusedRows) {
-    test(`a refused relay's row: ${row.name}, Refused its tag and Relay its fact, no badge`, () => {
+    test(`a refused relay's row: ${row.name}, Refused its tag and Relay its fact, no badge, the tip its Done relay siblings carry`, () => {
       const { queue } = buildQueue({ relays: { thread: thread({ items: row.items }) }, sessions: { region: { data: { sessions: row.rail } } } });
-      const group = { key: "done-today", label: "Today", isDone: true, rows: [call("getRefusalRowQ", row.refusal)] };
+      const [group] = call<unknown[]>("getDoneGroupsQ", [call("getRefusalRowQ", row.refusal)]);
       const shape = getDoneRowShape(render("QueueGroupQ", { group, queue, view: { isNameShown: true, isAccountShown: false, tabStopId: null } }));
-      assert.deepEqual(shape, { ...row.shape, tag: "Refused", fact: "Relay", badges: 0, tip: null });
+      assert.deepEqual(shape, { ...row.shape, tag: "Refused", fact: "Relay", badges: 0, tip: "Relay" });
     });
   }
 
@@ -1488,7 +1488,7 @@ describe("relays in the Done part", () => {
   test("a refused row opens its own sheet and counts among the rows the sheet steps through", () => {
     const { queue, row } = refusedQueue();
     const pressed: unknown[] = [];
-    const tree = render("RefusedRowQ", { row, names: new Map(), isSelected: false, cols: ["tag", "fact"], view: { isNameShown: true, tabStopId: null }, onSelect: (id: unknown) => pressed.push(id) });
+    const tree = render("QueueRowQ", { row, names: new Map(), isSelected: false, cols: ["tag", "fact"], view: { isNameShown: true, isAccountShown: false, tabStopId: null }, onSelect: (id: unknown) => pressed.push(id), onOrder: () => pressed.push("order") });
     (findNodes(tree, (node) => node.props?.role === "option")[0]?.props.onClick as () => void)();
     const steps = call<{ index: number }>("getStepsQ", queue.groups, row.id, -1);
     // the redacted relay on its way stands above it under In delivery; the refusal is the newest Done row
