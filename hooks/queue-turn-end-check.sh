@@ -4,10 +4,9 @@
 # record unless its last tool call is a record call and the session's record was written at or after the turn's start
 # entry — a record call is the CLI's record subcommand, or the server's record tool or its post tool flagged as the
 # turn's last act, the turn's one post that the server did not refuse and alone in its message, unless the session's
-# start found that server shadowed (queue_set_shadow_mark), whose ask names the CLI alone; a turn ending on the server's
-# record with no assistant text in the turn and no final message is asked once for its reply instead; (2) while an item
-# this session posted awaits the owner and nothing polls the monitor for this Claude process (queue_get_poller), the
-# wait command — a fallback for processes no listener serves. Each turn end also sends the transcript's title as the
+# start found that server shadowed (queue_set_shadow_mark), whose ask names the CLI alone; (2) while an item this
+# session posted awaits the owner and nothing polls the monitor for this Claude process (queue_get_poller), the wait
+# command — a fallback for processes no listener serves. Each turn end also sends the transcript's title as the
 # session's name once it changed (queue_put_session_name).
 # The record check confirms only that a record was made, never the judgment; the record operation checks its ids.
 # With no CLAUDE_PID in the hook env, the wait lock's own record decides whether a wait runs (queue_get_poller).
@@ -35,8 +34,6 @@ readonly SHADOWED_RECORD_ASK_TEMPLATE="Queue record (harness): this turn called 
 queue record made in this turn. Judge the turn against the must-not-miss kinds, post what is owed, then run the queue \
 CLI alone, last — a project or local MCP server named %s shadows the Atrium queue server in this session, so never \
 call its tools: \`%s record nothing\`, or \`%s record posted <id>...\` with every item id the turn posted."
-readonly REPLY_ASK="Queue reply (harness): this turn ended on its queue record with no reply text, so the owner \
-sees nothing. Write the turn's reply now, as text with no tool call — the record already stands."
 readonly WAIT_REASON_LEAD="[ATRIUM-QUEUE] harness: an item of this session awaits the owner and no wait runs — start it \
 now as a background command:"
 
@@ -58,23 +55,21 @@ record_reason=""
 wait_reason=""
 # set by set_record_reason: the session's start found the queue server shadowed (queue_is_shadow_marked)
 is_shadowed=false
-# set by set_tool_turn: a tool-using turn's start-entry id and time, whether its last tool call is a record call, and
-# whether that call is the server's record in a turn holding no assistant text
+# set by set_tool_turn: a tool-using turn's start-entry id and time, and whether its last tool call is a record call
 tool_turn=""
 turn_started=""
 is_record_last=false
-is_reply_missing=false
 check_deadline=0
 
 main() {
-  local fields="" is_subagent is_continued payload_session transcript has_message session_id
+  local fields="" is_subagent is_continued payload_session transcript session_id
   # shellcheck disable=SC2310  # no fields → the malformed-payload branch below
   if [[ ! -t 0 ]]; then fields="$(get_payload_fields)" || fields=""; fi
   if [[ -z "${fields}" ]]; then
     warn "the Stop payload is not a JSON object"
     exit 0
   fi
-  IFS=$'\x1f' read -r is_subagent is_continued payload_session transcript has_message <<<"${fields}"
+  IFS=$'\x1f' read -r is_subagent is_continued payload_session transcript <<<"${fields}"
   [[ "${is_subagent}" == false && "${is_continued}" == false ]] || exit 0
   session_id="$(queue_get_session_id "${payload_session}")"
   [[ -n "${session_id}" ]] || exit 0
@@ -82,7 +77,7 @@ main() {
   poller="$(queue_get_poller "${session_id}")"
   # a `claude -p` run is never asked for a record
   # shellcheck disable=SC2310  # a single [[ ]] test, so the errexit suspension changes nothing
-  if is_owner_facing_session; then set_record_reason "${session_id}" "${transcript}" "${has_message}"; fi
+  if is_owner_facing_session; then set_record_reason "${session_id}" "${transcript}"; fi
   set_wait_reason "${session_id}"
   # shellcheck disable=SC2310  # a refused update is sent again at the next turn end
   queue_put_session_name "${transcript}" "${session_id}" || true
@@ -90,12 +85,12 @@ main() {
   print_block
 }
 
-# stdin payload → "<has agent_id>␟<stop_hook_active>␟<session_id>␟<transcript_path>␟<has a non-blank final
-# message>"; nothing for anything but a JSON object
+# stdin payload → "<has agent_id>␟<stop_hook_active>␟<session_id>␟<transcript_path>"; nothing for anything but a JSON
+# object
 get_payload_fields() {
   jq -r 'if type == "object" then
       [(has("agent_id") | tostring), (.stop_hook_active == true | tostring), (.session_id | strings // ""),
-        (.transcript_path | strings // ""), (.last_assistant_message | strings // "" | test("\\S") | tostring)]
+        (.transcript_path | strings // "")]
       | join("\u001f")
     else empty end' 2>/dev/null
 }
@@ -104,11 +99,10 @@ warn() {
   (printf 'queue-turn-end-check: %s — the turn ends without the owner-queue check\n' "$1") >&2 || true
 }
 
-# <session id> <transcript path> <has a final message> → record_reason: the record ask; the reply ask when the turn
-# ends on the server's record made at or after its start with no reply anywhere; empty when the turn called no tool,
-# was asked already, ends on a record call made at or after its start, or cannot be decided
+# <session id> <transcript path> → record_reason: the ask, or empty when the turn called no tool, was asked already,
+# ends on a record call made at or after its start, or cannot be decided
 set_record_reason() {
-  local stamp recorded cli template="${RECORD_ASK_TEMPLATE}" is_reply_ask=false
+  local stamp recorded cli template="${RECORD_ASK_TEMPLATE}"
   # shellcheck disable=SC2310  # a pure read; no readable mark counts as unshadowed
   if queue_is_shadow_marked "$1"; then
     is_shadowed=true
@@ -117,10 +111,7 @@ set_record_reason() {
   set_tool_turn "$2"
   [[ -n "${tool_turn}" ]] || return 0
   recorded="$(queue_get_record_time "$1")"
-  if [[ "${is_record_last}" == true && -n "${recorded}" && ! "${recorded}" < "${turn_started}" ]]; then
-    [[ "${is_reply_missing}" == true && "$3" == false ]] || return 0
-    is_reply_ask=true
-  fi
+  if [[ "${is_record_last}" == true && -n "${recorded}" && ! "${recorded}" < "${turn_started}" ]]; then return 0; fi
   stamp="$(queue_get_awaiting_dir "$1")/.record-asked"
   if [[ -f "${stamp}" && "$(<"${stamp}")" == "${tool_turn}" ]]; then return 0; fi
   # the stamp lands before the ask → a later fire of this turn, its continuation included, is never asked again
@@ -128,20 +119,16 @@ set_record_reason() {
     warn "no record-ask stamp could be written at ${stamp}"
     return 0
   fi
-  if [[ "${is_reply_ask}" == true ]]; then
-    record_reason="${REPLY_ASK}"
-    return 0
-  fi
   cli="$(queue_get_cli_path)"
   # shellcheck disable=SC2059  # the format is one of this file's own constants; the names go in as arguments
   printf -v record_reason "${template}" "${QUEUE_MCP_SERVER_NAME}" "${cli}" "${cli}"
 }
 
-# <transcript path> → tool_turn, turn_started, is_record_last and is_reply_missing for a turn that called a tool; all
-# left unset when it called none, and after one warning when the turn or its start time cannot be read. In a shadowed
-# session the server's tools are the shadowing server's, so only the CLI's record counts.
+# <transcript path> → tool_turn, turn_started and is_record_last for a turn that called a tool; all left unset when it
+# called none, and after one warning when the turn or its start time cannot be read. In a shadowed session the
+# server's tools are the shadowing server's, so only the CLI's record counts.
 set_tool_turn() {
-  local found="" status="" turn="" started="" tools="" is_record="" is_unreplied="" cli pattern tool=""
+  local found="" status="" turn="" started="" tools="" is_record="" cli pattern tool=""
   if [[ -z "$1" ]]; then
     warn "the Stop payload names no transcript"
     return 0
@@ -154,20 +141,18 @@ set_tool_turn() {
   # the server's record tool, or its post tool flagged as the turn's last act: the turn's one unrefused post, sent alone
   found="$(python3 -I "${TURN_READER}" turn "$1" 2>/dev/null \
     | jq -r --arg tool "${tool}" --arg pattern "${pattern}" \
-      '($tool != "" and (.last_tool.name == $tool + "record"
-          or (.last_tool.name == $tool + "post" and .last_tool.last_act == true and .last_tool.alone == true
-            and .last_tool.name_calls == 1))) as $isServerRecord
-      | [.status, (.turn | strings // ""), (.started | strings // ""), (.tools == true | tostring),
-        ($isServerRecord or (.last_tool.name == "Bash" and (.last_tool.command // "" | test($pattern))) | tostring),
-        ($isServerRecord and .has_text != true | tostring)] | join("\u001f")' 2>/dev/null)" || found=""
-  IFS=$'\x1f' read -r status turn started tools is_record is_unreplied <<<"${found}" || true
+      '[.status, (.turn | strings // ""), (.started | strings // ""), (.tools == true | tostring),
+        (($tool != "" and (.last_tool.name == $tool + "record"
+            or (.last_tool.name == $tool + "post" and .last_tool.last_act == true and .last_tool.alone == true
+              and .last_tool.name_calls == 1)))
+          or (.last_tool.name == "Bash" and (.last_tool.command // "" | test($pattern))) | tostring)] | join("\u001f")' 2>/dev/null)" || found=""
+  IFS=$'\x1f' read -r status turn started tools is_record <<<"${found}" || true
   if [[ "${status}" != found || -z "${turn}" || ! "${started}" =~ ${QUEUE_RECORD_TIME_SHAPE} ]]; then
     warn "the transcript's current turn could not be read"
   elif [[ "${tools}" == true ]]; then
     tool_turn="${turn}"
     turn_started="${started}"
     is_record_last="${is_record}"
-    is_reply_missing="${is_unreplied}"
   fi
 }
 
