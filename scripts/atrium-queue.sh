@@ -118,7 +118,7 @@ Usage — run by this absolute path, no interpreter or env prefix in front:
                                   prints the wait step last
 The wait step: start a background wait, or start none — a wait of this session already runs, or its listener announces for it.
   ${cli} help
-Item JSON: title, body, isFreeTextAllowed, optional linkedDocIds; a decision adds options
+Item JSON: title, body, optional isFreeTextAllowed (default false), optional linkedDocIds; a decision adds options
   [{code R1-R9, label, pros, cons}] (2 to 9), recommendedCode and optional isApprovalClass.
 The session id comes from CLAUDE_CODE_SESSION_ID — never pass it.
 Exit codes: 0 done · 1 monitor unreachable or failing · 2 refused by the monitor · 3 item of another session, or a

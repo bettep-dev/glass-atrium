@@ -20,7 +20,7 @@ else
 fi
 
 # Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
-export -n INPUT COMMAND context ctx input
+export -n INPUT COMMAND context ctx input rest
 INPUT=$(hook_read_input)
 COMMAND=$(hook_get_tool_input "${INPUT}" "command")
 
@@ -29,15 +29,25 @@ COMMAND=$(hook_get_tool_input "${INPUT}" "command")
 # appear inside a regex or a human-readable message, so the force-push pattern's
 # '|' alternation stays intact (a '|' delimiter would truncate it mid-regex).
 # Format: regex<US>code<US>message<US>suggestion[<US>exempt]
-# exempt (optional): a regex whose match lets a pattern-matching command pass; a non-compiling one blocks.
+# exempt (optional): a regex whose matched spans are cut from the command before the rule's regex is
+# tried again; the command passes only when nothing matches what is left. A non-compiling exempt blocks.
 readonly US=$'\x1f'
+# GIT-006 pieces. IDX_VERB: the subcommand that writes the index — a checkout, or a restore --staged.
+# IDX_EXEMPT: a non-empty GIT_INDEX_FILE= set in the same statement as that verb, or exported in an
+# earlier statement; its span runs through the verb, so a later statement without one still blocks.
+# Spellings that pass this fixed-spelling guard and still write the shared index:
+#   - git --git-dir=<repo>/.git checkout <ref> -- . run from a foreign cwd (no work tree is spelled);
+#   - a GIT_WORK_TREE assigned and exported in separate statements (GIT_WORK_TREE=<dir>; export GIT_WORK_TREE).
+readonly IDX_VERB="[[:space:]](checkout([[:space:]]|\$)|restore[[:space:]]([^;&|]*[[:space:]])?(--staged|-[A-Za-z]*S[A-Za-z]*)([[:space:]=]|\$))"
+readonly IDX_VALUE="[\"']?[^[:space:];&|'\"]"
+readonly IDX_EXEMPT="(^|[[:space:];&|(])(GIT_INDEX_FILE=${IDX_VALUE}[^;&|]*|export[[:space:]]+([^;&|]*[[:space:]])?GIT_INDEX_FILE=${IDX_VALUE}.*)${IDX_VERB}"
 RULES=(
   "git\s+push\s+.*--force|git\s+push\s+-f\b${US}GIT-001${US}Force push blocked${US}This hook blocks force push whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+reset\s+--hard${US}GIT-002${US}Hard reset blocked${US}This hook blocks git reset --hard whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+clean\s+-fd${US}GIT-003${US}Clean force-delete blocked${US}This hook blocks git clean -fd whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+checkout\s+\.\s*\$${US}GIT-004${US}Discard-all blocked${US}This hook blocks git checkout . whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+restore\s+\.\s*\$${US}GIT-005${US}Restore-all blocked${US}This hook blocks git restore . whatever the approval; if the user confirms it, ask them to run it themselves"
-  "(--work-tree|GIT_WORK_TREE)[=[:space:]][^;&|]*[[:space:]](checkout([[:space:]]|\$)|restore[[:space:]]([^;&|]*[[:space:]])?(--staged|-[A-Za-z]*S[A-Za-z]*)([[:space:]=]|\$))${US}GIT-006${US}Checkout into another work tree blocked${US}A checkout, or a restore --staged, under --work-tree or GIT_WORK_TREE writes this repository's index (a --git-dir naming it included), so the other tree gets staged here; read a tree read-only with git archive <ref> | tar -x -C <dir>, or git worktree add <dir> <ref>, or give the command its own index with GIT_INDEX_FILE=<scratch file>${US}GIT_INDEX_FILE="
+  "(--work-tree|GIT_WORK_TREE)[=[:space:]][^;&|]*${IDX_VERB}|export[[:space:]]+([^;&|]*[[:space:]])?GIT_WORK_TREE=[^;&|]*[;&|].*${IDX_VERB}${US}GIT-006${US}Checkout into another work tree blocked${US}A checkout, or a restore --staged, under --work-tree or GIT_WORK_TREE (an exported one included) writes this repository's index (a --git-dir naming it included), so the other tree gets staged here; read a tree read-only with git archive <ref> | tar -x -C <dir>, or git worktree add <dir> <ref>, or give the command its own index with GIT_INDEX_FILE=<scratch file>${US}${IDX_EXEMPT}"
 )
 
 # Rule-table lint (recurrence guard): assert a pattern compiles under grep -E
@@ -64,8 +74,14 @@ for rule in "${RULES[@]}"; do
     exit 2
   fi
   # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-  if printf '%s' "${COMMAND}" | drain_after grep -qE "${pattern}" \
-    && ! { [[ -n "${exempt}" ]] && printf '%s' "${COMMAND}" | drain_after grep -qE "${exempt}" 2>/dev/null; }; then
+  printf '%s' "${COMMAND}" | drain_after grep -qE "${pattern}" || continue
+  rest="${COMMAND}"
+  if [[ -n "${exempt}" ]]; then
+    # A failed cut (an exempt that does not compile) keeps the whole command, so the rule still blocks.
+    rest=$(printf '%s' "${COMMAND}" | sed -E "s${US}${exempt}${US}${US}g" 2>/dev/null) || rest="${COMMAND}"
+  fi
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if printf '%s' "${rest}" | drain_after grep -qE "${pattern}"; then
     context="{\"command\":\"${COMMAND}\"}"
     # emit_error hands the context to jq as one argument; Linux refuses one of 131072 bytes or more.
     if (($(LC_ALL=C && printf '%s' "${#context}") >= 131072)); then context='{}'; fi

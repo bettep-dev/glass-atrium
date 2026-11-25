@@ -146,6 +146,13 @@ run_guard() {
     'git --git-dir=.git --work-tree=/tmp/export checkout main -- .'
     'git --work-tree=/tmp/export restore --staged --source=main -- .'
     'git --work-tree=/tmp/export restore -S --source main .'
+    'export GIT_WORK_TREE=/tmp/export; git checkout main -- .'
+    'GIT_INDEX_FILE=/tmp/export.idx git status; git --work-tree=/tmp/export checkout main -- .'
+    'GIT_INDEX_FILE= git --work-tree=/tmp/export checkout main -- .'
+    'GIT_INDEX_FILE="" git --work-tree=/tmp/export checkout main -- .'
+    'export GIT_INDEX_FILE=; git --work-tree=/tmp/export checkout main -- .'
+    'GIT_INDEX_FILE=/tmp/a.idx git --work-tree=/tmp/a checkout main -- .; git --work-tree=/tmp/b checkout main -- .'
+    'git --work-tree=/tmp/b checkout main -- .; export GIT_INDEX_FILE=/tmp/a.idx; git --work-tree=/tmp/a checkout main -- .'
   )
   for row in "${rows[@]}"; do
     run_guard "${row}"
@@ -173,6 +180,9 @@ run_guard() {
   local -a rows=(
     'GIT_INDEX_FILE=/tmp/export.idx git --work-tree=/tmp/export checkout main -- .'
     'export GIT_INDEX_FILE=/tmp/export.idx; git --work-tree=/tmp/export checkout main -- .'
+    'GIT_INDEX_FILE="/tmp/export.idx" git --work-tree=/tmp/export checkout main -- .'
+    'GIT_WORK_TREE=/tmp/export GIT_INDEX_FILE=/tmp/export.idx git checkout main -- .'
+    'export GIT_WORK_TREE=/tmp/export; export GIT_INDEX_FILE=/tmp/export.idx; git checkout main -- .'
     'git checkout main'
     'git -C /repo/.claude/worktrees/wt-a checkout feature/x -- hooks/a.sh'
     'git --work-tree=/tmp/export restore --source=main -- .'
@@ -185,6 +195,28 @@ run_guard() {
       return 1
     }
   done
+}
+
+@test "a GIT-006 exemption that does not compile blocks instead of exempting" {
+  local dir="${BATS_TEST_TMPDIR}/broken-exempt"
+  mkdir -p "${dir}/lib"
+  cp "${BATS_TEST_DIRNAME}/../hook-utils.sh" "${dir}/hook-utils.sh"
+  cp "${BATS_TEST_DIRNAME}/../lib/pipe-drain.sh" "${dir}/lib/pipe-drain.sh"
+  python3 -c 'import sys
+src = open(sys.argv[1]).read()
+old = "${US}${IDX_EXEMPT}\""
+assert src.count(old) == 1, "exempt field not found"
+src = src.replace(old, "${US}GIT_INDEX_FILE=(unbalanced\"")
+open(sys.argv[2], "w").write(src)' "${HOOK_SH}" "${dir}/enforce-commit-guard.sh"
+
+  local payload
+  payload="$(jq -n --arg c 'GIT_INDEX_FILE=/tmp/export.idx git --work-tree=/tmp/export checkout main -- .' \
+    '{tool_name:"Bash", tool_input:{command:$c}}')"
+  run bash -c 'printf "%s" "$1" | bash "$2" 2>&1' _ "${payload}" "${dir}/enforce-commit-guard.sh"
+  [[ "${status}" -eq 2 && "${output}" == *'"error_code":"GIT-006"'* ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
 }
 
 # --- Recurrence guard: rule-table lint fails CLOSED on a non-compiling pattern ---
