@@ -74,18 +74,22 @@ main() {
 }
 
 # Every pattern over every line → only grep's "<index>:" prefix leaves, never the matched text.
+# Fed through pipes only: a here-string spills to a temp file (bash 3.2 always, newer bash past the pipe buffer).
 find_all_matches() {
-  local text="${1}" rows="" hits row i rc
+  local text="${1}" rows="" hits i rc
   for i in "${!PATTERNS[@]}"; do
     rc=0
     # trap cleared → the inherited ERR trap would turn grep's failure status into 1, read below as "no match"
     # -a → an invalid-encoding byte never collapses the rows into one "binary file matches" notice
+    # grep's status alone classifies; a failed feed or row stage → 2, a refusal, never "no match"
     hits="$(
       trap - ERR
-      grep -naiE -- "${PATTERNS[${i}]}" <<<"${text}"
+      printf '%s\n' "${text}" | grep -naiE -- "${PATTERNS[${i}]}" \
+        | LC_ALL=C awk -F: -v code="${CODES[${i}]}" '{ print $1 "\t" code }' \
+        || exit "$((PIPESTATUS[0] || PIPESTATUS[2] ? 2 : PIPESTATUS[1]))"
     )" || rc=$?
     case "${rc}" in
-      0) while IFS= read -r row; do rows+="${row%%:*}"$'\t'"${CODES[${i}]}"$'\n'; done <<<"${hits}" ;;
+      0) rows+="${hits}"$'\n' ;;
       1) ;;
       *) exit 1 ;;
     esac

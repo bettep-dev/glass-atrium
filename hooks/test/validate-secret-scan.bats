@@ -169,6 +169,16 @@ set_list_fixture() {
   [[ "$(sort <<<"${output}")" == "${LIST_EXPECTED}" ]] || { echo "${output}"; return 1; }
 }
 
+# File-size limit 0 → any write of the text to a file (a here-string's temp file) kills the scanner with SIGXFSZ;
+# text past the 64 KiB pipe buffer → newer bash also takes the temp-file path for a here-string.
+@test "scanner list-all entry puts the scanned text in no file: it lists the same rows with no file-size allowance" {
+  local text
+  text="$(seq -f 'padding line %05g of ordinary source text' 1 4000)"$'\n'"const k = ${AWS_FIXTURE}"
+  run bash -c 'ulimit -f 0 && exec "$@"' _ "${SCANNER}" "${SCAN_LIST_FLAG}" <<<"${text}"
+  [[ "${status}" -eq "${SCAN_MATCH}" && "${output}" == "4001"$'\tSEC-001' ]] \
+    || { echo "status ${status}: ${output}"; return 1; }
+}
+
 @test "scanner no-argument entry replies only the first pattern in table order, wherever it sits in the text" {
   local text="" i
   for ((i = ${#ROW_TEXTS[@]} - 1; i >= 0; i--)); do text+="${ROW_TEXTS[${i}]}"$'\n'; done
@@ -221,6 +231,18 @@ set_list_fixture() {
     [[ "${status}" -ne "${SCAN_CLEAN}" && "${status}" -ne "${SCAN_MATCH}" ]] \
       || { echo "${flag:-no flag}: status ${status}: ${output}"; return 1; }
   done
+}
+
+# A row stage exiting 1 on a line grep matched → pipefail alone would read it as grep's "no match".
+@test "scanner list-all entry refuses instead of replying clean when a stage after the matcher fails" {
+  local bin="${BATS_TEST_TMPDIR}/bin"
+  mkdir -p "${bin}"
+  ln -s "$(command -v cat)" "${bin}/cat"
+  ln -s "$(command -v grep)" "${bin}/grep"
+  printf '#!/bin/sh\nexit 1\n' >"${bin}/awk"
+  chmod +x "${bin}/awk"
+  PATH="${bin}" run /bin/bash "${SCANNER}" "${SCAN_LIST_FLAG}" <<<"const k = ${AWS_FIXTURE}"
+  [[ "${status}" -ne "${SCAN_CLEAN}" && "${status}" -ne "${SCAN_MATCH}" ]] || { echo "status ${status}: ${output}"; return 1; }
 }
 
 # A hook copy beside a scanner stand-in. Args: $1=layout root · $2=stand-in body, or "" for no scanner file.
