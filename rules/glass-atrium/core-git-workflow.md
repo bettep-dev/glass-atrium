@@ -8,7 +8,8 @@ Applies to all agents.
   - Bodies are English as well (public OSS repository, no Korean subjects).
   - A Conventional Commits prefix (`feat:`, `fix:`) is optional; when used it follows the checkbox: `- [x] feat: <description>`.
   - **Issue / ticket references**: a footer block after a blank line, as `Refs: #123` or `Refs: PROJ-123`.
-- Commit only after the tests pass — an intermediate work-unit commit needs its affected tests (`scoped/shared-testing.md` → **Incremental commits**); the run's final commit, fully tested, is the working base for whoever builds on it
+- Commit only after the tests pass — an intermediate work-unit commit needs its affected tests (`scoped/shared-testing.md` → **Incremental commits**); the commit of the job's final gate, fully tested, is the working base for whoever builds on the job
+  - Job and final gate — the one step the delegation brief names as final, never each spawn's last commit: `scoped/shared-testing.md` → **Verification scope**.
 - `--no-verify` / `--no-gpg-sign` are forbidden in normal flow: they skip the git hooks (pre-commit, pre-push, …) and signing that vet every change
   - Honest backing: honor-system — no hook blocks either flag.
   - Agent execution context without configured signing key → configure SSH/GPG key or set `git config commit.gpgsign false` explicitly (silent `--no-verify` bypass remains forbidden)

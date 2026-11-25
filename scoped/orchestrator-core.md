@@ -94,7 +94,7 @@ Role-file heading → when:
 - `#### Plan edge discovery` — plan-derived work
 - `#### Decision-phase probes` — before a spawn
 - `#### Deliverable exposure` — every authoring delegation
-- `#### Monitoring-phase notes` — relaying results
+- `#### Monitoring-phase notes` — relaying results, closing a delegation out
 - `#### Scan boundary` — behavioural claims
 - `### Plan Direction Verification` — complex plans
 - `#### Backstop asymmetry` — gate backstops

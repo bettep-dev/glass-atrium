@@ -275,7 +275,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 ### Owner Queue — split points
 
-- `## Owner Queue Tools`, `## Owner Queue Authority`, `## Owner Queue Relay` and `## Owner Queue Listener` are split points holding `## Owner Queue` under the 8 KB H2 cap.
+- `## Owner Queue Tools`, `## Owner Queue Authority`, `## Owner Queue Relay`, `## Owner Queue Listener` and `## Owner Queue Waiting` are split points holding `## Owner Queue` under the 8 KB H2 cap.
   - A citer outside the rule file names `## Owner Queue`, never a split: the core's trigger line names it alone.
   - `## Owner Queue` keeps one pointer line to each of `## Owner Queue Tools`, `## Owner Queue Authority` and `## Owner Queue Relay`, in its lead list.
     - Single-sited in `## Owner Queue Tools`: which route a session takes, the tool-to-CLI table, the CLI's spelling, the main-session rule with its backing, and what each claimed item calls for.
@@ -286,6 +286,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - A session reaches `## Owner Queue Listener` through the pointer on the wait table's `[ATRIUM-QUEUE]` `pending` row, where a woken session looks.
     - The action on a wake stays single-sited in the wait table's `[ATRIUM-QUEUE]` rows.
   - `### On a wait's exit` is a split point holding `### Answers and messages` under the 3 KB H3 cap: the wait table's last row points to it.
+    - It sits under `## Owner Queue Waiting`: a session reaches its rows only through that row, after a `wait` it started has exited, and the core's trigger line names no wait — so the split loses no reader the trigger sends.
   - `### Last-act post` is a split point holding `### Posting and registering` under the 3 KB H3 cap: the **Turn record** tool-route bullet points to it.
   - `### Wait or listener` is a split point of the same H3 and the single site of the wait-or-listener rule.
     - Its pointers: the wait table's two `next` rows · `## Owner Queue Listener` · the interactive bullet of `### On a wait's exit`.

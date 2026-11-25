@@ -168,6 +168,8 @@ The canonical rule for what language this system writes in.
 | **Confirm** | File modification, external calls, installation |
 | **Forbidden** | Deleting source, documents or config (move to `~/.Trash/`: File Deletion Policy), security violations, sensitive files |
 
+- A removal under `rules/glass-atrium/core-security.md` → **Worktree close-out exception** is not "Deleting source": every tracked file stays in the repository under a contained commit, and that standing approval is its confirmation.
+
 ### File Deletion Policy [ALL]
 
 - `rm` forbidden for source code, documents, and config files → use `mv ~/.Trash/` instead (macOS).

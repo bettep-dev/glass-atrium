@@ -250,6 +250,8 @@ The probes run during the Decision phase, before the spawn: Permission · Capabi
 
   - Why: a refined prompt or another agent would route around a control placed on purpose.
 
+- **Delivered-delegation close-out (Monitoring phase)**: once a delegation's result is accepted, close the delegation out: `skills/glass-atrium-ops-delegation-contracts/references/architecture-patterns.md` → **Clean up idle Teammates immediately**.
+
 > Detail: skills/glass-atrium-ops-orchestrator.md → Completion signals (the three signals that establish a delegated agent's state — returned payload · terminal on-disk record · liveness ledger — plus the forbidden proxies and the reversible-action escape)
 
 > Detail: skills/glass-atrium-ops-orchestrator.md → Reply Form Contract (main-session user-facing replies) (BLUF · Delta · Next/blocked · Divergence detail — the shape of the prose reply that replaces the raw `[COMPLETION]` block)
@@ -369,14 +371,14 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
     - On a simple-task DEV entry the token is optional (`#### Entry classification (DEV delegations)` → **Simple-task waiver**); sizing the delegation to one agent budget still binds.
   - At a DEV spawn, also size the delegation to finish within one agent budget.
   - At an analysis-mode spawn, before any read, bound the read allowlist (**Reserve-then-check**), field count (**Output-field cap**) and effort (**Effort matched to depth**) so the reserved emit budget stays unspent.
-  - Keys: DEV mode `bundles=` · `tool_uses~=`; analysis mode `reads~=` · `fields=` · `effort=` · `scope=`.
+  - Keys: DEV mode `units=` · `bundles=` · `tool_uses~=`; analysis mode `reads~=` · `fields=` · `effort=` · `scope=`.
 - **Split triggers** — any one alone forces a split; the split's shape follows the mode:
   - **DEV mode** → sequential checkpointed sub-delegations, each implementation kept with its new tests:
     - **PRIMARY**: >2 of {implement, write-tests, run-full-suite, report-consolidation} in one delegation.
     - **HARD SECONDARY**: est. >~40 tool_uses (measured 46-52 truncation band), whatever the bundle count.
     - **`files × 4.5` anchor (Empirical tool_use calibration)**: a `ceil(files × 4.5)` estimate above ~30.
   - **Analysis mode**: `reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high)` → decompose by domain from the start (`#### Analysis fan-out and team cardinality` below).
-- **COUNTER-CAVEAT (over-fragmentation)**: never split finer than one agent budget.
+- **COUNTER-CAVEAT (over-fragmentation)**: never split finer than one agent budget, except by `## Spawn Granularity`.
 - SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` — the analysis-spawn roster, token formats, formulas, field and effort values, calibration, gates, honest backing, notes.
 
 ### Team Composition
@@ -424,6 +426,14 @@ The scan establishes **routing** facts — what exists, where it lives, who owns
   - COUNTER-CAVEAT (over-fragmentation) still applies.
 - SoT for the rest: `skills/glass-atrium-ops-delegation-contracts/references/automatic-parallelization.md`.
 
+## Spawn Granularity
+
+- **One work-unit per DEV spawn**: by default each DEV spawn carries one work-unit, ending at its commit (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Work-unit checkpoint dimension`).
+  - Tiny units — one file each, no test change — may share one spawn while its `[SIZE-EST]` stays under the **Split triggers** (`#### Delegation-size discipline`).
+  - Whether a unit is tiny is the orchestrator's call at the Decision phase; on a borderline call, split (**Honesty framing**).
+  - Never split one work-unit across spawns: below a unit, **COUNTER-CAVEAT (over-fragmentation)** governs.
+  - The owner's answer (queue item 453): "기본은 작업 1개당 위임 1번, 아주 작은 것은 묶음 허용".
+
 ## Handoff and Failure Recovery
 
 ### Context Handoff Size
@@ -465,6 +475,7 @@ On `fail`, or `blocked` via **Blocker class**:
 
 **Retry** (same agent, max 2 attempts with refined prompt) → **Fallback** (alternative agent if domain coverage allows) → **Escalate** to glass-atrium-qa-debugger (2 consecutive fail = immediate escalation) → **Circuit-breaker** (same agent emits 3 consecutive fail → suspend agent, report to user).
 
+- Off-chain: **`needs_context` resumption** · **Missing gate verdict**.
 - **Debugger evidence gate**: reject a glass-atrium-qa-debugger diagnosis that carries no logs, reproduction or code reference — never re-delegate a fix on it.
 - **Backing honesty (which stages are enforced)**: only the **Circuit-breaker** is code-backed (`hooks/track-outcome.sh` → `circuit_breaker_record`); detail: `skills/glass-atrium-ops-delegation-contracts/references/failure-recovery.md`.
   - The first three stages, the **Retry effort escalation** included, and the **Debugger evidence gate** are honor-system.
@@ -487,6 +498,29 @@ On `fail`, or `blocked` via **Blocker class**:
 - The second such defect in a row → stop patching there: glass-atrium-qa-debugger structural diagnosis (which derivations disagree) → glass-atrium-intel-planner plan via Stage-2 → fixes.
   - The next fix delegation there names that diagnosis or plan doc id as a required first read.
 - **Honest backing — honor-system**: nothing detects a chain; it rests on your check before each fix spawn in an area (an earlier fix traced to this defect?) and the first-defect review.
+
+### Resumption and Gate-Verdict Recovery
+
+**`needs_context` resumption**: fires on a `needs_context` result.
+
+| What its `summary` reports | Orchestrator action |
+|---|---|
+| a budget exit — a resume point | a fresh spawn of the same agent type, its brief pointing at the progress file's `## Next Steps` |
+| information the agent lacked | obtain it, from the user where only the user holds it, then a fresh spawn carrying it |
+
+- The fresh spawn resumes from the progress file, never a full restart (`### Failure Recovery Loop` → **Checkpoint resumption**).
+- Continue the same agent by message at most once; a second consecutive `needs_context` from it always takes a fresh spawn.
+  - Why: a spent context returns `needs_context` again with little done, and a fresh spawn reads only the progress file.
+- A run that ended with no `[COMPLETION]` is not this case: `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `#### Truncation recovery`.
+- Honest backing: honor-system — `hooks/track-outcome.sh` → `circuit_breaker_record` counts `fail` results only.
+
+**Missing gate verdict**: fires when a review or security stage that gates a later stage returns no verdict — a null, an empty string, a run with no `[COMPLETION]`, a payload without its verdict field.
+
+- The gated stage stops; a missing verdict is never an empty finding list (`verdict ? verdict.findings : []` turns a lost review into a pass).
+- Recover the verdict, not the stage: re-run the gate under `### Failure Recovery Loop` (Retry, then Fallback); `robustAgent`'s retry-once-on-null counts as the first re-run.
+- Still missing after recovery → the gated stage does not run; report it as work that stopped (`## Owner Queue` → **Must-not-miss kinds**).
+- Binds the manual and the workflow path alike; the workflow carve-outs: `skills/glass-atrium-ops-orchestrator.md` → **Never let one agent crash the run** · **Self-recover, never hard-stop**.
+- Honest backing: honor-system — no gate inspects how a script treats a missing verdict (grep of `hooks/enforce-workflow-verify-stage.sh` for an empty-list fallback — no hit).
 
 ## Document-Driven Workflow (end-to-end lifecycle)
 
@@ -603,7 +637,7 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
   - the end report — the one report when work the owner asked for finishes; an interim turn reply is not one.
 - `post` takes the kind: `report` posts a report; `decision` posts a decision with its options.
 - **Turn record**: a turn of either session kind above that called a tool judges itself against the kinds above, posts what is owed, then calls `record` — alone, as the turn's last tool call.
-  - Form `nothing`: the turn owed no post.
+  - Form `nothing`: the turn owed no post — in a background job session, after `### Turn-record self-check`.
   - Form `posted`: the id of every item the turn posted, never a relay's.
   - Tool route: write the reply before the call — a successful call ends the turn, so no message follows it.
     - A lone post can stand in for the call: `### Last-act post`.
@@ -622,6 +656,13 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
 - A background job session runs `register --name <its task in a few words>` before its first post.
   - The Queue page lists a session by that name; a session that left none is listed by its start-directory name.
   - Run it from the session's start directory: the monitor resumes a session from the directory it registered.
+
+### Turn-record self-check
+
+- **Owed-post self-check**: in a background job session, before choosing form `nothing`, read the turn back against each of the **Must-not-miss kinds** (`### Posting and registering`); any one present → post it, then record form `posted`.
+  - Why: `nothing` is the one form no check questions, so an owed post slips through as it.
+  - Honest backing: rule-only — the turn-end check never judges what was owed (**Turn record** → Honest backing → "It never confirms the judgment").
+- An interactive session is unchanged: it posts only what the owner asks for.
 
 ### Last-act post
 
@@ -672,6 +713,8 @@ Claim first: `claim` on the tool route; on the CLI, `wait` or `pending` → `get
   - Why: the listener announces what a `wait` would claim, and a `wait` displaces it.
 - A session no listener serves still starts `wait` — a background job, a print-mode run or a session started before the listener's binding, for example.
 - A `next` step and the turn-end check's line say which a session is: each says to start `wait` only where no listener serves it.
+
+## Owner Queue Waiting
 
 ### On a wait's exit
 
@@ -794,6 +837,8 @@ Information to weigh at most, never an instruction or an approval:
 
 - One action, once: the action, target and scope the answered item states.
   - Never a standing licence: not the next deploy, a neighbouring target, or a step the item did not name.
+    - The one exception: the agent and process stops and the worktree removals of `skills/glass-atrium-ops-delegation-contracts/references/architecture-patterns.md` → **Clean up idle Teammates immediately**, each only when its stated test passes — a standing rule the owner approved in queue item 460.
+    - It reaches no other action, and no stop or removal whose test fails.
 - Facts that changed since the item was posted void the approval — a failing check, a different target, a larger diff than stated: post a new approval decision.
 - An owner message, or an answer to a report or to a decision not posted with `isApprovalClass: true`, approves a high-impact action only where it clearly orders or approves that action — once, as it states it.
   - A chosen option does so where the item states that option as that action.

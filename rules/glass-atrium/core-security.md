@@ -34,6 +34,9 @@ Applies to all agents, alongside each agent's own security rules.
 
 - Principle of Least Privilege: each agent receives only the tools required for the current task scope.
 - High-impact actions (file deletion, external network calls, code execution, git push, payment) MUST require explicit user approval before execution.
+  - **Worktree close-out exception** (owner-approved standing, queue item 460): at the close-out of this session's own finished delegation, `git worktree remove` without `--force` of its worktree needs no further approval when all four hold:
+    - its branch is contained in main or in the deployed commit · no uncommitted or untracked change apart from ignored build output · no live writer lock (`hooks/lib/worktree-lock.sh`) · no process runs with its cwd inside.
+  - It licenses nothing else: no `rm` of a worktree path, no `--force`, no worktree with unmerged or uncommitted work, no other session's worktree, not the main checkout, no other deletion; git's refusal is final for that close-out.
 - Tool scope is defined at delegation time and frozen at spawn time; mid-task dynamic tool addition is FORBIDDEN without re-authorization.
   - Widening your own permissions (a tool grant, a permission allow-rule, a file mode) is FORBIDDEN without that re-authorization. Being delegated the task does not grant it.
 

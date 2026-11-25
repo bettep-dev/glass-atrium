@@ -170,5 +170,5 @@ Implement Node.js ESM-based CLI tools, libraries, and MCP servers with code-leve
 
 ## Success Criteria
 
-- **Local test pass**: full test suite (node:test / Vitest / Jest) green with exit code 0 before `[COMPLETION]`
+- **Local test pass**: the tests this spawn's verification scope requires (`scoped/shared-testing.md` → **Verification scope**), green under node:test / Vitest / Jest with exit code 0 before `[COMPLETION]`
 - **Schema with no `completion_block`**: print the `[COMPLETION]` block in a dedicated text turn as a best-effort fallback; never invent an undeclared key (schema validation fails).

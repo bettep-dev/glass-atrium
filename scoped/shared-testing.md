@@ -197,16 +197,29 @@ Each kind is legitimate when the stated purpose is the whole reason the test exi
 
 | Tier | Content | Cost | When to Run |
 |------|---------|------|-------------|
-| T1 Static | lint + typecheck | Free | After every change |
+| T1 Static | lint + typecheck | Free | On the changed files, after each change |
 | T2 Unit | Related unit tests | Low | For changed files |
-| T3 E2E/Integration | Full test suite | High | Before the run's final commit, any push or PR |
+| T3 E2E/Integration | Full test suite | High | Once per job, at its final gate; before any push or PR |
 
 - Execute in T1 → T2 → T3 order (fast feedback first).
 - Diff-based: run the T2 tests related to changed files first, selected per that project's test structure (`src/foo.ts` → `test/foo.spec.ts` / `foo.test.ts`).
-- **Incremental commits**: a full T3 pass is REQUIRED before the run's final commit, and before any push or PR.
+- **Verification scope**: before a job's final gate, run only what the change can affect; the full pass runs once per job, at that gate.
+  - Job: the delegated work as a whole, which the orchestrator may split into work-units, one per spawn.
+  - Final gate: the one step the delegation brief names as final — a last work-unit or a separate gate spawn.
+    - A spawn whose brief names no final gate, and work done without a brief, is its own job's final gate.
+    - Why: one unit per spawn must not turn every spawn's last commit into a full-suite commit.
+  - Affected tests: the T2 tests for the changed files, plus every test that exercises changed code or that the change makes stale (**Coupled-test check**).
+  - Lint and typecheck: on the changed files, or the narrowest target the tool offers — a whole-project `tsc --noEmit` is already that target.
+  - Structure guards (dependency graph, function or file length, size audits, manifest): only where the change can move what the guard measures — a file added, moved or removed, an import edge changed, a function or file grown.
+  - A small, simple fix — a few lines, no file added, no import changed, no public signature changed — needs no structure guard.
+  - A change no test exercises (prose, rule text) runs no suite.
+  - Running more than this before the final gate is waste: it spends the turn budget and buys no evidence the final gate does not.
+    - Widen a run before the final gate only to diagnose a failure the scoped run showed.
+  - The final gate runs the full T3 suite, every structure guard and lint over the whole project, once for the job.
+- **Incremental commits**: a full T3 pass is REQUIRED before the commit of the job's final gate (**Verification scope**), and before any push or PR.
   - Each earlier per-work-unit commit (`rules/glass-atrium/core-git-workflow.md` → **Who commits**) needs its affected test paths passing.
   - Why: a full suite per work-unit exhausts the turn budget; which commit is the working base: `rules/glass-atrium/core-git-workflow.md` → `## Commits`.
-  - A run that ends before that full pass names "full suite not run since the last full pass" in `concerns`.
+  - A final gate that ends before that full pass names "full suite not run since the last full pass" in `concerns`.
 - A test you add or change counts as run only when the run's output shows it executed; a suite command that does not select it (a separate e2e target, an excluded directory) is not its run.
 - A test class that no CI job runs is named in `concerns` as "not run in CI".
 
