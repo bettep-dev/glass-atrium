@@ -132,6 +132,61 @@ run_guard() {
   [[ -z "${GUARD_ERR}" ]] || return 1
 }
 
+# --- Checkout into another work tree (GIT-006): the shared index takes the foreign tree ---
+# A checkout, or a restore --staged, under --work-tree / GIT_WORK_TREE writes the CURRENT
+# repository's index (a --git-dir naming that repository included), so a "read-only" export
+# stages the foreign tree into the main checkout. Only a separate GIT_INDEX_FILE keeps it out.
+
+@test "a checkout or staged restore aimed at another work tree is blocked with code GIT-006" {
+  local row
+  local -a rows=(
+    'git --work-tree=/tmp/export checkout feature/x -- .'
+    'git --work-tree /tmp/export checkout main -- hooks'
+    'GIT_WORK_TREE=/tmp/export git checkout main -- .'
+    'git --git-dir=.git --work-tree=/tmp/export checkout main -- .'
+    'git --work-tree=/tmp/export restore --staged --source=main -- .'
+    'git --work-tree=/tmp/export restore -S --source main .'
+  )
+  for row in "${rows[@]}"; do
+    run_guard "${row}"
+    [[ "${status}" -eq 2 && "${GUARD_ERR}" == *'"error_code":"GIT-006"'* ]] || {
+      echo "not blocked as GIT-006: ${row}: status ${status}: ${GUARD_ERR}"
+      return 1
+    }
+  done
+}
+
+@test "the GIT-006 refusal names a read-only route to export a tree" {
+  run_guard 'git --work-tree=/tmp/export checkout main -- .'
+  [[ "${status}" -eq 2 ]] || {
+    echo "${GUARD_ERR}"
+    return 1
+  }
+  [[ "${GUARD_ERR}" == *'git archive <ref> | tar -x -C <dir>'* && "${GUARD_ERR}" == *'git worktree add'* ]] || {
+    echo "${GUARD_ERR}"
+    return 1
+  }
+}
+
+@test "a work-tree checkout with its own index or a checkout in the worktree itself is not blocked" {
+  local row
+  local -a rows=(
+    'GIT_INDEX_FILE=/tmp/export.idx git --work-tree=/tmp/export checkout main -- .'
+    'export GIT_INDEX_FILE=/tmp/export.idx; git --work-tree=/tmp/export checkout main -- .'
+    'git checkout main'
+    'git -C /repo/.claude/worktrees/wt-a checkout feature/x -- hooks/a.sh'
+    'git --work-tree=/tmp/export restore --source=main -- .'
+    'git --work-tree=/tmp/export status && git checkout main'
+  )
+  for row in "${rows[@]}"; do
+    run_guard "${row}"
+    [[ "${status}" -eq 0 && -z "${GUARD_ERR}" ]] || {
+      echo "blocked: ${row}: status ${status}: ${GUARD_ERR}"
+      return 1
+    }
+  done
+}
+
 # --- Recurrence guard: rule-table lint fails CLOSED on a non-compiling pattern ---
 
 @test "rule-table lint fails closed (GIT-000) when a pattern does not compile" {

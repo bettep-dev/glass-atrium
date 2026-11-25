@@ -28,7 +28,8 @@ COMMAND=$(hook_get_tool_input "${INPUT}" "command")
 # Field delimiter is US (Unit Separator, 0x1F) — a control byte that can never
 # appear inside a regex or a human-readable message, so the force-push pattern's
 # '|' alternation stays intact (a '|' delimiter would truncate it mid-regex).
-# Format: regex<US>code<US>message<US>suggestion
+# Format: regex<US>code<US>message<US>suggestion[<US>exempt]
+# exempt (optional): a regex whose match lets a pattern-matching command pass; a non-compiling one blocks.
 readonly US=$'\x1f'
 RULES=(
   "git\s+push\s+.*--force|git\s+push\s+-f\b${US}GIT-001${US}Force push blocked${US}This hook blocks force push whatever the approval; if the user confirms it, ask them to run it themselves"
@@ -36,6 +37,7 @@ RULES=(
   "git\s+clean\s+-fd${US}GIT-003${US}Clean force-delete blocked${US}This hook blocks git clean -fd whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+checkout\s+\.\s*\$${US}GIT-004${US}Discard-all blocked${US}This hook blocks git checkout . whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+restore\s+\.\s*\$${US}GIT-005${US}Restore-all blocked${US}This hook blocks git restore . whatever the approval; if the user confirms it, ask them to run it themselves"
+  "(--work-tree|GIT_WORK_TREE)[=[:space:]][^;&|]*[[:space:]](checkout([[:space:]]|\$)|restore[[:space:]]([^;&|]*[[:space:]])?(--staged|-[A-Za-z]*S[A-Za-z]*)([[:space:]=]|\$))${US}GIT-006${US}Checkout into another work tree blocked${US}A checkout, or a restore --staged, under --work-tree or GIT_WORK_TREE writes this repository's index (a --git-dir naming it included), so the other tree gets staged here; read a tree read-only with git archive <ref> | tar -x -C <dir>, or git worktree add <dir> <ref>, or give the command its own index with GIT_INDEX_FILE=<scratch file>${US}GIT_INDEX_FILE="
 )
 
 # Rule-table lint (recurrence guard): assert a pattern compiles under grep -E
@@ -51,7 +53,7 @@ pattern_compiles() {
 }
 
 for rule in "${RULES[@]}"; do
-  IFS="${US}" read -r pattern code message suggestion <<<"${rule}"
+  IFS="${US}" read -r pattern code message suggestion exempt <<<"${rule}"
   # SC2310: pattern_compiles is a pure predicate — set -e disable under `if !` is intended.
   # shellcheck disable=SC2310
   if ! pattern_compiles "${pattern}"; then
@@ -62,7 +64,8 @@ for rule in "${RULES[@]}"; do
     exit 2
   fi
   # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-  if printf '%s' "${COMMAND}" | drain_after grep -qE "${pattern}"; then
+  if printf '%s' "${COMMAND}" | drain_after grep -qE "${pattern}" \
+    && ! { [[ -n "${exempt}" ]] && printf '%s' "${COMMAND}" | drain_after grep -qE "${exempt}" 2>/dev/null; }; then
     context="{\"command\":\"${COMMAND}\"}"
     # emit_error hands the context to jq as one argument; Linux refuses one of 131072 bytes or more.
     if (($(LC_ALL=C && printf '%s' "${#context}") >= 131072)); then context='{}'; fi
