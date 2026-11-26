@@ -420,7 +420,8 @@ test("every in-screen hash link resolves to a hash-router screen id", async () =
   const screenSource = await readFile(AGENTS_SRC, "utf8");
   const app = await loadScreenModule(resolve(__dirname, "../public/src/app.jsx"), {
     ReactDOM: { createRoot: () => ({ render: () => {} }) },
-    document: { getElementById: () => null },
+    location: { hash: "" },
+    document: { getElementById: () => null, querySelector: () => null },
   });
   // vm read is untyped; the "improvement" check below fails on a missing or reshaped NAV
   const navIds = new Set((vm.runInContext("NAV", app) as Array<{ id: string }>).map(({ id }) => id));

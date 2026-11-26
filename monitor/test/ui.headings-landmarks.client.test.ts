@@ -18,7 +18,8 @@ interface ElementLike { type?: unknown; props?: { children?: unknown } }
 async function getNavEntries(): Promise<Array<{ id: string; label: string }>> {
   const app = await loadScreenModule(resolve(SRC, "app.jsx"), {
     ReactDOM: { createRoot: () => ({ render: () => {} }) },
-    document: { getElementById: () => null },
+    location: { hash: "" },
+    document: { getElementById: () => null, querySelector: () => null },
   });
   // vm read is untyped; the entry-count check in the caller fails on a missing or reshaped NAV
   return vm.runInContext("NAV", app) as Array<{ id: string; label: string }>;

@@ -1384,7 +1384,7 @@ describe("the nav offers remote access only on the Mac's loopback page", () => {
         UI: { ...ui, installRemoteFetch: () => undefined },
         ReactDOM: { createRoot: () => ({ render: () => undefined }) },
         location: { protocol: row.protocol, hash: "" },
-        document: { getElementById: () => null },
+        document: { getElementById: () => null, querySelector: () => null },
       });
 
       const navIds = (vm.runInContext("NAV_ITEMS", app) as { id: string }[]).map((item) => item.id);

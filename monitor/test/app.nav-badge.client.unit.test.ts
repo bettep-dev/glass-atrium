@@ -100,7 +100,7 @@ async function loadApp(): Promise<AppSurface> {
     window: { location, useTweaks: () => [{}, () => {}] },
     React: reactStub,
     ReactDOM: { createRoot: () => ({ render: () => {} }) },
-    document: { getElementById: () => ({}), documentElement: { style: {} } },
+    document: { getElementById: () => ({}), querySelector: () => null, documentElement: { style: {} } },
     // Bootstrap fetch at module tail — leave pending so sync eval finishes, no mount.
     fetch: () => new Promise(() => {}),
     Intl,
@@ -420,7 +420,8 @@ test("the Agents nav numeral renders nothing at zero, while unread, or when the 
 
 interface SidebarSurface {
   Sidebar: (props: Record<string, unknown>) => unknown;
-  React: { createElement: (type: unknown, props: unknown, ...children: unknown[]) => unknown };
+  NavList: (props: Record<string, unknown>) => unknown;
+  React: { createElement: (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) => unknown };
 }
 const collectText = (node: unknown): string[] => {
   if (typeof node === "string" || typeof node === "number") return [String(node)];
@@ -444,7 +445,9 @@ const findNodes = (node: unknown, match: (n: RenderedNode) => boolean): Rendered
 const renderSidebar = (harness: unknown, agentsState: unknown): unknown => {
   const surface = app as unknown as SidebarSurface;
   const stubCreate = surface.React.createElement;
-  surface.React.createElement = (type, props, ...children) => ({ type, props, children });
+  // the badges live in the shell's NavList → drawn in place with the props Sidebar hands it; every other component stays an element
+  surface.React.createElement = (type, props, ...children) =>
+    type === surface.NavList ? surface.NavList(props ?? {}) : { type, props, children };
   try {
     return surface.Sidebar({ active: "dashboard", onNav: () => {}, harness, agentsState });
   } finally {

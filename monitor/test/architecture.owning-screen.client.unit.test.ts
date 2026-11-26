@@ -28,7 +28,8 @@ const sandbox = await buildScreenSandbox<OwningSandbox>(ARCH_SRC);
 
 const app = await loadScreenModule(APP_SRC, {
   ReactDOM: { createRoot: () => ({ render: () => {} }) },
-  document: { getElementById: () => null },
+  location: { hash: "" },
+  document: { getElementById: () => null, querySelector: () => null },
 });
 // shipped app.jsx NAV → id ↔ label, the routing table the hash link must land in
 // vm read is untyped; the size precondition below fails on a missing or empty NAV

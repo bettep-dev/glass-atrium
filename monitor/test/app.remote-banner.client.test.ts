@@ -32,7 +32,7 @@ async function loadApp(status: number) {
     ReactDOM: { createRoot: () => ({ render: () => undefined }) },
     UI: ui,
     location: { protocol: "https:", origin: "https://studio-mac.local:16146", hash: "", replace: (url: string) => replaced.push(url) },
-    document: { getElementById: () => null, documentElement: { setAttribute: () => undefined, style: { setProperty: () => undefined } } },
+    document: { getElementById: () => null, querySelector: () => null, documentElement: { setAttribute: () => undefined, style: { setProperty: () => undefined } } },
     fetch: async (url: string, init: RequestInit = {}) => {
       // the page's shared CSRF read → answered, kept out of the acts under test
       if (url === SESSION_URL) return new Response(JSON.stringify({ csrf: "c3Jm", device: { id: "3", label: "Pixel 8" } }), { status: 200 });
