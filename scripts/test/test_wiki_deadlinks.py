@@ -42,5 +42,40 @@ class TestCuratorCategoryParity(unittest.TestCase):
         self.assertEqual(categories, {f"level-{level}-topic"})
 
 
+class TestDeadlinkLine(unittest.TestCase):
+    def test_every_reported_dead_link_carries_the_note_line_it_sits_on(self) -> None:
+        note = (
+            "---\n"
+            "category: agent-engineering\n"
+            "---\n"
+            "Intro cites [[missing-alpha]].\n"
+            "```bash\n"
+            "if [[ -v var ]]; then :; fi\n"
+            "```\n"
+            "See [the guide](gone-beta.md) and inline `[[ -n $x ]]` code.\n"
+            "Again [[missing-alpha]], renamed [[claude-code-cli-reference-flag]].\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            notes_dir = Path(tmp) / "notes"
+            notes_dir.mkdir()
+            (notes_dir / "routing-notes.md").write_text(note, encoding="utf-8")
+            (notes_dir / "claude-code-cli-reference-flags.md").write_text(
+                "# Flags\n", encoding="utf-8"
+            )
+            payload = wiki_deadlinks.deadlinks_result_to_dict(
+                wiki_deadlinks.run_deadlinks(wiki_root=Path(tmp))
+            )
+        records = payload["deadlink_dryrun"] + payload["deadlink_fixes"]
+        self.assertEqual(
+            sorted((r["broken_link"], r["line"]) for r in records),
+            [
+                ("[[claude-code-cli-reference-flag]]", 9),
+                ("[[missing-alpha]]", 4),
+                ("[[missing-alpha]]", 9),
+                ("[the guide](gone-beta.md)", 8),
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
