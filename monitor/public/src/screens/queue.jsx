@@ -456,8 +456,9 @@ function getRefusalRowQ(refusal) {
 }
 
 // no gap (layout §1): each read's frontier is its oldest loaded row, none once whole → a row older than the newer of them waits undrawn
+// a cursor the page cannot read → no frontier, so the Done rows stay drawn rather than all vanish
 function getDoneFloorQ(reads) {
-	return Math.max(-Infinity, ...[getFrontierQ(reads.done), getFrontierQ(reads.relays)].filter((floor) => floor !== null));
+	return Math.max(-Infinity, ...[getFrontierQ(reads.done), getFrontierQ(reads.relays)].filter(Number.isFinite));
 }
 
 // a history cursor names its oldest row's time in epoch microseconds → milliseconds, the precision every loaded time carries; whole → null
@@ -3761,7 +3762,7 @@ function RecentResumeListQ({ resumes }) {
 }
 
 const RELAY_REDACTED_Q = "Text redacted";
-// the queue's honest backing (plan 44099), said on every relay sheet, where a relay is read as evidence
+// no sender check on the queue → said on every relay sheet, where a relay is read as evidence
 const RELAY_NO_LOGIN_Q = "No login: any local process can send as any session, or redact.";
 
 /**

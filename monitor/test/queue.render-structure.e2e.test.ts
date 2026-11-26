@@ -1583,7 +1583,7 @@ describe("queue page on the mockup fixtures", () => {
     refuseOneRedaction(harness);
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
     await askRedaction(page);
-    // the designer's read: the dialog is the sheet's own act → centred on the sheet's column, not on the viewport
+    // the dialog is the sheet's own act → centred on the sheet's column, not on the viewport
     const asked = await page.evaluate(() => {
       const getCentre = (selector: string) => {
         const box = document.querySelector(selector)!.getBoundingClientRect();
@@ -1716,7 +1716,7 @@ describe("queue page on the mockup fixtures", () => {
       tag: document.querySelector(".queue-sheet-head .pill--tag")?.textContent,
     }));
     const firstRow = await page.locator(".queue-row").first().getAttribute("id");
-    await selectRow(page, 108);
+    await selectRow(page, 160);
     const first = await head();
     await page.keyboard.press("j");
     const second = await head();
@@ -1725,9 +1725,9 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.equal(firstRow, "queue-row-109", "the list's first row is an order");
-    assert.deepEqual(first, { hash: "#queue?item=108", position: "1 of 2", disabled: [true, false], tag: "Answer" });
-    assert.deepEqual(second, { hash: "#queue?item=160", position: "2 of 2", disabled: [false, true], tag: "Answer" });
-    assert.equal(back.hash, "#queue?item=108");
+    assert.deepEqual(first, { hash: "#queue?item=160", position: "1 of 2", disabled: [true, false], tag: "Answer" });
+    assert.deepEqual(second, { hash: "#queue?item=108", position: "2 of 2", disabled: [false, true], tag: "Answer" });
+    assert.equal(back.hash, "#queue?item=160");
   });
 
   // spec §7, §9.8 → On an answer → Afterwards: the images the session received, the thread's 96 squares under Your answer

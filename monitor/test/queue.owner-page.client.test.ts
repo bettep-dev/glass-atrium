@@ -1419,6 +1419,7 @@ describe("relays in the Done part", () => {
     { name: "the relay read has more → item rows older than its oldest send wait", done: {}, relays: { items: relays.items.filter((copy) => copy.id >= 412), nextCursor: cursorAt(240, 412) }, expected: [["refused pair_cap", 806, 412]] },
     { name: "the item read has more → relay rows older than its oldest item wait", done: { items: [ended(806, 200)], nextCursor: cursorAt(200, 806) }, relays: {}, expected: [["refused pair_cap", 806]] },
     { name: "the relay read cut its refusals → the cut holds no row back, the hole being in the refusals alone", done: {}, relays: { refusalCutAt: REFUSAL!.at }, expected: [["refused pair_cap", 806, 412], [398, 812]] },
+    { name: "a cursor in a form the page does not read → its frontier holds no row back", done: {}, relays: { nextCursor: `${atMinutes(240)}:412` }, expected: [["refused pair_cap", 806, 412], [398, 812]] },
   ];
   for (const row of frontiers) {
     test(`the merge: ${row.name}`, () => assert.deepEqual(getDoneBands([], { done: doneRead(row.done), relays: relayRead(row.relays) }), row.expected));
@@ -1835,7 +1836,7 @@ describe("a relay on its way", () => {
     });
   }
 
-  // the designer's read → one short painted line, both names keeping their self-named mark; spec §12.7's sentence in its title and to a reader;
+  // one short painted line keeps both names' self-named marks in view; spec §12.7's full sentence in its title and to a reader;
   // the parent's send on another day than this send → dated
   const hopSentence = `Hop 1 · sent after ${NAMED} received relay #398 from atrium (self-named) at 2026-11-18 12:00`;
   const hopRows = [
@@ -1866,7 +1867,7 @@ describe("a relay on its way", () => {
     assert.deepEqual(["yoaida", "atrium", "gersona"].map((name) => body.includes(`${name} · 5e55a0`)), [true, true, true]);
   });
 
-  // the designer's read: a relay gone from the list has no place to step from → its arrows dim, and neither a press nor J / K steps
+  // a relay gone from the list has no place to step from → its arrows dim, and neither a press nor J / K steps
   test("a relay whose row left draws its step arrows aria-disabled and steps nowhere, by press or by key", () => {
     const copies = toThree();
     const { calls, queue } = buildQueue({ steps: { index: -1, count: 3, prevId: 5, nextId: 7 } });
