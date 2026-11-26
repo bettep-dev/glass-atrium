@@ -1675,8 +1675,7 @@ describe("a relay on its way", () => {
     });
   }
 
-  // one session ticked → the sender leads the title cell as the name column draws it: the cut name, then the page's own mark outside it and
-  // outside the cut recipient and title; the full sender words in the name's tooltip and the row's accessible name, the cell's tooltip the title
+  // one session ticked → the sender's name is cut on its own, its self mark stays whole, and the recipient and title are cut on their own
   test("with one session ticked the title cell leads with the sender's name and its self mark, each its own part before the recipient and title", () => {
     const tree = renderRow(toYoaida(), false);
     const [cell] = byClass(tree, "queue-row-title");
