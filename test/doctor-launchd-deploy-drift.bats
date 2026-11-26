@@ -69,9 +69,12 @@ setup() {
   mkdir -p -- "${LA}" "${TARGET}" "${REF}"
 
   # fake config: the exact render_config sed against the SANDBOX home, timezone pinned to
-  # an explicit zone so atrium_resolve_timezone round-trips verbatim (host-independent).
+  # an explicit zone so atrium_resolve_timezone round-trips verbatim (host-independent), and
+  # node_bin pinned to an executable every host has — the template's Homebrew path is absent on
+  # Linux, and §11 counts a missing node_bin into the launchd-drift term.
   sed -e "s|\${HOME}|${SANDBOX_HOME}|g" \
     -e 's|^timezone = .*|timezone = "Asia/Seoul"|' \
+    -e 's|^node_bin = .*|node_bin = "/bin/sh"|' \
     "${TEMPLATE}" >"${FAKE_CONFIG}"
 
   # minimal valid manifest so §4/§7 stay clean; the §8 generator is stubbed exit-0.
