@@ -1,9 +1,11 @@
-// DetailSurface geometry read in a real browser: the overlay head is the 48 card-head with its title on the close button.
+// DetailSurface read in a real browser: the overlay head is the 48 card-head with its title on the close button,
+// and the focus trap's selector, matched by the browser, enters at controls that can take focus.
 // Runner: npx tsx --test test/ui.detail-surface.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
@@ -99,4 +101,54 @@ describe("the overlay head", () => {
     const pitch = lines[1].top - lines[0].top;
     assert.ok(Math.abs(pitch - fontSize * 1.5) < 0.5, `line pitch ${pitch} at ${fontSize}px`);
   });
+});
+
+describe("the focus trap enters at controls that can take focus", () => {
+  type TrapArgs = { focusables: unknown[]; active: unknown; panel: unknown; shiftKey: boolean };
+  const getTrapFocusTarget = ui.getTrapFocusTarget as (args: TrapArgs) => { id: string } | null;
+  // vm read is untyped; a missing const throws here, and a non-selector fails querySelectorAll in the page
+  const selector = vm.runInContext("FOCUSABLE_SELECTOR", ui) as string;
+
+  // each sheet's body opens and closes on a disabled control around two enabled ones
+  const option = () => h("option", null, "Daily");
+  const SHEETS = [
+    { name: "a disabled input", id: "input", disabled: () => h("input", { disabled: true, "aria-label": "Budget" }) },
+    { name: "a disabled select", id: "select", disabled: () => h("select", { disabled: true, "aria-label": "Window" }, option()) },
+    { name: "a disabled textarea", id: "textarea", disabled: () => h("textarea", { disabled: true, "aria-label": "Note" }) },
+    { name: "a control inside a disabled fieldset", id: "fieldset",
+      disabled: () => h("fieldset", { disabled: true }, h("input", { "aria-label": "Budget" })) },
+  ] as const;
+  const SHEET_PAGE = SHEETS.map((sheet) => {
+    const body = h("div", null,
+      sheet.disabled(),
+      h("button", { type: "button", id: `${sheet.id}-first` }, "Apply"),
+      h("input", { id: `${sheet.id}-last`, "aria-label": "Search" }),
+      sheet.disabled());
+    return `<div data-sheet="${sheet.id}">${render(ui.DetailSurface, { open: true, onClose: () => undefined, title: "Budget", bare: true, variant: "fullscreen" }, body)}</div>`;
+  }).join("\n");
+
+  let page: Page;
+
+  before(async () => {
+    page = await openPage(SHEET_PAGE);
+  });
+
+  // the browser matches the shipped selector; the shipped trap rule picks the entry among the matches
+  const getEntry = async (id: string, shiftKey: boolean): Promise<string | undefined> => {
+    const ids = await page.$eval(`[data-sheet="${id}"] [role="dialog"]`,
+      (panel, sel) => [...panel.querySelectorAll(sel as string)].map((node) => node.id), selector);
+    const focusables = ids.map((nodeId) => ({ id: nodeId }));
+    const panel = { contains: (node: unknown) => focusables.includes(node as { id: string }) };
+    return getTrapFocusTarget({ focusables, active: null, panel, shiftKey })?.id;
+  };
+
+  for (const sheet of SHEETS) {
+    test(`${sheet.name} first: Tab into the sheet lands on the first enabled control`, async () => {
+      assert.equal(await getEntry(sheet.id, false), `${sheet.id}-first`);
+    });
+
+    test(`${sheet.name} last: Shift+Tab into the sheet lands on the last enabled control`, async () => {
+      assert.equal(await getEntry(sheet.id, true), `${sheet.id}-last`);
+    });
+  }
 });
