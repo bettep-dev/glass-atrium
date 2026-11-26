@@ -1,7 +1,7 @@
-// Unit tests for public/src/app.jsx nav-badge routing (T2 · T13a): the architecture (System map)
+// Unit tests for public/src/app.jsx nav-badge routing: the architecture (System map)
 // nav numeral and the Dashboard lane read ONE harness fold, so the two surfaces cannot disagree
 // about a harness fact — including when a store fails to answer.
-// The map owns the health readings now, so the Health entry point is gone (T13a).
+// The map owns the health readings, so no Health entry point exists.
 //
 // Runner: npx tsx --test test/app.nav-badge.client.unit.test.ts
 //

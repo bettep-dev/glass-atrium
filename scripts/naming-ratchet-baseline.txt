@@ -570,7 +570,6 @@ ID_TITLE test AC-2 drawn subgraph nesting depth <= cap
 ID_TITLE test AC-2 the exported document carries no script, vendored or otherwise
 ID_TITLE test AC-2 the fallback watch catches a genuinely unregistered layout
 ID_TITLE test AC-2 the same render without awaiting the prep does warn
-ID_TITLE test AC-2: invalid model value → 400 field-level error + zero writes
 ID_TITLE test AC-3 ELK edges are orthogonal under the ADR-3 verdict
 ID_TITLE test AC-3 drawn node count <= its grade cap, and the faithful/balanced cap rows stay pinned to their four literals
 ID_TITLE test AC-3 the same source under dagre yields different node coordinates
@@ -586,7 +585,6 @@ ID_TITLE test AC-4: daemon-key change rewrites daemon-config.json — unknown ke
 ID_TITLE test AC-5 drawn node label chars <= its grade cap outside the literal exemption list
 ID_TITLE test AC-5 export and viewer draw the C4 fixture at the same width under one declared screen
 ID_TITLE test AC-5 export and viewer draw the erDiagram fixture at the same width
-ID_TITLE test AC-5: dev pin upserts only the model line, resolves symlinks, surfaces unparseable
 ID_TITLE test AC-6 an unresolvable mermaid package fails the export, not the module import
 ID_TITLE test AC-8 omitted_node_ids ledger is honest while drawn is smaller than source, and only canonical carries its own non-empty title/description in place of the source's
 ID_TITLE test AC-9 (route) 예산 health 표면이 등록되어 있고 slug/omitted_node_ids 를 리포트 위에 합성함
@@ -684,12 +682,9 @@ ID_TITLE test B2-4 guard the residual bindings come from the served part_binding
 ID_TITLE test B2-5 guard the last-run reading tracks the served instant and empties only the parts without one
 ID_TITLE test C1 a daemons store that has not answered leaves no verdict ring from the live daemon statuses
 ID_TITLE test C2 a node carrying more than one attention part says how many on its glyph
-ID_TITLE test C2 the per-node attention counts add up to the caption's attention count
 ID_TITLE test C3 regression pin — the as-of stamp advances only on a successful headline read
 ID_TITLE test C4 an unjudged part and a 'No data' part never share a drawer label
-ID_TITLE test D2: bare alias PUT → 400 with remediation message on EVERY domain (dev/research too)
 ID_TITLE test D3 fail-open: missing pricing SoT → GET 200 with known_models [] — next GET recovers
-ID_TITLE test D5: drift compare is variant-suffix-normalized ('claude-sonnet-5[1m]' == 'claude-sonnet-5')
 ID_TITLE test DF-13 cascadeAfterRowUpdate: actual diff on a grouped row → cascade fires once
 ID_TITLE test DF-13 cascadeAfterRowUpdate: standalone row (folder_id NULL) → NO cascade even on a diff
 ID_TITLE test DF-13 cascadeAfterRowUpdate: status echo (parsed === existing) → NO cascade (siblings untouched)
@@ -707,9 +702,7 @@ ID_TITLE test GET /api/cost/turn-stats: avg_turns_per_session true per-session a
 ID_TITLE test H6 전환 dual-match: bare alias 충돌 시 정확히 1회 + 비접두 키 passthrough
 ID_TITLE test M1 a 'No data' part keeps its tone on the node, and it outranks an ok daemon there
 ID_TITLE test M1 a live-overlay failure is named in the lane and names its own reason
-ID_TITLE test M1 a zero never stands in for a reading that never arrived
 ID_TITLE test M1 cutting a store can only add unverified nodes, never remove one
-ID_TITLE test M1 every health state renders its own caption sentence
 ID_TITLE test M1 the lane stands the worse fact first whatever order it was assembled in
 ID_TITLE test M3 a health model that never loaded leaves every bound node unverified
 ID_TITLE test P0-2 every canvas edge is axis-aligned while the dagre control is not
@@ -722,10 +715,6 @@ ID_TITLE test P0-2-fix every box and every zone is drawn with rounded corners
 ID_TITLE test P0-2-fix labels render in the same font mermaid measured them with
 ID_TITLE test P0-2-fix no node label overruns the box mermaid sized for it
 ID_TITLE test P0-2-fix the canvas, its zones and its boxes read as three separate tones
-ID_TITLE test P1 a node's accessible name carries its label and a distinct health word per state
-ID_TITLE test P1 the attention caption names every flagged part and no settled one
-ID_TITLE test P1 the focus ring sits outside the health ring and never moves it
-ID_TITLE test P1 the security category's node stroke uses no status hue
 ID_TITLE test P1-1 authored diagram text is rendered at a level that strips script
 ID_TITLE test P1-1 every adopted diagram type carries the useMaxWidth:false width contract
 ID_TITLE test P1-1 the config carries the ELK default and the log level the warning watch needs
@@ -756,7 +745,6 @@ ID_TITLE test T12 corpus-audits: NULL measurements arrive as null, never coerced
 ID_TITLE test T12 corpus-audits: limit is honoured and an out-of-range limit is a 400
 ID_TITLE test T12 corpus-audits: newest-first window, count and latest_cycle_date agree with the list
 ID_TITLE test T12 corpus-audits: seeded reading is retrievable from the route payload with all 12 columns intact
-ID_TITLE test T12: de-registered on-disk dev-*.md (glass-atrium-dev-ghost) excluded from the model table
 ID_TITLE test T6 cross-analysis: by_agent_top_10 excludes noise, keeps canonical
 ID_TITLE test T6 cross-analysis: sibling by_result is registry-scoped by default, include_all=1 restores noise
 ID_TITLE test T7 a daemon name carrying a space is encoded before the URL leaves the screen
@@ -764,7 +752,6 @@ ID_TITLE test T7 a daemon name that would otherwise change the query is encoded 
 ID_TITLE test T7 exactly one endpoint follows the daemon, which is what lets the other four stay put
 ID_TITLE test T7 search: default view excludes noise + de-registered (registry-scoped)
 ID_TITLE test T7 search: include_all=1 re-admits de-registered + sentinels (forensic, AC-2)
-ID_TITLE test T7 the map requests all five health responses it absorbed
 ID_TITLE test T7 the payload endpoint carries the selected daemon, not a frozen literal
 ID_TITLE test T8/T9 fail-open: empty registry skips the gate (no invalid IN () SQL)
 ID_TITLE test T8: actionable_proposals[] target_agent registry-gated
@@ -774,7 +761,6 @@ ID_TITLE test V1 an unjudged part never paints as ok, while warn and crit always
 ID_TITLE test V1 bindings that have not arrived report unknown, not an empty unverified set
 ID_TITLE test V2 a zone member's connections include the arrows drawn onto its zone
 ID_TITLE test V4 dashed strokes on the map mean unverified and nothing else
-ID_TITLE test a P95 numeral stays neutral at every tier, the glyph alone carrying the tier while amber stays off the routine warn tier
 ID_TITLE test a budget crossing rides the P95 fill-bar instead of a pill that contradicts the fast-tier glyph
 ID_TITLE test a parked pattern the registry gate hides is reported, not dropped (F5)
 ID_TITLE test buildSearchUrlO: include_all present only when the toggle is on (T7 contract)
@@ -782,7 +768,6 @@ ID_TITLE test classifyDbFailure: P2010 자체는 SQLSTATE 로 오인하지 않�
 ID_TITLE test daily-at America/New_York: EDT(여름, UTC-4) offset 적용 — EST 와 다름
 ID_TITLE test daily-at America/New_York: EST(겨울, UTC-5) offset 적용
 ID_TITLE test each stage group opens with a level-2 heading under the page H1, and the ledger holds no other heading
-ID_TITLE test every ledger row reads the fleet P95 cut, and only a p95 above it takes the warn glyph
 ID_TITLE test hook failures: unretried 24h failure → crit; retried-only → warn (F08)
 ID_TITLE test parseIdParam: unsafe-integer 거부 (M1 overflow + M3 float-round)
 ID_TITLE test rowToSummaryItem: invocations ↔ invocations_30d alias 동치 (F25 deprecated alias)
@@ -790,7 +775,6 @@ ID_TITLE test rowToSummaryItem: matrix 분모 — needs_context 제외 + 별도 
 ID_TITLE test stripIllegalControlChars: removes DEL (\\x7f) and C1 controls (\\x80–\\x9f)
 ID_TITLE test stripIllegalControlChars: removes the full C0 control range except \\t \\n \\r
 ID_TITLE test success-rate: days=7 윈도우 day-set 경계 — 오늘 포함 정확히 7일 (F26)
-ID_TITLE test the P95 warn cut follows the fleet's upper quartile, so warn stays rare while the 10-minute floor holds
 ID_TITLE test the removal ledger, its exclusions and the survivors hold in one tracked-tree scan (AC-B2-5d · AC-B2-6d · AC-B2-6b · ADR-20 · AC-12 · 39739-R1 · 39731-S1 · 39731-S4)
 INCIDENT_HEADER #      loses BOTH keys); the S-1 cases pin metachar-safe in-place rewrites.
 INCIDENT_HEADER #     AC1  a registered agent absent from the Scope Legend is NAMED and exits 2.
@@ -937,7 +921,6 @@ INCIDENT_HEADER // Tests for the dashboard update-availability resolver (plan E2
 INCIDENT_HEADER // Tests for the unified Atrium system version (T03) — the monitor reports ONE
 INCIDENT_HEADER // Unit tests for DAEMON_NODE_BINDINGS (F32) — every live-overlay daemon must
 INCIDENT_HEADER // Unit tests for clauded-docs/control-chars (illegal C0/C1 control stripping).
-INCIDENT_HEADER // Unit tests for public/src/app.jsx nav-badge routing (T2 · T13a): the sidebar footer, the
 INCIDENT_HEADER // Unit tests for public/src/data/health-model.js (F02) — the health KPI
 INCIDENT_HEADER // Unit tests for the F12 review-flag REASON rendering in
 INCIDENT_HEADER // Unit tests for the P18 daemon_run_payload keyed/labeled row logic in

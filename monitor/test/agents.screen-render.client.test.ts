@@ -1488,7 +1488,7 @@ test("the Instrumentation fold carries no tone and its body is the review-flag c
   assert.doesNotMatch(text, /no record|unfinished/, "the unfinished count lives on the No completion record head alone");
 });
 
-test("the drawer's Performance section states the agent's budget crossings, peak and P95; a read in flight shows the loading look, a failed read marks Not loaded with its cause, never 0", async () => {
+test("the drawer's Performance section states the agent's budget crossings, peak and p95; a read in flight shows the loading look, a failed read marks Not loaded with its cause, never 0", async () => {
   const agent = { agent_id: "glass-atrium-dev-react", agent_name: "glass-atrium-dev-react", runs: 40, needs_context_count: 0, invocations: 40 };
   const summaryState = { status: "ready", data: { agents: [agent] }, error: null };
   const latencyRead = { status: "ready", data: { agents: [{ agent_id: agent.agent_id, p95_ms: 42000 }] }, error: null };
@@ -1864,7 +1864,7 @@ describe("the P95 too-slow cut", () => {
   }
 });
 
-test("a row over the P95 cut carries the crit glyph, the Too slow words and the cut in its title, and a row under it carries no glyph", async () => {
+test("a row over the p95 cut carries the crit glyph, the Too slow words and the cut in its title, and a row under it carries no glyph", async () => {
   const mod = await loadAgentsScreen({ formatDuration: REAL_UI.formatDuration });
   const cells = getP95Cells(renderP95Table(mod, toP95Agents(P95_CUT_FIXTURES[0].secs)));
   const [slow, fast] = [cells[0], cells[cells.length - 1]];
@@ -1875,7 +1875,7 @@ test("a row over the P95 cut carries the crit glyph, the Too slow words and the 
   assert.equal(findNodes(fast, isTooSlowWords).length, 0, "no words under the cut");
 });
 
-test("the P95 bar is the row's p95 over the slowest p95 in the response, neutral and uncapped", async () => {
+test("the p95 bar is the row's p95 over the slowest p95 in the response, neutral and uncapped", async () => {
   const mod = await loadAgentsScreen({ formatDuration: REAL_UI.formatDuration });
   const secs = P95_CUT_FIXTURES[0].secs;
   const bars = getP95Cells(renderP95Table(mod, toP95Agents(secs))).map((cell) => findAtoms(cell, "Bar").find((bar) => /^p95 /.test(String(bar.props.ariaLabel))));
@@ -2085,7 +2085,7 @@ describe("the ledger head counts crit rows and the agents past the fleet cut, na
     });
   }
 
-  test("a row over the P95 cut is counted crit rather than watched", async () => {
+  test("a row over the p95 cut is counted crit rather than watched", async () => {
     const { agents, revision: revisionState } = fleet(typical(PENALTY.p45));
     const slow = agents.map((a, i) => ({ ...a, p95_ms: i === 3 ? 3_600_000 : 60_000 }));
     assert.deepEqual(await renderMarks(slow, revisionState), [{ tone: "crit", text: "1 needs attention" }]);
@@ -2737,7 +2737,7 @@ describe("Agents values take the shared number, date and nothing forms", () => {
     }
   });
 
-  test("a fractional budget crossing peak prints through formatPct in the drawer and on the P95 bar", async () => {
+  test("a fractional budget crossing peak prints through formatPct in the drawer and on the p95 bar", async () => {
     const mod = await loadAgentsScreen(formOverrides());
     const getCrossing = mod.getCrossingMetricsAg as (s: unknown, m: unknown, id: string) => { count: unknown; peak: unknown };
     const ready = getCrossing({ status: "ready" }, new Map([["a", { overage_count: 3, max_crossed_pct: 112.46 }]]), "a");

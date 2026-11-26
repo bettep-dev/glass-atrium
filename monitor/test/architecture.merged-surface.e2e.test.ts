@@ -1686,7 +1686,7 @@ const ABSORBED_HEALTH_PATHS = [
 	"/api/health/unpriced-models",
 ];
 
-test("T7 the map requests every health response it absorbed", async () => {
+test("the map requests every health response it absorbed", async () => {
 	await openMap(getLiveFixture());
 	await waitForPartVerdict("pg");
 	// 앵커는 판정 넷으로 서므로 페이로드 왕복이 아직 안 끝났을 수 있음 — 기한을 두고 기다림.

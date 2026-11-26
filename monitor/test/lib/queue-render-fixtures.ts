@@ -1,6 +1,6 @@
 // Fixture data for the Queue page render harness: the sessions, items, orders and images of mockup v5's rest state,
 // typed on the server's own view types → a change to the item view, session row or history read fails typecheck here.
-// Item text keeps the mockup's shape (Korean bullets, backticks, a declared document, R1–R3 with pros and cons) in
+// Item text keeps the mockup's shape (Korean bullets, backticks, a declared document, coded options with pros and cons) in
 // neutral wording: the mockup's sample text quotes private project work and this repository is public.
 
 import { readFileSync } from "node:fs";

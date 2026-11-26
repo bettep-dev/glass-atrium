@@ -43,7 +43,7 @@ async function createOrFail(tx: Prisma.TransactionClient, label: string) {
 }
 
 describe("issuing a device", () => {
-  test("the issued value finds its device, and only its SHA-256 digest is stored", async () => {
+  test("the issued value finds its device, and only its sha256 digest is stored", async () => {
     await runRolledBack(async (tx) => {
       const created = await createOrFail(tx, "Owner iPhone 15");
       const row = await tx.remoteDevice.findUniqueOrThrow({ where: { id: created.device.id } });

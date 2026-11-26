@@ -352,7 +352,7 @@ test("GET: agents carries every agent file by name with its role line, pin cut t
   assert.ok(!res.body.includes(fixtureDir), "no filesystem path in the response");
 });
 
-test("D5: drift compare is variant-suffix-normalized ('claude-haiku-4-5[1m]' == 'claude-haiku-4-5')", async () => {
+test("drift compare is variant-suffix-normalized ('claude-haiku-4-5[1m]' == 'claude-haiku-4-5')", async () => {
   // The daemon-config fixture renders 'claude-haiku-4-5' → a bracket-variant desired compares equal after normalization.
   const prisma = getPrisma();
   await prisma.modelConfig.update({ where: { configKey: "model.daemon_cycle_worker" }, data: { configValue: "claude-haiku-4-5[1m]" } });
@@ -428,7 +428,7 @@ test("a model value outside the id pattern → 400 field-level error + zero writ
   assert.strictEqual(readFileSync(daemonConfigPath, "utf8"), daemonConfigBefore, "daemon-config untouched");
 });
 
-test("D2: bare alias PUT → 400 with remediation message", async () => {
+test("a bare alias PUT → 400 with remediation message", async () => {
   // The words still match FREE_TEXT_MODEL_PATTERN — only the explicit reject-list stands between a bare alias and a silent 200.
   for (const value of ["sonnet", "opus", "haiku"]) {
     const res = await app.inject({ method: "PUT", url: "/api/model-config", payload: { models: { "model.daemon_cycle_worker": value } } });
