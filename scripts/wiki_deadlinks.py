@@ -143,18 +143,11 @@ def extract_links(text: str) -> list[tuple[str, str, int]]:
     text = _strip_code_spans(text)
     links: list[tuple[str, str, int]] = []
 
-    for m in _RE_WIKILINK.finditer(text):
-        raw = m.group(0)
-        target = m.group(1).strip()
-        # Strip path separators (vault-relative paths like notes/foo → foo).
-        slug = Path(target).stem
-        links.append((raw, slug, text.count("\n", 0, m.start()) + 1))
-
-    for m in _RE_MD_LINK.finditer(text):
-        raw = m.group(0)
-        path_str = m.group(2).strip()
-        slug = Path(path_str).stem
-        links.append((raw, slug, text.count("\n", 0, m.start()) + 1))
+    for pattern, target_group in ((_RE_WIKILINK, 1), (_RE_MD_LINK, 2)):
+        for m in pattern.finditer(text):
+            # Strip path separators (vault-relative paths like notes/foo → foo).
+            slug = Path(m.group(target_group).strip()).stem
+            links.append((m.group(0), slug, text.count("\n", 0, m.start()) + 1))
 
     return links
 
