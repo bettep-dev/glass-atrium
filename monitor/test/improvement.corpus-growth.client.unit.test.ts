@@ -372,6 +372,27 @@ test("the per-agent style-check table spells each header out and its stacked cel
   assert.deepEqual(cellLabels, headers.filter((c) => c.isNumeric).map((c) => c.label));
 });
 
+// design.md §12.6 Cells: an unmeasured table cell reads None in faint ink → the shared absent atom, never a local copy
+describe("an unmeasured instrumentation table cell renders through the shared absent atom", () => {
+  const rows = [
+    {
+      name: "a confidence group with no measured average",
+      render: () => (helpers.ConfidenceLaneTableI as Component)({ buckets: [{ promotion_tier: "auto", proposal_count: 3, confidence_observed_avg: null }] }),
+    },
+    {
+      name: "an agent with no style-check rate",
+      render: () => (helpers.StyleRefAgentTableI as Component)({ rows: [{ ...STYLE_AGENT, emission_rate: null }] }),
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const absent = viewTree(row.render()).filter((el) => el.type === helpers.window.UI.AbsentValue).map((el) => el.props.kind);
+
+      assert.deepEqual(absent, ["none"]);
+    });
+  }
+});
+
 // the agent column reads through the shared short-name atom, its full name kept for assistive tech
 describe("an instrumentation agent cell renders through the shared agent-name atom", () => {
   const rows = [

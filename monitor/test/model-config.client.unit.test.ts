@@ -922,6 +922,15 @@ test("the header sync token speaks only when the file needs action and leaves th
   assert.strictEqual(textMc(renderComponentMc(screens.SyncTokenMC, { state: "loading", sync: undefined })), "");
 });
 
+// a payload without daemon_config_sync knows no sync state → the failed read's words, never a dash
+test("a ready read with no sync value says the sync state is unavailable, as a failed read does", () => {
+  const failed = textMc(renderComponentMc(screens.SyncTokenMC, { state: "error", sync: undefined }));
+  const headerSync = sandboxFnMc<(data: unknown) => string>("headerSyncMC");
+  const sync = headerSync({ domains: DOMAIN_ROW_FIXTURE_MC, budgets: [] });
+
+  assert.strictEqual(textMc(renderComponentMc(screens.SyncTokenMC, { state: "ready", sync })), failed);
+});
+
 test("a warm read error puts the shared 'Last known' prefix on an alarm and keeps an in-sync file silent", () => {
   const readAt = Date.parse("2026-01-10T12:00:00.000Z");
   const region = { status: "ready", data: {}, error: null, busy: false };

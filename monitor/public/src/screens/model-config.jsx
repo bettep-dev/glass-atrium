@@ -562,12 +562,12 @@ function SyncTokenMC({ state, sync, freshness }) {
 
 	// the Refresh label already reads Loading… · agreement is silence · an empty roster → its cards say so
 	if (state === "loading" || sync === "ok" || sync === "empty") return null;
-	if (state !== "ready") {
+	if (state !== "ready" || !sync) {
 		return <span className="fs-meta text-faint">Sync state unavailable</span>;
 	}
 
 	const meta = SYNC_META_MC[sync] || {
-		label: sync || "—",
+		label: sync,
 		desc: "",
 		tone: "neutral",
 	};

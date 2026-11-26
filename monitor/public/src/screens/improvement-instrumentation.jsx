@@ -438,7 +438,7 @@ const LANE_COLUMNS_I = Object.freeze([
 ]);
 
 function ConfidenceLaneTableI({ buckets }) {
-	const { Table, TableRow, TableCell } = window.UI;
+	const { AbsentValue, Table, TableRow, TableCell } = window.UI;
 	return (
 		<Table caption="Suggestion confidence by group" columns={LANE_COLUMNS_I}>
 			{(view) => buckets.map((b) => {
@@ -455,7 +455,7 @@ function ConfidenceLaneTableI({ buckets }) {
 							{isMeasured ? (
 								<><SymI s={badge.symbol} className={badge.tone} size={11} /> {formatRateI(avg)}</>
 							) : (
-								<NoneCellI />
+								<AbsentValue kind="none" />
 							)}
 						</TableCell>
 					</TableRow>
@@ -463,11 +463,6 @@ function ConfidenceLaneTableI({ buckets }) {
 			})}
 		</Table>
 	);
-}
-
-// an empty cell reads None in faint ink, never blank or a dash
-function NoneCellI() {
-	return <span className="text-faint">None</span>;
 }
 
 // Add-only patches stacks with Results by check status beside Suggestion confidence → a short S slot keeps that pair level
@@ -685,7 +680,7 @@ const STYLE_REF_COL_WIDTHS_I = ["auto", ...Array(STYLE_REF_COLUMNS_I.length - 1)
 function StyleRefAgentTableI({ rows }) {
 	// 행=agent (가변) / 열=6 (agent · reported · rate · corroborated · uncorroborated · unverifiable)
 	// per-agent rate 열은 없다 — 세 bucket 을 하나의 비율로 접으면 adjudicated 여부가 사라진다.
-	const { AgentName, Table, TableRow, TableCell } = window.UI;
+	const { AbsentValue, AgentName, Table, TableRow, TableCell } = window.UI;
 	return (
 		<Table caption="Style-check rate by agent" columns={STYLE_REF_COLUMNS_I} widths={STYLE_REF_COL_WIDTHS_I} className="table-fixed">
 			{(view) => rows.map((r) => {
@@ -703,7 +698,7 @@ function StyleRefAgentTableI({ rows }) {
 							{formatIntI(emCount)} / {formatIntI(emTotal)}
 						</TableCell>
 						<TableCell view={view} textRole="meta" label="Rate" isNumeric>
-							{hasRate ? formatRateI(r.emission_rate) : <NoneCellI />}
+							{hasRate ? formatRateI(r.emission_rate) : <AbsentValue kind="none" />}
 						</TableCell>
 						<TableCell view={view} textRole="meta" label="Corroborated" isNumeric>
 							{formatIntI(corroborated)} / {formatIntI(eligible)}

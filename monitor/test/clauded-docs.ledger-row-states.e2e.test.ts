@@ -37,12 +37,12 @@ const STATES = {
 } as const;
 type State = keyof typeof STATES;
 
-// the ledger sits in the list card's elev; the cells carry the screen's dim meta text, the group member's faint placeholder, the stale flag's warn glyph, the crit glyph and the ink title
+// the ledger sits in the list card's elev; the cells carry the screen's dim meta text, the group member's faint None, the stale flag's warn glyph, the crit glyph and the ink title
 const getLedgerPage = () => `<!doctype html><html><head><style>${UTILITIES}</style></head><body style="margin: 0;">
   <div style="padding: 48px;"><div class="card"><table class="tbl"><tbody>
     ${Object.entries(STATES).map(([state, classes]) => `<tr id="${state}" class="doc-row ${classes}">
       <td class="doc-age-cell num text-dim"><div class="doc-age-line flex justify-end items-center gap-label-inline"><span class="doc-age-value flex-none">15d</span><span class="doc-age-flag relative inline-flex items-center flex-none text-dim"><span class="glyph-warn" style="color: rgb(var(--warn));">!</span><span class="sr-only">stale</span></span></div></td>
-      <td><span class="faint" style="color: rgb(var(--faint));">—</span></td>
+      <td><span class="faint" style="color: rgb(var(--faint));">None</span></td>
       <td class="title-cell"><span class="glyph-crit" style="color: rgb(var(--crit));">!</span> <span class="doc-title-text text-ink">Plan</span></td>
     </tr>`).join("")}
   </tbody></table></div></div>

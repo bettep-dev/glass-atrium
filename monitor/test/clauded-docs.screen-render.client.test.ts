@@ -1724,6 +1724,41 @@ describe("a group member row draws its title and Created in the root row's face"
   }
 });
 
+// design.md §12.6 Cells: an empty ledger cell reads None in faint ink → the shared absent atom, never a dash
+describe("an absent ledger value reads None through the shared absent atom, never a dash", () => {
+  const memberProps = {
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  };
+  const rows = [
+    {
+      name: "a Created cell whose date does not parse", absentCount: 1,
+      render: async () => {
+        const screen = await loadDocsScreen();
+        const rowAge = (screen.getRowAgeCD as (row: unknown, nowMs: number) => Record<string, unknown>)({ created_at: "", doc_status: "open" }, Date.now());
+        return renderScreen((screen.DocAgeCellCD as Component)({ createdAt: "", ...rowAge }));
+      },
+    },
+    {
+      name: "a group member with no stage", absentCount: 2,
+      render: async () => {
+        const member = { id: 21, title: "Member", doc_status: null, format: "md", audience: "exposed", author: "a", created_at: "2026-09-01T00:00:00Z" };
+        const screen = await loadDocsScreen(stubbedStateReact({ status: "ready", data: [member, { ...member, id: 22 }], error: null }));
+        return renderScreen(inTbody((screen.GroupMembersRowsCD as Component)(memberProps)));
+      },
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const tree = await row.render();
+      const kinds = findNodes(tree, (n) => n.props?.atom === "AbsentValue").map((n) => n.props.kind);
+      assert.deepEqual(kinds, Array(row.absentCount).fill("none"), `${row.name}: each absent value is the None atom`);
+      assert.doesNotMatch(collectText(tree), /—/, `${row.name}: no dash stands in for the value`);
+    });
+  }
+});
+
 test("the version history names the current revision in ink, never in a severity tone", async () => {
   const screen = await loadDocsScreen();
   const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));

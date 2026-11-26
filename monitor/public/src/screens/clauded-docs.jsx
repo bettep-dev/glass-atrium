@@ -1698,7 +1698,7 @@ function DocAgeCellCD({ view, createdAt, age, isStale }) {
 			title={`Created ${formatDateCD(createdAt)}`}>
 			{/* age, then the stale glyph inline on one line, never stacked */}
 			<div className="doc-age-line flex justify-end items-center gap-label-inline">
-				<span className="doc-age-value flex-none">{age ? age.label : "—"}</span>
+				<span className="doc-age-value flex-none">{age ? age.label : <window.UI.AbsentValue kind="none" />}</span>
 				{/* the Created floor holds no room for the word → glyph-only; "stale" rides the title and sr-only text (relative → the sr-only box resolves here) */}
 				{isStale && (
 					<span
@@ -2079,9 +2079,7 @@ function GroupMembersRowsCD({
 								isChanging={togglingIds.has(member.id)}
 							/>
 					) : (
-						<span className="fs-meta text-faint">
-							—
-						</span>
+						<window.UI.AbsentValue kind="none" />
 					)}
 				</TableCell>
 				<TableCell view={view} textRole="meta" label="ID" isNumeric className="fs-meta text-dim">
@@ -3134,15 +3132,8 @@ const formatIntCD = window.UI.formatInt;
 
 // created_at 등 모든 displayed 시각 = 서버 .toISOString() real-UTC instant
 // → 브라우저-local getHours/getDate 대신 KST 고정 포맷터 위임 (사용자 지시: 표시 시각 KST 명시).
-function formatDateCD(iso) {
-	if (!iso) return "—";
-	return window.UI.formatKstDate(iso); // → "YYYY-MM-DD" KST
-}
-
-function formatDateTimeCD(iso) {
-	if (!iso) return "—";
-	return window.UI.formatKstDateTime(iso); // → "MM/DD HH:mm" KST
-}
+const formatDateCD = window.UI.formatKstDate;
+const formatDateTimeCD = window.UI.formatKstDateTime;
 
 // ts_headline 'StartSel=<mark>, StopSel=</mark>' 출력을 React 노드로 변환.
 // 화이트리스트: <mark> 단일 태그만 — raw HTML 인젝션 차단 (XSS 방어).
