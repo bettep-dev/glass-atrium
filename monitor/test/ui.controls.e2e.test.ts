@@ -108,6 +108,8 @@ async function openFixture(kind: FixtureKind): Promise<Page> {
   await page.waitForFunction(() => Boolean((window as unknown as { UI?: unknown; ReactDOM?: unknown }).UI && (window as unknown as { ReactDOM?: unknown }).ReactDOM), null, { timeout: 30_000 });
   await page.evaluate(`(${MOUNT_FIXTURE})(${JSON.stringify(kind)})`);
   await page.waitForSelector("#fixture > *", { timeout: 30_000 });
+  // a busy machine lays the app's text out after load → its web faces swap in mid-test unless the first measure waits for them
+  await page.evaluate(() => { document.body.getBoundingClientRect(); return document.fonts.ready.then(() => undefined); });
   return page;
 }
 
