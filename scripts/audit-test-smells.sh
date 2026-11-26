@@ -180,7 +180,9 @@ readonly RE_EMIT_ARG='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"';|&)]+)'
 readonly RE_EMIT_FIRST="(^|[^[:alnum:]_])(${EMITTERS_FIRST})[[:space:]]+${RE_EMIT_ARG}"
 readonly RE_EMIT_SECOND="(^|[^[:alnum:]_])hook_require_python3_unless_empty[[:space:]]+${RE_EMIT_ARG}[[:space:]]+${RE_EMIT_ARG}"
 readonly RE_ARRAY_REF='^\$\{([A-Za-z_][A-Za-z0-9_]*)\['
-readonly RE_CODE_TABLE='^[[:space:]]*([a-z]+[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*)?([A-Za-z_][A-Za-z0-9_]*)=\([[:space:]"'"'"']*[A-Z][A-Z0-9]*(-[A-Z0-9]+)+([[:space:]"'"'"')]|$)'
+# an assignment's optional declaring builtin and its flags (`readonly -a NAME=(`) → capture groups 1-2
+readonly RE_DECL_HEAD='^[[:space:]]*([a-z]+[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*)?'
+readonly RE_CODE_TABLE="${RE_DECL_HEAD}"'([A-Za-z_][A-Za-z0-9_]*)=\([[:space:]"'"'"']*[A-Z][A-Z0-9]*(-[A-Z0-9]+)+([[:space:]"'"'"')]|$)'
 readonly RE_VAR_REF='^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$'
 readonly RE_READ_TABLE='IFS="\$\{([A-Za-z_][A-Za-z0-9_]*)\}"[[:space:]]+read[[:space:]]+(-r[[:space:]]+)?([A-Za-z_][A-Za-z0-9_ ]*)'
 readonly RE_WORD='^[[:space:]]*([^[:space:]]+)(.*)$'
@@ -457,7 +459,7 @@ register_code_arg() {
 
 # Registers every code-shaped element of the file's NAME=( … ) assignment, single- or multi-line.
 register_array_table() {
-  local file="${1}" re_open="^[[:space:]]*([a-z]+[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*)?${2}=\\((.*)$"
+  local file="${1}" re_open="${RE_DECL_HEAD}${2}=\\((.*)$"
   local line="" text="" in_array=0
   while IFS= read -r line || [[ -n "${line}" ]]; do
     scan_line "${line}"
