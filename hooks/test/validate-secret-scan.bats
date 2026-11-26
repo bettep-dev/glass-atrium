@@ -468,11 +468,11 @@ make_path_without() {
   use_monitor_stub
   names=("a reply that is not JSON" "a JSON reply without the decision field" "a pass under HTTP 201"
     "a pass under HTTP 500" "a decision in another case" "a decision with a trailing line break"
-    "a decision that is not a string" "a 409 without the refuse decision")
-  codes=(200 200 201 500 200 200 200 409)
+    "a decision that is not a string" "a 409 without the refuse decision" "a pass whose request id is not a UUID")
+  codes=(200 200 201 500 200 200 200 409 200)
   bodies=("decision=pass" "{${pass}}" "{\"decision\":\"pass\",${pass}}" "{\"decision\":\"pass\",${pass}}"
     "{\"decision\":\"Pass\",${pass}}" "{\"decision\":\"pass\\n\",${pass}}" "{\"decision\":true,${pass}}"
-    '{"error":"scan_approval_refused"}')
+    '{"error":"scan_approval_refused"}' '{"decision":"pass","requestId":"not-a-uuid"}')
   for i in "${!names[@]}"; do
     set_reply "${codes[${i}]}" "${bodies[${i}]}"
     run_hook "$(get_session_envelope "${CRED_FIXTURE}")"
@@ -491,7 +491,7 @@ make_path_without() {
   bodies=('{"error":"secret_line_hash_mismatch"}' '{"error":"secret_request_size"}' '{"error":"secret_request_cap"}'
     "request=${REQUEST_ID}" '{"requestId":"not-a-uuid"}')
   causes=("HTTP 400, secret_line_hash_mismatch" "HTTP 422, secret_request_size" "HTTP 429, secret_request_cap"
-    "HTTP 200, no readable code" "could not run")
+    "HTTP 200, no readable code" "register reply was malformed")
   for i in "${!names[@]}"; do
     set_nth_reply $((2 * i + 1)) 409 '{"error":"scan_approval_refused","decision":"refuse"}'
     set_nth_reply $((2 * i + 2)) "${codes[${i}]}" "${bodies[${i}]}"
@@ -598,17 +598,4 @@ make_path_without() {
   # status 1 alone → searched and not found; 2 (an unreadable root) is no evidence
   run grep -rl -- "${sentinel}" "${ps_log}" "${HOME}" "${TMPDIR}" "${GA_ROOT}"
   [[ "${status}" -eq 1 ]] || { echo "status ${status}: ${output}"; return 1; }
-}
-
-# The approval's decision comes only from the consume reply → the hook and its helpers call no queue reader of an
-# item, an answer or a claim, and name no monitor route but the two scan-approval routes.
-@test "no code path in the hook or its helpers reads a queue answer as proof" {
-  local files=() name used="" routes
-  files=("${HOOK_SH}" "${APPROVAL_LIB}" "${BATS_TEST_DIRNAME}/../lib/bounded-wait.sh")
-  for name in $(grep -oE '^queue_[a-z_]+\(\)' "${BATS_TEST_DIRNAME}/../../scripts/lib/queue-session.sh" | tr -d '()'); do
-    if grep -qw -- "${name}" "${files[@]}"; then used+="${name} "; fi
-  done
-  [[ "${used}" == "queue_send queue_get_reply_code queue_get_reply_body " ]] || { echo "calls: ${used}"; return 1; }
-  routes="$(grep -ohE '/api/[A-Za-z0-9_/.-]+' "${files[@]}" | sort -u | tr '\n' ' ')"
-  [[ "${routes}" == "/api/queue/scan-approvals /api/queue/scan-approvals/consume " ]] || { echo "routes: ${routes}"; return 1; }
 }

@@ -117,7 +117,7 @@ scan_content() {
 # Returns 0 only on the monitor's pass, with a hash-only log line; else 1 with APPROVAL_NOTE the refusal's added line.
 # Args: $1=scanned blob
 is_approved_write() {
-  local outcome status=0 kind value hashes
+  local outcome status=0
   APPROVAL_NOTE="${APPROVAL_PREFIX} the approval check could not run; this write stays refused"
   # shellcheck disable=SC2310  # a library that cannot load is a refusal, never an errexit
   set_approval_libs || return 1
@@ -127,16 +127,26 @@ is_approved_write() {
     APPROVAL_NOTE="${APPROVAL_PREFIX} the approval check passed its ${APPROVAL_DEADLINE_S} s deadline; this write stays refused"
     return 1
   fi
-  kind="${outcome%%$'\t'*}" value="${outcome#*$'\t'}"
+  is_pass_outcome "${outcome}"
+}
+
+# Reads the step's outcome line → 0 only on a well-formed pass, logged; else 1 with APPROVAL_NOTE naming what failed.
+# Args: $1=outcome line
+is_pass_outcome() {
+  local kind="${1%%$'\t'*}" value="${1#*$'\t'}" hashes
   case "${kind}" in
     cause) APPROVAL_NOTE="${APPROVAL_PREFIX} ${value}; this write stays refused" ;;
-    request) [[ ! "${value}" =~ ${QUEUE_UUID_SHAPE} ]] || APPROVAL_NOTE="$(get_request_note "${value}")" ;;
+    request)
+      APPROVAL_NOTE="${APPROVAL_PREFIX} the monitor's register reply was malformed; this write stays refused"
+      [[ ! "${value}" =~ ${QUEUE_UUID_SHAPE} ]] || APPROVAL_NOTE="$(get_request_note "${value}")"
+      ;;
     pass)
       hashes="${value#*$'\t'}" value="${value%%$'\t'*}"
       if [[ "${value}" =~ ${QUEUE_UUID_SHAPE} && "${hashes}" =~ ${HASH_LIST_SHAPE} ]]; then
         put_pass_log "${value}" "${hashes}"
         return 0
       fi
+      APPROVAL_NOTE="${APPROVAL_PREFIX} the monitor's consume reply was malformed; this write stays refused"
       ;;
     *) ;;
   esac
@@ -160,7 +170,7 @@ set_approval_libs() {
 # The refusal's line for a registered request → its id and the one sanctioned route, never the line.
 # Args: $1=request id
 get_request_note() {
-  printf '%s request %s registered. Post the secret-approval form with this request id alone, never the line; on the owner'"'"'s approve answer repeat the identical write once, and this hook decides. A subagent returns the request id and the target path to its parent and does not retry.\n' \
+  printf '%s request %s registered. Post the secret-approval form with this request id alone, never the line; on the owner'"'"'s approve answer repeat the identical write once, and this hook decides. A subagent returns the request id and the target path, never the line; it never posts and never retries before its parent'"'"'s approve answer.\n' \
     "${APPROVAL_PREFIX}" "${1}"
 }
 
