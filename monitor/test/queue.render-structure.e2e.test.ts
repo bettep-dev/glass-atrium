@@ -3251,6 +3251,16 @@ describe("queue page on the mockup fixtures", () => {
       await selectRow(page, id);
       await page.locator(".queue-sheet").getByText(ready).first().waitFor();
     };
+    const GONE_ANSWER = "Not approved: the request is gone. Nothing will pass.";
+    // the server drops the request after the lines are read → R1 answers its 409 and the list then reads gone; the wait stays under the 15 s check
+    const sendDroppedApproval = async (page: Page) => {
+      await openScanSheet(page, SCAN_IDS.one, "The line assigns a literal value.");
+      await page.locator(`#queue-option-${SCAN_IDS.one}-R1`).check();
+      harness.refusals.set("action", { status: 409, body: { error: "secret_request_gone" } });
+      harness.fixture = { ...harness.fixture, items: harness.fixture.items.map((item) => (item.id === SCAN_IDS.one ? { ...item, scanApproval: { state: "gone", lineCount: null, expiresAt: null } } : item)) };
+      await page.locator(".queue-sheet").getByRole("button", { name: "Send answer" }).click();
+      await page.locator(".queue-sheet").getByText("Gone: the monitor restarted.").waitFor({ timeout: 5_000 });
+    };
 
     const SHEET_SIZES = [
       { name: "at 1280 wide", viewport: MIN_WINDOW },
@@ -3390,6 +3400,27 @@ describe("queue page on the mockup fixtures", () => {
       });
     }
 
+    test("Send answer on a request the server dropped re-reads at once: the Gone line, no plate or read fact, Approve closed and unpicked, the alert kept", async (t) => {
+      t.after(() => harness.refusals.delete("action"));
+      const page = await openScanPage(MIN_WINDOW);
+      await sendDroppedApproval(page);
+      const shown = await page.evaluate((id) => {
+        const sheet = document.querySelector<HTMLElement>(".queue-sheet")!;
+        const approve = document.getElementById(`queue-option-${id}-R1`) as HTMLInputElement;
+        const send = [...sheet.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Send answer")!;
+        return {
+          plates: sheet.querySelectorAll(".scan-plate").length,
+          facts: [...sheet.querySelectorAll(".scan-facts dt")].map((label) => label.textContent),
+          approve: [approve.disabled, approve.checked],
+          isSendInk: send.classList.contains("primary"),
+          alerts: [...sheet.querySelectorAll("[role=alert]")].map((alert) => alert.textContent?.trim()),
+        };
+      }, SCAN_IDS.one);
+      await page.close();
+
+      assert.deepEqual(shown, { plates: 0, facts: [], approve: [true, false], isSendInk: false, alerts: [`✕ ${GONE_ANSWER}`] });
+    });
+
     test("the captured lines are read only when a waiting item's sheet opens, and its row says only how many lines", async () => {
       const page = await openScanPage(MIN_WINDOW);
       const before = [...harness.scanReadIds];
@@ -3413,7 +3444,7 @@ describe("queue page on the mockup fixtures", () => {
         { name: "1280-list-delivery", viewport: MIN_WINDOW, setUp: (page) => page.locator(`#queue-row-${SCAN_IDS.approved}`).scrollIntoViewIfNeeded() },
         { name: "1280-sheet-pending", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.one, "The line assigns a literal value.") },
         { name: "360-sheet-pending", viewport: PHONE, setUp: sheet(SCAN_IDS.one, "The line assigns a literal value.") },
-        { name: "360-sheet-options-foot", viewport: PHONE, setUp: showEnd(SCAN_IDS.one, "The line assigns a literal value.", ".queue-sheet .queue-options") },
+        { name: "360-sheet-options-foot", viewport: PHONE, setUp: showEnd(SCAN_IDS.long, "2 of 3 lines assign a literal value.", ".queue-sheet .queue-options") },
         { name: "360-decision-sheet", viewport: PHONE, setUp: sheet(103, "Options") },
         {
           name: "1280-sheet-reading", viewport: MIN_WINDOW,
@@ -3433,16 +3464,7 @@ describe("queue page on the mockup fixtures", () => {
         { name: "1280-sheet-withdrawn", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.withdrawn, "The session withdrew the request. The line was dropped.") },
         { name: "1280-sheet-expired", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.expired, "Expired: no answer within 24 hours.") },
         { name: "1280-sheet-gone", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.gone, "Gone: the monitor restarted.") },
-        {
-          name: "1280-sheet-conflict", viewport: MIN_WINDOW,
-          setUp: async (page) => {
-            harness.refusals.set("action", { status: 409, body: { error: "secret_request_gone" } });
-            await openScanSheet(page, SCAN_IDS.one, "The line assigns a literal value.");
-            await page.locator(`#queue-option-${SCAN_IDS.one}-R1`).check();
-            await page.locator(".queue-sheet").getByRole("button", { name: "Send answer" }).click();
-            await page.locator(".queue-sheet").getByText("Not approved: the request is gone. Nothing will pass.").waitFor();
-          },
-        },
+        { name: "1280-sheet-conflict", viewport: MIN_WINDOW, setUp: sendDroppedApproval },
       ];
       t.after(() => harness.refusals.delete("action"));
       for (const shot of shots) {

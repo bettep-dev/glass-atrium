@@ -2194,7 +2194,7 @@ function QueueSheetQ({ queue }) {
  */
 function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, isDone = false }) {
 	const scanRead = useScanReadQ(item);
-	const draft = queue.drafts[item.id] ?? {};
+	const draft = getShownDraftQ(queue.drafts[item.id] ?? {}, item, scanRead);
 	const isBusy = queue.busy.id === item.id;
 	const error = queue.busy.error?.id === item.id ? queue.busy.error.message : null;
 	const kind = isDone ? DONE_KIND_Q[item.kind] : getKindWordQ(item);
@@ -2430,6 +2430,16 @@ function getScanEndWordQ(state) {
 // Approve opens only on a waiting request whose lines are on screen
 function isScanClosedQ(item, read) {
 	return Boolean(item.scanApproval) && (getScanStateQ(item) !== "pending" || read.status !== "ready");
+}
+
+// a closed option is never the picked one → the options and the foot read nothing picked (layout §3 → conflict on approve)
+function getShownDraftQ(draft, item, read) {
+	return isClosedOptionQ(item, draft.code, isScanClosedQ(item, read)) ? { ...draft, code: undefined } : draft;
+}
+
+// the lines off screen → every option but the recommended Decline closed
+function isClosedOptionQ(item, code, isOnlySafe) {
+	return isOnlySafe && code !== undefined && code !== item.recommendedCode;
 }
 
 /**
@@ -2715,7 +2725,7 @@ function OptionsQ({ item, draft, onDraft, isOnlySafe = false }) {
 			<legend>Options</legend>
 			{(item.options ?? []).map((option) => (
 				<OptionRowQ key={option.code} itemId={item.id} option={option} isRecommended={option.code === item.recommendedCode}
-					isChecked={draft.code === option.code} isClosed={isOnlySafe && option.code !== item.recommendedCode} onPick={() => onDraft({ code: option.code })} />
+					isChecked={draft.code === option.code} isClosed={isClosedOptionQ(item, option.code, isOnlySafe)} onPick={() => onDraft({ code: option.code })} />
 			))}
 		</fieldset>
 	);

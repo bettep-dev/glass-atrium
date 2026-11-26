@@ -4594,8 +4594,40 @@ describe("the secret-approval card", () => {
     assert.deepEqual([textOf(approval as RenderedNode), call("getScanStateQ", item, end - 1000), call("getScanStateQ", item, end + 1000)], ["Once, until 15:04", "approved", "ended"]);
   });
 
-  test("Send answer on a gone request says nothing passes", () => {
-    assert.equal(call("getActionErrorQ", { status: 409, data: { error: "secret_request_gone" }, error: null }), "Not approved: the request is gone. Nothing will pass.");
+  describe("Send answer on a request the server no longer holds", () => {
+    const GONE_ANSWER = "Not approved: the request is gone. Nothing will pass.";
+
+    test("says nothing passes, keeps the item open and re-reads the page at once", async () => {
+      const page = (await loadScreenModule(QUEUE_SRC, {
+        window: { UI: uiStub() },
+        fetch: async () => ({ status: 409, json: async () => ({ error: "secret_request_gone" }) }),
+      })) as ScreenModule;
+      let busy: unknown = null;
+      let reloads = 0;
+      const isDone = await (page.sendActionQ as (deps: unknown) => Promise<boolean>)({
+        id: 77, action: "answer", body: { code: "R1" }, setBusy: (next: unknown) => { busy = next; }, setDrafts: () => undefined, reload: () => { reloads += 1; },
+      });
+      assert.deepEqual([isDone, getPlain(busy), reloads], [false, { id: null, error: { id: 77, message: GONE_ANSWER } }, 1]);
+    });
+
+    // the re-read's list facts → the request ended; the owner's pick of Approve was made on lines no longer there
+    const rows = [
+      { name: "gone", facts: { state: "gone", lineCount: null, expiresAt: null }, line: "Gone: the monitor restarted. The session must ask again." },
+      { name: "expired", facts: { state: "pending", lineCount: 1, expiresAt: "2020-01-01T00:00:00.000Z" }, line: "Expired: no answer within 24 hours. The line was dropped." },
+    ];
+    for (const row of rows) {
+      test(`after the re-read reads ${row.name}: its line, no plate, Approve closed and unpicked, Send answer quiet, the alert kept`, () => {
+        const { queue } = buildQueue({ drafts: { 77: { code: "R1" } }, busy: { id: null, error: { id: 77, message: GONE_ANSWER } } });
+        const tree = renderSheet({ item: scanItem({ scanApproval: row.facts }), queue });
+        const [approve] = optionInputs(tree);
+        const [send] = buttonLabelled(tree, "Send answer");
+        assert.deepEqual({
+          line: textOf(byClass(tree, "scan-state")[0]), plates: plates(tree).length, facts: byClass(tree, "scan-facts").length,
+          approve: [approve?.props.disabled, approve?.props.checked], isSendInk: String(send?.props.className).split(" ").includes("primary"),
+          alerts: findNodes(tree, (node) => node.type === "p" && node.props?.role === "alert").map((node) => textOf(node)),
+        }, { line: row.line, plates: 0, facts: 0, approve: [true, false], isSendInk: false, alerts: [`✕ ${GONE_ANSWER}`] });
+      });
+    }
   });
 
   // an ended request's tag word stands in for Approval where the list leaves the fact cell out
