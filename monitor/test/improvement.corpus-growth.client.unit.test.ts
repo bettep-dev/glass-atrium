@@ -372,6 +372,27 @@ test("the per-agent style-check table spells each header out and its stacked cel
   assert.deepEqual(cellLabels, headers.filter((c) => c.isNumeric).map((c) => c.label));
 });
 
+// design.md §12.6 Cells: an unmeasured table cell reads None in faint ink → the shared absent atom, never a local copy
+describe("an unmeasured instrumentation table cell renders through the shared absent atom", () => {
+  const rows = [
+    {
+      name: "a confidence group with no measured average",
+      render: () => (helpers.ConfidenceLaneTableI as Component)({ buckets: [{ promotion_tier: "auto", proposal_count: 3, confidence_observed_avg: null }] }),
+    },
+    {
+      name: "an agent with no style-check rate",
+      render: () => (helpers.StyleRefAgentTableI as Component)({ rows: [{ ...STYLE_AGENT, emission_rate: null }] }),
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const absent = viewTree(row.render()).filter((el) => el.type === helpers.window.UI.AbsentValue).map((el) => el.props.kind);
+
+      assert.deepEqual(absent, ["none"]);
+    });
+  }
+});
+
 // the agent column reads through the shared short-name atom, its full name kept for assistive tech
 describe("an instrumentation agent cell renders through the shared agent-name atom", () => {
   const rows = [
@@ -439,14 +460,15 @@ describe("the corpus and agreement figures read their counts in words", () => {
   };
   const getAuditLine = (totalAudits: number) => {
     const tree = viewTree((helpers.CorpusGrowthCardI as Component)({ state: { status: "ready", data: { total_audits: totalAudits, audits: [CORPUS_READING] } } }));
-    return tree.filter((el) => el.type === "div").map((el) => [el.props.children].flat().join("")).find((text) => /audits/.test(text));
+    return tree.filter((el) => el.type === "div").map((el) => [el.props.children].flat().join("")).find((text) => / · latest /.test(text));
   };
   const rows = [
     { name: "one gate trip reads singular against the check total", read: () => getFact({ ...CORPUS_READING, gate_trip_count: 1, gate_total_count: 10 }, "Gate checks"), text: "1 trip in 10" },
     { name: "several gate trips read plural against the check total", read: () => getFact({ ...CORPUS_READING, gate_trip_count: 3, gate_total_count: 1200 }, "Gate checks"), text: "3 trips in 1,200" },
     { name: "the Alert value names the raised kinds only", read: () => getFact({ ...CORPUS_READING, trend_alert: true, absolute_alert: true }, "Alert"), text: "trend + absolute" },
     { name: "the agreement context counts the signals and dates the latest", read: () => getAgreementContext(128, "2026-11-22T03:00:00Z"), text: "128 signals · latest 11-22" },
-    { name: "the corpus body line counts the audits and dates the latest cycle", read: () => getAuditLine(12), text: "12 audits · latest 11-20" },
+    { name: "one audit reads singular on the corpus body line beside the latest cycle", read: () => getAuditLine(1), text: "1 audit · latest 11-20" },
+    { name: "several audits read plural on the corpus body line beside the latest cycle", read: () => getAuditLine(2), text: "2 audits · latest 11-20" },
   ];
   for (const row of rows) {
     test(row.name, () => {

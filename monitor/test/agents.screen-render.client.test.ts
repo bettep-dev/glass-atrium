@@ -536,10 +536,8 @@ describe("the drawer hero's success figure carries no tone at any rate, which ri
   for (const row of rows) {
     test(row.name, async () => {
       const agent = { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", runs: 50, needs_context_count: 0, success_pct: row.success_pct };
-      const emptyRows = { status: "ready", data: { rows: [] }, error: null };
       const tree = await renderComponent("AgentOverviewSection", {
-        agent, drawerAgent: agent.agent_id, summaryState: { status: "ready", data: { agents: [agent] }, error: null },
-        revisionState: emptyRows, reviewByAgentState: emptyRows, onRetry: () => undefined,
+        agent, drawerAgent: agent.agent_id, summaryState: { status: "ready", data: { agents: [agent] }, error: null }, onRetry: () => undefined,
       });
       const metric = findNodes(tree, (n) => n.type === "DetailMetric" && n.props.label === "Success rate")[0];
       const figures = findNodes(metric, (n) => /\bfs-title\b/.test(String(n.props?.className ?? "")));
@@ -2289,8 +2287,7 @@ describe("the Agents empty and count lines use the designer's words", () => {
   test("the drawer's last-run line drops the activity word its head already shows", async () => {
     const agent = { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "error", runs: 50, needs_context_count: 0, success_pct: 98, last_run_at: "2026-01-10T03:00:00.000Z", description: "Builds screens." };
     const tree = await renderComponent("AgentOverviewSection", {
-      agent, drawerAgent: agent.agent_id, summaryState: ready({ agents: [agent] }),
-      revisionState: ready({ rows: [] }), reviewByAgentState: ready({ rows: [] }), onRetry: () => undefined,
+      agent, drawerAgent: agent.agent_id, summaryState: ready({ agents: [agent] }), onRetry: () => undefined,
     });
     const text = collectText(tree);
     assert.match(text, /Last run/);
@@ -2505,10 +2502,8 @@ function getTintedNodes(tree: RenderedNode | string | null): RenderedNode[] {
 
 test("the drawer overview states the setup requirement as a Requires field and its config as metadata badges", async () => {
   const agent = { agent_id: "glass-atrium-dev-react", agent_name: "dev-react", status: "active", runs: 50, needs_context_count: 0, success_pct: 98, compatibility: "monitor daemon running", origin: "system" };
-  const emptyRows = { status: "ready", data: { rows: [] }, error: null };
   const tree = await renderComponent("AgentOverviewSection", {
-    agent, drawerAgent: agent.agent_id, summaryState: { status: "ready", data: { agents: [agent] }, error: null },
-    revisionState: emptyRows, reviewByAgentState: emptyRows, onRetry: () => undefined,
+    agent, drawerAgent: agent.agent_id, summaryState: { status: "ready", data: { agents: [agent] }, error: null }, onRetry: () => undefined,
   });
   const fields = findAtoms(tree, "DetailField").filter((n) => n.props.label === "Requires");
   assert.deepEqual(fields.map((n) => n.props.value), ["monitor daemon running"]);

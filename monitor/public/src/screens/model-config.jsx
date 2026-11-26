@@ -562,12 +562,12 @@ function SyncTokenMC({ state, sync, freshness }) {
 
 	// the Refresh label already reads Loading… · agreement is silence · an empty roster → its cards say so
 	if (state === "loading" || sync === "ok" || sync === "empty") return null;
-	if (state !== "ready") {
+	if (state !== "ready" || !sync) {
 		return <span className="fs-meta text-faint">Sync state unavailable</span>;
 	}
 
 	const meta = SYNC_META_MC[sync] || {
-		label: sync || "—",
+		label: sync,
 		desc: "",
 		tone: "neutral",
 	};
@@ -812,6 +812,7 @@ function AgentTableMC({ state, items, knownModels, apply }) {
 	return (
 		<Table
 			caption="Agent models. Up and Down move between rows, Right reaches a row's checkbox, Enter ticks the focused row."
+			isHeadSticky
 			columns={getAgentColumnsMC(master)}
 			widths={AGENT_COL_WIDTHS_MC}
 			stackBelowPx={AGENT_STACK_BELOW_PX_MC}

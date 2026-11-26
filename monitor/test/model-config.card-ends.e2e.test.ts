@@ -1,5 +1,5 @@
 // E2E chromium check for the Models & budgets screen (screens/model-config.jsx): the agent card spans the page above the
-// daemon split row, ticking an agent never moves a row, and the split row's two columns end together — none of which a node render can measure.
+// daemon split row, a long roster scrolls with the page, ticking an agent never moves a row, and the split row's two columns end together — none of which a node render can measure.
 //
 // Runner: npx tsx --test test/model-config.card-ends.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network.
@@ -437,6 +437,70 @@ for (const width of [960, 768, 640]) {
       assert.deepStrictEqual(read.heads.map((head) => head.text), ["", "Agent", "Model"], "the stacked head drops Role");
       assert.ok(Math.abs(read.heads[1].left - read.rows[0].nameLeft) <= 1, `${width}px: Agent heads the name x`);
       assert.ok(Math.abs(read.heads[2].right - read.modelRight) <= 1, `${width}px: Model ends over the model cell`);
+    } finally {
+      await browser.close();
+      await app.close();
+    }
+  });
+}
+
+// a roster taller than the viewport: the page scrolls it, the agent card holds no scroller of its own, and the column head stays in view
+const LONG_AGENTS_CONFIG = {
+  ...CONFIG,
+  agents: Array.from({ length: 40 }, (_, index) => ({
+    name: `glass-atrium-roster-agent-${String(index + 1).padStart(2, "0")}`,
+    file: `glass-atrium-roster-agent-${String(index + 1).padStart(2, "0")}.md`,
+    role: "Drafts release notes",
+    pin: index % 3 === 0 ? MODEL : null,
+    registered: true,
+  })),
+  unreadable: [],
+};
+
+for (const width of [1280, 1920, 768]) {
+  test(`${width}px: a long agent roster scrolls with the page to its last row, inside no scroller of its own, under a head that stays in view`, async () => {
+    const app = Fastify({ logger: false });
+    await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
+    app.get("/api/model-config", async () => LONG_AGENTS_CONFIG);
+    app.get("/api/*", async () => ({ rows: [] }));
+    const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    const browser = await chromium.launch({ headless: true });
+
+    try {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      await page.goto(`${serverUrl}/#model-config`, { waitUntil: "load" });
+      await page.waitForSelector("#mc-models [data-roving-row] input[type=checkbox]", { timeout: 30_000 });
+      // anonymous callbacks only: tsx wraps a named const in a __name() helper the page lacks
+      const read = await page.evaluate(() => {
+        const table = document.querySelector("#mc-models table")!;
+        const rows = [...table.querySelectorAll("tbody [data-roving-row]")];
+        const last = rows[rows.length - 1];
+        const scrollers: string[] = [];
+        for (let el = table.parentElement; el && el !== document.scrollingElement; el = el.parentElement) {
+          const overflowY = getComputedStyle(el).overflowY;
+          if ((overflowY === "auto" || overflowY === "scroll") && el.scrollHeight > el.clientHeight + 1) scrollers.push(`${el.tagName}.${el.className}`);
+        }
+        // a wide table sticks each th, a stacked one its whole thead → read whichever box sticks
+        const thead = table.querySelector("thead")!;
+        const head = getComputedStyle(thead).position === "sticky" ? thead : [...thead.querySelectorAll("th")].find((th) => th.getBoundingClientRect().width > 0)!;
+        window.scrollTo(0, 0);
+        const headStart = head.getBoundingClientRect().top;
+        window.scrollTo(0, headStart + 400);
+        const headOffset = head.getBoundingClientRect().top;
+        const lastEnd = last.getBoundingClientRect().bottom + window.scrollY - window.innerHeight;
+        window.scrollTo(0, lastEnd);
+        const lastBox = last.getBoundingClientRect();
+        const hit = document.elementFromPoint(lastBox.left + lastBox.width / 2, lastBox.bottom - 2);
+        const scrolledTo = window.scrollY;
+        window.scrollTo(0, 0);
+        return { count: rows.length, scrollers, headOffset, lastEnd, scrolledTo, isLastHit: hit !== null && last.contains(hit) };
+      });
+
+      assert.strictEqual(read.count, LONG_AGENTS_CONFIG.agents.length, `${width}px: one row per agent`);
+      assert.deepStrictEqual(read.scrollers, [], `${width}px: no box between the agent table and the page scrolls on its own`);
+      assert.ok(Math.abs(read.scrolledTo - read.lastEnd) <= 1, `${width}px: the page scrolls to ${read.scrolledTo}, the last row needs ${read.lastEnd}`);
+      assert.ok(read.isLastHit, `${width}px: the last agent row shows at its own place once the page reaches it`);
+      assert.ok(Math.abs(read.headOffset) <= 1, `${width}px: the column head sits ${read.headOffset}px off the viewport top mid-table`);
     } finally {
       await browser.close();
       await app.close();

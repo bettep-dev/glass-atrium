@@ -234,7 +234,7 @@ def _get_knob_error(kind: Literal["tier", "output cap"], value: object) -> str |
     else:
         if isinstance(value, str) and _OUTPUT_CAP_PATTERN.fullmatch(value):
             return None
-        allowed = "a positive integer string, 1-999999"
+        allowed = "an integer string, 1-999999"
     quoted = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     quoted = quoted.encode("utf-8", "backslashreplace").decode("utf-8")  # lone surrogate → \udXXX
     return f"{quoted} is not a valid {kind} (allowed: {allowed})"

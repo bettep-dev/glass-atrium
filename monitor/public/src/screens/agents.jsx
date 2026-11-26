@@ -211,21 +211,19 @@ function ScreenAgents() {
     // G3 latency 서버 allowlist {1-30} — 캐핑.
     const latencyDays = Math.min(days, 30);
 
-    const tasks = [
-      runFetchAg(`/api/agents/summary?days=${days}&order=runs&limit=50`, ctrl, setSummaryState),
-      runFetchAg(`/api/agents/latency?days=${latencyDays}`, ctrl, setLatencyState),
-      runFetchAg(`/api/agents/success-rate?days=${days}`, ctrl, setSuccessState),
-      runFetchAg(`/api/agents/revision-distribution?days=${days}`, ctrl, setRevisionState),
-      runFetchAg(`/api/agents/review-flag-timeseries?days=${days}`, ctrl, setReviewState),
-      // CF1 P0 — Health Index review_flag 성분을 per-agent 실비율로 공급.
-      // 404 (pre-deploy) 시 error 상태 → buildQualityHealthRanking 이 revision 단독으로 graceful degrade.
-      runFetchAg(`/api/agents/review-flag-by-agent?days=${days}`, ctrl, setReviewByAgentState),
-      runFetchAg(`/api/agents/failure-patterns?days=${days}`, ctrl, setFailureState),
-      runFetchAg(`/api/agents/lifecycle-stats?days=${days}`, ctrl, setLifecycleState),
-      // budget_overages P95 막대 크로싱 표기 — days ∈ {7,30,90} 서버 allowlist 와 동일.
-      runFetchAg(`/api/agents/budget-overages?days=${days}`, ctrl, setOverageState),
-      runFetchAg(`/api/telemetry/activations?days=${days}&limit=1`, ctrl, setActivationState),
-    ];
+    runFetchAg(`/api/agents/summary?days=${days}&order=runs&limit=50`, ctrl, setSummaryState);
+    runFetchAg(`/api/agents/latency?days=${latencyDays}`, ctrl, setLatencyState);
+    runFetchAg(`/api/agents/success-rate?days=${days}`, ctrl, setSuccessState);
+    runFetchAg(`/api/agents/revision-distribution?days=${days}`, ctrl, setRevisionState);
+    runFetchAg(`/api/agents/review-flag-timeseries?days=${days}`, ctrl, setReviewState);
+    // CF1 P0 — Health Index review_flag 성분을 per-agent 실비율로 공급.
+    // 404 (pre-deploy) 시 error 상태 → buildQualityHealthRanking 이 revision 단독으로 graceful degrade.
+    runFetchAg(`/api/agents/review-flag-by-agent?days=${days}`, ctrl, setReviewByAgentState);
+    runFetchAg(`/api/agents/failure-patterns?days=${days}`, ctrl, setFailureState);
+    runFetchAg(`/api/agents/lifecycle-stats?days=${days}`, ctrl, setLifecycleState);
+    // budget_overages P95 막대 크로싱 표기 — days ∈ {7,30,90} 서버 allowlist 와 동일.
+    runFetchAg(`/api/agents/budget-overages?days=${days}`, ctrl, setOverageState);
+    runFetchAg(`/api/telemetry/activations?days=${days}&limit=1`, ctrl, setActivationState);
 
     return () => ctrl.abort();
   }, [days, refreshTick]);
@@ -1372,8 +1370,6 @@ function AgentDetailDrawer({
               agent={agent}
               drawerAgent={drawerAgent}
               summaryState={summaryState}
-              revisionState={revisionState}
-              reviewByAgentState={reviewByAgentState}
               onRetry={onRetry}
             />
           </AgentDrawerSection>
@@ -1599,21 +1595,10 @@ function DrawerInfoRow({ label, value, title }) {
   );
 }
 
-// 1. Overview (hero) — identity + 단일 health verdict + 단일 success-rate hero number (디자인 #46399 §4.3).
+// 1. Overview (hero) — identity + 단일 success-rate hero number (디자인 #46399 §4.3).
 // success-rate 는 패널 전체에서 단 한 번 (Performance 의 중복 박스 폐지) · 비용/모델 disclaimer 는 섹션 끝으로 후퇴.
-// health index 는 buildQualityHealthRanking(공식 1−(0.6×min(1,revision÷0.5)+0.4×review_flag)) — peer-independent 절대 척도.
-function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState, reviewByAgentState, onRetry }) {
-  const { formatPctWithDenominator, LOW_N_MIN, BulletBar, Badge } = window.UI;
-
-  // health entry 는 revision/review fetch 페어 — summary 와 독립 degrade. summary 에러는 hero 자체를 막음.
-  const ranking = useMemoAg(
-    () => buildQualityHealthRanking(
-      readyData(revisionState)?.rows ?? [],
-      readyData(reviewByAgentState)?.rows ?? [],
-      Number.MAX_SAFE_INTEGER,
-    ),
-    [revisionState, reviewByAgentState],
-  );
+function AgentOverviewSection({ agent, drawerAgent, summaryState, onRetry }) {
+  const { formatPctWithDenominator, Badge } = window.UI;
 
   const view = window.UI.getRegionView(summaryState);
   if (view === 'loading') {
@@ -1626,7 +1611,6 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
     return <DrawerSectionEmpty message={`No summary row for ${drawerAgent} in this window.`}/>;
   }
 
-  const statusTone = mapStatusToTone(agent.status);
   const lastRun = agent.last_run_at ? formatRelativeTimeAg(agent.last_run_at) : <window.UI.AbsentValue kind="none"/>;
   const phaseLabel = agent.dual_phase ? 'dual-phase' : 'single-phase';
 
@@ -1634,19 +1618,9 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
   const { denominator: successDenominator, numerator: successNumerator, tone: failShareTone } = getSummaryRateAg(agent);
   const successTone = successDenominator > 0 ? '' : 'text-faint';
 
-  // 단일 health verdict — buildQualityHealthRanking entry 의 verdict + dominantDriver inline 노출 (R4).
-  // R1 low-N 억제: outcome 표본 < LOW_N_MIN → entry 무시하고 기존 "No signal" neutral verdict.
-  const healthEntry = ranking.find((a) => a.agent === drawerAgent) || null;
-  const healthSampleN = healthEntry ? healthEntry.totalRevisions : 0;
-  const healthHasSignal = !!healthEntry && healthSampleN >= LOW_N_MIN;
-  const healthIndex = healthEntry ? healthEntry.healthIndex : null;
-  const healthPct = healthHasSignal ? (healthIndex * 100).toFixed(0) : '—';
-
   return (
     <div className="space-y-block">
-      {/* 식별(이름·뱃지·verdict)은 항상-노출 헤더가 단독 소유 — hero 는 고유 KPI 로 직행 (중복 제거 #dup).
-          at-a-glance — success-rate hero(지배 수치, 비대칭 2fr) + health index(축소 보조 1fr).
-          두 박스 동일 DetailMetric chrome 공유 → hero 는 값 크기로만 차별 (#3 twin 통합). */}
+      {/* 식별(이름·뱃지·verdict)은 항상-노출 헤더가 단독 소유 → 본문은 success-rate hero(DetailMetric) 하나로 시작 */}
       <DetailMetric
         label="Success rate"
         tone={successTone}
@@ -3313,17 +3287,6 @@ const formatDecimalAg = window.UI.formatDecimal;
 const formatRelativeTimeAg = window.UI.formatRelativeTime;
 
 // Tone / formatting helpers
-
-// /api/agents/summary status → StatusDot tone (dashboard.jsx mapAgentStatus 동일).
-function mapStatusToTone(status) {
-  switch (status) {
-    case 'active':   return 'ok';
-    case 'idle':     return 'info';
-    case 'inactive': return 'warn';
-    case 'error':    return 'crit';
-    default:         return 'info';
-  }
-}
 
 // One Agents rate scale — the shared breakage crit step over a surface's own failed count; steady state stays neutral.
 // Low-N guard stays at each call site.

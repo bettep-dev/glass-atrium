@@ -1,8 +1,8 @@
 // 공용 UI atoms — window.UI 로 export, screens/*.jsx 가 destructure 임포트
 const { useEffect, useLayoutEffect, useRef, useState } = React;
 
-// 포커스 가능 요소 셀렉터 SoT — focus-trap 진입/순환 공용 (DetailSurface).
-const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea, input, select, summary, iframe, [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
+// 포커스 가능 요소 셀렉터 SoT — focus-trap 진입/순환 공용 (DetailSurface) · :disabled → disabled fieldset 하위 컨트롤까지 제외.
+const FOCUSABLE_SELECTOR = 'a[href], button:not(:disabled), textarea:not(:disabled), input:not(:disabled), select:not(:disabled), summary, iframe, [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
 
 // 짧은 별칭(레거시 call-site 이름) → Lucide UMD PascalCase 키. 손수 관리하던 36개 글리프의 모든
 //   호출 이름을 Lucide 정식 이름으로 매핑 → 기존 <Icon name>/SymI/TONE_ICON 호출 전부 무회귀 +

@@ -96,8 +96,7 @@ function ScreenCost() {
 
     const markReceived = () => setAsOfAt(new Date().toISOString());
 
-    // 윈도우 경계 = 서버 buildWindowLowerBound SoT (KST 기준 정확히 N일 · 오늘 포함) —
-    // FE 는 days 파라미터(+ cost-timeseries 의 prior_window opt-in)만 전달. /api/cost/kpi 는 고정 윈도우(오늘·7d·3h)라 days 미전달.
+    // day window = server buildDayWindow (last N bucket-tz days, today included) → FE sends only days (+ prior_window); /api/cost/kpi has fixed windows, so no days
     runFetchC('/api/cost/kpi',                               ctrl, setKpiState, markReceived);
     runFetchC(`/api/dashboard/cost-timeseries?days=${days}&prior_window=1`, ctrl, setTokenState, markReceived);
     runFetchC(`/api/cost/by-model?days=${days}`,             ctrl, setModelState, markReceived);

@@ -240,10 +240,11 @@ label.ctl-checkbox-hit {
 	max-height: 70vh;
 	overflow-y: auto;
 }
-/* S/M lists cap by row count; a stretched row grows instead of nesting a scroller */
+/* S/M lists cap by row count; a stretched row and the Agent models roster grow instead of nesting a scroller → the page scrolls them */
 .split-row--equal .card-body,
 .card--s .card-body,
-.card--m .card-body {
+.card--m .card-body,
+.agent-card > .card-body {
 	max-height: none;
 	overflow-y: visible;
 }
