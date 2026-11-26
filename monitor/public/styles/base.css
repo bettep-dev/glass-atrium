@@ -545,11 +545,8 @@ label.ctl-checkbox-hit {
 	[data-route="queue"] > .shell-sidebar {
 		display: none;
 	}
-	/* after .btn.icon's 32 square → the phone's 44 target */
 	.queue-menu.btn.icon {
 		display: inline-flex;
-		width: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
-		height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
 	}
 	.queue-screen {
 		min-height: 0;
@@ -587,7 +584,6 @@ label.ctl-checkbox-hit {
 		height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
 	}
 	.queue-view-back.btn.icon {
-		width: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
 		margin-inline-start: calc(-1 * var(--space-3));
 	}
 	/* the words keep the title's type and column and ellipsize; the chevron stays */
