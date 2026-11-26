@@ -774,16 +774,25 @@ function buildAlarms(sources) {
   return rows.sort((a, b) => (SEVERITY_RANK[b.tone] || 0) - (SEVERITY_RANK[a.tone] || 0));
 }
 
+// down parts → crit; otherwise parts needing attention → warn, in the System map's word for a warning part
 function buildHarnessAlarm({ harness }) {
-  if (!harness || harness.status !== 'ready' || harness.downNames.length === 0) return null;
+  if (!harness || harness.status !== 'ready') return null;
+  const isDown = harness.downNames.length > 0;
+  const names = isDown ? harness.downNames : harness.cautionNames;
+  if (names.length === 0) return null;
   return {
-    tone: 'crit',
-    title: `${harness.downNames.length} system ${harness.downNames.length === 1 ? 'part is' : 'parts are'} down`,
-    detail: joinPartNames(harness.downNames),
+    tone: isDown ? 'crit' : 'warn',
+    title: `${names.length} system ${describePartState(names.length, isDown)}`,
+    detail: joinPartNames(names),
     isHeld: hasHeldPartRead(harness),
     target: 'architecture',
     targetLabel: 'System map',
   };
+}
+
+function describePartState(count, isDown) {
+  if (isDown) return count === 1 ? 'part is down' : 'parts are down';
+  return count === 1 ? 'part needs attention' : 'parts need attention';
 }
 
 // the Task results stat's rule, worded: the tripped line's share and its count — the thresholds stay behind the stat's ⓘ
@@ -922,17 +931,26 @@ function describeHarnessReading(harness) {
   const lostCount = isPartlyUnread ? harness.partsTotal - harness.partsChecked : 0;
   const partCount = lostCount > 0 ? harness.partsTotal : harness.partsChecked;
   const coverage = describeHarnessCoverage(harness, isPartlyUnread);
-  // a known fault keeps crit; otherwise an unread source withholds the healthy verdict
-  const verdict = downCount > 0 ? { tone: 'crit' } : isPartlyUnread ? UNREAD_LINE : { tone: 'ok' };
-  // a down part trips the value → the line goes empty, its coverage behind ⓘ
   const reading = {
-    ...verdict,
+    ...getHarnessVerdict(harness, isPartlyUnread, coverage),
     value: downCount > 0 ? `${downCount} of ${partCount} down` : `${harness.partsOk} of ${partCount} up`,
-    context: downCount > 0 ? null : coverage, notes: downCount > 0 ? [`${coverage}.`] : [], canRetry: isPartlyUnread,
+    canRetry: isPartlyUnread,
   };
   if (!isPartlyUnread) return reading;
   const unread = describeUnread(harness, lostCount);
   return { ...reading, ...unread, notes: [`${coverage}.`, `${unread.cause}.`] };
+}
+
+// a known fault keeps crit, a known caution warn; otherwise an unread source withholds the healthy verdict
+// a down part trips the value → the line goes empty; a caution trips the line, which names it — coverage behind ⓘ
+function getHarnessVerdict(harness, isPartlyUnread, coverage) {
+  if (harness.downNames.length > 0) return { tone: 'crit', context: null, notes: [`${coverage}.`] };
+  const cautionCount = harness.cautionNames.length;
+  if (cautionCount > 0) {
+    const context = `${joinPartNames(harness.cautionNames)} ${cautionCount === 1 ? 'needs' : 'need'} attention`;
+    return { tone: 'warn', isContextTripped: true, context, notes: [`${coverage}.`] };
+  }
+  return { ...(isPartlyUnread ? UNREAD_LINE : { tone: 'ok' }), context: coverage, notes: [] };
 }
 
 // the held line's shape → the state alone on the line, every unread source in the title and the ⓘ note

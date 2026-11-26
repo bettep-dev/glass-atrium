@@ -58,7 +58,8 @@ const CARD_FACTS_RESOLVERS = {
   },
 
   // tone 소스 = core.hook_failures 24h recency (F08) — 설정 인벤토리는 sub-metric 강등.
-  // crit = 미재시도 실패 존재(유실 위험) · warn = 24h 내 실패(재시도됨) · 집계 미수신 → 설정 기반 폴백.
+  // 실패 행 = 기록 못 하고 버린 쓰기 — retry_attempted=true 는 회복이 아니라 일시적 DB 오류로 재시도한 쓰기도 실패.
+  // crit = 재시도 없는 실패(일시적 DB 오류 아님 → 재시도로 안 낫는 결함) · warn = 일시적 DB 오류만 · 집계 미수신 → 설정 기반 폴백.
   hook(_def, { hookState, hookFailState }) {
     if (hookState.status !== 'ready') return { status: hookState.status, error: hookState.error };
     const events = hookState.data?.events || [];
@@ -126,9 +127,9 @@ function readReady(state, pick) {
   return state && state.status === 'ready' ? pick(state.data) : null;
 }
 
-// tone → 파트 관측 결과. ok=정상 · crit/warn=고장 · 그 외(info·비ready)=관측 못 함(null).
+// tone → 파트 관측 결과. ok=정상 · warn=가동 중 주의(System map 'needs attention') · crit=고장 · 그 외(info·비ready)=관측 못 함(null).
 // 모르는 파트는 분모에서 빠진다 — 정상으로도 고장으로도 세지 않음.
-const PART_OK_BY_TONE = { ok: true, crit: false, warn: false };
+const PART_OK_BY_TONE = { ok: true, warn: true, crit: false };
 
 // 셸 스토어 → resolveCardFacts 입력 이름. 미폴링 스토어도 loading 계약으로 채워
 // resolver 가 옵셔널 체크 없이 같은 형태를 읽는다.
@@ -150,7 +151,7 @@ function foldHarness(states = {}) {
   const parts = HEALTH_CARD_DEFS.map((def) => {
     const facts = resolveCardFacts(def, cardStates);
     const ok = facts.status === 'ready' ? PART_OK_BY_TONE[facts.tone] : undefined;
-    return { id: def.id, name: def.name, ok: ok === undefined ? null : ok };
+    return { id: def.id, name: def.name, ok: ok === undefined ? null : ok, isCaution: ok === true && facts.tone === 'warn' };
   });
   const checked = parts.filter((p) => p.ok !== null);
   const down = checked.filter((p) => p.ok === false);
@@ -162,6 +163,7 @@ function foldHarness(states = {}) {
     partsTotal: parts.length,
     downNames: down.map((p) => p.name),
     uncheckedNames: parts.filter((p) => p.ok === null).map((p) => p.name),
+    cautionNames: parts.filter((p) => p.isCaution).map((p) => p.name),
     failCount1h: readReady(states.kpiState, (d) => Number(d?.last_1h_fail_count) || 0),
     version: readReady(states.healthState, (d) => d?.version || null),
   };

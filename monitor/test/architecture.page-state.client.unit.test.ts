@@ -292,7 +292,8 @@ test("a part's cause line comes only from a fact that explains the state", () =>
   const rows = [
     { name: "an overdue daemon", facts: { isStale: true, daemon: {} }, cause: "Missed its expected run" },
     { name: "an unreachable database", facts: { pgOk: false }, cause: "Database not reachable" },
-    { name: "unretried hook failures", facts: { unretried24h: 3 }, cause: "3 unretried failures in 24h" },
+    { name: "hook writes lost, some not retried", facts: { count24h: 3, unretried24h: 2 }, cause: "3 hook writes lost in 24h · 2 not retried" },
+    { name: "one hook write lost after its retry", facts: { count24h: 1, unretried24h: 0 }, cause: "1 hook write lost in 24h after a retry" },
     { name: "a daemon whose last run errored", facts: { daemon: { effective_status: "error" } }, cause: "Its last run reported an error" },
     { name: "a healthy database", facts: { pgOk: true }, cause: null },
     { name: "no explaining fact", facts: {}, cause: null },

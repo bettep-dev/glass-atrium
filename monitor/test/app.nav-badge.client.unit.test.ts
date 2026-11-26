@@ -11,7 +11,7 @@
 // minimal React/window/fetch stubs (the trailing bootstrap fetch is left pending so the
 // synchronous eval completes and never mounts). No DB / no network is touched.
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
@@ -41,6 +41,7 @@ interface HarnessFold {
   partsTotal: number;
   downNames: string[];
   uncheckedNames: string[];
+  cautionNames: string[];
   failCount1h: number | null;
   version: string | null;
 }
@@ -236,14 +237,22 @@ test("partsOk counts only observed-healthy parts and never exceeds partsChecked"
   }
 });
 
-// The lane exists for act-now facts, and a hook failure is one of them (plan §2 P1).
-test("an unretried hook failure puts the hook chain in the lane's down set", () => {
-  const fold = app.foldHarness(
-    allHealthy({ hookFailState: ready({ count_24h: 3, unretried_count_24h: 2 }) }),
-  );
-  assert.deepEqual([...fold.downNames], ["Hooks"]);
-  assert.equal(fold.partsOk, 4);
-  assert.equal(fold.partsChecked, 5);
+// only a crit part is down; a warn part stays up and is listed as a caution — the System map's "needs attention"
+describe("a part is down only on a critical verdict, a warning leaves it up as a caution", () => {
+  const rows = [
+    { name: "an unretried hook failure", over: { hookFailState: ready({ count_24h: 3, unretried_count_24h: 2 }) }, down: ["Hooks"], caution: [] as string[] },
+    { name: "a hook write lost after its retry", over: { hookFailState: ready({ count_24h: 1, unretried_count_24h: 0 }) }, down: [] as string[], caution: ["Hooks"] },
+    { name: "a daemon reporting a partial run", over: { liveState: ready({ daemons: [{ daemon_name: "autoagent", effective_status: "partial" }, { daemon_name: "wiki", effective_status: "ok" }] }) }, down: [] as string[], caution: ["autoagent"] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const fold = app.foldHarness(allHealthy(row.over));
+      assert.deepEqual([...fold.downNames], row.down, "down set");
+      assert.deepEqual([...fold.cautionNames], row.caution, "caution set");
+      assert.equal(fold.partsOk, fold.partsChecked - row.down.length, "a caution part counts as up");
+      assert.equal(fold.partsChecked, 5);
+    });
+  }
 });
 
 test("a hook store that has not answered leaves the part unchecked, not down", () => {

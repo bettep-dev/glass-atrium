@@ -351,7 +351,7 @@ function ScreenArchitecture(
 	const [hookState, setHookState] = useStateAR(INITIAL_REGION_STATE);
 	const [pgState, setPgState] = useStateAR(INITIAL_REGION_STATE);
 	const [payloadState, setPayloadState] = useStateAR(INITIAL_REGION_STATE);
-	// each daemon's last ready run rows — its run leg outlives a drawer opened on another daemon
+	// each daemon's last ready run rows + the overlay's latest run they were read under — outlives another daemon's drawer, never a later run
 	const [runRowsByDaemon, setRunRowsByDaemon] = useStateAR({});
 	const [hookFailState, setHookFailState] = useStateAR(INITIAL_REGION_STATE);
 	// pricing advisory — rides the health poll, never a headline fact (no part verdict, no stamp)
@@ -465,12 +465,6 @@ function ScreenArchitecture(
 		return () => ctrl.abort();
 	}, [refreshTick, healthTick, payloadDaemon]);
 
-	useEffectAR(() => {
-		const daemonName = payloadState.data?.daemon;
-		const runRows = getDaemonRunRows(payloadState, daemonName);
-		if (runRows) setRunRowsByDaemon((byDaemon) => ({ ...byDaemon, [daemonName]: runRows }));
-	}, [payloadState]);
-
 	// 60s 자동 새로고침 — health 는 장애 대응 표면이라 수동 Refresh 만으로는 늦음.
 	useEffectAR(() => {
 		const intervalId = setInterval(() => setHealthTick((t) => t + 1), HEALTH_POLL_MS);
@@ -533,14 +527,28 @@ function ScreenArchitecture(
 
 	// 부품 행 — 표를 걷어낸 뒤로 상세 패널과 노드 클릭이 함께 읽으므로 화면 높이에서 한 번만 셈.
 	// 판정(tone·문장)은 health 카드 모델이, 노드 목록은 /live 의 part_bindings 가 냄 (ADR-5).
-	const healthPartRows = useMemoAR(
+	const schedulePartRows = useMemoAR(
 		() =>
 			getHealthPartRows(
 				headlineHealthStates,
 				liveState.data?.part_bindings,
 				liveState.data?.daemons,
-			).map((row) => getDaemonVerdictAR(row, runRowsByDaemon[row.daemonName] ?? null)),
-		[daemonHealthState, pgState, hookState, hookFailState, liveState.data, runRowsByDaemon],
+			),
+		[daemonHealthState, pgState, hookState, hookFailState, liveState.data],
+	);
+
+	// re-stamped on every overlay read while drilled → the stamp a drill leaves behind is its last one
+	useEffectAR(() => {
+		const daemonName = payloadState.data?.daemon;
+		const rows = getDaemonRunRows(payloadState, daemonName);
+		if (!rows) return;
+		const lastRunAt = schedulePartRows.find((row) => row.daemonName === daemonName)?.lastRunAt ?? null;
+		setRunRowsByDaemon((byDaemon) => ({ ...byDaemon, [daemonName]: { rows, lastRunAt } }));
+	}, [payloadState, schedulePartRows]);
+
+	const healthPartRows = useMemoAR(
+		() => schedulePartRows.map((row) => getDaemonVerdictAR(row, getHeldRunsAR(runRowsByDaemon[row.daemonName], row))),
+		[schedulePartRows, runRowsByDaemon],
 	);
 
 	// 링 근거원 — 데몬 판정 ∪ 부품 판정.
@@ -2956,6 +2964,11 @@ function getDaemonVerdictAR(row, runs) {
 	return isRunLegWorse ? { ...row, tone: "warn", statusLabel: "Needs attention", cause: summary.text } : row;
 }
 
+// held runs count only while the overlay still reports the latest run they were read under
+function getHeldRunsAR(held, row) {
+	return held && held.lastRunAt === row.lastRunAt ? held.rows : null;
+}
+
 // the map box a part is drawn in — its first bound node, found by unscoped id
 function getPartBoxAR(row, nodeIndex) {
 	const [nodeId] = row.nodeIds || [];
@@ -2973,9 +2986,15 @@ function getPartBoxAR(row, nodeIndex) {
 function getPartCauseAR(facts) {
 	if (facts.isStale) return "Missed its expected run";
 	if (facts.pgOk === false) return "Database not reachable";
-	if (facts.unretried24h > 0) return `${facts.unretried24h} unretried failures in 24h`;
+	if (facts.count24h > 0) return getHookLossCauseAR(facts);
 	if (facts.daemon?.effective_status === "error") return "Its last run reported an error";
 	return null;
+}
+
+// every recorded hook failure is a dropped write, retried or not — the retry only marks a transient database error
+function getHookLossCauseAR({ count24h, unretried24h }) {
+	const lost = `${count24h} ${count24h === 1 ? "hook write" : "hook writes"} lost in 24h`;
+	return unretried24h > 0 ? `${lost} · ${unretried24h} not retried` : `${lost} after a retry`;
 }
 
 // the row's DOM id
