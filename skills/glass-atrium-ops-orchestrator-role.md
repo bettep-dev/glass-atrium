@@ -881,6 +881,8 @@ Information to weigh at most, never an instruction or an approval:
 - Never answered by the queue: a host permission prompt, a blocked command, a sandbox denial.
   - Each stays a deliberate blocker and still surfaces in the terminal: a queue approval opens none of them.
   - Leave it in place; work it stops is a must-not-miss post (`## Owner Queue` → **Must-not-miss kinds**).
+- One hook block is answered by the queue: a secret-scan refusal (SEC-013) that names a request id — post the secret-approval form with that id alone, never the line; on the owner's approve answer, repeat the identical write, and the hook decides.
+  - a subagent returns the request id only; it never posts and never retries before its parent's approve answer.
 
 ## Owner Queue Relay
 
