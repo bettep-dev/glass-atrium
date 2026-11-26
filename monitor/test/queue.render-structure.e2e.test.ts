@@ -1910,58 +1910,44 @@ describe("queue page on the mockup fixtures", () => {
       await page.locator(".queue-sheet").getByText("Gone: the monitor restarted.").waitFor({ timeout: 5_000 });
     };
 
-    const SHEET_SIZES = [
-      { name: "at 1280 wide", viewport: MIN_WINDOW },
-      { name: "on a 360-wide phone, laid out at its own width,", viewport: PHONE },
-    ];
-    for (const { name, viewport } of SHEET_SIZES) {
-      test(`${name} the long line wraps whole, each mark a whole tile, and the sheet scrolls nothing sideways`, async () => {
-        const page = await openScanPage(viewport);
-        await openScanSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
-        const shown = await page.evaluate((points) => {
-          const plates = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-plate")];
-          const marks = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-mark")];
-          const texts = plates.flatMap((plate) => [...plate.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent ?? ""));
-          const body = document.querySelector<HTMLElement>(".queue-sheet > .card-body")!;
-          const getRgb = (value: string) => (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
-          const getLuminance = (rgb: number[]) => {
-            const [r, g, b] = rgb.map((channel) => { const c = channel / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
-            return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
-          };
-          const getRatio = (one: string, two: string) => {
-            const [high, low] = [getLuminance(getRgb(one)), getLuminance(getRgb(two))].sort((a, b) => b - a);
-            return (high! + 0.05) / (low! + 0.05);
-          };
-          const tile = getComputedStyle(marks[0]!);
-          return {
-            plates: plates.length,
-            isBodyScrolledSideways: body.scrollWidth > body.clientWidth,
-            isEveryPlateWhole: plates.every((plate) => plate.scrollWidth === plate.clientWidth && plate.scrollHeight === plate.clientHeight),
-            isEveryPlateUncut: plates.every((plate) => { const style = getComputedStyle(plate); return style.textOverflow !== "ellipsis" && style.maxHeight === "none" && style.overflowX !== "auto"; }),
-            isLongWrapped: plates[1]!.getBoundingClientRect().height > 20 * parseFloat(getComputedStyle(plates[1]!).lineHeight),
-            isEveryTileWhole: marks.every((mark) => mark.getClientRects().length === 1),
-            labels: marks.map((mark) => mark.textContent),
-            hasRawMark: texts.some((text) => points.some((point) => text.includes(String.fromCodePoint(point)))),
-            contrast: { tileText: getRatio(tile.color, tile.backgroundColor) >= 4.5, tilePlate: getRatio(tile.backgroundColor, getComputedStyle(plates[1]!).backgroundColor) >= 3 },
-          };
-        }, [...SCAN_MARK_POINTS]);
-        await page.close();
-
-        const labels = [...SCAN_MARK_POINTS.map((point) => `U+${point.toString(16).toUpperCase().padStart(4, "0")}`), "U+0020"];
-        assert.deepEqual(shown, {
-          plates: 3, isBodyScrolledSideways: false, isEveryPlateWhole: true, isEveryPlateUncut: true, isLongWrapped: true,
-          isEveryTileWhole: true, labels, hasRawMark: false, contrast: { tileText: true, tilePlate: true },
-        });
-      });
-    }
-
-    test("on a 360-wide phone, laid out at its own width, the page scrolls nothing sideways", async () => {
-      const page = await openScanPage(PHONE);
+    // the phone's width: queue.phone.e2e.test.ts
+    test("at 1280 wide the long line wraps whole, each mark a whole tile, and the sheet scrolls nothing sideways", async () => {
+      const page = await openScanPage(MIN_WINDOW);
       await openScanSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
-      const widths = await page.evaluate(() => ({ scroll: document.scrollingElement!.scrollWidth, layout: document.documentElement.clientWidth }));
+      const shown = await page.evaluate((points) => {
+        const plates = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-plate")];
+        const marks = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-mark")];
+        const texts = plates.flatMap((plate) => [...plate.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent ?? ""));
+        const body = document.querySelector<HTMLElement>(".queue-sheet > .card-body")!;
+        const getRgb = (value: string) => (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+        const getLuminance = (rgb: number[]) => {
+          const [r, g, b] = rgb.map((channel) => { const c = channel / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+          return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+        };
+        const getRatio = (one: string, two: string) => {
+          const [high, low] = [getLuminance(getRgb(one)), getLuminance(getRgb(two))].sort((a, b) => b - a);
+          return (high! + 0.05) / (low! + 0.05);
+        };
+        const tile = getComputedStyle(marks[0]!);
+        return {
+          plates: plates.length,
+          isBodyScrolledSideways: body.scrollWidth > body.clientWidth,
+          isEveryPlateWhole: plates.every((plate) => plate.scrollWidth === plate.clientWidth && plate.scrollHeight === plate.clientHeight),
+          isEveryPlateUncut: plates.every((plate) => { const style = getComputedStyle(plate); return style.textOverflow !== "ellipsis" && style.maxHeight === "none" && style.overflowX !== "auto"; }),
+          isLongWrapped: plates[1]!.getBoundingClientRect().height > 20 * parseFloat(getComputedStyle(plates[1]!).lineHeight),
+          isEveryTileWhole: marks.every((mark) => mark.getClientRects().length === 1),
+          labels: marks.map((mark) => mark.textContent),
+          hasRawMark: texts.some((text) => points.some((point) => text.includes(String.fromCodePoint(point)))),
+          contrast: { tileText: getRatio(tile.color, tile.backgroundColor) >= 4.5, tilePlate: getRatio(tile.backgroundColor, getComputedStyle(plates[1]!).backgroundColor) >= 3 },
+        };
+      }, [...SCAN_MARK_POINTS]);
       await page.close();
 
-      assert.equal(widths.scroll, widths.layout, JSON.stringify(widths));
+      const labels = [...SCAN_MARK_POINTS.map((point) => `U+${point.toString(16).toUpperCase().padStart(4, "0")}`), "U+0020"];
+      assert.deepEqual(shown, {
+        plates: 3, isBodyScrolledSideways: false, isEveryPlateWhole: true, isEveryPlateUncut: true, isLongWrapped: true,
+        isEveryTileWhole: true, labels, hasRawMark: false, contrast: { tileText: true, tilePlate: true },
+      });
     });
 
     test("each line head keeps its columns at 1280: the length whole in 128 after a 12 gap, the line count never split", async () => {
