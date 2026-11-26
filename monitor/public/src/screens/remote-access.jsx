@@ -74,7 +74,7 @@ const DEVICE_RA = {
 		],
 	},
 	// installs before it compares (Android shows the fingerprint only once installed) → install and compare are adjacent, the address only after the compare
-	// SECURITY: release gate G8 open — unmeasured on a phone; no release may carry this entry before galaxy-build-record.md → S8 phone record is filled and read by security.
+	// SECURITY: Galaxy (Android) phone steps — release gate G8 closed, galaxy-build-record.md → S8 phone record read by security.
 	galaxy: {
 		name: "Galaxy phone",
 		hosts: ["address", "hostName"],
