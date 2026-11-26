@@ -199,6 +199,39 @@ describe("page origin", () => {
   });
 });
 
+describe("request validation", () => {
+  // a key name may be text the caller wrote → a refusal never repeats it
+  test("every owner route answers an unknown key without its name", async () => {
+    const itemId = await seedDecision(await seedSession());
+    const key = `unknownkey${randomUUID().replaceAll("-", "")}`;
+    const rows = [
+      { route: `GET /api/queue/owner/items?${key}=1`, body: undefined },
+      { route: `GET /api/queue/owner/items/${itemId}?${key}=1`, body: undefined },
+      { route: `GET /api/queue/owner/items/${itemId}/scan-approval?${key}=1`, body: undefined },
+      { route: `GET /api/queue/owner/resumes?${key}=1`, body: undefined },
+      { route: `GET /api/queue/owner/orders?kind=item&${key}=1`, body: undefined },
+      { route: `GET /api/queue/owner/sessions?${key}=1`, body: undefined },
+      { route: `POST /api/queue/owner/items/${itemId}/redact`, body: {} },
+      { route: `POST /api/queue/owner/items/${itemId}/answer`, body: { code: "R1" } },
+      { route: `POST /api/queue/owner/items/${itemId}/reply`, body: { text: "Hold it." } },
+      { route: `POST /api/queue/owner/items/${itemId}/later`, body: {} },
+      { route: `POST /api/queue/owner/items/${itemId}/seen`, body: {} },
+      { route: `POST /api/queue/owner/items/${itemId}/resend`, body: {} },
+      { route: "POST /api/queue/owner/messages/send", body: { sessionIds: [randomUUID()], text: "Rebase onto main." } },
+      { route: `POST /api/queue/owner/images?name=shot.png&${key}=1`, body: {} },
+    ];
+    const replies = [];
+    for (const row of rows) {
+      const [method, url] = row.route.split(" ") as ["GET" | "POST", string];
+      const isQueryKey = url.includes(key);
+      const response = await send(method, url, row.body === undefined || isQueryKey ? row.body : { ...row.body, [key]: 1 });
+      replies.push([row.route, response.statusCode, response.json().error, response.body.includes(key)]);
+    }
+    assert.deepEqual(replies, rows.map((row) => [row.route, 400, "invalid_input", false]));
+    assert.equal((await getItemRow(itemId)).status, "open");
+  });
+});
+
 describe("answer record", () => {
   test("an answer and a reply stamp the route and the page-origin signal in the same write as the answer", async () => {
     const sessionId = await seedSession();

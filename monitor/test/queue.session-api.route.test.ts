@@ -599,6 +599,33 @@ describe("post and get by id", () => {
     }
   });
 
+  // a key name may be text the caller wrote → a refusal never repeats it
+  test("every session route answers an unknown key without its name", async () => {
+    const sessionId = await seedSession();
+    const key = `unknownkey${randomUUID().replaceAll("-", "")}`;
+    const rows = [
+      { route: "POST /api/queue/sessions/register", body: { sessionId, pid: 4242, derivedName: "s" } },
+      { route: "POST /api/queue/sessions/deregister", body: { sessionId } },
+      { route: "POST /api/queue/items", body: { kind: "report", sessionId, title: "Done", body: "Merged." } },
+      { route: `GET /api/queue/items/1?sessionId=${sessionId}&${key}=1`, body: undefined },
+      { route: "POST /api/queue/pending", body: { sessionId } },
+      { route: "POST /api/queue/items/1/ack", body: { sessionId, msgId: randomUUID() } },
+      { route: "POST /api/queue/pending/count", body: { sessionId, pid: 4242 } },
+      { route: "POST /api/queue/items/1/withdraw", body: { sessionId } },
+      { route: "POST /api/queue/peers", body: { sessionId } },
+      { route: "POST /api/queue/relay", body: { sessionId, to: ["abcd1234"], text: "Rebase onto main." } },
+      { route: "POST /api/queue/scan-approvals", body: { sessionId } },
+      { route: "POST /api/queue/scan-approvals/consume", body: { sessionId } },
+    ];
+    const replies = [];
+    for (const row of rows) {
+      const [method, url] = row.route.split(" ") as ["GET" | "POST", string];
+      const response = await send(method, url, row.body === undefined ? undefined : { ...row.body, [key]: 1 });
+      replies.push([row.route, response.statusCode, response.json().error, response.body.includes(key)]);
+    }
+    assert.deepEqual(replies, rows.map((row) => [row.route, 400, "invalid_input", false]));
+  });
+
   test("answers 404 for an unknown session or item and 400 for a malformed id", async () => {
     const sessionId = await seedSession();
     const unknownSession = await send("POST", "/api/queue/items", decision(randomUUID()));
@@ -677,6 +704,17 @@ describe("secret-approval post", () => {
     const rows = [
       { name: "registered under another session id", prepare: async () => createRequest(await seedSession()), status: 404, error: "unknown_secret_request", linked: 0 },
       { name: "never registered", prepare: async () => randomUUID(), status: 404, error: "unknown_secret_request", linked: 0 },
+      {
+        name: "registered, then declined, so gone from the store",
+        prepare: async () => {
+          const requestId = createRequest(sessionId);
+          secretRequests.delete(requestId);
+          return requestId;
+        },
+        status: 404,
+        error: "unknown_secret_request",
+        linked: 0,
+      },
       {
         name: "already approved",
         prepare: async () => {

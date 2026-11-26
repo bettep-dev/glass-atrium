@@ -17,6 +17,7 @@ import { getPeerSessions } from "../queue/owner-sessions.js";
 import { type RelayRefusal, createRelay, getRefusalResponse } from "../queue/relay.js";
 import { getSecretScannerPath } from "../queue/relay-scan.js";
 import { deregisterSession, putSessionName, registerSession } from "../queue/registry.js";
+import { secretRequests } from "../queue/scan-approvals.js";
 import { buildHostAllowlistHook } from "../queue/request-gate.js";
 import { hasBrowserSignal } from "../request-guards.js";
 import {
@@ -27,6 +28,8 @@ import {
   postItemBodySchema,
   registerRouteBodySchema,
   relayBodySchema,
+  scanApprovalConsumeBodySchema,
+  scanApprovalRegisterBodySchema,
   sessionBodySchema,
 } from "../queue/schemas.js";
 import { ownerRoutesPlugin } from "./queue-owner.js";
@@ -77,6 +80,7 @@ async function queuePlugin(app: FastifyInstance, options: QueueRouteOptions): Pr
   registerWithdrawRoute(app);
   registerPeerRoute(app);
   registerRelayRoute(app, options.scannerPath);
+  registerScanApprovalRoutes(app);
   await app.register(ownerRoutesPlugin, options);
 }
 
@@ -187,6 +191,38 @@ function registerRelayRoute(app: FastifyInstance, scannerPath: string): void {
         await recordRelayRefusal(request, outcome.refusal, refusal);
         reply.code(refusal.statusCode);
         return refusal.body;
+      },
+    }),
+  );
+}
+
+// The secret-scan hook's two calls; every reply carries ids only, never a line or a hash
+function registerScanApprovalRoutes(app: FastifyInstance): void {
+  app.post("/api/queue/scan-approvals", SESSION_ONLY_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/scan-approvals",
+      schema: scanApprovalRegisterBodySchema,
+      input: request.body,
+      work: async (body) => {
+        const requestId = secretRequests.create(body);
+        request.log.info({ requestId }, "scan approval request registered");
+        return { requestId };
+      },
+    }),
+  );
+  app.post("/api/queue/scan-approvals/consume", SESSION_ONLY_ROUTE_OPTIONS, async (request, reply) =>
+    handleParsed(request, reply, {
+      route: "/api/queue/scan-approvals/consume",
+      schema: scanApprovalConsumeBodySchema,
+      input: request.body,
+      work: async (body) => {
+        const requestId = secretRequests.consume(body);
+        if (requestId === null) {
+          reply.code(409);
+          return { error: "scan_approval_refused", decision: "refuse" };
+        }
+        request.log.info({ requestId }, "scan approval consumed — the write it covers passes once");
+        return { decision: "pass", requestId };
       },
     }),
   );

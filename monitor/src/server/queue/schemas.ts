@@ -2,6 +2,8 @@
 
 import { z } from "zod";
 
+import { SECRET_REQUEST_LIMIT } from "./scan-approvals.js";
+
 const MAX_PID = 2_147_483_647;
 const MAX_PATH_LENGTH = 4096;
 const MAX_LINKED_DOCS = 20;
@@ -126,6 +128,21 @@ const decisionSchema = z
 const secretApprovalSchema = z.strictObject({ kind: z.literal("secret-approval"), sessionId, requestId: z.uuid() });
 
 export const postItemBodySchema = z.discriminatedUnion("kind", [reportSchema, decisionSchema, secretApprovalSchema]);
+
+const lineHash = z.string().regex(/^[0-9a-f]{64}$/u);
+// line count, the request's byte total and the rule are the store's checks; one line over the store's byte limit is refused here, before the store
+const lineText = z.string().refine((text) => Buffer.byteLength(text, "utf8") <= SECRET_REQUEST_LIMIT.REQUEST_BYTES);
+const scanTarget = { sessionId, path: absolutePath, rule: z.string().max(16) };
+
+/** The hook's capture of a refused write; the main session has no agent id → an empty id and type. */
+export const scanApprovalRegisterBodySchema = z.strictObject({
+  ...scanTarget,
+  agent: z.strictObject({ id: z.string().max(64), type: z.string().max(128) }),
+  lines: z.array(z.strictObject({ text: lineText, hash: lineHash })),
+});
+
+/** The hook's retry of the refused write: its tuple and the hash of every SEC-013 line, never a line. */
+export const scanApprovalConsumeBodySchema = z.strictObject({ ...scanTarget, hashes: z.array(lineHash) });
 
 export const emptyBodySchema = z.strictObject({});
 

@@ -37,10 +37,15 @@ export async function handleParsed<S extends z.ZodType, R>(
 ): Promise<R | object> {
   const parsed = spec.schema.safeParse(spec.input ?? {});
   if (!parsed.success) {
-    const issues = parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
+    const issues = parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: getIssueMessage(issue) }));
     return reply.code(400).send({ error: "invalid_input", issues });
   }
   return handleQueueRequest(request, reply, { route: spec.route, work: () => spec.work(parsed.data) });
+}
+
+// Zod names an unknown key in its message, and a key name may be caller text (a captured line) → never repeated
+function getIssueMessage(issue: z.core.$ZodIssue): string {
+  return issue.code === "unrecognized_keys" ? "unrecognized key" : issue.message;
 }
 
 export async function handleQueueRequest<R>(request: FastifyRequest, reply: FastifyReply, spec: RouteWork<R>): Promise<R | object> {
