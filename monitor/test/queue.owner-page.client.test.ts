@@ -671,6 +671,14 @@ describe("relay refusals and redaction", () => {
     assert.deepEqual([texts.length, getLongSentences(texts)], [1, []]);
   });
 
+  // a name the peer wrote carries its self-named mark wherever the page paints it
+  test("the redaction dialog names a self-named sender with its mark", () => {
+    const [copy] = fixture.items.filter((item) => item.sendId === fixture.items[1]!.sendId);
+    const redaction = { target: { id: copy!.id, item: copy, copies: [copy] }, isBusy: false, error: null, ask: () => undefined, cancel: () => undefined, confirm: () => undefined };
+    const [text] = findNodes(render("RedactConfirmQ", { redaction }), (node) => node.type === "p" && node.props?.className === "fs-body text-dim").map((node) => collectText(node));
+    assert.ok(text?.startsWith(`${copy!.relay!.sender.selfDeclaredName} (self-named) sent it to `), text);
+  });
+
   test("the dialog's error slot draws its cross in the crit tone before the words, as every other cross on the relay views", () => {
     const copies = fixture.items.filter((item) => item.sendId === fixture.items[1]!.sendId);
     const slot = (error: string | null) => {
@@ -1441,7 +1449,7 @@ describe("relays in the Done part", () => {
   const getDoneRowShape = (tree: RenderedNode) => {
     const [row] = findNodes(tree, (node) => node.props?.role === "option");
     return {
-      who: cellOf(tree, "queue-row-who"), title: cellOf(tree, "queue-row-title"), tag: cellOf(tree, "queue-row-tag"), fact: cellOf(tree, "queue-row-fact"),
+      who: cellOf(tree, "queue-row-name"), isMarked: byClass(tree, "queue-row-mark").length === 1, title: cellOf(tree, "queue-row-title"), tag: cellOf(tree, "queue-row-tag"), fact: cellOf(tree, "queue-row-fact"),
       badges: findNodes(tree, (node) => node.props?.atom === "Badge").length,
       label: String(row?.props["aria-label"]).replace(/, (sent )?\S+ ago$/, ""), tip: row?.props.title ?? null,
     };
@@ -1454,15 +1462,15 @@ describe("relays in the Done part", () => {
   const endings = [
     {
       name: "every copy received reads Received", copies: RECEIVED,
-      shape: { who: "atrium (self-named)", title: `→ gersona ${RECEIVED[0]!.title}`, tag: "Received", fact: "Relay", badges: 0, label: `Relay from atrium (self-named) to gersona: ${RECEIVED[0]!.title}, received`, tip: "Relay" },
+      shape: { who: "atrium", isMarked: true, title: `→ gersona ${RECEIVED[0]!.title}`, tag: "Received", fact: "Relay", badges: 0, label: `Relay from atrium (self-named) to gersona: ${RECEIVED[0]!.title}, received`, tip: "Relay" },
     },
     {
       name: "of several, some lapsed reads how many, and a relay passed on says its hop", copies: FORWARDED,
-      shape: { who: "aidl (self-named)", title: `→ 2 sessions ${FORWARDED[0]!.title}`, tag: "1 lapsed", fact: "Relay", badges: 0, label: `Relay from aidl (self-named) to 2 sessions: ${FORWARDED[0]!.title}, 1 lapsed, passed on, hop 1`, tip: "Relay · passed on, hop 1" },
+      shape: { who: "aidl", isMarked: true, title: `→ 2 sessions ${FORWARDED[0]!.title}`, tag: "1 lapsed", fact: "Relay", badges: 0, label: `Relay from aidl (self-named) to 2 sessions: ${FORWARDED[0]!.title}, 1 lapsed, passed on, hop 1`, tip: "Relay · passed on, hop 1" },
     },
     {
       name: "every copy lapsed reads Lapsed", copies: FORWARDED.map(lapse),
-      shape: { who: "aidl (self-named)", title: `→ 2 sessions ${FORWARDED[0]!.title}`, tag: "Lapsed", fact: "Relay", badges: 0, label: `Relay from aidl (self-named) to 2 sessions: ${FORWARDED[0]!.title}, lapsed, passed on, hop 1`, tip: "Relay · passed on, hop 1" },
+      shape: { who: "aidl", isMarked: true, title: `→ 2 sessions ${FORWARDED[0]!.title}`, tag: "Lapsed", fact: "Relay", badges: 0, label: `Relay from aidl (self-named) to 2 sessions: ${FORWARDED[0]!.title}, lapsed, passed on, hop 1`, tip: "Relay · passed on, hop 1" },
     },
   ];
   for (const row of endings) {
@@ -1476,12 +1484,22 @@ describe("relays in the Done part", () => {
   const GERSONA = FIXTURE_SESSION_IDS.gersona.slice(0, 8);
   const YOAIDA = FIXTURE_SESSION_IDS.yoaida.slice(0, 8);
   const railRows = [{ sessionIdPrefix: GERSONA, name: "gersona" }, { sessionIdPrefix: YOAIDA, name: "yoaida" }];
+  // a send from GERSONA whose name is the peer's own writing, to a session that is not GERSONA
+  const sentAs = (selfDeclaredName: string) => [{ ...FORWARDED[0]!, relay: { ...FORWARDED[0]!.relay!, sender: { ...FORWARDED[0]!.relay!.sender, sessionIdPrefix: GERSONA, selfDeclaredName } } }];
   const refusedRows = [
-    { name: "named by the loaded relays", refusal: REFUSAL, items: relays.items, rail: [], shape: { who: "gersona", title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" } },
-    { name: "named by the rail's rows when no loaded relay names them", refusal: REFUSAL, items: [], rail: railRows, shape: { who: "gersona", title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" } },
-    { name: "named by neither → its ids", refusal: REFUSAL, items: [], rail: [], shape: { who: GERSONA, title: `→ ${YOAIDA} Too many to one session`, label: `Refused relay from ${GERSONA} to ${YOAIDA}: Too many to one session` } },
-    { name: "to several → their count", refusal: { ...REFUSAL!, recipientIdPrefixes: [YOAIDA, GERSONA] }, items: relays.items, rail: [], shape: { who: "gersona", title: "→ 2 sessions Too many to one session", label: "Refused relay from gersona to 2 sessions: Too many to one session" } },
-    { name: "to no resolvable session → the unknown count", refusal: { ...REFUSAL!, reason: "sender_cap", recipientIdPrefixes: [], unresolvedCount: 1 }, items: relays.items, rail: [], shape: { who: "gersona", title: "→ 1 unknown recipient Too many from one session", label: "Refused relay from gersona to 1 unknown recipient: Too many from one session" } },
+    { name: "named by the loaded relays", refusal: REFUSAL, items: relays.items, rail: [], shape: { who: "gersona", isMarked: false, title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" } },
+    { name: "named by the rail's rows when no loaded relay names them", refusal: REFUSAL, items: [], rail: railRows, shape: { who: "gersona", isMarked: false, title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" } },
+    { name: "named by neither → its ids", refusal: REFUSAL, items: [], rail: [], shape: { who: GERSONA, isMarked: false, title: `→ ${YOAIDA} Too many to one session`, label: `Refused relay from ${GERSONA} to ${YOAIDA}: Too many to one session` } },
+    {
+      name: "named only by a loaded relay's own sender name → that name marked as self-named", refusal: REFUSAL, items: sentAs("gersona"), rail: railRows.slice(1),
+      shape: { who: "gersona", isMarked: true, title: "→ yoaida Too many to one session", label: "Refused relay from gersona (self-named) to yoaida: Too many to one session" },
+    },
+    {
+      name: "a peer-written name never replaces the rail's name for its session", refusal: REFUSAL, items: sentAs("yoaida"), rail: railRows,
+      shape: { who: "gersona", isMarked: false, title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" },
+    },
+    { name: "to several → their count", refusal: { ...REFUSAL!, recipientIdPrefixes: [YOAIDA, GERSONA] }, items: relays.items, rail: [], shape: { who: "gersona", isMarked: false, title: "→ 2 sessions Too many to one session", label: "Refused relay from gersona to 2 sessions: Too many to one session" } },
+    { name: "to no resolvable session → the unknown count", refusal: { ...REFUSAL!, reason: "sender_cap", recipientIdPrefixes: [], unresolvedCount: 1 }, items: relays.items, rail: [], shape: { who: "gersona", isMarked: false, title: "→ 1 unknown recipient Too many from one session", label: "Refused relay from gersona to 1 unknown recipient: Too many from one session" } },
   ];
   for (const row of refusedRows) {
     test(`a refused relay's row: ${row.name}, Refused its tag and Relay its fact, no badge, the tip its Done relay siblings carry`, () => {
@@ -1617,7 +1635,8 @@ describe("a relay on its way", () => {
   const getRowShape = (tree: RenderedNode) => {
     const [row] = findNodes(tree, (node) => node.props?.role === "option");
     return {
-      who: cellText(tree, "queue-row-who"),
+      who: cellText(tree, "queue-row-name"),
+      mark: cellText(tree, "queue-row-mark"),
       title: cellText(tree, "queue-row-title"),
       tags: findNodes(byClass(tree, "queue-row-tag")[0] as RenderedNode, (node) => node.props?.atom === "Badge").map((badge) => badge.props.title),
       fact: cellText(tree, "queue-row-fact"),
@@ -1628,27 +1647,27 @@ describe("a relay on its way", () => {
   const rows = [
     {
       name: "to one session it names its sender, leads its title with the recipient and reads Relay", copies: toYoaida(), isNameShown: true,
-      shape: { who: NAMED, title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
+      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
     },
     {
       name: "to several it names their count and reads received of sent", copies: toThree(), isNameShown: true,
-      shape: { who: NAMED, title: `→ 3 sessions ${TITLE}`, tags: [], fact: "1 of 3", label: `Relay from ${NAMED} to 3 sessions: ${TITLE}, 1 of 3` },
+      shape: { who: "aidl", mark: "self", title: `→ 3 sessions ${TITLE}`, tags: [], fact: "1 of 3", label: `Relay from ${NAMED} to 3 sessions: ${TITLE}, 1 of 3` },
     },
     {
       name: "a copy its session never acknowledged is not yet, never not received", copies: toYoaida({ status: "unacked", deviation: "unacked" }), isNameShown: true,
-      shape: { who: NAMED, title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
+      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
     },
     {
       name: "a copy whose session does not listen is counted in the tag column", copies: toYoaida({ session: buildSession({ name: "yoaida", state: "live", isWaiting: false }) }), isNameShown: true,
-      shape: { who: NAMED, title: `→ yoaida ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}, 1 next turn` },
+      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}, 1 next turn` },
     },
     {
       name: "with one session ticked the name column is left out and the title names both ends", copies: toYoaida(), isNameShown: false,
-      shape: { who: null, title: `${NAMED} → yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
+      shape: { who: null, mark: null, title: `${NAMED} → yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
     },
     {
       name: "a redacted relay reads Text redacted where its title stood", copies: toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } }), isNameShown: true,
-      shape: { who: NAMED, title: "→ yoaida Text redacted", tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: Text redacted` },
+      shape: { who: "aidl", mark: "self", title: "→ yoaida Text redacted", tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: Text redacted` },
     },
   ];
   for (const row of rows) {
@@ -1722,8 +1741,8 @@ describe("a relay on its way", () => {
 
   // a peer writes its own name → wherever the queue names the sender, a written name is marked as the sender's own
   const NAME_ROWS = [
-    { name: "a name the sender gave itself is marked self-named", sender, shown: NAMED },
-    { name: "a sender that gave no name reads as its id prefix, unmarked", sender: { ...sender, selfDeclaredName: null }, shown: "aca91592" },
+    { name: "a name the sender gave itself is marked self-named", sender, shown: NAMED, cell: { who: "aidl", mark: "self" } },
+    { name: "a sender that gave no name reads as its id prefix, unmarked", sender: { ...sender, selfDeclaredName: null }, shown: "aca91592", cell: { who: "aca91592", mark: null } },
   ];
   for (const row of NAME_ROWS) {
     test(`the sender in the row's name column, the sheet head, the sheet title, the From line, the text's label and the standing line: ${row.name}`, () => {
@@ -1732,10 +1751,10 @@ describe("a relay on its way", () => {
       const body = sheet.body.replace(/\s+/g, " ");
       assert.deepEqual(
         {
-          who: getRowShape(renderRow(copies)).who, head: sheet.head, title: sheet.title, from: body.includes(`From ${row.shown} · aca91592 · work`),
+          cell: (({ who, mark }) => ({ who, mark }))(getRowShape(renderRow(copies))), head: sheet.head, title: sheet.title, from: body.includes(`From ${row.shown} · aca91592 · work`),
           label: body.includes(`What ${row.shown} wrote`), standing: body.includes(`${row.shown} sent this as its message, not yours.`),
         },
-        { who: row.shown, head: `Relay from ${row.shown} → to yoaida`, title: `Message from ${row.shown} to yoaida`, from: true, label: true, standing: true },
+        { cell: row.cell, head: `Relay from ${row.shown} → to yoaida`, title: `Message from ${row.shown} to yoaida`, from: true, label: true, standing: true },
       );
     });
   }
@@ -4159,6 +4178,25 @@ describe("In delivery rows", () => {
       assert.deepEqual(findNodes(tree, (node) => typeof node.props?.className === "string" && node.props.className.startsWith("queue-row-")).map((node) => collectText(node)), row.lines);
     });
   }
+
+  // one sender reads as one name on every row; a self-declared name adds the page's own mark beside it, never in it
+  test("a sender's name reads the same on its decision row and its relay row; only a self-declared name adds the self mark, its words in the tooltips", () => {
+    const relay = getRelayThreadFixture().items.find((copy) => copy.id === 398)!;
+    const decision = buildItem({ session: buildSession({ name: "atrium" }) });
+    const unnamed = { ...relay, relay: { ...relay.relay!, sender: { ...relay.relay!.sender, selfDeclaredName: null } } };
+    const cellOf = (item: unknown) => {
+      const tree = render("RowWhoQ", { row: { id: 1, item, copies: [item] } });
+      const [name] = byClass(tree, "queue-row-name");
+      const [mark] = byClass(tree, "queue-row-mark");
+      const isMarkInName = mark !== undefined && name !== undefined && findNodes(name, (node) => node === mark).length > 0;
+      return { name: collectText(name!), tip: name?.props.title, mark: mark && { text: collectText(mark), tip: mark.props.title, isHidden: mark.props["aria-hidden"] === "true" }, isMarkInName };
+    };
+    assert.deepEqual([cellOf(decision), cellOf(relay), cellOf(unnamed)], [
+      { name: "atrium", tip: "atrium", mark: undefined, isMarkInName: false },
+      { name: "atrium", tip: "atrium (self-named)", mark: { text: "self", tip: "self-named", isHidden: true }, isMarkInName: false },
+      { name: relay.relay!.sender.sessionIdPrefix, tip: relay.relay!.sender.sessionIdPrefix, mark: undefined, isMarkInName: false },
+    ]);
+  });
 });
 
 describe("the sheet's letterhead and record", () => {

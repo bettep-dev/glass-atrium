@@ -1788,6 +1788,38 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(heights.filter((row) => !row.isRowHeight), []);
   });
 
+  // one sender reads as one name on every row; a self-declared name's mark stands whole beside it, outside the cut, its words in the tooltips
+  test("a sender's name paints the same on its decision, refused and relay rows at 1280, 1440 and 1568, and only a self-named relay row adds the whole self mark", async () => {
+    harness.fixture = getRelayListFixture(true);
+    const shown = [];
+    for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
+      const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+      await waitForDoneBands(page);
+      const rows = await page.evaluate(() => [...document.querySelectorAll(".queue-row")].flatMap((row) => {
+        const name = row.querySelector<HTMLElement>(".queue-row-name");
+        if (name === null) return [];
+        const mark = row.querySelector<HTMLElement>(".queue-row-mark");
+        const who = row.querySelector(".queue-row-who")!.getBoundingClientRect();
+        const isWhole = (cell: HTMLElement) => cell.scrollWidth <= cell.clientWidth && cell.getBoundingClientRect().right <= who.right + 0.5;
+        return [{
+          name: name.textContent, painted: isWhole(name) ? name.textContent : "cut", isSelfNamed: name.title.endsWith(" (self-named)"),
+          mark: mark && { text: mark.textContent, tip: mark.title, isHidden: mark.getAttribute("aria-hidden") === "true", isWhole: isWhole(mark) && !name.contains(mark) },
+          label: [" to ", ": "].some((end) => row.getAttribute("aria-label")?.includes(`from ${name.title}${end}`)),
+        }];
+      }));
+      await page.close();
+      shown.push({ width: viewport.width, rows });
+    }
+
+    const byName = shown.flatMap(({ width, rows }) => [...new Set(rows.map((row) => row.name))].map((name) => ({ width, name, painted: [...new Set(rows.filter((row) => row.name === name).map((row) => row.painted))] })));
+    assert.ok(shown.every(({ rows }) => rows.some((row) => row.isSelfNamed) && rows.some((row) => !row.isSelfNamed)), "each width paints self-named and recorded names");
+    assert.deepEqual(byName.filter(({ painted }) => painted.length > 1 || painted[0] === "cut"), [], "a sender's name paints whole and alike on every row");
+    assert.deepEqual(
+      shown.flatMap(({ width, rows }) => rows.map((row) => ({ width, mark: row.mark, label: row.label }))),
+      shown.flatMap(({ width, rows }) => rows.map((row) => ({ width, mark: row.isSelfNamed ? { text: "self", tip: "self-named", isHidden: true, isWhole: true } : null, label: true }))),
+    );
+  });
+
   // spec §4.2: who, then what — the session name in one fixed column at the row's start, the title and its meta line to its right
   test("with exactly one session ticked no row paints a name, and every title starts where the band labels start", async () => {
     harness.fixture = getRestFixture();

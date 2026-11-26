@@ -1129,6 +1129,15 @@ label.ctl-checkbox-hit {
 	white-space: nowrap;
 	text-overflow: ellipsis;
 }
+/* a self-declared sender's mark: the page's word, never the name's text → its own weight, tone and dotted rule; the name gives way, never the mark */
+.queue-row-mark {
+	flex: none;
+	margin-inline-start: var(--space-1);
+	font-weight: 400;
+	color: rgb(var(--faint));
+	text-decoration: underline dotted;
+	text-underline-offset: 2px;
+}
 /* up to two count atoms, worst first; both fit the 80 */
 .queue-row-tag {
 	display: flex;

@@ -1790,10 +1790,10 @@ function QueueGroupQ({ group, queue, view }) {
 	);
 }
 
-// a refusal holds id prefixes alone → names from the loaded relays, a session none of them names from the rail's rows (layout §1)
+// a refusal holds id prefixes alone → names from the loaded relays and the rail's rows (layout §1); a name the queue records outranks one the peer wrote
 function getRefusalNamesQ(queue) {
-	const rail = (queue.sessions.region.data?.sessions ?? []).map((session) => [session.sessionIdPrefix, session.name]);
-	return new Map([...rail, ...getRelayNamesQ(queue.relays.thread.items)]);
+	const rail = (queue.sessions.region.data?.sessions ?? []).map((session) => [session.sessionIdPrefix, { name: session.name, isSelfNamed: false }]);
+	return new Map([...getRelayNamesQ(queue.relays.thread.items), ...rail]);
 }
 
 // the column rule (spec §4.2): a band draws the tag and the fact column while one of its loaded rows fills it → then on every row of the band
@@ -1831,28 +1831,43 @@ function QueueRowQ({ row, names = null, isSelected, isNew = false, cols, view, o
 
 // a refusal's sender and recipients by name where `names` holds one, else by id prefix; `reason` the reason's name alone, its sentence the sheet's
 function getRefusalEndsQ(refusal, names) {
-	const sender = names.get(refusal.senderIdPrefix) ?? refusal.senderIdPrefix;
+	const who = getPrefixWhoQ(refusal.senderIdPrefix, names);
+	const sender = getWhoLabelQ(who);
 	const to = getRefusalToQ(refusal, names);
-	return { sender, to, reason: getRelayRefusalLineQ(refusal.reason, { sender, recipient: to }).name };
+	return { who, sender, to, reason: getRelayRefusalLineQ(refusal.reason, { sender, recipient: to }).name };
+}
+
+function getPrefixWhoQ(prefix, names) {
+	return names.get(prefix) ?? { name: prefix, isSelfNamed: false };
 }
 
 // `yoaida`, `3 sessions`, or with none resolved `1 unknown recipient`
 function getRefusalToQ(refusal, names) {
 	const [first, ...rest] = refusal.recipientIdPrefixes;
 	if (first === undefined) return `${refusal.unresolvedCount ?? 0} unknown ${refusal.unresolvedCount === 1 ? "recipient" : "recipients"}`;
-	return rest.length > 0 ? `${rest.length + 1} sessions` : names.get(first) ?? first;
+	return rest.length > 0 ? `${rest.length + 1} sessions` : getWhoLabelQ(getPrefixWhoQ(first, names));
 }
 
-// one cut line, the whole name in its tooltip
+// one cut line, the whole name in its tooltip · a self-declared name → the page's own mark beside it, outside the cut and the peer's text
 function RowWhoQ({ row, names }) {
-	const name = getRowNameQ(row, names);
-	return <span className="queue-row-name" title={name}>{name}</span>;
+	const who = getRowWhoQ(row, names);
+	return (
+		<>
+			<span className="queue-row-name" title={getWhoLabelQ(who)}>{who.name}</span>
+			{who.isSelfNamed && <span className="queue-row-mark" title="self-named" aria-hidden="true">self</span>}
+		</>
+	);
+}
+
+// the name column in words, as the row's accessible name says it
+function getRowNameQ(row, names) {
+	return getWhoLabelQ(getRowWhoQ(row, names));
 }
 
 // the name column: a refusal's or a relay's sender (spec §9.9), else who the item is from or to
-function getRowNameQ(row, names) {
-	if (row.refusal) return getRefusalEndsQ(row.refusal, names).sender;
-	return row.item.kind === "relay" ? getSenderLabelQ(row.item.relay.sender) : getCopiesNameQ(row.copies);
+function getRowWhoQ(row, names) {
+	if (row.refusal) return getRefusalEndsQ(row.refusal, names).who;
+	return row.item.kind === "relay" ? getSenderWhoQ(row.item.relay.sender) : { name: getCopiesNameQ(row.copies), isSelfNamed: false };
 }
 
 // one session's name, or `3 sessions` for a send to several
@@ -3806,7 +3821,7 @@ function RedactConfirmQ({ redaction }) {
 	return (
 		<div ref={placeRef} className="queue-confirm-place" style={place}>
 			<DetailSurface open variant="confirm" suppressOutsideClose onClose={isBusy ? () => undefined : redaction.cancel} title="Redact this relay's text?" footer={footer}>
-				<p className="fs-body text-dim">{`${getSenderNameQ(target.item.relay.sender)} sent it to ${names}. The text becomes a fixed marker, for good. Who sent it, who received it and when all stay. A session that already received it keeps what it read.`}</p>
+				<p className="fs-body text-dim">{`${getSenderLabelQ(target.item.relay.sender)} sent it to ${names}. The text becomes a fixed marker, for good. Who sent it, who received it and when all stay. A session that already received it keeps what it read.`}</p>
 				<p role="alert" className="fs-meta queue-relay-error">
 					{redaction.error !== null && <><span aria-hidden="true" className="text-crit">{`${TONE_GLYPH.crit} `}</span>{redaction.error}</>}
 				</p>
@@ -3830,14 +3845,10 @@ function useSheetColumnQ(ref) {
 	return place;
 }
 
-// a refusal record holds id prefixes only → the names the loaded relays carry for them; an unknown prefix stays a bare id
+// a refusal record holds id prefixes only → the names the loaded relays carry for them, a sender's own name before the copies' session records
 function getRelayNamesQ(items) {
-	const names = new Map();
-	for (const item of items) {
-		names.set(item.session.sessionIdPrefix, item.session.name);
-		if (item.relay?.sender.selfDeclaredName) names.set(item.relay.sender.sessionIdPrefix, item.relay.sender.selfDeclaredName);
-	}
-	return names;
+	const senders = items.filter((item) => item.relay?.sender.selfDeclaredName).map(({ relay: { sender } }) => [sender.sessionIdPrefix, getSenderWhoQ(sender)]);
+	return [...senders, ...items.map(({ session }) => [session.sessionIdPrefix, { name: session.name, isSelfNamed: false }])];
 }
 
 // spec §9.9 → the reason table: the server's codes, the page's words; no sentence holds a limit (the server sets them)
@@ -3918,8 +3929,8 @@ function RefusedWhoQ({ refusal, names }) {
 
 // `yoaida · 5e55a000`, or the bare id no loaded session names
 function SessionPrefixQ({ prefix, names }) {
-	const name = names.get(prefix);
-	return <>{name !== undefined && <><span className="font-semibold">{name}</span>{" · "}</>}<window.UI.MachineString>{prefix}</window.UI.MachineString></>;
+	const who = names.get(prefix);
+	return <>{who !== undefined && <><span className="font-semibold">{getWhoLabelQ(who)}</span>{" · "}</>}<window.UI.MachineString>{prefix}</window.UI.MachineString></>;
 }
 
 function getUnresolvedTextQ(count) {
@@ -3948,15 +3959,19 @@ function RelayHopLineQ({ relay, at }) {
 	);
 }
 
-// the sender registers its own name → shown as written, the id prefix when it registered none
-function getSenderNameQ(sender) {
-	return sender.selfDeclaredName ?? sender.sessionIdPrefix;
+// the sender registers its own name → shown as written and marked as its own; none registered → its id prefix, the queue's fact
+function getSenderWhoQ(sender) {
+	return { name: sender.selfDeclaredName ?? sender.sessionIdPrefix, isSelfNamed: sender.selfDeclaredName !== null };
 }
 
-// where the open list and its sheet name the sender: a name the peer wrote is marked as its own, never read as the queue's fact
+// where the open list and its sheet name the sender in words
 function getSenderLabelQ(sender) {
-	const name = getSenderNameQ(sender);
-	return sender.selfDeclaredName === null ? name : `${name} (self-named)`;
+	return getWhoLabelQ(getSenderWhoQ(sender));
+}
+
+// a name the peer wrote is marked as its own wherever it is painted, never read as the queue's fact
+function getWhoLabelQ({ name, isSelfNamed }) {
+	return isSelfNamed ? `${name} (self-named)` : name;
 }
 
 // account + start-directory tail → tells two same-named sessions apart
