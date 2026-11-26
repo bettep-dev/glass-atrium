@@ -1714,10 +1714,9 @@ function parseDaysParam(raw: string | undefined): AgentsWindowDays | null {
   return parsed as AgentsWindowDays;
 }
 
-// Canonical "last N days" window lower bound — repo-wide SoT semantics from
-// cost.ts buildWindowLowerBound: [CURRENT_DATE - (days-1) .. CURRENT_DATE]
-// inclusive = exactly `days` calendar days (today counted), so every "최근 N일"
-// card covers the identical day-set. Rolling NOW()-N is reserved for liveness
+// Agents-screen "last N days" window lower bound: CURRENT_DATE - (days-1), today counted
+// = exactly `days` calendar days of the PG session's CURRENT_DATE — not the bucket-tz
+// day of timezone.ts buildDayWindow, which the cost reads use. Rolling NOW()-N is reserved for liveness
 // fields only, never rate aggregates — /summary last_run_at/status stay liveness
 // signals but derive from rows inside this calendar window.
 // Prisma.raw is safe: `days` is allowlist/range-validated; `days - 1` is derived.

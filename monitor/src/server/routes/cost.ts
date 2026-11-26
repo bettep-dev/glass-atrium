@@ -8,7 +8,7 @@ import { Prisma } from "../../generated/prisma/client.js";
 import { buildAgentMembershipFilter, loadCanonicalAgentKeys } from "../agents/registry.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
-import { DAY_BUCKET_TIMEZONE } from "../timezone.js";
+import { buildDayWindow, computeBucketTzToday, DAY_BUCKET_TIMEZONE } from "../timezone.js";
 import type {
   CacheHitResponse,
   CacheHitRow,
@@ -133,7 +133,7 @@ async function handleByModel(
     return reply.code(400).send(invalidDays());
   }
 
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     // COALESCE(model, 'unknown') folds residual NULL-model rows (legacy parse
@@ -157,7 +157,7 @@ async function handleByModel(
         COALESCE(SUM(cost_usd), 0)::numeric(12,6) AS cost_usd,
         COUNT(DISTINCT session_id)::bigint  AS session_count
       FROM core.cost_events
-      WHERE event_date >= ${windowLowerBound}
+      WHERE event_date BETWEEN ${dayWindow.firstDay} AND ${dayWindow.lastDay}
         AND NOT (kind = 'turn'
                  AND stop_reason IS NOT DISTINCT FROM ${SESSION_TRACKING_STOP_REASON})
         AND NOT (model IS NOT DISTINCT FROM ${SYNTHETIC_MODEL}
@@ -204,7 +204,7 @@ async function handleCacheHit(
 
   // generate_series fills gap days with zero rows so the FE chart has continuous
   // x-axis values (no missing-day skips). NULLIF guards against divide-by-zero.
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     const rows = await prisma.$queryRaw<CacheHitDbRow[]>`
@@ -218,8 +218,8 @@ async function handleCacheHit(
                 / NULLIF(SUM(c.input_tokens + c.cache_read_tokens), 0))::numeric(8,6)
         END AS cache_hit_rate
       FROM generate_series(
-        ${windowLowerBound},
-        CURRENT_DATE,
+        ${dayWindow.firstDay},
+        ${dayWindow.lastDay},
         '1 day'
       ) d
       LEFT JOIN core.cost_events c ON c.event_date = d::date
@@ -260,7 +260,7 @@ async function handleSessionDistribution(
     return reply.code(400).send(invalidDays());
   }
 
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     // Two parallel queries: top-N rows + counts. Sessions whose every event is
@@ -275,7 +275,7 @@ async function handleSessionDistribution(
             SELECT m.model
             FROM core.cost_events m
             WHERE m.session_id = e.session_id
-              AND m.event_date >= ${windowLowerBound}
+              AND m.event_date BETWEEN ${dayWindow.firstDay} AND ${dayWindow.lastDay}
               AND m.model IS NOT NULL
             GROUP BY m.model
             ORDER BY SUM(m.cost_usd) DESC, m.model
@@ -288,7 +288,7 @@ async function handleSessionDistribution(
           -- zone-less day-bucket wall-clock → timestamptz, else the driver reads it as UTC
           (MAX(event_date + event_time) AT TIME ZONE ${DAY_BUCKET_TIMEZONE}::text) AS last_event_at
         FROM core.cost_events e
-        WHERE event_date >= ${windowLowerBound}
+        WHERE event_date BETWEEN ${dayWindow.firstDay} AND ${dayWindow.lastDay}
         GROUP BY session_id
         HAVING SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) > 0
         ORDER BY total_cost_usd DESC
@@ -302,7 +302,7 @@ async function handleSessionDistribution(
           SELECT SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens)
                    AS session_tokens
           FROM core.cost_events
-          WHERE event_date >= ${windowLowerBound}
+          WHERE event_date BETWEEN ${dayWindow.firstDay} AND ${dayWindow.lastDay}
           GROUP BY session_id
         ) s
       `,
@@ -365,7 +365,7 @@ async function handleParseErrors(
   // parse health. subagent rows derive from a separate transcript-scan path
   // (always parse_error=false) and would dilute the denominator, understating the
   // true turn-parse error rate; excluded to keep the metric meaningful.
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     const rows = await prisma.$queryRaw<ParseErrorDbRow[]>`
@@ -379,8 +379,8 @@ async function handleParseErrors(
                 / NULLIF(COUNT(c.id), 0))::numeric(8,6)
         END AS error_ratio
       FROM generate_series(
-        ${windowLowerBound},
-        CURRENT_DATE,
+        ${dayWindow.firstDay},
+        ${dayWindow.lastDay},
         '1 day'
       ) d
       LEFT JOIN core.cost_events c
@@ -435,8 +435,8 @@ async function handleTurnStats(
   // kind='turn' filter REQUIRED on both queries — subagent rows (kind='subagent',
   // stop_reason NULL, num_turns 0) are not turns; without the filter they would
   // appear as an 'unknown' stop_reason bucket and dilute the turn metrics.
-  // Two parallel queries share the window lower bound.
-  const windowLowerBound = buildWindowLowerBound(days);
+  // The parallel queries share one day window.
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     const [stopReasonRows, turnRows, sessionTurnRows] = await Promise.all([
@@ -446,7 +446,7 @@ async function handleTurnStats(
           COUNT(*)::bigint                   AS event_count,
           COUNT(DISTINCT session_id)::bigint AS session_count
         FROM core.cost_events
-        WHERE event_date >= ${windowLowerBound}
+        WHERE event_date BETWEEN ${dayWindow.firstDay} AND ${dayWindow.lastDay}
           AND kind = 'turn'
         GROUP BY 1
         ORDER BY event_count DESC
@@ -459,7 +459,7 @@ async function handleTurnStats(
           COUNT(*) FILTER (WHERE num_turns > 0)::bigint             AS turn_event_count,
           COUNT(DISTINCT session_id)::bigint                        AS stop_reason_session_count
         FROM core.cost_events
-        WHERE event_date >= ${windowLowerBound}
+        WHERE event_date BETWEEN ${dayWindow.firstDay} AND ${dayWindow.lastDay}
           AND kind = 'turn'
       `,
       // True per-session aggregate (SUM per session, then AVG) — the per-event
@@ -471,7 +471,7 @@ async function handleTurnStats(
         FROM (
           SELECT SUM(num_turns) AS session_turns
           FROM core.cost_events
-          WHERE event_date >= ${windowLowerBound}
+          WHERE event_date BETWEEN ${dayWindow.firstDay} AND ${dayWindow.lastDay}
             AND kind = 'turn'
             AND num_turns > 0
           GROUP BY session_id
@@ -603,17 +603,6 @@ function parseDaysParam(raw: string | undefined): CostWindowDays | null {
   }
   // Type-narrow back to literal union — allowlist guarantees the cast is safe.
   return parsed as CostWindowDays;
-}
-
-// Canonical "last N days" window lower bound (single SoT across all cost
-// endpoints, so every "last N days" card covers the identical day-set).
-// Window = [CURRENT_DATE - (days-1) .. CURRENT_DATE] inclusive = exactly `days`
-// calendar days (today counted); matches the generate_series form.
-// Prisma.raw, not a bind: parameterized INTERVAL needs a `($1 || ' days')::interval`
-// text-cast the template-tag won't emit cleanly. Safe — `days` is allowlist-validated
-// ({7,30,90}), `days - 1` is derived; no user input reaches SQL.
-function buildWindowLowerBound(days: number): Prisma.Sql {
-  return Prisma.raw(`CURRENT_DATE - INTERVAL '${days - 1} days'`);
 }
 
 function bigintToNumber(value: bigint): number {
