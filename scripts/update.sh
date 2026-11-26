@@ -3643,20 +3643,9 @@ update_build_monitor() {
 # never request-derived — SECURITY), then (re)render the decoupled one-shot plist.
 # Each render is best-effort + loud (a failure warns, never aborts the applied update).
 update_render_parity() {
-  local launcher render_launchd render_monitor_env report rc=0 line
-  # [paths] binaries first, so the plists below render from them: the repair keeps a working value and moves a
-  # Homebrew Cellar one to its version-free twin (the fix for an install whose node path breaks on an upgrade);
-  # never the template render, so every other config byte stays. Its lines (a moved key, the backup) reach the log.
-  launcher="$(update_ga_root)/glass-atrium"
-  if [[ -x "${launcher}" ]]; then
-    report="$("${launcher}" repair-config-binaries 2>&1 >/dev/null)" || rc=$?
-    while IFS= read -r line; do
-      [[ -z "${line}" ]] || update_log "${line}"
-    done <<<"${report}"
-    [[ "${rc}" -eq 0 ]] || update_log "WARN: config binary repair failed (rc=${rc}) — config.toml [paths] binaries not re-resolved; run '${launcher} repair-config-binaries'"
-  else
-    update_log "WARN: launcher missing or not executable (${launcher}) — config.toml [paths] binaries not re-resolved"
-  fi
+  local render_launchd render_monitor_env
+  # [paths] binaries first, so the plists below render from them
+  update_repair_config_binaries
   render_launchd="${ATRIUM_UPDATE_RENDER_LAUNCHD:-${_update_script_dir}/render-launchd-plists.sh}"
   render_monitor_env="${ATRIUM_UPDATE_RENDER_MONITOR_ENV:-${_update_script_dir}/render-monitor-env.sh}"
   # Loud-fail an absent/non-executable render script (Precondition Loud-Fail Principle) — a SILENT
@@ -3674,6 +3663,29 @@ update_render_parity() {
     update_log "WARN: render-monitor-env.sh missing or non-executable (${render_monitor_env}) — monitor env parity SKIPPED; ATRIUM_* env NOT rendered (monitor will fall back to dev schedules + UTC day-bucket)"
   fi
   update_render_oneshot_plist >/dev/null 2>&1 || update_log "WARN: one-shot plist render failed"
+}
+
+# The launcher's repair keeps a working value and moves a Homebrew Cellar one to its version-free twin (the fix for
+# an install whose node path breaks on an upgrade); never the template render, so every other config byte stays.
+# Its lines (a moved key, the backup) reach the log. Best-effort + loud like the renders.
+update_repair_config_binaries() {
+  local launcher usage report rc=0 line
+  launcher="$(update_ga_root)/glass-atrium"
+  if [[ ! -x "${launcher}" ]]; then
+    update_log "WARN: launcher missing or not executable (${launcher}) — config.toml [paths] binaries not re-resolved"
+    return 0
+  fi
+  # a launcher older than the subcommand refuses it as unknown → probe its usage, so that is never logged as a failed repair
+  usage="$("${launcher}" --help 2>/dev/null)" || usage=""
+  if [[ "${usage}" != *"glass-atrium repair-config-binaries"* ]]; then
+    update_log "note: launcher (${launcher}) has no repair-config-binaries subcommand — config.toml [paths] binaries left as they are"
+    return 0
+  fi
+  report="$("${launcher}" repair-config-binaries 2>&1 >/dev/null)" || rc=$?
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] || update_log "${line}"
+  done <<<"${report}"
+  [[ "${rc}" -eq 0 ]] || update_log "WARN: config binary repair failed (rc=${rc}) — config.toml [paths] binaries not re-resolved; run '${launcher} repair-config-binaries'"
 }
 
 # Reissue the remote leaf while access is on and the leaf is due (expiry, address or name); never turns
