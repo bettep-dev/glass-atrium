@@ -205,6 +205,7 @@ function registerScanApprovalRoutes(app: FastifyInstance): void {
       input: request.body,
       work: async (body) => {
         const requestId = secretRequests.create(body);
+        setAuditTarget(request, { sessionId: body.sessionId, requestId });
         request.log.info({ requestId }, "scan approval request registered");
         return { requestId };
       },
@@ -217,6 +218,7 @@ function registerScanApprovalRoutes(app: FastifyInstance): void {
       input: request.body,
       work: async (body) => {
         const requestId = secretRequests.consume(body);
+        setAuditTarget(request, requestId === null ? { sessionId: body.sessionId } : { sessionId: body.sessionId, requestId });
         if (requestId === null) {
           reply.code(409);
           return { error: "scan_approval_refused", decision: "refuse" };

@@ -52,6 +52,9 @@ export const ROUTE_RESOURCE: ReadonlyMap<string, string> = new Map([
   ["/api/queue/relay", "queue-relay"],
   // Owner redaction of a relay's text: the row names the relay (target id) and the page-origin signal that admitted it
   ["/api/queue/owner/items/:id/redact", "queue-relay"],
+  // Secret-scan approvals, session-only as the relay: the store is process memory → this row is the one durable trace; session + request id, never a line or hash
+  ["/api/queue/scan-approvals", "queue-scan-approval"],
+  ["/api/queue/scan-approvals/consume", "queue-scan-approval"],
 ]);
 
 // Routes whose handler writes files with no transaction to roll back → the trail must hold the attempt before the write

@@ -11,6 +11,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 
 import "dotenv/config";
 
@@ -18,6 +19,7 @@ import Fastify, { type FastifyBaseLogger, type FastifyInstance, type LightMyRequ
 import pino from "pino";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { registerAuditLogHook } from "../src/server/middleware/audit-log.js";
 import { SECRET_APPROVAL_CODE } from "../src/server/queue/items.js";
 import { getLineDisplay, getLineHash, secretRequests } from "../src/server/queue/scan-approvals.js";
 import { getRouteClass } from "../src/server/remote/route-classes.js";
@@ -33,7 +35,10 @@ const CONSUME = "/api/queue/scan-approvals/consume";
 const WRITE_PATH = "/Users/owner/Desktop/git/glass-atrium/monitor/src/server/config.ts";
 const AGENT = { id: "a3f9c2d17b4e8f05", type: "glass-atrium-dev-node" } as const;
 
+const AUDITED_RESOURCES = ["queue-scan-approval", "queue-item"];
+
 const fixtureRoot = mkdtempSync(path.join(tmpdir(), "queue-scan-approvals-"));
+const suiteStart = new Date();
 const trackedSessionIds: string[] = [];
 let logged = "";
 let app: FastifyInstance;
@@ -48,6 +53,7 @@ before(async () => {
   });
   const loggerInstance: FastifyBaseLogger = pino({ level: "trace" }, sink);
   app = Fastify({ loggerInstance });
+  registerAuditLogHook(app);
   const options = { port: PORT, homeDir: path.join(fixtureRoot, "home"), cliPath: "/opt/atrium-test/scripts/atrium-queue.sh" };
   await registerQueueRoutes(app, { ...options, imageDir: path.join(fixtureRoot, "images"), scannerPath: "/opt/atrium-test/scripts/lib/secret-scan.sh" });
   await app.ready();
@@ -59,6 +65,7 @@ after(async () => {
   await prisma.queueDelivery.deleteMany({ where: { item: { sessionId: { in: trackedSessionIds } } } });
   await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
   await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
+  await prisma.auditLog.deleteMany({ where: { targetTable: { in: AUDITED_RESOURCES }, eventTs: { gte: suiteStart } } });
   await unlockQueueRows();
   await disconnectPrisma();
   deleteDirectory(fixtureRoot);
@@ -122,6 +129,14 @@ async function postApproval(sessionId: string, line: CapturedLine, isApproved = 
     assert.equal(answered.statusCode, 200, answered.body);
   }
   return { itemId, requestId };
+}
+
+/** The session's scan-approval audit payloads, oldest first, once `count` have landed → the hook writes after the reply, unawaited. */
+async function findAuditPayloads(sessionId: string, count: number): Promise<unknown[]> {
+  const where = { targetTable: "queue-scan-approval", payload: { path: ["change", "sessionId"], equals: sessionId } };
+  for (let attempt = 0; attempt < 40 && (await getPrisma().auditLog.count({ where })) < count; attempt += 1) await delay(25);
+  const rows = await getPrisma().auditLog.findMany({ where, orderBy: { id: "asc" }, select: { payload: true } });
+  return rows.map((row) => row.payload);
 }
 
 /** The scratch database's data as pg_dump writes it; the connection comes from the environment, never an argument. */
@@ -305,18 +320,25 @@ describe("the line never leaves the store but by the owner read", () => {
     assert.deepEqual([payloads[1]?.json().scanApproval.state, payloads[4]?.json().answeredItemIds, claimedIds], ["approved", [itemId], [itemId]]);
   });
 
-  test("a sentinel line through register, approve and consume, and a rejected register, leave it in no monitor log and no database row", async () => {
+  test("a sentinel line through register, approve, consume and a spent consume, and a rejected register, leave it in no monitor log and no database row; the audit rows name route, session and request id only", async () => {
     const sessionId = await seedSession();
     const line = createLine();
     const { requestId } = await postApproval(sessionId, line, true);
     const consumed = await send("POST", CONSUME, getConsumeBody(sessionId, line));
+    const spent = await send("POST", CONSUME, getConsumeBody(sessionId, line));
     const rejected = createLine();
     const refused = await send("POST", REGISTER, { ...getRegisterBody(sessionId, rejected), rule: "SEC-015" });
+    const audited = await findAuditPayloads(sessionId, 3);
     const dump = await dumpDatabase();
     // the item row's request id in the dump → the dump holds this test's rows
     assert.deepEqual(
-      [consumed.statusCode, refused.statusCode, dump.includes(requestId), dump.includes(line.sentinel), dump.includes(rejected.sentinel), logged.includes(line.sentinel), logged.includes(rejected.sentinel)],
-      [200, 400, true, false, false, false, false],
+      [consumed.statusCode, spent.statusCode, refused.statusCode, dump.includes(requestId), dump.includes(line.sentinel), dump.includes(rejected.sentinel), dump.includes(getLineHash(line.text)), logged.includes(line.sentinel), logged.includes(rejected.sentinel)],
+      [200, 409, 400, true, false, false, false, false, false],
     );
+    assert.deepEqual(audited, [
+      { method: "POST", route: REGISTER, status_code: 200, change: { sessionId, requestId } },
+      { method: "POST", route: CONSUME, status_code: 200, change: { sessionId, requestId } },
+      { method: "POST", route: CONSUME, status_code: 409, change: { sessionId } },
+    ]);
   });
 });
