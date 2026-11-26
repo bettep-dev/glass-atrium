@@ -20,6 +20,8 @@ TOOLS=(post claim record sessions relay)
 
 setup() {
   unset CLAUDE_CONFIG_DIR CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_CODE_ENTRYPOINT
+  # this file's own knobs → set only by a row, never inherited (the CI bats step exports ROOT as its test root)
+  unset ROOT IS_TERMINAL ANSWER
   export HOME="${BATS_TEST_TMPDIR}/home"
   export GA_TARGET_HOME="${HOME}/.claude"
   export GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data"
