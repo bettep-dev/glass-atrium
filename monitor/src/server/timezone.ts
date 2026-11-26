@@ -121,11 +121,7 @@ export function resolveDayBucketTimezone(
 // Module-load resolution — the single SoT. Invalid explicit value → loud boot failure in the launchd log, not a silent wrong bucket.
 export const DAY_BUCKET_TIMEZONE: string = resolveDayBucketTimezone(process.env.ATRIUM_TIMEZONE);
 
-// Day-bucket timezone's "today" as an ISO calendar-day string (YYYY-MM-DD). The KPI
-// path pins its buckets to this timezone via SQL NOW() AT TIME ZONE; the timeseries
-// resolves the same bucket-tz wall-clock day here (en-CA → ISO format) so its series
-// bounds agree with the KPI buckets instead of drifting to session-tz CURRENT_DATE.
-// Deterministic given `now` — the frozen-clock route test asserts the KST-today bound.
+/** Day-bucket timezone's "today" as an ISO calendar day (YYYY-MM-DD, en-CA format) — the day the KPI path buckets on via SQL NOW() AT TIME ZONE. */
 export function computeBucketTzToday(now: Date, timeZone: string = DAY_BUCKET_TIMEZONE): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone,

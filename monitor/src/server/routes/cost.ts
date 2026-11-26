@@ -435,7 +435,6 @@ async function handleTurnStats(
   // kind='turn' filter REQUIRED on both queries — subagent rows (kind='subagent',
   // stop_reason NULL, num_turns 0) are not turns; without the filter they would
   // appear as an 'unknown' stop_reason bucket and dilute the turn metrics.
-  // The parallel queries share one day window.
   const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
