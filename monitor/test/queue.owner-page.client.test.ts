@@ -1388,6 +1388,21 @@ describe("done items in the one list", () => {
       );
     });
   }
+
+  // an answered item on its way: a foot only while it holds an act or an error → never an empty band under the body
+  const answeredFeet = [
+    { name: "nothing to resend and no error draws no foot", item: { status: "answered" }, error: null, foot: [] },
+    { name: "a Resend draws the foot with its button", item: { status: "unacked", canResend: true }, error: null, foot: ["Resend answer"] },
+    { name: "a failed send draws the foot with its error", item: { status: "answered" }, error: "The answer was not sent.", foot: ["The answer was not sent."] },
+  ];
+  for (const row of answeredFeet) {
+    test(`the sheet of an answered decision: ${row.name}`, () => {
+      const { queue } = buildQueue();
+      const item = buildItem({ answer: { code: "R1" }, answeredAt: "2026-11-12T12:26:40.118Z", ...row.item });
+      const tree = renderSheet({ item, queue: { ...queue, busy: { id: null, error: row.error === null ? null : { id: item.id, message: row.error } } } });
+      assert.deepEqual(byClass(tree, "card-foot").map((foot) => collectText(foot).replace(/^\W+/, "").trim()), row.foot);
+    });
+  }
 });
 
 // layout §1, §6 → Order, Ticks: the Done part merges the item thread and the relay thread, each paged by its own cursor
@@ -3057,13 +3072,19 @@ describe("order composer", () => {
 
   // spec §10 → Rail "no session takes a message": the note says so, not "tick one"; before the rail loads nothing is known
   const notes = [
-    { name: "none ticked", count: 0, rows: [buildSessionRow()], note: "Tick a session in the rail to address this order." },
-    { name: "none ticked before the rail loads", count: 0, rows: null, note: "Tick a session in the rail to address this order." },
+    { name: "none ticked", count: 0, rows: [buildSessionRow()], note: "Tick a session in Sessions to address this order." },
+    { name: "none ticked before the rail loads", count: 0, rows: null, note: "Tick a session in Sessions to address this order." },
     { name: "no session takes a message", count: 0, rows: [buildSessionRow({ isSelectable: false }), buildSessionRow({ id: REPLACED_ID, state: "exited", exitReason: "replaced", isSelectable: false })], note: "No session can take an order right now." },
     { name: "one ticked", count: 1, rows: [buildSessionRow()], note: "Goes to s0." },
     { name: "several ticked", count: 2, rows: [buildSessionRow()], note: "Each ticked session gets its own copy." },
   ];
   for (const row of notes) test(`the note at rest: ${row.name}`, () => assert.equal(call("getOrderNoteQ", targetsOf(row.count), row.rows), row.note));
+
+  // the rail is titled Sessions on the desk and the phone alike → one wording at every width
+  test("the Orders view with nothing ticked names Sessions in its empty state", () => {
+    const [empty] = findNodes(render("ThreadEmptyQ", { names: [] }), (node) => node.props?.atom === "EmptyState");
+    assert.deepEqual([empty?.props.message, empty?.props.hint], ["No orders yet", "Tick a session in Sessions and write the first one below."]);
+  });
 
   // spec §9.2 → Note at rest: where the owner decides whether to send, the note says what follows for a ticked session that does not listen
   const deaf = (id: string, name: string) => buildSessionRow({ id, name, isWaiting: false });

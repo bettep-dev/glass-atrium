@@ -1268,7 +1268,7 @@ function getOrderInvalidQ(targets, text) {
 
 /** The composer's note at rest · `rows` null → the rail not read yet, so no claim that nobody takes an order (spec §10). */
 function getOrderNoteQ({ ids, names }, rows = null) {
-	if (ids.length === 0) return rows?.some((row) => row.isSelectable) === false ? "No session can take an order right now." : "Tick a session in the rail to address this order.";
+	if (ids.length === 0) return rows?.some((row) => row.isSelectable) === false ? "No session can take an order right now." : "Tick a session in Sessions to address this order.";
 	const notListening = (rows ?? []).filter((row) => ids.includes(row.id) && isNotListeningQ(row)).map((row) => row.name);
 	if (ids.length === 1) return notListening.length > 0 ? getNextTurnSentenceQ(notListening, "this") : `Goes to ${names[0]}.`;
 	const each = "Each ticked session gets its own copy.";
@@ -2340,7 +2340,7 @@ function QueueSheetQ({ queue }) {
 }
 
 /**
- * One item on the sheet: head (the way back, kind and session, the stepping), body (the date line, title, text, kind block, state lines), foot (the composer).
+ * One item on the sheet: head (the way back, kind and session, the stepping), body (the date line, title, text, kind block, state lines), foot (the composer, drawn only while it holds something).
  * Its own card markup: the head's h2 sits between two buttons, which the Card head's title slot cannot hold.
  * @param copies - the row's copies: a relay to several sessions → one per recipient
  * @param cliPath - the installed queue CLI the server resolved (GA_ROOT-aware)
@@ -2353,6 +2353,7 @@ function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, is
 	const error = queue.busy.error?.id === item.id ? queue.busy.error.message : null;
 	const kind = isDone ? DONE_KIND_Q[item.kind] : getKindWordQ(item);
 	const names = getPageNamesQ(queue);
+	const foot = getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone });
 	return (
 		<div className="card queue-pane queue-sheet">
 			<SheetHeadQ queue={queue}><LetterheadQ item={item} copies={copies} kind={kind} note={getNameNoteQ(item.session, queue, names)} names={names} /></SheetHeadQ>
@@ -2360,7 +2361,7 @@ function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, is
 			<div className="card-body" tabIndex={-1}>
 				<SheetBodyQ item={item} copies={copies} rails={queue.sessions?.region.data?.sessions ?? []} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} scanRead={scanRead} />
 			</div>
-			<div className="card-foot">{getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone })}</div>
+			{foot !== null && <div className="card-foot">{foot}</div>}
 		</div>
 	);
 }
@@ -2374,6 +2375,8 @@ function getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isD
 	if (item.kind === "relay") return <RelayFootQ copies={copies} onReread={queue.rereadLists} hasLeft={hasLeft} isDone={isDone} />;
 	if (isDone) return <EndLineQ item={item} />;
 	if (hasLeft) return <LeftQueueLineQ />;
+	// on its way with nothing to resend and no error → no foot; the body's state lines say where it stands
+	if (item.status !== "open" && !item.canResend && !error) return null;
 	return <SheetFootQ item={item} draft={draft} queue={queue} isBusy={isBusy} error={error} />;
 }
 
@@ -3597,7 +3600,7 @@ function ThreadQ({ orders, names, pageNames, busy }) {
 // spec §10 → Order view, no entry in scope
 function ThreadEmptyQ({ names }) {
 	const { EmptyState } = window.UI;
-	if (names.length === 0) return <EmptyState message="No orders yet" hint="Tick a session in the rail and write the first one below." />;
+	if (names.length === 0) return <EmptyState message="No orders yet" hint="Tick a session in Sessions and write the first one below." />;
 	return <EmptyState message={`No orders to ${getNameListQ(names)} yet`} hint="Write the first one below." />;
 }
 

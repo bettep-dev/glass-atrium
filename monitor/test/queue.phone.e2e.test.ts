@@ -326,6 +326,22 @@ describe("the Queue page on a phone", () => {
       assert.deepEqual(facts, { triggerHeight: 44, ordersHeight: 44, isKeysShown: false });
     });
 
+    // a quiet filter trigger as wide as its words; Orders the head's one edged button
+    for (const viewport of PHONES) {
+      test(`at ${viewport.width} the scope trigger draws All sessions whole with no edge at rest, and Orders keeps its edge`, async () => {
+        const page = await openQueuePage(harness, viewport, getRestReadyText());
+        const facts = await page.locator(".queue-list > .card-head").evaluate((head) => {
+          const words = head.querySelector(".queue-scope-words")!;
+          const edgeOf = (selector: string) => getComputedStyle(head.querySelector(selector)!).borderTopColor;
+          return { isWhole: words.scrollWidth === words.clientWidth, words: getComputedStyle(words, "::before").content, trigger: edgeOf(".queue-scope-trigger"), orders: edgeOf(".queue-orders-open") };
+        });
+        await page.close();
+
+        const CLEAR = "rgba(0, 0, 0, 0)";
+        assert.deepEqual([facts.isWhole, facts.words, facts.trigger, facts.orders !== CLEAR], [true, '"All sessions"', CLEAR, true]);
+      });
+    }
+
     for (const trip of TRIPS) {
       test(`${trip.name}, and its back arrow returns to the list at the scroll it had`, async () => {
         // a list longer than the phone's screen → a scroll to keep

@@ -596,8 +596,11 @@ label.ctl-checkbox-hit {
 		max-width: 100%;
 		gap: var(--space-1);
 		padding-inline: var(--space-2);
-		margin-inline-start: calc(-1 * var(--space-2));
 		font: inherit;
+	}
+	/* the cell, not the trigger, steps back by the trigger's inset → the cell is the trigger's whole width, the words cut only on a full head */
+	.queue-desk .card-title:has(> .queue-scope-trigger) {
+		margin-inline-start: calc(-1 * var(--space-2));
 	}
 	.queue-scope-words {
 		min-width: 0;
@@ -1785,13 +1788,13 @@ label.ctl-checkbox-hit {
 	flex: none;
 	white-space: nowrap;
 }
-/* §12.5 — on the Queue screen a word button carries a 1px edge at rest, the bar's quiet Reset filters (§4.1) excepted; a glyph button (.icon) is the glyph alone in its 32 square.
+/* §12.5 — on the Queue screen a word button carries a 1px edge at rest, the bar's quiet Reset filters (§4.1) and the phone's scope trigger excepted; a glyph button (.icon) is the glyph alone in its 32 square.
    Word ranks: three, six states, colours only (no size, no shadow); the edge walks control edge → faint → ink as the pointer commits,
    the primary's fill ink → dim → faint. The drawer's own close button (.detail-head) stays the system's. */
-.queue-screen .btn.ghost:not(.detail-head .btn, .icon, .filter-bar-reset) {
+.queue-screen .btn.ghost:not(.detail-head .btn, .icon, .filter-bar-reset, .queue-scope-trigger) {
 	border-color: rgb(var(--control-edge));
 }
-.queue-screen .btn.ghost:not([aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .icon, .filter-bar-reset):hover {
+.queue-screen .btn.ghost:not([aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .icon, .filter-bar-reset, .queue-scope-trigger):hover {
 	border-color: rgb(var(--faint));
 }
 .queue-screen .btn.primary:not([aria-busy="true"], :disabled, [aria-disabled="true"]):hover {
