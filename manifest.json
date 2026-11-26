@@ -2120,7 +2120,7 @@
     "test/doctor-fail-err-trap.bats": "d6d600bfd3fd086e3a23b994341adc8a1c3b59530178f71a76939633cebd83d6",
     "test/doctor-hook-bindings.bats": "22cc3ce0cdaf96754a01802434b0bf5c07d5f3164235d23af46d1238232c2647",
     "test/doctor-inject-drop-seam.bats": "04c30e16c760e33caef4f95325188ae202979f709845cee7211022857165d2a7",
-    "test/doctor-launchd-deploy-drift.bats": "ed8d5406e64a2040f0115642de094d03f22e35fd2589af875ad2ab3ac4c3ff2e",
+    "test/doctor-launchd-deploy-drift.bats": "756de4ddb3d9ce3bdf69f25791c142114e220404ce0c0b06975e78b1c46a8a59",
     "test/doctor-migrations.bats": "560266404a4d396564b5af49797aca668429fd99b635b0b696f7013aacaff88d",
     "test/doctor-missed-cycle.bats": "665fb9df4c7f5f87519e18b1cf95df952fc396403a34df6c2d9a57cde4cb6f4f",
     "test/doctor-profile-branch-links.bats": "2324da7716a1f7e44babc2b286c65ecf5db00be943a9a5bb603e3b50469c7979",
