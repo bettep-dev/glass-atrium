@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
-import type { Browser, Locator, Page } from "playwright";
+import type { Browser, Locator, Page, Route } from "playwright";
 import { chromium } from "playwright";
 
 import { RELAY_REDACTION_MARKER } from "../src/server/queue/owner-items.js";
@@ -552,12 +552,20 @@ interface Harness {
   uploads: number;
   /** The item ids the owner read of captured lines was asked for, in order. */
   scanReadIds: number[];
+  /** Each CDN response (index.html's scripts, the web fonts) as first fetched, replayed to every later page. */
+  responseByUrl: Map<string, Promise<CachedResponse>>;
+}
+
+interface CachedResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: Buffer;
 }
 
 async function openHarness(): Promise<Harness> {
   const app = Fastify({ logger: false });
   const harness: Harness = {
-    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, heldDesk: null, heldAct: null, isListDown: false, moreCursor: null, uploads: 0, scanReadIds: [],
+    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, heldDesk: null, heldAct: null, isListDown: false, moreCursor: null, uploads: 0, scanReadIds: [], responseByUrl: new Map(),
   };
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   registerFixtureRoutes(app, harness);
@@ -734,7 +742,7 @@ function isOrderBefore(order: { at: bigint; id: bigint }, bound: { at: bigint; i
  */
 async function openQueuePage(harness: Harness, viewport: Viewport, readyText: string, isClockDriven = false, scale = 1): Promise<Page> {
   const { isMobile = false, ...size } = viewport;
-  const page = await harness.browser.newPage({ viewport: size, deviceScaleFactor: scale, isMobile, hasTouch: isMobile });
+  const page = await createPage(harness, { viewport: size, deviceScaleFactor: scale, isMobile, hasTouch: isMobile });
   // tsx keeps function names through an injected __name helper → the evaluated fact readers need it on the page
   await page.addInitScript("globalThis.__name = (fn) => fn");
   await (isClockDriven ? page.clock.install({ time: FIXTURE_NOW }) : page.clock.setFixedTime(FIXTURE_NOW));
@@ -742,6 +750,35 @@ async function openQueuePage(harness: Harness, viewport: Viewport, readyText: st
   await page.getByText(readyText).first().waitFor({ timeout: READY_TIMEOUT_MS });
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
   return page;
+}
+
+/**
+ * A fresh page whose CDN reads replay the harness's first fetch of each URL.
+ * Each page is its own browser context with an empty HTTP cache → unreplayed, every one of the file's pages re-downloads
+ * index.html's scripts and the web fonts, and the file outgrows the CI job's time.
+ */
+async function createPage(harness: Harness, options: Parameters<Browser["newPage"]>[0]): Promise<Page> {
+  const page = await harness.browser.newPage(options);
+  await page.route(/^https:\/\//, async (route) => {
+    const url = route.request().url();
+    const response = harness.responseByUrl.get(url) ?? getResponse(route, harness.responseByUrl);
+    try {
+      await route.fulfill(await response);
+    } catch (error) {
+      // a page closed while its read is in flight → nothing left to answer
+      if (!page.isClosed()) throw error;
+    }
+  });
+  return page;
+}
+
+// a failed fetch leaves no entry → the next page fetches the URL again
+function getResponse(route: Route, responseByUrl: Map<string, Promise<CachedResponse>>): Promise<CachedResponse> {
+  const url = route.request().url();
+  const response = route.fetch().then(async (fetched) => ({ status: fetched.status(), headers: fetched.headers(), body: await fetched.body() }));
+  responseByUrl.set(url, response);
+  response.catch(() => responseByUrl.delete(url));
+  return response;
 }
 
 const PARTLY_REDACTED_LINE = "✕ 1 of 2 copies was not redacted. Redact text again.";
@@ -1294,7 +1331,7 @@ async function readFirstLoad<T>(harness: Harness, viewport: Viewport, read: (pag
   const held = new Promise<void>((resolve) => { release = resolve; });
   harness.heldRead = held;
   harness.heldDesk = held;
-  const page = await harness.browser.newPage({ viewport });
+  const page = await createPage(harness, { viewport });
   try {
     await page.clock.setFixedTime(FIXTURE_NOW);
     await page.goto(`${harness.url}/#queue`, { waitUntil: "load" });
