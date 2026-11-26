@@ -1938,8 +1938,13 @@ function getNameKeyQ(text) {
 
 // a who as the page draws it, its id beside it where the page's names hold one
 function getPageWhoQ(who, prefix, names) {
-	const idPrefix = names?.get(prefix)?.idPrefix;
+	const idPrefix = getPageIdQ(prefix, names);
 	return idPrefix === undefined ? who : { ...who, idPrefix };
+}
+
+// the id the page's names hold for a prefix (getPageNamesQ); undefined where its name is mistaken for no other
+function getPageIdQ(prefix, names) {
+	return names?.get(prefix)?.idPrefix;
 }
 
 function getSessionPrefixQ(session) {
@@ -2452,7 +2457,7 @@ function SheetHeadQ({ queue, children }) {
 function getNameNoteQ(session, queue, names) {
 	const items = queue.list.data?.items ?? [];
 	const isManyAccounts = new Set(items.map((item) => item.session.profileLabel)).size > 1;
-	return { idPrefix: names.get(getSessionPrefixQ(session))?.idPrefix, account: (isManyAccounts && session.profileLabel) || undefined };
+	return { idPrefix: getPageIdQ(getSessionPrefixQ(session), names), account: (isManyAccounts && session.profileLabel) || undefined };
 }
 
 // the head's h2 content: read as `Decision from gersona`; the session's account, directory and id ride its title ·
@@ -3478,7 +3483,7 @@ function SessionRailRowQ({ row, view, sessions }) {
 	const state = getRailStateQ(row, view.notReceived.get(row.id) ?? 0);
 	const lineId = `queue-rail-line-${row.id}`;
 	const Row = row.isSelectable ? "label" : "div";
-	const { idPrefix } = view.names.get(row.sessionIdPrefix) ?? {};
+	const idPrefix = getPageIdQ(row.sessionIdPrefix, view.names);
 	// the id can cut the name to nothing → the title leads with it whole
 	const named = idPrefix === undefined ? "" : `${row.name} · ${idPrefix}\n`;
 	return (
@@ -3833,7 +3838,7 @@ function getOrderTextQ(item) {
 // the session name and its receipt, and nothing else; Resend only where the queue names it (canResend); a refused resend says why under the row
 function RecipientRowQ({ copy, pageNames = null, busy, onResend }) {
 	const { formatKstTime, MachineString } = window.UI;
-	const { idPrefix } = getPageWhoQ({}, getSessionPrefixQ(copy.session), pageNames);
+	const idPrefix = getPageIdQ(getSessionPrefixQ(copy.session), pageNames);
 	const receipt = getReceiptQ(copy);
 	const time = receipt === "received" && copy.deliveredAt ? [{ text: formatKstTime(copy.deliveredAt) }] : [];
 	const refusal = busy?.error?.id === copy.id ? busy.error.message : null;
@@ -4307,9 +4312,8 @@ function getRelayRefusalLineQ(reason, names) {
  * nothing arrived, so the standing line keeps its no-login sentence alone, and the foot only says when.
  */
 function RefusedSheetQ({ refusal, queue }) {
-	const { TONE_GLYPH } = window.UI;
+	const { TONE_GLYPH, NoWrap } = window.UI;
 	const names = getPageNamesQ(queue);
-	const { NoWrap } = window.UI;
 	const { who, toWho } = getRefusalEndsQ(refusal, names);
 	const line = getRelayRefusalLineQ(refusal.reason, { sender: getUnmarkedLabelQ(who), recipient: getUnmarkedLabelQ(toWho) });
 	return (
@@ -4406,8 +4410,8 @@ function getSessionWhoQ(session) {
 }
 
 // a name the session wrote is marked as its own wherever it is painted, never read as the queue's fact; its id follows where it could be mistaken
-function getWhoLabelQ({ name, isSelfNamed, idPrefix }) {
-	return `${name}${isSelfNamed ? " (self-named)" : ""}${idPrefix === undefined ? "" : ` · ${idPrefix}`}`;
+function getWhoLabelQ(who) {
+	return `${who.name}${who.isSelfNamed ? " (self-named)" : ""}${getIdTailQ(who)}`;
 }
 
 // a name inside the page's own sentence: the mark is the head's and the rows', its id kept where the page's names hold one
