@@ -117,8 +117,21 @@ jobs:
 
       # Refuse a stale manifest: version + per-file hashes + file list must match
       # the tracked tree (generate-manifest.sh --check, exit 1 on any drift).
-      - name: Verify manifest integrity (--check)
-        run: ./scripts/generate-manifest.sh --check
+      # HEAD is the tagged commit, so --check's own HEAD reference sees no dropped
+      # retired key here: the nearest earlier v* tag holds the map consumers last
+      # received, and a first release has none.
+      - name: Verify manifest integrity (--check against the last release)
+        env:
+          RUNNER_TMP: ${{ runner.temp }}
+        run: |
+          tags="$(git tag --list 'v*' --merged "${GITHUB_SHA}^" --sort=-v:refname)"
+          previous="${tags%%$'\n'*}"
+          if [[ -z "${previous}" ]]; then
+            ./scripts/generate-manifest.sh --check
+          else
+            git show "${previous}:manifest.json" >"${RUNNER_TMP}/last-release-manifest.json"
+            ./scripts/generate-manifest.sh --check --reference "${RUNNER_TMP}/last-release-manifest.json"
+          fi
 
       # The pushed tag MUST equal v<manifest.version> so the release version of
       # record cannot drift from the asset it ships.

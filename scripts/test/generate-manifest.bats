@@ -699,9 +699,21 @@ drop_lib_a_from_current_retired() {
   mv -f "${MANIFEST}.tmp" "${MANIFEST}"
 }
 
-@test "--check: a retired key dropped from the committed map stays invisible without a reference" {
+@test "--check: exit 1 names a retired key the working map dropped from HEAD's committed map" {
   retire_lib_a_into_reference
+  git -C "${WORK}" add manifest.json
+  git -C "${WORK}" commit -qm retire-a
   drop_lib_a_from_current_retired
+  run "${SCRIPT}" --check
+  [[ "${status}" -eq 1 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"RETIRED-DROPPED (1):"* ]] || return 1
+  [[ "${output}" == *"- scripts/lib/a.sh"* ]] || return 1
+}
+
+@test "--check: exit 0 when HEAD carries no committed manifest to hold the map to" {
+  "${SCRIPT}" >/dev/null
+  git -C "${WORK}" rm -q --cached manifest.json
+  git -C "${WORK}" commit -qm untrack-manifest
   run "${SCRIPT}" --check
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
 }
