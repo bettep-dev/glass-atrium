@@ -11,8 +11,8 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerCostRoutes } from "../src/server/routes/cost.js";
-import { computeBucketTzToday, registerDashboardRoutes } from "../src/server/routes/dashboard.js";
-import { DAY_BUCKET_TIMEZONE } from "../src/server/timezone.js";
+import { registerDashboardRoutes } from "../src/server/routes/dashboard.js";
+import { computeBucketTzToday, DAY_BUCKET_TIMEZONE } from "../src/server/timezone.js";
 
 let app: FastifyInstance;
 
@@ -431,6 +431,8 @@ test("GET /api/cost/turn-stats: stop_reason_session_count is the distinct sessio
 // One priced event on each side of both 30-day window edges; a model per day names the day in by-model.
 const EDGE_SESSION = `window-edge-${process.pid}`;
 const EDGE_MODEL_PREFIX = `edge-model-${process.pid}:`;
+// a stop reason only the seeded session carries → its turn-stats bucket holds the seeded events alone
+const EDGE_STOP_REASON = `edge-stop-${process.pid}`;
 const EDGE_OFFSETS = [-30, -29, 0, 1];
 // 00:30 in Seoul, still the previous day in UTC → the bucket-tz today and the UTC CURRENT_DATE differ
 const EDGE_NOW = Date.parse("2026-07-17T15:30:00Z");
@@ -445,7 +447,7 @@ async function seedEdgeEvents(): Promise<void> {
          cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms, num_turns,
          stop_reason, model, parse_error)
       VALUES (${addDays(EDGE_TODAY, offset)}::date, '00:10:00', ${EDGE_SESSION}, 'turn',
-              ${`${EDGE_SESSION}:${offset}`}, 10, 10, 0, 0, 1.25, 0, 1, 'end_turn',
+              ${`${EDGE_SESSION}:${offset}`}, 10, 10, 0, 0, 1.25, 0, 1, ${EDGE_STOP_REASON},
               ${`${EDGE_MODEL_PREFIX}${offset}`}, false)
     `;
   }
@@ -509,12 +511,29 @@ for (const row of [
   });
 }
 
-test("GET /api/cost/session-distribution counts a session's events on both edge days and none outside them", async (t) => {
-  await seedEdgeEvents();
-  t.after(clearEdgeEvents);
-  const [distribution] = (await getAtEdgeNow(t, ["/api/cost/session-distribution?days=30"])) as [
-    { rows: Array<{ session_id: string; event_count: number }> },
-  ];
-  const seeded = distribution.rows.find((session) => session.session_id === EDGE_SESSION);
-  assert.strictEqual(seeded?.event_count, 2);
-});
+// each body is that route's JSON payload → the cast names only the fields its row reads
+for (const row of [
+  {
+    name: "session-distribution",
+    url: "/api/cost/session-distribution?days=30",
+    getSeededCount: (body: unknown): number | undefined =>
+      (body as { rows: Array<{ session_id: string; event_count: number }> }).rows.find(
+        (session) => session.session_id === EDGE_SESSION,
+      )?.event_count,
+  },
+  {
+    name: "turn-stats",
+    url: "/api/cost/turn-stats?days=30",
+    getSeededCount: (body: unknown): number | undefined =>
+      (body as { stop_reasons: Array<{ stop_reason: string; event_count: number }> }).stop_reasons.find(
+        (bucket) => bucket.stop_reason === EDGE_STOP_REASON,
+      )?.event_count,
+  },
+]) {
+  test(`GET /api/cost/${row.name} counts a session's events on both edge days and none outside them`, async (t) => {
+    await seedEdgeEvents();
+    t.after(clearEdgeEvents);
+    const [body] = await getAtEdgeNow(t, [row.url]);
+    assert.strictEqual(row.getSeededCount(body), 2);
+  });
+}
