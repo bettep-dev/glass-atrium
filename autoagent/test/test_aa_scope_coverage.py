@@ -281,7 +281,6 @@ _DATA_HANDOFFS = {
     ),
     "hooks/agent-tracker.sh": (
         ('TIMESTAMP="${TIMESTAMP}"', "the event timestamp"),
-        ("IFS=$'\\t'", "a tab field separator for read"),
     ),
     "hooks/advisory-subagent-budget.sh": tuple(
         (f'{name}="${{{value}}}"', "a field of the overage row")
@@ -651,6 +650,23 @@ _REDIRECT = re.compile(r"^\d*(?:&>>?|[<>]{1,3})&?\d*")
 _VARIABLE_REF = re.compile(
     r"\$\{([A-Za-z_]\w*)(?:\[0\])?(%/\*|:-[^}]*)?\}|\$([A-Za-z_]\w*|0)(?![\w\[])"
 )
+# a whole word in bash ANSI-C quoting: a literal, its backslash escapes decoded
+_ANSI_C_WORD = re.compile(r"\$'((?:[^'\\]|\\.)*)'", re.S)
+_ANSI_C_ESCAPE = re.compile(
+    r"\\(?:x(?P<hex>[0-9A-Fa-f]{1,2})|u(?P<unicode>[0-9A-Fa-f]{1,4})|(?P<octal>[0-7]{1,3})"
+    r"|c(?P<control>[^\\])|(?P<letter>[abeEfnrtv?'\"]))"
+)
+_ANSI_C_LETTERS = {
+    "a": "\a",
+    "b": "\b",
+    "e": "\x1b",
+    "E": "\x1b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "v": "\v",
+}
 
 
 class Heredoc(NamedTuple):
@@ -884,6 +900,9 @@ class _ShellScope:
         if self_dir:
             tail = (self_dir.group("tail") or "").lstrip("/")
             return _join(posixpath.dirname(self.path), tail)
+        ansi_c = _ANSI_C_WORD.fullmatch(word)
+        if ansi_c:
+            return _get_ansi_c_text(ansi_c.group(1))
         if "$(" in word or "`" in word:
             return None
         value = self._substitute(word.replace('"', "").replace("'", ""), seen)
@@ -903,6 +922,23 @@ class _ShellScope:
             cursor = match.end()
         out += text[cursor:]
         return None if "$" in out else out
+
+
+def _get_ansi_c_text(body: str) -> str | None:
+    """A ``$'…'`` word's literal text; a backslash left after decoding leaves it unread."""
+    text = _ANSI_C_ESCAPE.sub(_get_ansi_c_char, body)
+    return None if "\\" in text else text
+
+
+def _get_ansi_c_char(match: re.Match[str]) -> str:
+    digits = match["hex"] or match["unicode"]
+    if digits:
+        return chr(int(digits, 16))
+    if match["octal"]:
+        return chr(int(match["octal"], 8) & 0xFF)  # bash keeps the low byte of \400-\777
+    if match["control"]:
+        return chr(ord(match["control"]) & 0x1F)
+    return _ANSI_C_LETTERS.get(match["letter"], match["letter"])
 
 
 def _get_shell_edges(path: str) -> list[Edge]:
@@ -1698,6 +1734,17 @@ _HANDOFF_ROWS = (
         [('D="${HOME}/.glass-atrium/hooks/lib"', None)],
     ),
     ("a data path outside the tree", 'export F="${HOME}/.glass-atrium/data/x.json"', []),
+    ("an ANSI-C quoted separator", "IFS=$'\\x1f' read -r a b", []),
+    (
+        "an ANSI-C quoted code path its escapes spell",
+        "export LIB=$'hooks\\x2flib\\057style_ref_match.py'",
+        [("LIB=$'hooks\\x2flib\\057style_ref_match.py'", "hooks/lib/style_ref_match.py")],
+    ),
+    (
+        "an ANSI-C escape the row does not decode",
+        "export A=$'\\U0001F600'",
+        [("A=$'\\U0001F600'", None)],
+    ),
     ("a plain word value", "LC_ALL=C sort", []),
     ("set -a exports every later assignment", "set -a", [("set -a", None)]),
     ("set -o allexport", "set -o allexport", [("set -o allexport", None)]),
@@ -1802,7 +1849,11 @@ _HANDOFF_ROWS = (
     ),
     ("env operand with a quoted name", 'env "A"=$(pick) ./run.sh', [('"A"=$(pick)', None)]),
     ("env operand with an escaped =", "env A\\=$(pick) ./run.sh", [("A\\=$(pick)", None)]),
-    ("env operand in ANSI-C quotes", "env $'A=1' ./run.sh", [("env $'A=1'", None)]),
+    (
+        "env operand in ANSI-C quotes",
+        "env $'LIB=hooks/lib/style_ref_match.py' ./run.sh",
+        [("env $'LIB=hooks/lib/style_ref_match.py'", "hooks/lib/style_ref_match.py")],
+    ),
     ("export operand quoted whole", f'export "A=$(pick)"', [('"A=$(pick)"', None)]),
     (
         "export operand single-quoted code path",
