@@ -74,7 +74,8 @@ else:
     text = get_scanned_field(d)
 sys.stdout.buffer.write(text.encode("utf-8"))'
 # payload on stdin, rule then the 1-based lines to approve as arguments → the consume body, the register body, the
-# hashes joined by commas; exit 65 no session_id, 66 a target path with no real parent directory
+# hashes joined by commas; exit 65 no session_id, 66 a target path with no real parent directory, 67 a line that is not
+# one of the text's (an index not a decimal from 1 to the line count → lines[-1] would bind another line)
 readonly APPROVAL_BODIES_PY='import json, os, sys
 d = json.load(sys.stdin)
 session = d.get("session_id")
@@ -85,7 +86,10 @@ if not isinstance(path, str) or not os.path.isabs(path) or not os.path.isdir(os.
     sys.exit(66)
 path = os.path.realpath(path)
 lines = get_lines(get_scanned_field(d).encode("utf-8"))
-picked = [lines[int(index) - 1] for index in sys.argv[2:]]
+indexes = sys.argv[2:]
+if not all(index.isascii() and index.isdigit() and 1 <= int(index) <= len(lines) for index in indexes):
+    sys.exit(67)
+picked = [lines[int(index) - 1] for index in indexes]
 hashes = [get_line_hash(line) for line in picked]
 agent = {key: d.get(field) if isinstance(d.get(field), str) else "" for key, field in (("id", "agent_id"), ("type", "agent_type"))}
 target = {"sessionId": session, "path": path, "rule": sys.argv[1]}
@@ -236,6 +240,7 @@ get_approval_outcome() {
     0) ;;
     65) printf 'cause\tthe hook payload carries no session_id\n' && return 0 ;;
     66) printf 'cause\tthe target path has no real parent directory\n' && return 0 ;;
+    67) printf 'cause\tthe scanner listed a line this write does not hold\n' && return 0 ;;
     *) printf 'cause\tthe approval request could not be built\n' && return 0 ;;
   esac
   # shellcheck disable=SC2310  # queue_send fails only with no reply at all → a cause, never an errexit

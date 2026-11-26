@@ -209,14 +209,14 @@ print(json.dumps(get_value(json.load(sys.stdin))))'
   done
 }
 
-# Each row's text on its own line after a CRLF filler line, then one line carrying two classes and an invalid
+# Each row's text on its own line after a filler line holding every line break but LF (VT, FF, NEL, U+2028, CRLF), then one line carrying two classes and an invalid
 # UTF-8 byte (GNU grep's binary-file notice would replace its rows). Sets LIST_TEXT and LIST_EXPECTED, the sorted
 # "<line index>\t<code>" rows the list-all entry owes.
 set_list_fixture() {
   local i line=0
   LIST_TEXT="" LIST_EXPECTED=""
   for i in "${!ROW_NAMES[@]}"; do
-    LIST_TEXT+="export const filler = ${i}"$'\r\n'"${ROW_TEXTS[${i}]}"$'\n'
+    LIST_TEXT+="export const filler = ${i}"$'\v\f\xc2\x85\xe2\x80\xa8\r\n'"${ROW_TEXTS[${i}]}"$'\n'
     line=$((line + 2))
     LIST_EXPECTED+="${line}"$'\t'"${ROW_CODES[${i}]}"$'\n'
   done
@@ -312,12 +312,17 @@ set_list_fixture() {
   [[ "${status}" -ne "${SCAN_CLEAN}" && "${status}" -ne "${SCAN_MATCH}" ]] || { echo "status ${status}: ${output}"; return 1; }
 }
 
-# A hook copy beside a scanner stand-in. Args: $1=layout root · $2=stand-in body, or "" for no scanner file.
+# A hook copy and its approval libraries beside a scanner stand-in. Args: $1=layout root · $2=stand-in body, or "" for no scanner file.
 make_hook_layout() {
-  local root="${1}"
+  local root="${1}" lib
   mkdir -p "${root}/hooks/lib" "${root}/scripts/lib"
   cp "${HOOK_SH}" "${BATS_TEST_DIRNAME}/../hook-utils.sh" "${root}/hooks/"
-  cp "${BATS_TEST_DIRNAME}/../lib/pipe-drain.sh" "${root}/hooks/lib/"
+  for lib in pipe-drain bounded-wait scan-approval; do
+    cp "${BATS_TEST_DIRNAME}/../lib/${lib}.sh" "${root}/hooks/lib/"
+  done
+  for lib in queue-session atrium-config path-guard; do
+    cp "${BATS_TEST_DIRNAME}/../../scripts/lib/${lib}.sh" "${root}/scripts/lib/"
+  done
   if [[ -n "${2}" ]]; then printf '%s\n' "${2}" >"${root}/scripts/lib/secret-scan.sh"; fi
   printf '%s\n' "${root}/hooks/validate-secret-scan.sh"
 }
@@ -538,11 +543,13 @@ make_path_without() {
   use_monitor_stub
   names=("a reply that is not JSON" "a JSON reply without the decision field" "a pass under HTTP 201"
     "a pass under HTTP 500" "a decision in another case" "a decision with a trailing line break"
-    "a decision that is not a string" "a 409 without the refuse decision" "a pass whose request id is not a UUID")
-  codes=(200 200 201 500 200 200 200 409 200)
+    "a decision that is not a string" "a 409 without the refuse decision" "a pass whose request id is not a UUID"
+    "a pass whose request id has text before a UUID" "a pass whose request id has text after a UUID")
+  codes=(200 200 201 500 200 200 200 409 200 200 200)
   bodies=("decision=pass" "{${pass}}" "{\"decision\":\"pass\",${pass}}" "{\"decision\":\"pass\",${pass}}"
     "{\"decision\":\"Pass\",${pass}}" "{\"decision\":\"pass\\n\",${pass}}" "{\"decision\":true,${pass}}"
-    '{"error":"scan_approval_refused"}' '{"decision":"pass","requestId":"not-a-uuid"}')
+    '{"error":"scan_approval_refused"}' '{"decision":"pass","requestId":"not-a-uuid"}'
+    "{\"decision\":\"pass\",\"requestId\":\"id-${REQUEST_ID}\"}" "{\"decision\":\"pass\",\"requestId\":\"${REQUEST_ID}-1\"}")
   for i in "${!names[@]}"; do
     set_reply "${codes[${i}]}" "${bodies[${i}]}"
     run_hook "$(get_session_envelope "${CRED_FIXTURE}")"
@@ -556,12 +563,15 @@ make_path_without() {
   local names=() codes=() bodies=() causes=() i
   use_monitor_stub
   names=("a hash the monitor computes differently" "a request over the size limit" "the session's request cap"
-    "a reply that is not JSON" "a request id that is not a UUID")
-  codes=(400 422 429 200 200)
+    "a reply that is not JSON" "a request id that is not a UUID" "a request id with text before a UUID"
+    "a request id with text after a UUID")
+  codes=(400 422 429 200 200 200 200)
   bodies=('{"error":"secret_line_hash_mismatch"}' '{"error":"secret_request_size"}' '{"error":"secret_request_cap"}'
-    "request=${REQUEST_ID}" '{"requestId":"not-a-uuid"}')
+    "request=${REQUEST_ID}" '{"requestId":"not-a-uuid"}' "{\"requestId\":\"id-${REQUEST_ID}\"}"
+    "{\"requestId\":\"${REQUEST_ID}-1\"}")
   causes=("HTTP 400, secret_line_hash_mismatch" "HTTP 422, secret_request_size" "HTTP 429, secret_request_cap"
-    "HTTP 200, no readable code" "register reply was malformed")
+    "HTTP 200, no readable code" "register reply was malformed" "register reply was malformed"
+    "register reply was malformed")
   for i in "${!names[@]}"; do
     set_nth_reply $((2 * i + 1)) 409 '{"error":"scan_approval_refused","decision":"refuse"}'
     set_nth_reply $((2 * i + 2)) "${codes[${i}]}" "${bodies[${i}]}"
@@ -590,6 +600,35 @@ make_path_without() {
     check_cause_refusal "${names[${i}]}" "${causes[${i}]}" || return 1
   done
   [[ "$(request_count)" -eq 0 ]] || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
+}
+
+@test "a scanner line list naming a line the write does not hold refuses the write with one cause line and sends nothing" {
+  local names=() indexes=() i hook
+  use_monitor_stub
+  names=("index 0" "a negative index" "an index past the last line" "an index that is not a number")
+  indexes=(0 -1 2 one)
+  for i in "${!names[@]}"; do
+    hook="$(make_hook_layout "${BATS_TEST_TMPDIR}/install-${i}" "cat >/dev/null
+if [[ \"\${1:-}\" == ${SCAN_LIST_FLAG} ]]; then printf '%s\tSEC-013\n' '${indexes[${i}]}'
+else printf 'SEC-013\tGeneric credential assignment\n'; fi
+exit ${SCAN_MATCH}")"
+    run bash "${hook}" <<<"$(get_session_envelope "${CRED_FIXTURE}")"
+    check_cause_refusal "${names[${i}]}" "the scanner listed a line this write does not hold" || return 1
+  done
+  [[ "$(request_count)" -eq 0 ]] || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
+}
+
+# The bounded wait stands in as a step that wrote a well-formed pass line before its deadline came.
+@test "a step that ends at the deadline refuses the write even when its output already holds a pass line" {
+  use_monitor_stub
+  eval "run_with_deadline() {
+    printf 'pass\t%s\t%s\n' '${REQUEST_ID}' '$(get_hash "${CRED_FIXTURE}")'
+    return 124
+  }"
+  export -f run_with_deadline
+  export _BOUNDED_WAIT_LOADED=1 DEADLINE_STATUS=124
+  run_hook "$(get_session_envelope "${CRED_FIXTURE}")"
+  check_cause_refusal "a pass line printed before the deadline" "deadline" || return 1
 }
 
 # Another session's, another path's or an expired approval is the monitor's refusal (its store pins each); the hook's
