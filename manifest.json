@@ -1,5 +1,5 @@
 {
-  "version": "1.0.4",
+  "version": "1.0.5",
   "files": [
     "LICENSE",
     "LICENSES-THIRD-PARTY.md",
@@ -1874,7 +1874,7 @@
     "scripts/fixtures/retired-seed.json": "503e3c79ef2d972a3b382df3fdffd861719621d7b86639cc88f3a864e16c1fa7",
     "scripts/ga-trash-purge.sh": "5fa15c10c2298b1f464505a9fa2ee8ea566ec2ac1c7fccde264544fcc631276b",
     "scripts/gate-audit.sh": "d18af6af7f6f6742dd9e58b0f36c3f07391980bb383b5fb841ff5a044e66dff6",
-    "scripts/generate-manifest.sh": "9f2dfd2e1a47dc803a8919fa43d1ef0ff4494a6a3375628da30be79a4e26cc77",
+    "scripts/generate-manifest.sh": "c925ced015e313586cb7400223482f0aa7331752b6351fef03996f698c14890e",
     "scripts/init-test-repos.sh": "01042b12ec3ef320a108a7dc38b8f8d17b3df6f7e35574e9e93369c002e1aa03",
     "scripts/lib/apply-lock.sh": "2de590e75922a7dc8b4e683a634f3e1f506f815eeb130f1878fdba506ae49db9",
     "scripts/lib/apply-spine.sh": "d32cafeae2629ad52dadfc8d1bf878dbfe3bfef09bee260e6199e843ab9abfc8",
