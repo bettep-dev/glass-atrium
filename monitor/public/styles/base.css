@@ -1238,6 +1238,21 @@ label.ctl-checkbox-hit {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+/* a decision's or report's head: its name cut first, the page's (self-named) beside it whole; pre keeps each part's leading space */
+.queue-letter-name:has(> .queue-letter-text) {
+	display: flex;
+}
+.queue-letter-text,
+.queue-letter-note {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: pre;
+}
+.queue-letter-self {
+	flex: none;
+	white-space: pre;
+}
 .queue-steps {
 	flex: none;
 	display: flex;
@@ -1283,10 +1298,12 @@ label.ctl-checkbox-hit {
 .queue-sheet .card-title {
 	font-size: var(--fs-control);
 }
+/* never wider than the head's title → the name inside it is what gives way */
 .queue-letter {
 	display: inline-flex;
 	align-items: center;
 	gap: var(--space-2);
+	max-width: 100%;
 }
 .queue-sheet > .card-body {
 	padding: var(--space-4) var(--card-pad) var(--space-8);

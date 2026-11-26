@@ -872,6 +872,11 @@ function getSelfNamedFixture(fixture: QueueFixture, id: number, selfDeclaredName
   return { ...fixture, items: fixture.items.map((item) => (item.id === id && item.relay !== null ? { ...item, relay: { ...item.relay, sender: { ...item.relay.sender, selfDeclaredName } } } : item)) };
 }
 
+// every decision and report from the named session under the name its start directory gives, as for a session that registered none
+function getStartDirectoryFixture(fixture: QueueFixture, name: string): QueueFixture {
+  return { ...fixture, items: fixture.items.map((item) => (item.kind !== "relay" && item.session.name === name ? { ...item, session: { ...item.session, isNameRegistered: false } } : item)) };
+}
+
 async function tickSessions(page: Page, names: string[]): Promise<void> {
   for (const name of names) await page.getByLabel(`Select ${name}`).check();
 }
@@ -1844,10 +1849,10 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(heights.filter((row) => !row.isRowHeight), []);
   });
 
-  // one sender reads as one name on every row; a self-declared name's mark stands whole beside it, outside the cut, its words in the tooltips;
+  // one sender reads as one name on every row; a name the session wrote takes the mark whole beside it, outside the cut, its words in the tooltips;
   // the fixture's longest name, nine letters, self-named on relay 421 → name and mark still whole in the name column, every title on one x
-  test("a sender's name paints the same on its decision, refused and relay rows at 1280, 1440 and 1568, and only a self-named relay row adds the whole self mark, a nine-letter name whole beside it and every title on one x", async () => {
-    harness.fixture = getSelfNamedFixture(getRelayListFixture(true), RELAY_ROW_IDS.one, "portfolio");
+  test("a sender's name paints the same on its decision, refused and relay rows at 1280, 1440 and 1568, and every self-named row of any kind adds the whole self mark, a nine-letter name whole beside it and every title on one x", async () => {
+    harness.fixture = getStartDirectoryFixture(getSelfNamedFixture(getRelayListFixture(true), RELAY_ROW_IDS.one, "portfolio"), "aidl");
     const shown = [];
     for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
       const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
@@ -1870,7 +1875,7 @@ describe("queue page on the mockup fixtures", () => {
     }
 
     const byName = shown.flatMap(({ width, rows }) => [...new Set(rows.map((row) => row.name))].map((name) => ({ width, name, painted: [...new Set(rows.filter((row) => row.name === name).map((row) => row.painted))] })));
-    assert.ok(shown.every(({ rows }) => rows.some((row) => row.name === "portfolio" && row.isSelfNamed) && rows.some((row) => !row.isSelfNamed)), "each width paints the self-named nine-letter name and recorded names");
+    assert.ok(shown.every(({ rows }) => rows.some((row) => row.name === "portfolio" && row.isSelfNamed) && rows.some((row) => row.name === "aidl" && !row.isSelfNamed)), "each width paints the self-named nine-letter name and a start-directory name");
     assert.deepEqual(shown.map(({ width, rows }) => ({ width, titleAts: new Set(rows.map((row) => row.titleAt)).size })), shown.map(({ width }) => ({ width, titleAts: 1 })), "every title on one x");
     assert.deepEqual(byName.filter(({ painted }) => painted.length > 1 || painted[0] === "cut"), [], "a sender's name paints whole and alike on every row");
     assert.deepEqual(
@@ -3697,7 +3702,60 @@ describe("queue page on the mockup fixtures", () => {
       const name = await page.evaluate(() => document.querySelector(".queue-letter [title]")?.textContent);
       await page.close();
 
-      assert.equal(name, `atrium · ${EDGE_SESSION_IDS.twin.slice(0, 8)}`);
+      assert.equal(name, `atrium (self-named) · ${EDGE_SESSION_IDS.twin.slice(0, 8)}`);
+    });
+
+    // the registered 100-character name cut in the 104 column, the page's mark whole beside it; a start directory's name never marked
+    test("at 1280 a decision or report row from a registered name cuts the name and paints its self mark whole, and a start-directory row paints none", async () => {
+      harness.fixture = getNameColumnFixture();
+      const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+      const shown = await page.evaluate((longName) => [longName, "atrium-hooks"].map((named) => {
+        const name = [...document.querySelectorAll<HTMLElement>(".queue-row-who .queue-row-name")].find((one) => one.title.startsWith(named))!;
+        const who = name.closest(".queue-row-who")!.getBoundingClientRect();
+        const mark = name.parentElement!.querySelector<HTMLElement>(".queue-row-mark");
+        const markBox = mark?.getBoundingClientRect();
+        const label = name.closest(".queue-row")!.getAttribute("aria-label")!;
+        return {
+          isNameCut: name.scrollWidth > name.clientWidth,
+          mark: mark === null ? null : { text: mark.textContent, isWhole: mark.scrollWidth <= mark.clientWidth && markBox!.left >= name.getBoundingClientRect().right - 0.5 && markBox!.right <= who.right + 0.5 },
+          label: [label.includes(`from ${named} (self-named): `), label.includes(", start directory")],
+        };
+      }), EDGE_LONG_SESSION_NAME);
+      await page.close();
+
+      assert.deepEqual(shown, [
+        { isNameCut: true, mark: { text: "self", isWhole: true }, label: [true, false] },
+        { isNameCut: false, mark: null, label: [false, true] },
+      ]);
+    });
+
+    // the head is where the owner answers → a registered name's (self-named) is the page's own element, whole while the name is cut
+    test("at 1280 the sheet head of a registered 100-character name cuts the name and keeps its (self-named) whole, and a start-directory head reads start directory with none", async () => {
+      harness.fixture = getNameColumnFixture();
+      const heads = [];
+      for (const named of [EDGE_LONG_SESSION_NAME, "atrium-hooks"]) {
+        const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+        await page.locator(".queue-row-who .queue-row-name", { hasText: named.slice(0, 12) }).first().click();
+        await page.locator(".queue-sheet .queue-letter-text", { hasText: named.slice(0, 12) }).waitFor();
+        heads.push(await page.evaluate(() => {
+          const head = document.querySelector<HTMLElement>(".queue-sheet .queue-letter-name")!.getBoundingClientRect();
+          const name = document.querySelector<HTMLElement>(".queue-sheet .queue-letter-text")!;
+          const self = document.querySelector<HTMLElement>(".queue-sheet .queue-letter-self");
+          const selfBox = self?.getBoundingClientRect();
+                    return {
+            isNameCut: name.scrollWidth > name.clientWidth,
+            isStartDirectory: name.textContent!.endsWith(" start directory"),
+            self: self === null ? null : { text: self.textContent, isOutsideName: !name.contains(self), isWhole: self.scrollWidth <= self.clientWidth && selfBox!.right <= head.right + 0.5 && selfBox!.width > 0 },
+          };
+        }));
+        await page.close();
+      }
+
+      const [registered, startDirectory] = heads;
+      assert.deepEqual(
+        [registered, { isStartDirectory: startDirectory?.isStartDirectory, self: startDirectory?.self }],
+        [{ isNameCut: true, isStartDirectory: false, self: { text: " (self-named)", isOutsideName: true, isWhole: true } }, { isStartDirectory: true, self: null }],
+      );
     });
 
     test("a 100-character session name stays on one cut line, its rail row 44 high and inside the rail", async () => {

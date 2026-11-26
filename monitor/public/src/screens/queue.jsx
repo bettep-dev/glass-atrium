@@ -1804,9 +1804,9 @@ function QueueGroupQ({ group, queue, view }) {
 	);
 }
 
-// a refusal holds id prefixes alone → names from the loaded relays and the rail's rows (layout §1); a name the queue records outranks one the peer wrote
+// a refusal holds id prefixes alone → names from the loaded relays and the rail's rows (layout §1); every source reads one name column, the rail's read last
 function getRefusalNamesQ(queue) {
-	const rail = (queue.sessions.region.data?.sessions ?? []).map((session) => [session.sessionIdPrefix, { name: session.name, isSelfNamed: false }]);
+	const rail = (queue.sessions.region.data?.sessions ?? []).map((session) => [session.sessionIdPrefix, getSessionWhoQ(session)]);
 	return new Map([...getRelayNamesQ(queue.relays.thread.items), ...rail]);
 }
 
@@ -1847,22 +1847,23 @@ function QueueRowQ({ row, names = null, isSelected, isNew = false, cols, view, o
 function getRefusalEndsQ(refusal, names) {
 	const who = getPrefixWhoQ(refusal.senderIdPrefix, names);
 	const sender = getWhoLabelQ(who);
-	const to = getRefusalToQ(refusal, names);
-	return { who, sender, to, reason: getRelayRefusalLineQ(refusal.reason, { sender, recipient: to }).name };
+	const toWho = getRefusalToQ(refusal, names);
+	const to = getWhoLabelQ(toWho);
+	return { who, sender, toWho, to, reason: getRelayRefusalLineQ(refusal.reason, { sender, recipient: to }).name };
 }
 
 function getPrefixWhoQ(prefix, names) {
 	return names.get(prefix) ?? { name: prefix, isSelfNamed: false };
 }
 
-// `yoaida`, `3 sessions`, or with none resolved `1 unknown recipient`
+// `yoaida`, `3 sessions`, or with none resolved `1 unknown recipient` — only one session's own name can be self-named
 function getRefusalToQ(refusal, names) {
 	const [first, ...rest] = refusal.recipientIdPrefixes;
-	if (first === undefined) return `${refusal.unresolvedCount ?? 0} unknown ${refusal.unresolvedCount === 1 ? "recipient" : "recipients"}`;
-	return rest.length > 0 ? `${rest.length + 1} sessions` : getWhoLabelQ(getPrefixWhoQ(first, names));
+	if (first === undefined) return { name: `${refusal.unresolvedCount ?? 0} unknown ${refusal.unresolvedCount === 1 ? "recipient" : "recipients"}`, isSelfNamed: false };
+	return rest.length > 0 ? { name: `${rest.length + 1} sessions`, isSelfNamed: false } : getPrefixWhoQ(first, names);
 }
 
-// one cut line, the whole name in its tooltip · a self-declared name → the page's own mark beside it, outside the cut and the peer's text
+// one cut line, the whole name in its tooltip · a name the session wrote → the page's own mark beside it, outside the cut and the session's text
 function RowWhoQ({ row, names }) {
 	const who = getRowWhoQ(row, names);
 	return (
@@ -1878,10 +1879,11 @@ function getRowNameQ(row, names) {
 	return getWhoLabelQ(getRowWhoQ(row, names));
 }
 
-// the name column: a refusal's or a relay's sender (spec §9.9), else who the item is from or to
+// the name column: a refusal's or a relay's sender (spec §9.9), else who the item is from or to — a send to several names no one session
 function getRowWhoQ(row, names) {
 	if (row.refusal) return getRefusalEndsQ(row.refusal, names).who;
-	return row.item.kind === "relay" ? getSenderWhoQ(row.item.relay.sender) : { name: getCopiesNameQ(row.copies), isSelfNamed: false };
+	if (row.item.kind === "relay") return getSenderWhoQ(row.item.relay.sender);
+	return row.copies.length > 1 ? { name: getCopiesNameQ(row.copies), isSelfNamed: false } : getSessionWhoQ(row.copies[0].session);
 }
 
 // one session's name, or `3 sessions` for a send to several
@@ -1898,8 +1900,8 @@ function getRowTitleQ(row, isNameShown, names) {
 	const { item } = row;
 	const from = isNameShown ? null : <RowWhoQ row={row} names={names} />;
 	if (row.refusal) {
-		const { to, reason } = getRefusalEndsQ(row.refusal, names);
-		return getArrowTitleQ({ from, to, text: reason, isQuiet: true });
+		const { toWho, reason } = getRefusalEndsQ(row.refusal, names);
+		return getArrowTitleQ({ from, to: toWho.name, text: reason, isQuiet: true });
 	}
 	if (item.kind !== "relay") return <span className="queue-row-title" title={item.title}>{item.title}</span>;
 	const isRedacted = item.relay.redaction !== null;
@@ -2309,7 +2311,11 @@ function LetterheadQ({ item, copies = [item], kind, nameNote = "" }) {
 		<span className="queue-letter">
 			<Badge fill="tag">{kind}</Badge>
 			<span className="sr-only">{" from "}</span>
-			<span className="queue-letter-name" title={where}><ItemSessionNameQ session={session} />{nameNote}</span>
+			<span className="queue-letter-name" title={where}>
+				<span className="queue-letter-text"><ItemSessionNameQ session={session} /></span>
+				{getSessionWhoQ(session).isSelfNamed && <span className="queue-letter-self font-normal text-dim">{" (self-named)"}</span>}
+				{nameNote && <span className="queue-letter-note">{nameNote}</span>}
+			</span>
 		</span>
 	);
 }
@@ -4089,10 +4095,10 @@ function useSheetColumnQ(ref) {
 	return place;
 }
 
-// a refusal record holds id prefixes only → the names the loaded relays carry for them, a sender's own name before the copies' session records
+// a refusal record holds id prefixes only → the names the loaded relays carry for them: their senders', then their copies' sessions
 function getRelayNamesQ(items) {
 	const senders = items.filter((item) => item.relay?.sender.selfDeclaredName).map(({ relay: { sender } }) => [sender.sessionIdPrefix, getSenderWhoQ(sender)]);
-	return [...senders, ...items.map(({ session }) => [session.sessionIdPrefix, { name: session.name, isSelfNamed: false }])];
+	return [...senders, ...items.map(({ session }) => [session.sessionIdPrefix, getSessionWhoQ(session)])];
 }
 
 // spec §9.9 → the reason table: the server's codes, the page's words; no sentence holds a limit (the server sets them)
@@ -4213,7 +4219,12 @@ function getSenderLabelQ(sender) {
 	return getWhoLabelQ(getSenderWhoQ(sender));
 }
 
-// a name the peer wrote is marked as its own wherever it is painted, never read as the queue's fact
+// a session's registered name is its own writing (its register sets it, unchecked) → self-named; the start-directory fallback is the page's
+function getSessionWhoQ(session) {
+	return { name: session.name, isSelfNamed: session.isNameRegistered === true };
+}
+
+// a name the session wrote is marked as its own wherever it is painted, never read as the queue's fact
 function getWhoLabelQ({ name, isSelfNamed }) {
 	return isSelfNamed ? `${name} (self-named)` : name;
 }
