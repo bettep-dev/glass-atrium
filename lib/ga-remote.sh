@@ -333,14 +333,19 @@ ga_remote_main() {
 
 ga_remote_is_terminal() { [[ -t 0 && -t 1 ]]; }
 
+# <word> → 0 on an interactive terminal; otherwise the refusal naming <word> is printed and 1 returned.
+ga_remote_require_terminal() {
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_remote_is_terminal; then return 0; fi
+  printf "remote: '%s' needs an interactive terminal — refused, nothing changed\n" "$1" >&2
+  return 1
+}
+
 # A typed confirmation word on an interactive terminal; there is no skip flag.
 ga_remote_require_confirmation() {
   local word="$1" prompt="$2" answer
-  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
-  if ! ga_remote_is_terminal; then
-    printf "remote: '%s' needs an interactive terminal — refused, nothing changed\n" "${word}" >&2
-    return 1
-  fi
+  # shellcheck disable=SC2310  # verdict branched on — the refusal is already printed
+  ga_remote_require_terminal "${word}" || return 1
   printf '%s' "${prompt}"
   IFS= read -r answer || answer=""
   [[ "${answer}" == "${word}" ]] && return 0
@@ -486,6 +491,9 @@ ga_remote_get_trust_identity() {
 # Terminal trust (CLI and install): the identity and what trusting it means, the typed word, then the write step.
 _ga_remote_trust_on_terminal() {
   local identity gateway
+  # the terminal first → a refusal reads no host tool, so it is the same on every host
+  # shellcheck disable=SC2310  # verdict branched on — the refusal is already printed
+  ga_remote_require_terminal trust || return 4
   identity="$(ga_remote_get_trust_identity)" || return
   gateway="${identity#* }"
   gateway="${gateway% *}"

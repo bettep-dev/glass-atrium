@@ -234,6 +234,18 @@ configd_service_for() {
   [[ ! -s "${CALLS}" ]] || return 1
 }
 
+@test "on and trust refuse without a terminal before they read any host tool, whatever the host's network" {
+  # every host tool fails and is logged → a refusal that depends on the host shows a read or another status
+  ga_remote_run() { printf '%s\n' "$1" >>"${CALLS}"; return 1; }
+  local sub
+  for sub in on trust; do
+    run ga_remote_main "${sub}" </dev/null
+    [[ "${status}" -eq 4 && "${output}" == *"'${sub}' needs an interactive terminal"* ]] \
+      || { echo "${sub}: ${status} ${output}"; return 1; }
+  done
+  [[ ! -s "${CALLS}" ]] || { echo "host tools read: $(tr '\n' ' ' <"${CALLS}")"; return 1; }
+}
+
 @test "on creates the keys, writes enabled and the default port owner-only, restarts and prints the device count" {
   start_monitor_stub
   stub_route 'GET /api/remote/cli/devices 200 {"devices":[{"id":"3","label":"phone","createdAt":"2026-11-14T05:20:11.123Z","lastSeenAt":"2026-11-14T06:01:02.456Z"}]}'
