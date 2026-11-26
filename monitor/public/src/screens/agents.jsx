@@ -1620,9 +1620,7 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, onRetry }) {
 
   return (
     <div className="space-y-block">
-      {/* 식별(이름·뱃지·verdict)은 항상-노출 헤더가 단독 소유 — hero 는 고유 KPI 로 직행 (중복 제거 #dup).
-          at-a-glance — success-rate hero(지배 수치, 비대칭 2fr) + health index(축소 보조 1fr).
-          두 박스 동일 DetailMetric chrome 공유 → hero 는 값 크기로만 차별 (#3 twin 통합). */}
+      {/* 식별(이름·뱃지·verdict)은 항상-노출 헤더가 단독 소유 → 본문은 success-rate hero(DetailMetric) 하나로 시작 */}
       <DetailMetric
         label="Success rate"
         tone={successTone}
