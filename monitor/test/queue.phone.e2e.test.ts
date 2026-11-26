@@ -377,16 +377,14 @@ describe("the Queue page on a phone", () => {
     });
   });
 
-  // SR-3b: a view drawing names no mark covers states once, under its head, that names are unchecked — the rail the full sentence, every other such view the short one
-  describe("states once in each view that names are unchecked, under the view's head", () => {
+  // every view and every sheet states once, under its head, that names are unchecked — the rail the full sentence, every other view and every sheet the short one
+  describe("states once in each view and each sheet that names are unchecked, under its head", () => {
     const CLOSE_SHEET = ".queue-sheet-head .queue-back button";
     const PLACES = [
       { name: "list", statement: STATEMENT.SHORT, open: VIEWS[0]!.open, close: async () => undefined },
       { name: "Sessions", statement: STATEMENT.FULL, open: VIEWS[1]!.open, close: (page: Page) => page.locator(".queue-sessions").getByRole("button", BACK).tap() },
       { name: "Orders", statement: STATEMENT.SHORT, open: VIEWS[2]!.open, close: (page: Page) => page.locator(".queue-orders").getByRole("button", BACK).tap() },
-      ...SHEETS.filter((sheet) => ["a relay", "a refused relay", "a decision"].includes(sheet.name)).map((sheet) => ({
-        name: sheet.name, statement: sheet.name === "a decision" ? null : STATEMENT.SHORT, open: (page: Page) => openRowSheet(page, sheet.row, sheet.ready), close: (page: Page) => page.locator(CLOSE_SHEET).tap(),
-      })),
+      ...SHEETS.map((sheet) => ({ name: sheet.name, statement: STATEMENT.SHORT, open: (page: Page) => openRowSheet(page, sheet.row, sheet.ready), close: (page: Page) => page.locator(CLOSE_SHEET).tap() })),
     ];
     // every drawn statement, measured before and after each drawn scroller is scrolled to its end
     const getStatements = (page: Page) => page.evaluate((texts) => {
@@ -407,23 +405,23 @@ describe("the Queue page on a phone", () => {
     const getTreeCount = async (page: Page) => (await page.locator(".queue-screen").ariaSnapshot()).split(STATEMENT.END).length - 1;
 
     for (const viewport of PHONES) {
-      test(`at ${viewport.width} each view drawing an unmarked name shows its one statement whole, plain and fixed, and a decision whose one name is its head shows none`, async () => {
+      test(`at ${viewport.width} each view and each sheet shows its one statement whole, plain and fixed, and the decision's head still marks its name`, async () => {
         harness.fixture = getEveryViewFixture();
         const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
         const shown: Record<string, unknown> = {};
         for (const place of PLACES) {
           await place.open(page);
           shown[place.name] = { statements: await getStatements(page), treeCount: await getTreeCount(page) };
-          if (place.statement === null) shown[`${place.name} head`] = (await page.locator(".queue-sheet-head").textContent())?.includes("(self-named)");
+          if (place.name === "a decision") shown["a decision head"] = (await page.locator(".queue-sheet-head").textContent())?.includes("(self-named)");
           await place.close(page);
         }
         await page.close();
 
         const getExpected = (text: string) => ({ text, element: "p fs-meta text-dim", isWhole: true, isPlain: true, isBetweenHeadAndBody: true, isFixed: true });
-        assert.deepEqual(shown, Object.fromEntries(PLACES.flatMap((place) => [
-          [place.name, place.statement === null ? { statements: [], treeCount: 0 } : { statements: [getExpected(place.statement)], treeCount: 1 }],
-          ...(place.statement === null ? [[`${place.name} head`, true]] : []),
-        ])));
+        assert.deepEqual(shown, {
+          ...Object.fromEntries(PLACES.map((place) => [place.name, { statements: [getExpected(place.statement)], treeCount: 1 }])),
+          "a decision head": true,
+        });
       });
     }
   });

@@ -2722,25 +2722,25 @@ describe("the rail's statement on names", () => {
   }
 });
 
-// SR-3b: a sheet that draws its session's name past its head states once that names are unchecked; a sheet whose one name is its head states nothing
+// every sheet states once, outside its body, that names are unchecked: its foot or body may draw the session's name away from the head's mark
 const SHORT_STATEMENT = "Names are self-written and unchecked. Only the id identifies a session.";
 describe("the sheet's statement on names", () => {
   const relaySender = { sessionIdPrefix: "9d2f4c10", profileLabel: "work", selfDeclaredName: "gersona", cwdTail: "git/gersona" };
   const rows = [
-    { name: "an open decision", item: buildItem(), isNamedInBody: false },
-    { name: "a relay to its recipient", item: buildItem({ kind: "relay", status: "answered", options: [], sendId: "relay-send-7", relay: { hop: 0, parent: null, sender: relaySender, fetchedAt: null, redaction: null, lapsedAt: null } }), isNamedInBody: true },
-    { name: "an answered decision its live session gets at its next turn", item: buildItem({ status: "answered", answeredAt: "2026-11-10T06:20:00.000Z", answer: { code: "R2", text: null }, session: buildSession({ state: "live" }) }), isNamedInBody: true },
-    { name: "a decision its session did not acknowledge", item: buildItem({ status: "unacked", answeredAt: "2026-11-10T06:20:00.000Z", answer: { code: "R2", text: null } }), isNamedInBody: true },
+    { name: "an open decision", item: buildItem(), isDone: false },
+    { name: "a relay to its recipient", item: buildItem({ kind: "relay", status: "answered", options: [], sendId: "relay-send-7", relay: { hop: 0, parent: null, sender: relaySender, fetchedAt: null, redaction: null, lapsedAt: null } }), isDone: false },
+    { name: "an answered decision its live session gets at its next turn", item: buildItem({ status: "answered", answeredAt: "2026-11-10T06:20:00.000Z", answer: { code: "R2", text: null }, session: buildSession({ state: "live" }) }), isDone: false },
+    { name: "a decision under a Done band", item: buildItem({ status: "answered", answeredAt: "2026-11-10T06:20:00.000Z", answer: { code: "R2", text: null } }), isDone: true },
   ];
   for (const row of rows) {
-    test(`${row.name} states it ${row.isNamedInBody ? "once, as a plain line outside the body" : "nowhere"}, as its body ${row.isNamedInBody ? "names" : "does not name"} the session`, () => {
-      const tree = renderSheet({ item: row.item, queue: buildQueue().queue });
+    test(`${row.name} states it once, as a plain line outside the body`, () => {
+      const tree = renderSheet({ item: row.item, queue: buildQueue().queue, isDone: row.isDone });
       const [body] = byClass(tree, "card-body");
       const notes = findNodes(tree, (node) => typeof node.type === "string" && collectText(node) === SHORT_STATEMENT && (node.children ?? []).every((child) => typeof child === "string"));
       const concealed = notes.flatMap((note) => ["aria-hidden", "hidden", "title", "aria-live", "role"].filter((key) => note.props?.[key] !== undefined));
       assert.deepEqual(
-        { isNamedInBody: collectText(body!).includes(row.item.session.name), notes: notes.map((note) => note.type), concealed, isInBody: notes.some((note) => findNodes(body!, (node) => node === note).length > 0) },
-        { isNamedInBody: row.isNamedInBody, notes: row.isNamedInBody ? ["p"] : [], concealed: [], isInBody: false },
+        { notes: notes.map((note) => note.type), concealed, isInBody: notes.some((note) => findNodes(body!, (node) => node === note).length > 0) },
+        { notes: ["p"], concealed: [], isInBody: false },
       );
     });
   }

@@ -112,7 +112,7 @@ const REFERENCE_LINE_Q = "Reference only — not part of the approval.";
 const MESSAGE_Q = { MAX_TARGETS: 20 };
 const SESSIONS_Q = {
 	SOURCE: "the session list",
-	// the page checks no name → said once where the names are listed; the short form on a phone view drawing names no mark covers (NamesNoteQ)
+	// the page checks no name → said once where the names are listed; the short form on every other phone view and every sheet (NamesNoteQ)
 	STATEMENT: {
 		FULL: "Session names are written by the sessions themselves and are not checked. Only the id identifies a session.",
 		SHORT: "Names are self-written and unchecked. Only the id identifies a session.",
@@ -1722,7 +1722,7 @@ function ScopeTitleQ({ scope, onOpen }) {
 	);
 }
 
-// the statement on names under a phone view's head where that view draws a name with no mark of its own (SR-3b); drawn under 640 alone (base.css → .queue-names-note)
+// the statement on names under the head of every phone view but Sessions and of every sheet; drawn under 640 alone (base.css → .queue-names-note)
 function NamesNoteQ() {
 	return <p className="fs-meta text-dim queue-names-note">{SESSIONS_Q.STATEMENT.SHORT}</p>;
 }
@@ -2357,18 +2357,13 @@ function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, is
 	return (
 		<div className="card queue-pane queue-sheet">
 			<SheetHeadQ queue={queue}><LetterheadQ item={item} copies={copies} kind={kind} note={getNameNoteQ(item.session, queue, names)} names={names} /></SheetHeadQ>
-			{isNamedInBodyQ(item, isDone) && <div className="card-bar"><NamesNoteQ /></div>}
+			<div className="card-bar"><NamesNoteQ /></div>
 			<div className="card-body" tabIndex={-1}>
 				<SheetBodyQ item={item} copies={copies} rails={queue.sessions?.region.data?.sessions ?? []} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} scanRead={scanRead} />
 			</div>
 			{foot !== null && <div className="card-foot">{foot}</div>}
 		</div>
 	);
-}
-
-// a relay's recipients, or a line naming the item's session (CardStateQ) → a name past the head
-function isNamedInBodyQ(item, isDone) {
-	return item.kind === "relay" || (!isDone && getSessionLineQ(item) !== null);
 }
 
 function getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone }) {
