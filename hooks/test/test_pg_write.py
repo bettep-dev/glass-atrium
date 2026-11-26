@@ -29,7 +29,7 @@ _HOOKS_DIR = Path(__file__).resolve().parent.parent
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 
-from _pg_connect import CONNECT_TIMEOUT_SEC, RETRY_BACKOFF_SEC
+from _pg_connect import CONNECT_TIMEOUT_SEC, HOOK_STALL_CEILING_SEC, RETRY_BACKOFF_SEC
 
 # private port → a libpq that ignored PGHOST would find no /tmp socket and fail fast
 _FAKE_PORT = 59321
@@ -40,7 +40,7 @@ _HUNG_CONNECTS = 3
 _HUNG_WAIT_SEC = _HUNG_CONNECTS * CONNECT_TIMEOUT_SEC
 _HUNG_WORST_SEC = _HUNG_WAIT_SEC + RETRY_BACKOFF_SEC
 # slack = loaded-runner interpreter start + driver import; the connect count pins the attempts
-_HOOK_STALL_CEILING_SEC = _HUNG_WORST_SEC + CONNECT_TIMEOUT_SEC
+_ELAPSED_LIMIT_SEC = _HUNG_WORST_SEC + CONNECT_TIMEOUT_SEC
 _ROW = {
     "event_ts": "2026-11-26T19:35:12.481+09:00",
     "event_name": "SubagentStart",
@@ -217,6 +217,13 @@ class _FakePostgres:
             conn.sendall(_message(b"C", tag.encode() + b"\0") + _message(b"Z", status))
 
 
+class HookStallCeiling(unittest.TestCase):
+    def test_the_hung_database_worst_case_stays_under_the_hook_stall_ceiling(
+        self,
+    ) -> None:
+        self.assertLess(_HUNG_WORST_SEC, HOOK_STALL_CEILING_SEC)
+
+
 @unittest.skipUnless(
     _HAS_DRIVER, "psycopg / psycopg2 not installed — a writer cannot connect at all"
 )
@@ -249,7 +256,7 @@ class ConnectTolerance(unittest.TestCase):
             capture_output=True,
             text=True,
             env=env,
-            timeout=_HOOK_STALL_CEILING_SEC * 2,
+            timeout=_ELAPSED_LIMIT_SEC * 2,
         )
         return result, time.monotonic() - started
 
@@ -267,7 +274,7 @@ class ConnectTolerance(unittest.TestCase):
         result, elapsed = self._run_writer()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('"error_kind"', result.stderr)
-        self.assertLess(elapsed, _HOOK_STALL_CEILING_SEC, f"{elapsed:.1f}s")
+        self.assertLess(elapsed, _ELAPSED_LIMIT_SEC, f"{elapsed:.1f}s")
 
     def test_every_writer_waits_out_the_shared_connect_timeout_on_a_hung_database(
         self,
@@ -282,9 +289,7 @@ class ConnectTolerance(unittest.TestCase):
                 self.assertGreaterEqual(
                     elapsed, _HUNG_WAIT_SEC, f"{name}: {elapsed:.1f}s"
                 )
-                self.assertLess(
-                    elapsed, _HOOK_STALL_CEILING_SEC, f"{name}: {elapsed:.1f}s"
-                )
+                self.assertLess(elapsed, _ELAPSED_LIMIT_SEC, f"{name}: {elapsed:.1f}s")
 
 
 if __name__ == "__main__":
