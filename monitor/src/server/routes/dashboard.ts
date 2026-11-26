@@ -207,7 +207,7 @@ async function handleCostTimeseries(
     const hasPriorWindow = request.query.prior_window === "1" || request.query.prior_window === "true";
     // generate_series fills gap days with zero rows (LEFT JOIN). Interval embedded
     // via Prisma.raw is safe here because `days` was validated against allowlist.
-    const windowLowerBound = buildWindowLowerBound(todayIso, days);
+    const dayWindow = buildDayWindow(todayIso, days);
     const [rows, priorWindow] = await Promise.all([
       prisma.$queryRaw<TimeseriesRow[]>`
       SELECT
@@ -218,12 +218,12 @@ async function handleCostTimeseries(
         COALESCE(SUM(c.cache_creation_tokens), 0)::bigint AS cache_creation_tokens,
         COALESCE(SUM(c.cost_usd), 0)::numeric(12,6) AS cost_usd,
         COUNT(DISTINCT c.session_id)::bigint AS session_count
-      FROM generate_series(${windowLowerBound}, ${todayIso}::date, '1 day') d
+      FROM generate_series(${dayWindow.firstDay}, ${dayWindow.lastDay}, '1 day') d
       LEFT JOIN core.cost_events c ON c.event_date = d::date
       GROUP BY d
       ORDER BY d ASC
     `,
-      hasPriorWindow ? findCostPriorWindow(windowLowerBound, days, cutTime) : undefined,
+      hasPriorWindow ? findCostPriorWindow(dayWindow.firstDay, days, cutTime) : undefined,
     ]);
 
     const points: CostTimeseriesPoint[] = rows.map((row) => ({
@@ -403,14 +403,20 @@ export function getBucketTzClock(
   };
 }
 
-// Canonical "last N days" window lower bound, computed from the bucket-tz `today` bind
-// param (todayIso), NOT session-tz CURRENT_DATE.
-// Window = [today - (days-1) .. today] inclusive = exactly `days` calendar days (today
-// counted), where `today` is the bucket-tz day (bind param), so every "last N days"
-// card covers the same bucket-tz day-set as the KPI band.
-// Safe: `days` allowlist-validated ({7, 30, 90}); `days - 1` is a derived integer.
-function buildWindowLowerBound(todayIso: string, days: number): Prisma.Sql {
-  return Prisma.sql`${todayIso}::date - ${Prisma.raw(`INTERVAL '${days - 1} days'`)}`;
+/**
+ * Canonical "last N days" window of every cost read: [today - (days-1) .. today] inclusive,
+ * `today` = the bucket-tz calendar day (computeBucketTzToday), never session-tz CURRENT_DATE
+ * → every "last N days" card covers the same bucket-tz day-set as the KPI band.
+ * Safe Prisma.raw: `days` allowlist-validated ({7, 30, 90}); `days - 1` is a derived integer.
+ */
+export function buildDayWindow(
+  todayIso: string,
+  days: number,
+): { firstDay: Prisma.Sql; lastDay: Prisma.Sql } {
+  return {
+    firstDay: Prisma.sql`${todayIso}::date - ${Prisma.raw(`INTERVAL '${days - 1} days'`)}`,
+    lastDay: Prisma.sql`${todayIso}::date`,
+  };
 }
 
 function bigintToNumber(value: bigint): number {
