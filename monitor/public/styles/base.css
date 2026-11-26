@@ -967,70 +967,9 @@ label.ctl-checkbox-hit {
 	font-weight: 600;
 	color: rgb(var(--ink));
 }
-/* Relay history (spec §9.9): the thread's form with every entry at the column's start and no fill → never read as the owner's bubble */
-.queue-relay-log {
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-6);
-}
-.queue-relay-list {
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-6);
-}
-.queue-relay {
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-1_5);
-	font-size: var(--fs-control);
-}
-.queue-relay-head {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	gap: var(--space-1_5);
-	font-size: var(--fs-meta);
-	color: rgb(var(--dim));
-}
-.queue-relay-head > time {
-	color: rgb(var(--faint));
-	font-variant-numeric: tabular-nums;
-}
-/* the end slot: Redact text, the Redacted tag or ✕ Refused */
-.queue-relay-slot {
-	margin-inline-start: auto;
-}
-.queue-relay-name {
-	font-weight: 600;
-	color: rgb(var(--ink));
-}
-.queue-relay-head > .queue-relay-name {
-	font-size: var(--fs-control);
-}
-.queue-relay-copies {
-	display: flex;
-	flex-direction: column;
-	gap: var(--gap-stack);
-}
-.queue-relay-copy {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: var(--space-1_5);
-	min-height: 24px;
-	font-size: var(--fs-meta);
-	color: rgb(var(--dim));
-}
 /* the redaction dialog's error slot keeps its one line while empty → the buttons never move */
 .queue-relay-error {
 	min-height: var(--lh-row);
-}
-/* the relay's text in the history: the bubble's clamp without its fill or inset */
-.queue-bubble.is-plain {
-	max-width: var(--measure-prose);
-	padding: 0;
-	background: none;
-	border-radius: 0;
 }
 /* a pane: head, bar and foot fixed, the body the only scroller on its axis */
 .queue-pane > .card-body {
@@ -1092,12 +1031,14 @@ label.ctl-checkbox-hit {
 	gap: var(--space-2);
 	min-height: calc(var(--row-h-compact) + 2 * var(--space-1_5));
 	padding: var(--space-1_5) var(--card-pad);
+	white-space: nowrap;
 }
-/* a row (spec §4.2): one 20 line between 12 paddings → 44 — name 80 · title · tag 80 · fact 64 · age 32 · chevron 16;
-   8 between columns, the title's 4 margins making its 12 on either side. 80 holds "12 sessions" whole.
+/* a row (spec §4.2): one 20 line between 12 paddings → 44 — name 104 · title · tag 80 · fact 64 · age 32 · chevron 16;
+   8 between columns, the title's 4 margins making its 12 on either side. 104 holds a nine-letter name and its self mark whole.
    Template = the name lead + its band's tail (data-cols) → one band, one set of columns; a column a band leaves out gives the title its width */
 .queue-row {
-	--queue-row-lead: 80px minmax(0, 1fr);
+	--queue-row-name: 104px;
+	--queue-row-lead: var(--queue-row-name) minmax(0, 1fr);
 	display: grid;
 	grid-template-columns: var(--queue-row-lead) var(--queue-row-tail);
 	column-gap: var(--space-2);
@@ -1125,7 +1066,7 @@ label.ctl-checkbox-hit {
 }
 /* under 160 of title the fact column is left out, its fact kept in the row's title and name — at the 1280 list only a band
    drawing the tag beside the names; every other band keeps 160 there */
-@container queue-list (width < 512px) {
+@container queue-list (width < 536px) {
 	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) {
 		--queue-row-tail: 80px 32px 16px;
 	}
@@ -1184,10 +1125,31 @@ label.ctl-checkbox-hit {
 }
 .queue-row-title,
 .queue-row-name,
+.queue-row-ends,
 .queue-row-fact {
 	overflow: hidden;
 	white-space: nowrap;
 	text-overflow: ellipsis;
+}
+/* a self-declared sender's mark: the page's word, never the name's text → its own weight, tone and dotted rule; the name gives way, never the mark */
+.queue-row-mark {
+	flex: none;
+	margin-inline-start: var(--space-1);
+	font-weight: 400;
+	color: rgb(var(--faint));
+	text-decoration: underline dotted;
+	text-underline-offset: 2px;
+}
+/* one session ticked → the sender leads the title cell as the name column draws it, never wider than that column:
+   its name cut first, its mark whole, then the rest of the title cut on its own */
+.queue-row-title:has(> .queue-row-from) {
+	display: flex;
+	gap: var(--space-1);
+}
+.queue-row-from {
+	display: flex;
+	flex: none;
+	max-width: var(--queue-row-name);
 }
 /* up to two count atoms, worst first; both fit the 80 */
 .queue-row-tag {
@@ -1406,6 +1368,28 @@ label.ctl-checkbox-hit {
 	margin-top: var(--space-1);
 	font-size: var(--fs-control);
 	line-height: var(--lh-row);
+}
+/* a relay's To line (layout §2 → Who): one line — pre keeps the separators' spaces at the flex items' edges; only the place gives way, cut */
+.queue-relay-to {
+	display: flex;
+	align-items: baseline;
+	white-space: pre;
+}
+.queue-relay-to > * {
+	flex: none;
+}
+.queue-relay-to > .queue-relay-place {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+/* the redact confirm (layout §2 → Redaction): the sheet's own act → the dialog centres on the sheet's column, the scrim the viewport's */
+.queue-confirm-place {
+	display: contents;
+}
+.queue-confirm-place > .detail-confirm {
+	padding-inline: var(--queue-sheet-start, 0px) var(--queue-sheet-end, 0px);
 }
 /* the composer: one pattern on every pane's foot — label, the box with its buttons, one reserved note line */
 .queue-sheet > .card-foot,

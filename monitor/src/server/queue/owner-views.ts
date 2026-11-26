@@ -25,7 +25,6 @@ export const DEVIATION_STATUSES = ["unacked", "held", "expired", "resume_pending
 // Every state an answer leads to; open, seen and withdrawn carry no answer → never "answered outside"
 const ANSWERED_STATUSES = new Set<QueueItemStatus>([...ACKABLE, "delivered"]);
 export const SESSION_ID_PREFIX_LENGTH = 8;
-const RELAY_SIGNAL_WINDOW_MS = 24 * 3_600_000;
 // ponytail: refusals past this cap in one page's time span are cut (isRefusalListCut) → upgrade: their own cursor
 const REFUSAL_PAGE_MAX = 100;
 // The relay refusals the relay module decided: only those audit rows carry a reason
@@ -128,13 +127,6 @@ export interface RelayRefusalView {
   unresolvedCount: number | null;
 }
 
-export interface RelaySignal {
-  /** The last 24 hours: refusals, relays sent at hop 1 or 2, redactions. */
-  count: { refused: number; forwarded: number; redacted: number };
-  /** Any relay or relay refusal on record, of any age. */
-  hasRecord: boolean;
-}
-
 /** How the owner's answer was made; its time is the item's `answeredAt`. */
 export interface AnswerRecord {
   route: QueueAnswerRoute;
@@ -235,7 +227,7 @@ export async function getOwnerItems(query: OwnerListQuery): Promise<{ items: Own
     where: {
       // a relay copy is inserted answered → non-terminal = on its way to its recipient, as for an owner order
       status: { notIn: TERMINAL },
-      // the owner took a redacted relay's text out of the record → read in the relay history only
+      // the owner took a redacted relay's text out of the record → read in the relay thread only
       relayRedactedAt: null,
       ...(query.sessionId === undefined ? {} : { sessionId: query.sessionId }),
       session: { isProbe: false, ...(query.profile === undefined ? {} : { profileLabel: query.profile }) },
@@ -288,22 +280,6 @@ export async function getRecentResumes(query: RecentResumesQuery): Promise<{ res
       session: { profileLabel: item.session.profileLabel, cwdTail: getCwdTail(item.session.cwd) },
     })),
   };
-}
-
-/**
- * The relay signal the page raises: the last 24 hours' relay refusals the relay module decided (only those rows carry a
- * reason), relays sent at hop 1 or more, and redactions, each counted; plus whether any relay or refusal is on record.
- */
-export async function getRelaySignal(): Promise<RelaySignal> {
-  const since = new Date(Date.now() - RELAY_SIGNAL_WINDOW_MS);
-  const [row] = await getPrisma().$queryRaw<Array<RelaySignal["count"] & { hasRecord: boolean }>>`
-    SELECT
-      (SELECT count(*)::int FROM "monitor"."audit_log" a WHERE ${RELAY_REFUSAL_FILTER} AND a."event_ts" >= ${since}) AS "refused",
-      (SELECT count(*)::int FROM "monitor"."queue_items" i WHERE i."kind"::text = 'relay' AND i."relay_hop" >= 1 AND i."asked_at" >= ${since}) AS "forwarded",
-      (SELECT count(*)::int FROM "monitor"."queue_items" i WHERE i."relay_redacted_at" >= ${since}) AS "redacted",
-      (EXISTS (SELECT 1 FROM "monitor"."queue_items" i WHERE i."kind"::text = 'relay')
-        OR EXISTS (SELECT 1 FROM "monitor"."audit_log" a WHERE ${RELAY_REFUSAL_FILTER})) AS "hasRecord"`;
-  return { count: { refused: row?.refused ?? 0, forwarded: row?.forwarded ?? 0, redacted: row?.redacted ?? 0 }, hasRecord: row?.hasRecord ?? false };
 }
 
 export async function getOwnerItemOrThrow(id: number): Promise<OwnerItemView> {

@@ -14,7 +14,7 @@ import { imageUploadQuerySchema, messageBodySchema, ownerOrdersQuerySchema, repl
 import { getImageFacts } from "../src/server/queue/image-format.js";
 import { IMAGE_BYTES_MAX } from "../src/server/queue/images.js";
 import { collectText, createEffectReact, createFakeDocument, createStatefulReact, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
-import { getRelayHistoryFixture } from "./lib/queue-render-fixtures.js";
+import { FIXTURE_NOW, FIXTURE_SESSION_IDS, getRelayThreadFixture } from "./lib/queue-render-fixtures.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const QUEUE_SRC = resolve(__dirname, "../public/src/screens/queue.jsx");
@@ -122,8 +122,6 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
       busy: { id: null, error: null },
       resumes: READY_RESUMES,
       readResumes: record("readResumes"),
-      relaySignal: { status: "ready", data: { count: { refused: 0, forwarded: 0, redacted: 0 }, hasRecord: false }, error: null, busy: false },
-      relayHistory: { thread: { status: "loading", items: [], refusals: [], nextCursor: null, error: null }, read: record("readRelayHistory"), showEarlier: record("showEarlierRelays") },
       drafts: {},
       setDraft: record("setDraft"),
       later: record("later"),
@@ -137,7 +135,9 @@ function buildQueue(overrides: Record<string, unknown> = {}) {
       back: record("back"),
       list: { status: "ready", data: { items: [], nextCursor: null }, newIds: [] },
       done: { thread: { status: "ready", hasRead: true, items: [], nextCursor: null, error: null, refusals: [] }, read: record("readDone"), showEarlier: record("moreDone"), reread: record("rereadDone") },
+      relays: { thread: { status: "ready", hasRead: true, items: [], nextCursor: null, error: null, refusals: [], refusalCutAt: null }, read: record("readRelays"), showEarlier: record("moreRelays"), reread: record("rereadRelays") },
       steps: { index: 0, count: 1, prevId: null, nextId: null },
+      sheet: { kind: "none", id: null },
       ...overrides,
     },
   };
@@ -584,20 +584,20 @@ describe("recent automatic resumes", () => {
   });
 
   // spec §4.4: the foot button's count and ⚠ follow the page's own tick, as the list does
-  test("the page's tick reads the resume record and the relay signal beside the list, the sessions, the count, the thread and the done items", async () => {
+  test("the page's tick reads the resume record beside the list, the sessions, the count, the thread and both Done reads", async () => {
     const reads: string[] = [];
     const read = (name: string, answer: unknown = undefined) => async () => { reads.push(name); return answer; };
     const isGood = await (screen.getPageReadQ as (deps: unknown) => Promise<boolean>)({
       readList: read("list", { isGood: true, arrived: [], turned: [] }),
       readResumes: read("resumes"),
-      readRelaySignal: read("relay signal"),
       sessions: { read: read("sessions") },
       orders: { reread: read("thread") },
       done: { reread: read("done items") },
+      relays: { reread: read("done relays") },
       onReadQueueCount: read("count"),
       setStatus: () => undefined,
     });
-    assert.deepEqual([isGood, [...reads].sort()], [true, ["count", "done items", "list", "relay signal", "resumes", "sessions", "thread"]]);
+    assert.deepEqual([isGood, [...reads].sort()], [true, ["count", "done items", "done relays", "list", "resumes", "sessions", "thread"]]);
   });
 
   test("the record is read from the resume route, whatever the owner list holds", async () => {
@@ -620,72 +620,9 @@ describe("recent automatic resumes", () => {
 // a limit is the server's → no sentence holds one, as a digit or as a count word
 const LIMIT_FIGURE = /\d|\b(?:once|twice|thrice|one|two|three|four|five|six|seven|eight|nine|ten|single|double|triple)\b/i;
 
-describe("relay history", () => {
-  const fixture = getRelayHistoryFixture();
-  const READY_SIGNAL = { status: "ready", data: fixture.signal, error: null, busy: false };
-  const history = (thread: Record<string, unknown> = {}) => ({
-    thread: { status: "ready", items: fixture.items, refusals: fixture.refusals, nextCursor: null, error: null, ...thread },
-    read: () => undefined,
-    showEarlier: () => undefined,
-  });
+describe("relay refusals and redaction", () => {
+  const fixture = getRelayThreadFixture();
   const flat = (node: RenderedNode | string) => collectText(node).replace(/\s+/g, " ").trim();
-  const entries = (tree: RenderedNode) => findNodes(tree, (node) => node.type === "article");
-
-  test("the history read asks the server's relay thread, unscoped by the ticks", async () => {
-    const urls: string[] = [];
-    const module = (await loadScreenModule(QUEUE_SRC, {
-      URLSearchParams,
-      window: { UI: realUi },
-      fetch: async (url: string) => { urls.push(url); return { status: 200, json: async () => ({ items: [], nextCursor: null, refusals: [] }) }; },
-    })) as ScreenModule;
-    await (module.getThreadQ as (deps: unknown) => Promise<void>)({ ids: [], before: null, setThread: () => undefined, kind: "relay" });
-    const [path, query] = (urls[0] ?? "").split("?");
-    assert.equal(path, "/api/queue/owner/orders");
-    assert.deepEqual(ownerOrdersQuerySchema.parse(Object.fromEntries(new URLSearchParams(query))), { kind: "relay", limit: 30 });
-  });
-
-  test("entries run oldest first, one per send, each named by its sender, its recipients and its send time", () => {
-    const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
-    assert.deepEqual(entries(tree).map((node) => node.props["aria-label"]), [
-      "Relay from atrium to gersona, sent 2026-11-12 12:00",
-      "Relay from aidl to yoaida and portfolio, sent 2026-11-13 11:00",
-      "Relay from gersona to atrium, sent 2026-11-13 13:00",
-    ]);
-  });
-
-  test("each copy reads its relay id and one outcome: received, lapsed or not yet", () => {
-    const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
-    const rows = findNodes(tree, (node) => node.type === "li" && node.props.className === "queue-relay-copy").map(flat);
-    assert.deepEqual(rows, [
-      "→ gersona 25a65a54 #398 ✓ Received 12:01",
-      "→ yoaida fa32c7cb #412 ✓ Received 11:04",
-      "→ portfolio 5d0e77a1 #413 ⚠ Lapsed 14:00",
-      "→ atrium e8923338 #415 Not yet",
-    ]);
-  });
-
-  test("a passed-on relay names its parent on the hop line; a relay at hop 0 has none", () => {
-    const [received, forwarded] = entries(render("RelayLogQ", { history: history({ refusals: [] }) }));
-    assert.match(flat(forwarded!), /Hop 1 · sent after aidl \(self-named\) received relay #398 from atrium \(self-named\) at 2026-11-12 12:00/);
-    assert.doesNotMatch(flat(received!), /Hop/);
-  });
-
-  test("relay text is drawn as sent: each kept text is the stored string whole in one pre-wrap text node, never prose-parsed or set as HTML", () => {
-    const items = fixture.items.map((item) => ({ ...item, body: item.relay?.redaction === null ? `${item.body}\n${EVERY_BLOCK_FORM}` : item.body }));
-    const tree = render("RelayLogQ", { history: history({ items, refusals: [] }) });
-    const kept = [...new Map(items.filter((item) => item.relay?.redaction === null).map((item) => [item.sendId, item.body])).values()].reverse();
-    assert.deepEqual(getAsSentTexts(tree), kept);
-    assert.equal(findNodes(tree, (node) => node.props?.atom === "ProseText").length, 0);
-    assert.equal(findNodes(tree, (node) => node.props?.dangerouslySetInnerHTML !== undefined).length, 0);
-  });
-
-  test("a refusal stands between the sends by its time, with its reason and its resolved recipient, and holds no text", () => {
-    const tree = render("RelayLogQ", { history: history() });
-    const all = entries(tree);
-    assert.equal(all[2]?.props["aria-label"], "Refused relay from gersona to yoaida, 2026-11-13 12:00");
-    assert.match(flat(all[2]!), /✕ Refused Too many to one session — gersona hit the hourly limit for yoaida\. → yoaida fa32c7cb$/);
-    assert.equal(findNodes(all[2]!, (node) => node.props?.atom === "ProseText").length, 0);
-  });
 
   test("every reason the page knows has a name and a sentence with no limit figure, in digits or in words; an unknown one names its code", () => {
     const codes = ["hop", "pair_cap", "sender_cap", "machine_cap", "token", "secret", "scan_unavailable", "sender_probe", "sender_not_live", "self", "recipient"];
@@ -695,34 +632,11 @@ describe("relay history", () => {
     assert.deepEqual(call("getRelayRefusalLineQ", "recipient_ambiguous", { sender: "gersona", recipient: "yoaida" }), { name: "Refused", sentence: "The queue gave the reason", code: "recipient_ambiguous" });
   });
 
-  test("a recipient that matched no session is a count, never a string", () => {
-    const refusal = { at: "2026-11-13T03:00:00.000Z", reason: "recipient", senderIdPrefix: "25a65a54", recipientIdPrefixes: [], unresolvedCount: 1 };
-    const tree = render("RelayLogQ", { history: history({ items: [], refusals: [refusal] }) });
-    assert.match(flat(entries(tree)[0]!), /→ 1 recipient that matched no session$/);
-  });
-
   test("an earlier page's refusals join the loaded ones; a first page replaces them", () => {
     const prev = { items: [], nextCursor: "c1", refusals: [{ at: "b" }] };
     const page = { items: [], nextCursor: null, refusals: [{ at: "a" }] };
     assert.deepEqual(call<{ refusals: unknown[] }>("getReadThreadQ", prev, page, "c1", false).refusals, [{ at: "a" }, { at: "b" }]);
     assert.deepEqual(call<{ refusals: unknown[] }>("getReadThreadQ", prev, page, null, false).refusals, [{ at: "a" }]);
-  });
-
-  test("a redacted send paints the page's own line from the stored time and length, never the stored text, and offers no control", () => {
-    const tree = render("RelayLogQ", { history: history({ refusals: [] }) });
-    const redacted = entries(tree)[2]!;
-    assert.match(flat(redacted), /Redacted Text redacted 2026-11-13 14:30 KST · it was 1,284 characters long/);
-    assert.doesNotMatch(flat(redacted), /relay text redacted by the owner/);
-    assert.equal(findNodes(redacted, (node) => node.props?.atom === "ProseText").length, 0);
-    assert.deepEqual(entries(tree).map((entry) => buttonLabelled(entry, "Redact text").length), [1, 1, 0]);
-  });
-
-  test("a send with one copy still holding its text keeps the text and its Redact text", () => {
-    const [kept, gone] = getRelayHistoryFixture().items.filter((item) => item.sendId === fixture.items[1]!.sendId);
-    const partly = [kept!, { ...gone!, body: "[relay text redacted by the owner]", relay: { ...gone!.relay!, redaction: { at: "2026-11-13T05:30:00.000Z", length: 99 } } }];
-    const tree = render("RelayLogQ", { history: history({ items: partly, refusals: [] }) });
-    assert.equal(buttonLabelled(tree, "Redact text").length, 1);
-    assert.ok(findNodes(tree, (node) => String(node.props?.className ?? "").startsWith("queue-bubble")).some((node) => collectText(node).startsWith("파트너")));
   });
 
   test("the redaction posts one owner action per unredacted copy, each by its relay id, with no text", async () => {
@@ -757,6 +671,14 @@ describe("relay history", () => {
     assert.deepEqual([texts.length, getLongSentences(texts)], [1, []]);
   });
 
+  // a name the peer wrote carries its self-named mark wherever the page paints it
+  test("the redaction dialog names a self-named sender with its mark", () => {
+    const [copy] = fixture.items.filter((item) => item.sendId === fixture.items[1]!.sendId);
+    const redaction = { target: { id: copy!.id, item: copy, copies: [copy] }, isBusy: false, error: null, ask: () => undefined, cancel: () => undefined, confirm: () => undefined };
+    const [text] = findNodes(render("RedactConfirmQ", { redaction }), (node) => node.type === "p" && node.props?.className === "fs-body text-dim").map((node) => collectText(node));
+    assert.ok(text?.startsWith(`${copy!.relay!.sender.selfDeclaredName} (self-named) sent it to `), text);
+  });
+
   test("the dialog's error slot draws its cross in the crit tone before the words, as every other cross on the relay views", () => {
     const copies = fixture.items.filter((item) => item.sendId === fixture.items[1]!.sendId);
     const slot = (error: string | null) => {
@@ -772,64 +694,54 @@ describe("relay history", () => {
     ]);
   });
 
-  const buttons = [
-    { name: "a record with any relay or refusal shows the button", hasRecord: true, count: 1 },
-    { name: "an empty record shows no button", hasRecord: false, count: 0 },
-  ];
-  for (const row of buttons) {
-    test(row.name, () => {
-      const signal = { ...READY_SIGNAL, data: { count: { refused: 0, forwarded: 0, redacted: 0 }, hasRecord: row.hasRecord } };
-      const tree = render("RelayHistoryQ", { signal, history: history() });
-      assert.equal(buttonLabelled(tree, "Relay history").length, row.count);
-    });
-  }
-
-  const signals = [
-    { name: "a refusal, a passed-on relay and a redaction put the glyph before the label and name each count", count: { refused: 1, forwarded: 1, redacted: 1 }, text: "⚠ Relay history", label: "Relay history — 1 refused, 1 passed on, 1 redacted in the last 24 hours", sub: "⚠ Last 24 hours: 1 refused · 1 passed on · 1 redacted" },
-    { name: "a count at zero is left out of the name and the drawer's sub line", count: { refused: 2, forwarded: 0, redacted: 0 }, text: "⚠ Relay history", label: "Relay history — 2 refused in the last 24 hours", sub: "⚠ Last 24 hours: 2 refused" },
-    { name: "nothing in the last 24 hours leaves the bare label and no sub line", count: { refused: 0, forwarded: 0, redacted: 0 }, text: "Relay history", label: undefined, sub: undefined },
-  ];
-  for (const row of signals) {
-    test(`the signal: ${row.name}`, () => {
-      const signal = { ...READY_SIGNAL, data: { count: row.count, hasRecord: true } };
-      const tree = render("RelayHistoryQ", { signal, history: history() });
-      const [button] = findNodes(tree, (node) => node.type === "button" && /Relay history$/.test(collectText(node).trim()));
-      const [drawer] = findNodes(tree, (node) => node.props?.atom === "DetailSurface");
-      assert.deepEqual(
-        { text: collectText(button!).trim(), label: button?.props["aria-label"], title: button?.props.title, sub: drawer?.props.sub === undefined ? undefined : flat(renderScreen(drawer.props.sub) as RenderedNode) },
-        { text: row.text, label: row.label, title: row.label, sub: row.sub },
-      );
-    });
-  }
-
-  test("a breaker trip changes only the Relay history button: the list, its status line and the rest of the rail stay as they were", () => {
-    const desk = (refused: number) => {
-      const relaySignal = { ...READY_SIGNAL, data: { count: { refused, forwarded: 0, redacted: 0 }, hasRecord: true } };
-      return { ...withList(buildQueue({ relaySignal }).queue, [buildItem({ id: 1 })]), status: "1 new report" };
+  // layout §2 → Foot: the open list leaves a redacted copy out and the relay read brings it back → the two land together or the row drops for a render
+  test("a redaction's re-read lands the list and both Done reads at once: a relay on its way keeps its row and its sheet while the relay read is late", async () => {
+    const redacted = fixture.items.find((item) => item.id === 415)!;
+    const kept = { ...redacted, relay: { ...redacted.relay!, redaction: null } };
+    let isRedacted = false;
+    let releaseRelays: () => void = () => undefined;
+    const relaysLate = new Promise<void>((resolve) => { releaseRelays = resolve; });
+    const answer = (body: unknown) => ({ status: 200, json: async () => body });
+    const stateful = createStatefulReact();
+    const module = (await loadScreenModule(QUEUE_SRC, {
+      React: stateful.react, URLSearchParams, window: { UI: uiStub(), location: { hash: "#queue" }, history: { replaceState: () => undefined } },
+      fetch: async (url: string) => {
+        const isAfter = isRedacted;
+        if (url.includes("kind=relay")) {
+          if (isAfter) await relaysLate;
+          return answer({ items: [isAfter ? redacted : kept], nextCursor: null, refusals: [] });
+        }
+        if (url.includes("kind=item")) return answer({ items: [], nextCursor: null, refusals: [] });
+        return answer({ items: isAfter ? [] : [kept], nextCursor: null });
+      },
+    })) as ScreenModule;
+    type Reread = (options?: unknown) => Promise<unknown>;
+    type Thread = { thread: unknown; read: Reread; reread: Reread };
+    const run = () => {
+      stateful.resetCursor();
+      const [list, setList] = (stateful.react.useState as (initial: unknown) => [{ data: { items: unknown[] } | null }, unknown])({ status: "loading", data: null, error: null, readAt: null, newIds: [] });
+      const readList = (module.useListReadQ as (list: unknown, setList: unknown) => Reread)(list, setList);
+      const useThread = module.useThreadQ as (scope: unknown) => Thread;
+      return { list, readList, done: useThread({ selectedIds: [], kind: "item" }), relays: useThread({ selectedIds: [], kind: "relay" }) };
     };
-    const isRelayButton = (node: RenderedNode) => node.type === "button" && /Relay history$/.test(collectText(node).trim());
-    // what is drawn outside the Relay history control, without the inputs handed down (the trip is in them)
-    const drawn = (tree: RenderedNode) => JSON.parse(JSON.stringify(tree, (key, value) => {
-      if (key === "queue" || key === "signal") return undefined;
-      return value?.type === "RelayHistoryQ" ? "relay-history" : value;
-    }));
-    const [atRest, tripped] = [desk(0), desk(1)];
-    const rails = [atRest, tripped].map((queue) => renderCard("SessionsRegionQ", { queue }));
-    assert.deepEqual(rails.map((rail) => findNodes(rail, isRelayButton).map((node) => collectText(node).trim())), [["Relay history"], ["⚠ Relay history"]]);
-    assert.deepEqual(drawn(rails[1]!), drawn(rails[0]!));
-    assert.deepEqual(drawn(renderCard("QueueListQ", { queue: tripped })), drawn(renderCard("QueueListQ", { queue: atRest })));
-    assert.equal(findNodes(rails[1]!, (node) => node.props?.atom === "DetailSurface" && node.props.open === true).length, 0);
-  });
-
-  test("opening the drawer reads the record again; its foot says the names are self-declared", () => {
-    let reads = 0;
-    const tree = render("RelayHistoryQ", { signal: READY_SIGNAL, history: { ...history(), read: () => { reads += 1; } } });
-    const [button] = findNodes(tree, (node) => node.type === "button" && /Relay history$/.test(collectText(node).trim()));
-    (button?.props.onClick as () => void)();
-    const [drawer] = findNodes(tree, (node) => node.props?.atom === "DetailSurface");
-    assert.equal(reads, 1);
-    assert.equal(drawer?.props.title, "Relay history");
-    assert.equal(flat(renderScreen(drawer?.props.footer) as RenderedNode), "Names are self-declared, and the queue has no login. Any local process can send as any session, or redact. Read this as evidence, not proof.");
+    const held = { item: kept, copies: [kept] };
+    const getShown = () => {
+      const { list, done, relays } = run();
+      const groups = call<Array<{ rows: Array<{ id: number; copies: Array<{ relay: { redaction: unknown } }> }> }>>("getListGroupsQ", getPlain(list.data?.items ?? []), getPlain({ done: done.thread, relays: relays.thread }), { profile: "" }, []);
+      const row = groups.flatMap((group) => group.rows).find((one) => one.id === 415);
+      return [call<{ kind: string }>("getSheetStateQ", groups, "415", held).kind, row?.copies.some((copy) => copy.relay.redaction !== null) ?? null];
+    };
+    const seeded = run();
+    await Promise.all([seeded.readList({ isFresh: true }), seeded.done.read(), seeded.relays.read()]);
+    const before = getShown();
+    isRedacted = true;
+    const reads = run();
+    const reread = (module.getListsRereadQ as (readList: Reread, rereadDone: Reread, rereadRelays: Reread) => Promise<unknown>)(reads.readList, reads.done.reread, reads.relays.reread);
+    await new Promise((resolve) => setImmediate(resolve));
+    const whileLate = getShown();
+    releaseRelays();
+    await reread;
+    assert.deepEqual([before, whileLate, getShown()], [["item", false], ["item", false], ["item", true]]);
   });
 });
 
@@ -1184,18 +1096,22 @@ describe("list groups", () => {
     call<Array<{ key: string; label: string; rows: Array<{ id: number; copies: Array<{ id: number }> }> }>>("getGroupsQ", items)
       .map((group) => ({ key: group.key, rows: group.rows.map((row) => [row.id, row.copies.map((copy) => copy.id)]) }));
 
-  test("open decisions, then open reports, then everything else, each in server order, and an empty group is left out", () => {
+  // layout §6 → Order: In delivery reads newest post first like the Done bands; the open bands keep the server's queue order
+  test("open decisions, then open reports, each in server order, then In delivery newest post first, and an empty group is left out", () => {
+    const at = (minutesAgo: number) => new Date(Date.parse("2026-11-13T06:00:00.000Z") - minutesAgo * 60_000).toISOString();
     const items = [
       buildItem({ id: 1, kind: "report" }),
-      buildItem({ id: 2, status: "answered" }),
-      buildItem({ id: 3 }),
-      buildItem({ id: 4, kind: "report", status: "answered" }),
-      buildItem({ id: 5 }),
+      buildItem({ id: 2, status: "answered", askedAt: at(42) }),
+      buildItem({ id: 3, askedAt: at(9) }),
+      buildItem({ id: 4, kind: "report", status: "answered", askedAt: at(3) }),
+      buildItem({ id: 5, askedAt: at(2) }),
+      buildItem({ id: 6, kind: "relay", status: "answered", askedAt: at(120), sendId: "s-6" }),
+      buildItem({ id: 7, kind: "message", status: "delivered", askedAt: at(2), sendId: "s-7" }),
     ];
     assert.deepEqual(getShape(items), [
       { key: "decisions", rows: [[3, [3]], [5, [5]]] },
       { key: "reports", rows: [[1, [1]]] },
-      { key: "inDelivery", rows: [[2, [2]], [4, [4]]] },
+      { key: "inDelivery", rows: [[7, [7]], [4, [4]], [2, [2]], [6, [6]]] },
     ]);
     assert.deepEqual(getShape([buildItem({ id: 9, kind: "report" })]).map((group) => group.key), ["reports"]);
   });
@@ -1226,7 +1142,8 @@ describe("done items in the one list", () => {
       doneReport({ id: 2, closedAt: "2026-11-16T10:00:00.000Z" }),
       doneReport({ id: 1, closedAt: "2026-11-16T09:00:00.000Z" }),
     ];
-    const groups = call<Array<{ label: string; rows: Array<{ id: number; copies: unknown[]; isDone: boolean }> }>>("getDoneGroupsQ", items, new Date("2026-11-19T06:00:00.000Z"));
+    const rows = items.map((item) => call("getSingleRowQ", item));
+    const groups = call<Array<{ label: string; rows: Array<{ id: number; copies: unknown[]; isDone: boolean }> }>>("getDoneGroupsQ", rows, new Date("2026-11-19T06:00:00.000Z"));
     assert.deepEqual(groups.map((group) => [group.label, group.rows.map((row) => [row.id, row.copies.length, row.isDone])]), [
       ["Today", [[5, 1, true], [4, 1, true]]],
       ["Yesterday", [[3, 1, true]]],
@@ -1280,7 +1197,7 @@ describe("done items in the one list", () => {
   const portfolio = buildSession({ id: "d4", name: "portfolio", profileLabel: "personal" });
   const open = (id: number, overrides: Record<string, unknown> = {}) => buildItem({ id, ...overrides });
   const getGroups = (items: unknown[], done: unknown[], filter: Record<string, string> = { profile: "" }, ids: string[] = []) =>
-    call<Array<{ key: string; isDone?: boolean; label: string; rows: Array<{ id: number; item: { status: string } }> }>>("getListGroupsQ", items, done, filter, ids);
+    call<Array<{ key: string; isDone?: boolean; label: string; rows: Array<{ id: number; item: { status: string } }> }>>("getListGroupsQ", items, { done: { items: done, nextCursor: null }, relays: { items: [], refusals: [], nextCursor: null } }, filter, ids);
 
   test("every open band stands above every Done band, and an item both reads return is drawn once, in its open band", () => {
     const items = [open(1, { kind: "report" }), open(2), open(3, { status: "answered", ...answered })];
@@ -1362,10 +1279,11 @@ describe("done items in the one list", () => {
   });
 
   // the queue as useQueueStateQ hands it to the list: its open read, its done read, and the one list's bands
-  const listQueue = (items: unknown[], thread: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => {
+  const listQueue = (items: unknown[], thread: Record<string, unknown> = {}, extra: Record<string, unknown> = {}, relayThread: Record<string, unknown> = {}) => {
     const { queue, calls } = buildQueue({ loadMore: () => calls.push(["loadMore"]) });
     const done = { ...queue.done, thread: { ...queue.done.thread, ...thread } };
-    const base = { ...withList(queue, items), done, ...extra };
+    const relays = { ...queue.relays, thread: { ...queue.relays.thread, ...relayThread } };
+    const base = { ...withList(queue, items), done, relays, ...extra };
     const groups = getGroups(items, done.thread.items as unknown[]);
     return { queue: { ...base, groups, sheet: getSheet(groups, ""), selectedId: null }, calls };
   };
@@ -1387,10 +1305,16 @@ describe("done items in the one list", () => {
     { name: "a later done read in flight → the rows stay", items: [open(1)], thread: { status: "loading", items: [doneReport()] }, expected: { rows: [1, 806], loading: [], empty: [], failures: 0 } },
     { name: "nothing in either part → the empty queue", items: [], thread: {}, expected: { rows: [], loading: [], empty: ["Nothing is waiting for you"], failures: 0 } },
     { name: "the done read failed → the open rows stay", items: [open(1)], thread: { status: "error", hasRead: undefined, error: FAILURE }, expected: { rows: [1], loading: [], empty: [], failures: 0 } },
+    { name: "the first relay read in flight → the queue loading, though both other reads are in", items: [open(1)], thread: { items: [doneReport()] }, relays: { status: "loading", hasRead: undefined }, expected: { rows: [], loading: ["the queue"], empty: [], failures: 0 } },
   ];
   for (const row of states) {
-    test(`the one list: ${row.name}`, () => assert.deepEqual(getBody(bodyOf(listQueue(row.items, row.thread).queue)), row.expected));
+    test(`the one list: ${row.name}`, () => assert.deepEqual(getBody(bodyOf(listQueue(row.items, row.thread, {}, row.relays).queue)), row.expected));
   }
+
+  test("the empty queue's hint names every kind the list holds, relays included, and the page's check interval", () => {
+    const [empty] = findNodes(bodyOf(listQueue([], {}).queue), (node) => node.props?.atom === "EmptyState");
+    assert.equal(empty?.props.hint, "Reports, decisions and relays from sessions show here. The page checks every 15 seconds.");
+  });
 
   test("the head counts the open items alone: 0 waiting while only done rows show", () => {
     const [card] = findNodes(render("QueueListQ", { queue: listQueue([], { items: [doneReport()] }).queue }), (node) => node.props?.atom === "Card");
@@ -1401,7 +1325,7 @@ describe("done items in the one list", () => {
     const { queue, calls } = listQueue([], {}, { list: { status: "error", data: null, error: FAILURE, readAt: null, newIds: [] } });
     const [failure] = findNodes(bodyOf(queue), (node) => node.type === "QueueFailureQ");
     (failure?.props.onRetry as () => void)();
-    assert.deepEqual(getPlain(calls), [["reload"], ["readDone"]]);
+    assert.deepEqual(getPlain(calls), [["reload"], ["readDone"], ["readRelays"]]);
   });
 
   // spec §4.6 → More handled items: one line after the last row — the open read's next page first, then the done read's 30
@@ -1409,7 +1333,7 @@ describe("done items in the one list", () => {
     { name: "the open read has more → Show more reads its next page", nextCursor: 9, thread: { items: [doneReport()], nextCursor: "1:1" }, expected: { more: [["loadMore"]], text: "Show more" } },
     { name: "the open read whole, the done read has more → Show more reads the next done page", nextCursor: null, thread: { items: [doneReport()], nextCursor: "1:1" }, expected: { more: [["moreDone"]], text: "Show more" } },
     { name: "a done page in progress → Loading…", nextCursor: null, thread: { status: "loading", items: [doneReport()], nextCursor: "1:1" }, expected: { more: [], text: "Loading…" } },
-    { name: "200 done items loaded with more behind them → only the newest show", nextCursor: null, thread: { items: Array.from({ length: 200 }, (_, index) => doneReport({ id: index + 1 })), nextCursor: "1:1" }, expected: { more: [], text: "Showing the 200 most recent" } },
+    { name: "200 done items loaded with more behind them → only the newest show", nextCursor: null, thread: { items: Array.from({ length: 200 }, (_, index) => doneReport({ id: index + 2 })), nextCursor: "1:1" }, expected: { more: [], text: "Showing the 200 most recent" } },
     { name: "the done read failed → its warning and a Retry that reads it again", nextCursor: null, thread: { status: "error", error: FAILURE }, expected: { more: [["readDone"]], text: "⚠ Done items could not be read. Retry" } },
     { name: "both reads whole → no line", nextCursor: null, thread: { items: [doneReport()] }, expected: { more: [], text: "" } },
   ];
@@ -1447,6 +1371,245 @@ describe("done items in the one list", () => {
   }
 });
 
+// layout §1, §6 → Order, Ticks: the Done part merges the item thread and the relay thread, each paged by its own cursor
+describe("relays in the Done part", () => {
+  const relays = getRelayThreadFixture();
+  const [REFUSAL] = relays.refusals;
+  const atMinutes = (minutes: number) => new Date(FIXTURE_NOW - minutes * 60_000).toISOString();
+  // a history cursor: its row's time in epoch microseconds, then its id
+  const cursorAt = (minutes: number, id: number) => `${(FIXTURE_NOW - minutes * 60_000) * 1000}:${id}`;
+  const ended = (id: number, minutes: number, kind = "report") => buildItem({ id, kind, status: "seen", options: [], closedAt: atMinutes(minutes) });
+  const thread = (overrides: Record<string, unknown> = {}) => ({ status: "ready", hasRead: true, items: [], refusals: [], nextCursor: null, refusalCutAt: null, error: null, ...overrides });
+  // a report ended 200 minutes ago and a decision 30 hours ago, beside the fixture's sends (4 h and 27 h ago, one at 2 h still on its way) and its refusal (3 h ago)
+  const doneRead = (overrides: Record<string, unknown> = {}) => thread({ items: [ended(806, 200), ended(812, 30 * 60, "decision")], ...overrides });
+  const relayRead = (overrides: Record<string, unknown> = {}) => thread({ items: relays.items, refusals: relays.refusals, ...overrides });
+  type Row = { id: number | string; refusal?: { reason: string }; item?: { sendId: string | null }; copies: unknown[] };
+  const getGroups = (open: unknown[], reads: Record<string, unknown>, ids: string[] = []) =>
+    call<Array<{ isDone?: boolean; rows: Row[] }>>("getListGroupsQ", open, reads, { profile: "" }, ids);
+  const named = (row: Row) => (row.refusal ? `refused ${row.refusal.reason}` : row.id);
+  const getDoneBands = (open: unknown[], reads: Record<string, unknown>, ids: string[] = []) =>
+    getGroups(open, reads, ids).filter((group) => group.isDone).map((group) => group.rows.map(named));
+
+  test("Done rows run newest last act first across both reads, banded by the day of that act: an item's end, a send's send, a refusal's time", () => {
+    assert.deepEqual(getDoneBands([], { done: doneRead(), relays: relayRead() }), [["refused pair_cap", 806, 412], [398, 812]]);
+  });
+
+  // one send, one row: the open part draws it first, and a send with a copy on its way is never in Done
+  const onWay = relays.items.map((copy) => (copy.id === 413 ? { ...copy, status: "answered", relay: { ...copy.relay!, lapsedAt: null } } : copy));
+  // the owner list leaves a redacted copy out → the sends it would hold, the fixture's redacted one on its way set apart
+  const kept = (items: typeof relays.items) => items.filter((copy) => copy.relay!.redaction === null);
+  const sends = [
+    { name: "a send with a copy on its way is drawn in the open part alone", open: onWay.filter((copy) => copy.id === 413), relayItems: kept(onWay), expected: [[false, "forwarded"], [true, "received"]] },
+    { name: "an ended send the open read still holds stays in the open part", open: relays.items.filter((copy) => copy.id === 412), relayItems: kept(relays.items), expected: [[false, "forwarded"], [true, "received"]] },
+    { name: "a send on its way that the open read leaves out has no row", open: [], relayItems: kept(onWay), expected: [[true, "received"]] },
+    { name: "a redacted send on its way, which the open list leaves out, is drawn under In delivery from the relay read", open: [], relayItems: relays.items, expected: [[false, "redacted"], [true, "forwarded"], [true, "received"]] },
+  ];
+  const sendNames = new Map(relays.items.map((copy) => [copy.sendId, copy.id >= 415 ? "redacted" : copy.id >= 412 ? "forwarded" : "received"]));
+  for (const row of sends) {
+    test(`one send, one row: ${row.name}`, () => {
+      const drawn = getGroups(row.open, { done: thread(), relays: relayRead({ items: row.relayItems, refusals: [] }) })
+        .flatMap((group) => group.rows.map((entry) => [group.isDone === true, sendNames.get(entry.item!.sendId)]));
+      assert.deepEqual(drawn, row.expected);
+    });
+  }
+
+  // no gap: a read's frontier is its oldest loaded row, none once whole; a row older than the newer frontier waits undrawn
+  const frontiers = [
+    { name: "both reads whole → every row", done: {}, relays: {}, expected: [["refused pair_cap", 806, 412], [398, 812]] },
+    { name: "the relay read has more → item rows older than its oldest send wait", done: {}, relays: { items: relays.items.filter((copy) => copy.id >= 412), nextCursor: cursorAt(240, 412) }, expected: [["refused pair_cap", 806, 412]] },
+    { name: "the item read has more → relay rows older than its oldest item wait", done: { items: [ended(806, 200)], nextCursor: cursorAt(200, 806) }, relays: {}, expected: [["refused pair_cap", 806]] },
+    { name: "the relay read cut its refusals → the cut holds no row back, the hole being in the refusals alone", done: {}, relays: { refusalCutAt: REFUSAL!.at }, expected: [["refused pair_cap", 806, 412], [398, 812]] },
+    { name: "a cursor in a form the page does not read → its frontier holds no row back", done: {}, relays: { nextCursor: `${atMinutes(240)}:412` }, expected: [["refused pair_cap", 806, 412], [398, 812]] },
+  ];
+  for (const row of frontiers) {
+    test(`the merge: ${row.name}`, () => assert.deepEqual(getDoneBands([], { done: doneRead(row.done), relays: relayRead(row.relays) }), row.expected));
+  }
+
+  // a relay is in scope by either end, a refusal too (the relay read takes the ticks as sessionIds and matches either end)
+  const ticks = [
+    { name: "only the sender ticked shows its relay", ids: [FIXTURE_SESSION_IDS.aidl], expected: [[412]] },
+    { name: "only one of its recipients ticked shows it", ids: [FIXTURE_SESSION_IDS.portfolio], expected: [[412]] },
+    { name: "a third session ticked hides it", ids: [FIXTURE_SESSION_IDS.atrium], expected: [[398]] },
+    { name: "a refusal shows by its sender, beside a relay to that session", ids: [FIXTURE_SESSION_IDS.gersona], expected: [["refused pair_cap"], [398]] },
+  ];
+  for (const row of ticks) {
+    test(`ticks: ${row.name}`, () => assert.deepEqual(getDoneBands([], { done: thread(), relays: relayRead() }, row.ids), row.expected));
+  }
+
+  test("a send with one copy redacted is one In delivery row holding the open list's copy and the relay read's redacted one", () => {
+    const [redacted] = relays.items.filter((copy) => copy.id === 415);
+    const other = { ...redacted!, id: 416, session: { ...redacted!.session, id: FIXTURE_SESSION_IDS.yoaida, sessionIdPrefix: FIXTURE_SESSION_IDS.yoaida.slice(0, 8), name: "yoaida" }, relay: { ...redacted!.relay!, redaction: null } };
+    const open = getGroups([other], { done: thread(), relays: relayRead({ items: [redacted, other], refusals: [] }) }).filter((group) => !group.isDone);
+    assert.deepEqual(open.map((group) => group.rows.map((row) => (row.copies as Array<{ id: number }>).map((copy) => copy.id))), [[[415, 416]]]);
+  });
+
+  const cellOf = (tree: RenderedNode, name: string) => {
+    const [cell] = byClass(tree, name);
+    return cell === undefined ? null : collectText(cell).replace(/\s+/g, " ").trim();
+  };
+  const getDoneRowShape = (tree: RenderedNode) => {
+    const [row] = findNodes(tree, (node) => node.props?.role === "option");
+    return {
+      who: cellOf(tree, "queue-row-name"), isMarked: byClass(tree, "queue-row-mark").length === 1, title: cellOf(tree, "queue-row-title"), tag: cellOf(tree, "queue-row-tag"), fact: cellOf(tree, "queue-row-fact"),
+      badges: findNodes(tree, (node) => node.props?.atom === "Badge").length,
+      label: String(row?.props["aria-label"]).replace(/, (sent )?\S+ ago$/, ""), tip: row?.props.title ?? null,
+    };
+  };
+
+  // how a Done relay ended (layout §1, §5): plain words in its tag column, said after its title in its accessible name; its fact Relay
+  const sendOf = (sendId: string | null) => relays.items.filter((copy) => copy.sendId === sendId);
+  const [RECEIVED, FORWARDED] = [sendOf(relays.items.find((copy) => copy.id === 398)!.sendId), sendOf(relays.items.find((copy) => copy.id === 412)!.sendId)];
+  const lapse = (copy: (typeof relays.items)[number]) => ({ ...copy, status: "withdrawn", deliveredAt: null, relay: { ...copy.relay!, lapsedAt: atMinutes(60) } });
+  const endings = [
+    {
+      name: "every copy received reads Received", copies: RECEIVED,
+      shape: { who: "atrium", isMarked: true, title: `→ gersona ${RECEIVED[0]!.title}`, tag: "Received", fact: "Relay", badges: 0, label: `Relay from atrium (self-named) to gersona: ${RECEIVED[0]!.title}, received`, tip: "Relay" },
+    },
+    {
+      name: "of several, some lapsed reads how many, and a relay passed on says its hop", copies: FORWARDED,
+      shape: { who: "aidl", isMarked: true, title: `→ 2 sessions ${FORWARDED[0]!.title}`, tag: "1 lapsed", fact: "Relay", badges: 0, label: `Relay from aidl (self-named) to 2 sessions: ${FORWARDED[0]!.title}, 1 lapsed, passed on, hop 1`, tip: "Relay · passed on, hop 1" },
+    },
+    {
+      name: "every copy lapsed reads Lapsed", copies: FORWARDED.map(lapse),
+      shape: { who: "aidl", isMarked: true, title: `→ 2 sessions ${FORWARDED[0]!.title}`, tag: "Lapsed", fact: "Relay", badges: 0, label: `Relay from aidl (self-named) to 2 sessions: ${FORWARDED[0]!.title}, lapsed, passed on, hop 1`, tip: "Relay · passed on, hop 1" },
+    },
+  ];
+  for (const row of endings) {
+    test(`a Done relay's row: ${row.name}`, () => {
+      const tree = render("QueueRowQ", { row: { id: row.copies[0]!.id, item: row.copies[0], copies: row.copies, isDone: true }, isSelected: false, cols: ["tag", "fact"], view: { isNameShown: true, isAccountShown: false, tabStopId: null }, onSelect: () => undefined, onOrder: () => undefined });
+      assert.deepEqual(getDoneRowShape(tree), row.shape);
+    });
+  }
+
+  // a refused relay's row (layout §1, §5): its sender, `→` its recipients and the reason's name; a name by id prefix from the loaded relays, else the rail's rows, else the id
+  const GERSONA = FIXTURE_SESSION_IDS.gersona.slice(0, 8);
+  const YOAIDA = FIXTURE_SESSION_IDS.yoaida.slice(0, 8);
+  const railRows = [{ sessionIdPrefix: GERSONA, name: "gersona" }, { sessionIdPrefix: YOAIDA, name: "yoaida" }];
+  // a send from GERSONA whose name is the peer's own writing, to a session that is not GERSONA
+  const sentAs = (selfDeclaredName: string) => [{ ...FORWARDED[0]!, relay: { ...FORWARDED[0]!.relay!, sender: { ...FORWARDED[0]!.relay!.sender, sessionIdPrefix: GERSONA, selfDeclaredName } } }];
+  const refusedRows = [
+    { name: "named by the loaded relays", refusal: REFUSAL, items: relays.items, rail: [], shape: { who: "gersona", isMarked: false, title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" } },
+    { name: "named by the rail's rows when no loaded relay names them", refusal: REFUSAL, items: [], rail: railRows, shape: { who: "gersona", isMarked: false, title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" } },
+    { name: "named by neither → its ids", refusal: REFUSAL, items: [], rail: [], shape: { who: GERSONA, isMarked: false, title: `→ ${YOAIDA} Too many to one session`, label: `Refused relay from ${GERSONA} to ${YOAIDA}: Too many to one session` } },
+    {
+      name: "named only by a loaded relay's own sender name → that name marked as self-named", refusal: REFUSAL, items: sentAs("gersona"), rail: railRows.slice(1),
+      shape: { who: "gersona", isMarked: true, title: "→ yoaida Too many to one session", label: "Refused relay from gersona (self-named) to yoaida: Too many to one session" },
+    },
+    {
+      name: "a peer-written name never replaces the rail's name for its session", refusal: REFUSAL, items: sentAs("yoaida"), rail: railRows,
+      shape: { who: "gersona", isMarked: false, title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" },
+    },
+    { name: "to several → their count", refusal: { ...REFUSAL!, recipientIdPrefixes: [YOAIDA, GERSONA] }, items: relays.items, rail: [], shape: { who: "gersona", isMarked: false, title: "→ 2 sessions Too many to one session", label: "Refused relay from gersona to 2 sessions: Too many to one session" } },
+    { name: "to no resolvable session → the unknown count", refusal: { ...REFUSAL!, reason: "sender_cap", recipientIdPrefixes: [], unresolvedCount: 1 }, items: relays.items, rail: [], shape: { who: "gersona", isMarked: false, title: "→ 1 unknown recipient Too many from one session", label: "Refused relay from gersona to 1 unknown recipient: Too many from one session" } },
+  ];
+  for (const row of refusedRows) {
+    test(`a refused relay's row: ${row.name}, Refused its tag and Relay its fact, no badge, the tip its Done relay siblings carry`, () => {
+      const { queue } = buildQueue({ relays: { thread: thread({ items: row.items }) }, sessions: { region: { data: { sessions: row.rail } } } });
+      const [group] = call<unknown[]>("getDoneGroupsQ", [call("getRefusalRowQ", row.refusal)]);
+      const shape = getDoneRowShape(render("QueueGroupQ", { group, queue, view: { isNameShown: true, isAccountShown: false, tabStopId: null } }));
+      assert.deepEqual(shape, { ...row.shape, tag: "Refused", fact: "Relay", badges: 0, tip: "Relay" });
+    });
+  }
+
+  const FAILURE = { sentence: "The queue could not be read.", next: "Retry.", detail: "503" };
+  const endOf = (done: Record<string, unknown>, relayThread: Record<string, unknown>) => {
+    const { queue, calls } = buildQueue();
+    const reads = { done: { ...queue.done, thread: done }, relays: { ...queue.relays, thread: relayThread } };
+    const groups = getGroups([], { done, relays: relayThread });
+    const tree = render("ListEndQ", { queue: { ...withList(queue, []), ...reads, groups } });
+    for (const button of findNodes(tree, (node) => node.type === "button")) (button.props.onClick as (() => void) | undefined)?.();
+    return { more: getPlain(calls), text: collectText(tree).replace(/\s+/g, " ") };
+  };
+  const manyEnded = Array.from({ length: 199 }, (_, index) => ended(index + 1, index + 1));
+  // the fixture's refusal at 2026-11-13 12:00 KST is the oldest the cut page listed
+  const CUT_LINE = "⚠ Refusals before Nov 13 12:00 not listed.";
+  const ends = [
+    { name: "the item read's frontier is newer → Show more reads the item read", done: doneRead({ items: [ended(806, 200)], nextCursor: cursorAt(200, 806) }), relays: relayRead({ nextCursor: cursorAt(1620, 398) }), expected: { more: [["moreDone"]], text: "Show more" } },
+    { name: "the relay read's frontier is newer → Show more reads the relay read", done: doneRead({ nextCursor: cursorAt(1800, 812) }), relays: relayRead({ items: relays.items.filter((copy) => copy.id >= 412), nextCursor: cursorAt(240, 412) }), expected: { more: [["moreRelays"]], text: "Show more" } },
+    { name: "200 Done rows across both reads with more behind them → only the newest show", done: thread({ items: manyEnded, nextCursor: cursorAt(199, 1) }), relays: thread({ refusals: [{ ...REFUSAL!, at: atMinutes(0) }] }), expected: { more: [], text: "Showing the 200 most recent" } },
+    { name: "a send on its way counts nowhere → 199 Done rows beside it still offer Show more", done: thread({ items: manyEnded, nextCursor: cursorAt(199, 1) }), relays: thread({ items: relays.items.filter((copy) => copy.id >= 415) }), expected: { more: [["moreDone"]], text: "Show more" } },
+    { name: "the relay read failed → the Done warning and a Retry that reads the relay read", done: doneRead(), relays: thread({ status: "error", error: FAILURE }), expected: { more: [["readRelays"]], text: "⚠ Done items could not be read. Retry" } },
+    { name: "both reads failed → one warning, whose Retry reads both", done: thread({ status: "error", error: FAILURE }), relays: thread({ status: "error", error: FAILURE }), expected: { more: [["readDone"], ["readRelays"]], text: "⚠ Done items could not be read. Retry" } },
+    { name: "the relay read cut its refusals and has more → Show more in its own place reads the relay read, then the cut line", done: doneRead(), relays: relayRead({ refusalCutAt: REFUSAL!.at, nextCursor: cursorAt(1620, 398) }), expected: { more: [["moreRelays"]], text: "Show more " + CUT_LINE } },
+    { name: "the relay read cut its refusals and the item read has a cursor behind the cut → Show more in its own place reads the item read, then the cut line", done: doneRead({ items: [ended(806, 200)], nextCursor: cursorAt(200, 806) }), relays: relayRead({ refusalCutAt: REFUSAL!.at }), expected: { more: [["moreDone"]], text: "Show more " + CUT_LINE } },
+    { name: "the relay read cut its refusals and both reads are whole → the cut line alone", done: doneRead(), relays: relayRead({ refusalCutAt: REFUSAL!.at }), expected: { more: [], text: CUT_LINE } },
+  ];
+  for (const row of ends) test(`the list's end: ${row.name}`, () => assert.deepEqual(endOf(row.done, row.relays), row.expected));
+
+  // the relay thread pages refusals by time span: each record lands on one page, cut past the server's page bound
+  const prev = { items: [], nextCursor: cursorAt(400, 1), refusals: [{ at: atMinutes(100) }, { at: atMinutes(300) }], refusalCutAt: null };
+  const refusalReads = [
+    { name: "a re-read takes its span's refusals and keeps the loaded ones older than its span", page: { items: [], nextCursor: cursorAt(200, 1), refusals: [{ at: atMinutes(50) }] }, before: null, isQuiet: true, expected: { refusals: [50, 300], cutAt: null } },
+    { name: "a whole re-read takes every refusal from the read", page: { items: [], nextCursor: null, refusals: [{ at: atMinutes(50) }] }, before: null, isQuiet: true, expected: { refusals: [50], cutAt: null } },
+    { name: "a cut re-read keeps the loaded refusals older than its oldest listed one", page: { items: [], nextCursor: cursorAt(200, 1), refusals: [{ at: atMinutes(50) }, { at: atMinutes(90) }], isRefusalListCut: true }, before: null, isQuiet: true, expected: { refusals: [50, 90, 100, 300], cutAt: null } },
+    { name: "a cut first page marks the cut at its oldest listed refusal", page: { items: [], nextCursor: cursorAt(200, 1), refusals: [{ at: atMinutes(50) }, { at: atMinutes(90) }], isRefusalListCut: true }, before: null, isQuiet: false, expected: { refusals: [50, 90], cutAt: 90 } },
+    { name: "an earlier page keeps the newer cut", page: { items: [], nextCursor: null, refusals: [{ at: atMinutes(500) }], isRefusalListCut: true }, before: cursorAt(400, 1), isQuiet: false, prev: { ...prev, refusalCutAt: atMinutes(90) }, expected: { refusals: [100, 300, 500], cutAt: 90 } },
+  ];
+  const minutesOf = (iso: string) => Math.round((FIXTURE_NOW - Date.parse(iso)) / 60_000);
+  for (const row of refusalReads) {
+    test(`refusal pages: ${row.name}`, () => {
+      const read = call<{ refusals: Array<{ at: string }>; refusalCutAt: string | null }>("getReadThreadQ", row.prev ?? prev, row.page, row.before, row.isQuiet);
+      const refusals = read.refusals.map((refusal) => minutesOf(refusal.at)).sort((left, right) => left - right);
+      assert.deepEqual({ refusals, cutAt: read.refusalCutAt === null ? null : minutesOf(read.refusalCutAt) }, row.expected);
+    });
+  }
+
+  // layout §2 → Refused: the fixture's pair_cap refusal, gersona (25a65a54) to yoaida (fa32c7cb), 2026-11-13 12:00 KST, names from the loaded relays
+  const refusedQueue = () => {
+    const base = buildQueue().queue;
+    const groups = getGroups([], { done: thread(), relays: relayRead() });
+    const row = groups.flatMap((group) => group.rows).find((entry) => entry.refusal)!;
+    return { queue: { ...base, relays: { ...base.relays, thread: relayRead() }, groups, sheet: call("getSheetStateQ", groups, String(row.id), null) }, row };
+  };
+  const flatText = (node: RenderedNode) => collectText(node).replace(/\s+/g, " ").trim();
+
+  test("a refused row opens its own sheet and counts among the rows the sheet steps through", () => {
+    const { queue, row } = refusedQueue();
+    const pressed: unknown[] = [];
+    const tree = render("QueueRowQ", { row, names: new Map(), isSelected: false, cols: ["tag", "fact"], view: { isNameShown: true, isAccountShown: false, tabStopId: null }, onSelect: (id: unknown) => pressed.push(id), onOrder: () => pressed.push("order") });
+    (findNodes(tree, (node) => node.props?.role === "option")[0]?.props.onClick as () => void)();
+    const steps = call<{ index: number }>("getStepsQ", queue.groups, row.id, -1);
+    // the redacted relay on its way stands above it under In delivery; the refusal is the newest Done row
+    assert.deepEqual([pressed, (queue.sheet as { kind: string; id: unknown }).kind, (queue.sheet as { id: unknown }).id, steps.index], [[row.id], "item", row.id, 1]);
+  });
+
+  test("a refused relay's sheet: the two ends in the head, the refusal and its time on the date line, the page's own title, From and To with their ids, the reason, no text", () => {
+    const tree = render("QueueSheetQ", { queue: refusedQueue().queue });
+    const [head] = findNodes(tree, (node) => node.type === "h2");
+    const [title] = findNodes(tree, (node) => node.type === "h3");
+    const body = flatText(byClass(tree, "queue-sheet-body")[0] as RenderedNode);
+    assert.deepEqual(
+      {
+        head: flatText(head as RenderedNode), title: collectText(title as RenderedNode), date: flatText(byClass(tree, "queue-date-line")[0] as RenderedNode),
+        parts: ["From gersona · 25a65a54", "To yoaida · fa32c7cb", "Too many to one session — gersona hit the hourly limit for yoaida.", "Its text was not stored."].map((part) => body.includes(part)),
+        crit: findNodes(byClass(tree, "queue-date-line")[0] as RenderedNode, (node) => node.props?.className === "text-crit").map(flatText),
+      },
+      { head: "Relay from gersona → to yoaida", title: "Refused relay from gersona to yoaida", date: "✕ Refused 2026-11-13 12:00 KST", parts: [true, true, true, true], crit: ["✕"] },
+    );
+  });
+
+  test("a refused relay's sheet carries the no-login sentence alone, since nothing arrived, and its foot only says when: no field, no button", () => {
+    const tree = render("QueueSheetQ", { queue: refusedQueue().queue });
+    const text = flatText(tree);
+    const [foot] = byClass(tree, "card-foot");
+    assert.deepEqual(
+      [text.includes("No login: any local process can send as any session, or redact."), text.includes("sent this as its message"), flatText(foot as RenderedNode), findNodes(foot as RenderedNode, (node) => ["button", "textarea", "input"].includes(String(node.type))).length],
+      [true, false, "Refused · Nov 13 12:00", 0],
+    );
+  });
+
+  test("a refusal to no resolvable session names the count on its To line", () => {
+    const refusal = { ...REFUSAL!, recipientIdPrefixes: [], unresolvedCount: 1 };
+    const text = flatText(render("RefusedWhoQ", { refusal, names: new Map() }));
+    assert.equal(text, "From 25a65a54 To → 1 recipient that matched no session");
+  });
+
+  test("O on a refused row ticks the rail's sessions its recipient ids name, never its sender", () => {
+    const rails = [{ id: FIXTURE_SESSION_IDS.yoaida, sessionIdPrefix: FIXTURE_SESSION_IDS.yoaida.slice(0, 8) }, { id: FIXTURE_SESSION_IDS.gersona, sessionIdPrefix: FIXTURE_SESSION_IDS.gersona.slice(0, 8) }];
+    assert.deepEqual(call("getOrderKeyIdsQ", refusedQueue().row, rails), [FIXTURE_SESSION_IDS.yoaida]);
+  });
+});
+
 // spec §4.2, §9.9: a relay on its way — a row under In delivery on the list's own columns, and the list's sheet read-only
 describe("a relay on its way", () => {
   const TITLE = "필드 이름이 바뀌었습니다.";
@@ -1473,7 +1636,8 @@ describe("a relay on its way", () => {
   const getRowShape = (tree: RenderedNode) => {
     const [row] = findNodes(tree, (node) => node.props?.role === "option");
     return {
-      who: cellText(tree, "queue-row-who"),
+      who: cellText(tree, "queue-row-name"),
+      mark: cellText(tree, "queue-row-mark"),
       title: cellText(tree, "queue-row-title"),
       tags: findNodes(byClass(tree, "queue-row-tag")[0] as RenderedNode, (node) => node.props?.atom === "Badge").map((badge) => badge.props.title),
       fact: cellText(tree, "queue-row-fact"),
@@ -1484,27 +1648,23 @@ describe("a relay on its way", () => {
   const rows = [
     {
       name: "to one session it names its sender, leads its title with the recipient and reads Relay", copies: toYoaida(), isNameShown: true,
-      shape: { who: NAMED, title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
+      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
     },
     {
       name: "to several it names their count and reads received of sent", copies: toThree(), isNameShown: true,
-      shape: { who: NAMED, title: `→ 3 sessions ${TITLE}`, tags: [], fact: "1 of 3", label: `Relay from ${NAMED} to 3 sessions: ${TITLE}, 1 of 3` },
+      shape: { who: "aidl", mark: "self", title: `→ 3 sessions ${TITLE}`, tags: [], fact: "1 of 3", label: `Relay from ${NAMED} to 3 sessions: ${TITLE}, 1 of 3` },
     },
     {
       name: "a copy its session never acknowledged is not yet, never not received", copies: toYoaida({ status: "unacked", deviation: "unacked" }), isNameShown: true,
-      shape: { who: NAMED, title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
+      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
     },
     {
       name: "a copy whose session does not listen is counted in the tag column", copies: toYoaida({ session: buildSession({ name: "yoaida", state: "live", isWaiting: false }) }), isNameShown: true,
-      shape: { who: NAMED, title: `→ yoaida ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}, 1 next turn` },
-    },
-    {
-      name: "with one session ticked the name column is left out and the title names both ends", copies: toYoaida(), isNameShown: false,
-      shape: { who: null, title: `${NAMED} → yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
+      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}, 1 next turn` },
     },
     {
       name: "a redacted relay reads Text redacted where its title stood", copies: toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } }), isNameShown: true,
-      shape: { who: NAMED, title: "→ yoaida Text redacted", tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: Text redacted` },
+      shape: { who: "aidl", mark: "self", title: "→ yoaida Text redacted", tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: Text redacted` },
     },
   ];
   for (const row of rows) {
@@ -1514,6 +1674,31 @@ describe("a relay on its way", () => {
       assert.match(String(findNodes(tree, (node) => node.props?.role === "option")[0]?.props["aria-label"]), /, sent \S+ ago$/);
     });
   }
+
+  // one session ticked → the sender's name is cut on its own, its self mark stays whole, and the recipient and title are cut on their own
+  test("with one session ticked the title cell leads with the sender's name and its self mark, each its own part before the recipient and title", () => {
+    const tree = renderRow(toYoaida(), false);
+    const [cell] = byClass(tree, "queue-row-title");
+    const partOf = (node: unknown) => {
+      const part = node as RenderedNode;
+      return { className: part.props?.className, text: collectText(part).replace(/\s+/g, " ").trim(), tip: part.props?.title, isHidden: part.props?.["aria-hidden"] === "true" };
+    };
+    const [from, ends] = (cell?.children ?? []).filter((child) => typeof child === "object" && child !== null) as RenderedNode[];
+    assert.deepEqual({
+      cell: { names: byClass(tree, "queue-row-who").length, tip: cell?.props.title, parts: [from, ends].map((part) => part?.props.className) },
+      from: findNodes(from!, (node) => node !== from && String(node.props?.className ?? "").startsWith("queue-row-")).map(partOf),
+      ends: collectText(ends!).replace(/\s+/g, " ").trim(),
+      label: getRowShape(tree).label,
+    }, {
+      cell: { names: 0, tip: TITLE, parts: ["queue-row-from", "queue-row-ends"] },
+      from: [
+        { className: "queue-row-name", text: "aidl", tip: NAMED, isHidden: false },
+        { className: "queue-row-mark", text: "self", tip: "self-named", isHidden: true },
+      ],
+      ends: `→ yoaida ${TITLE}`,
+      label: `Relay from ${NAMED} to yoaida: ${TITLE}`,
+    });
+  });
 
   test("a redacted relay's stored text is drawn nowhere on its row or its sheet", () => {
     const copies = toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } });
@@ -1549,16 +1734,18 @@ describe("a relay on its way", () => {
       title: collectText(title as RenderedNode),
       date: collectText(date as RenderedNode),
       foot: collectText(foot as RenderedNode).replace(/\s+/g, " ").trim(),
-      controls: findNodes(foot as RenderedNode, (node) => ["button", "textarea", "input"].includes(String(node.type))).length,
+      controls: findNodes(foot as RenderedNode, (node) => ["textarea", "input"].includes(String(node.type))).length,
+      buttons: findNodes(foot as RenderedNode, (node) => node.type === "button").map((node) => [collectText(node), node.props.className]),
       body: collectText(byClass(tree, "queue-sheet-body")[0] as RenderedNode),
     };
   };
+  const QUIET_REDACT = [["Redact text", "btn ghost sm"]];
 
-  test("a relay to one session opens read-only: its two ends in the head and title, no field and no button", () => {
+  test("a relay to one session opens read-only: its two ends in the head and title, no field, and its one act a quiet Redact text at the foot's end", () => {
     const shape = getSheetShape(toYoaida());
     assert.deepEqual(
-      { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls },
-      { head: `Relay from ${NAMED} → to yoaida`, title: `Message from ${NAMED} to yoaida`, foot: "Read-only. It reaches yoaida by itself and stays in Relay history.", controls: 0 },
+      { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls, buttons: shape.buttons },
+      { head: `Relay from ${NAMED} → to yoaida`, title: `Message from ${NAMED} to yoaida`, foot: "Read-only. It reaches yoaida by itself. Redact text", controls: 0, buttons: QUIET_REDACT },
     );
     assert.match(shape.date, /^Not yet\s+Sent\s+2026-11-19 14:20 KST$/);
     for (const part of [`What ${NAMED} wrote`, `${NAMED} sent this as its message, not yours.`, "It carries none of your authority."]) assert.ok(shape.body.includes(part), part);
@@ -1569,15 +1756,15 @@ describe("a relay on its way", () => {
     const shape = getSheetShape(toThree());
     assert.deepEqual(
       { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls },
-      { head: `Relay from ${NAMED} → to 3 sessions`, title: `Message from ${NAMED} to 3 sessions`, foot: "Read-only. It reaches each session by itself and stays in Relay history.", controls: 0 },
+      { head: `Relay from ${NAMED} → to 3 sessions`, title: `Message from ${NAMED} to 3 sessions`, foot: "Read-only. It reaches each session by itself. Redact text", controls: 0 },
     );
     assert.match(shape.date, /^1 of 3 received/);
   });
 
   // a peer writes its own name → wherever the queue names the sender, a written name is marked as the sender's own
   const NAME_ROWS = [
-    { name: "a name the sender gave itself is marked self-named", sender, shown: NAMED },
-    { name: "a sender that gave no name reads as its id prefix, unmarked", sender: { ...sender, selfDeclaredName: null }, shown: "aca91592" },
+    { name: "a name the sender gave itself is marked self-named", sender, shown: NAMED, cell: { who: "aidl", mark: "self" } },
+    { name: "a sender that gave no name reads as its id prefix, unmarked", sender: { ...sender, selfDeclaredName: null }, shown: "aca91592", cell: { who: "aca91592", mark: null } },
   ];
   for (const row of NAME_ROWS) {
     test(`the sender in the row's name column, the sheet head, the sheet title, the From line, the text's label and the standing line: ${row.name}`, () => {
@@ -1586,10 +1773,10 @@ describe("a relay on its way", () => {
       const body = sheet.body.replace(/\s+/g, " ");
       assert.deepEqual(
         {
-          who: getRowShape(renderRow(copies)).who, head: sheet.head, title: sheet.title, from: body.includes(`From ${row.shown} · aca91592 · work`),
+          cell: (({ who, mark }) => ({ who, mark }))(getRowShape(renderRow(copies))), head: sheet.head, title: sheet.title, from: body.includes(`From ${row.shown} · aca91592 · work`),
           label: body.includes(`What ${row.shown} wrote`), standing: body.includes(`${row.shown} sent this as its message, not yours.`),
         },
-        { who: row.shown, head: `Relay from ${row.shown} → to yoaida`, title: `Message from ${row.shown} to yoaida`, from: true, label: true, standing: true },
+        { cell: row.cell, head: `Relay from ${row.shown} → to yoaida`, title: `Message from ${row.shown} to yoaida`, from: true, label: true, standing: true },
       );
     });
   }
@@ -1670,6 +1857,30 @@ describe("a relay on its way", () => {
     });
   }
 
+  // one short painted line keeps both names' self-named marks in view; spec §12.7's full sentence in its title and to a reader;
+  // the parent's send on another day than this send → dated
+  const hopSentence = `Hop 1 · sent after ${NAMED} received relay #398 from atrium (self-named) at 2026-11-18 12:00`;
+  const hopRows = [
+    {
+      name: "a relay passed on paints its parent's relay id, sender and send time in one short line, the full sentence in its title and to a reader",
+      facts: { hop: 1, parent: { id: 398, sender: { ...sender, sessionIdPrefix: "e8923338", selfDeclaredName: "atrium" }, sentAt: "2026-11-18T03:00:00.000Z" } },
+      lines: [{ shown: "Hop 1 · passed on from #398 · atrium (self-named) · 2026-11-18 12:00", title: hopSentence, spoken: hopSentence }],
+    },
+    { name: "a relay sent first has none", facts: {}, lines: [] },
+  ];
+  for (const row of hopRows) {
+    test(`the hop line on a relay's sheet: ${row.name}`, () => {
+      const copies = toYoaida({}, row.facts);
+      const paragraphs = findNodes(render("RelayBlockQ", { item: copies[0], copies, rails: [] }), (node) => node.type === "p" && collectText(node).trim().startsWith("Hop"));
+      const textOf = (node: RenderedNode, isPart: (part: RenderedNode) => boolean) => findNodes(node, isPart).map((part) => collectText(part).replace(/\s+/g, " ").trim()).join("");
+      assert.deepEqual(paragraphs.map((node) => ({
+        shown: textOf(node, (part) => part.props?.["aria-hidden"] === "true"),
+        title: node.props.title,
+        spoken: textOf(node, (part) => part.props?.className === "sr-only"),
+      })), row.lines);
+    });
+  }
+
   test("a relay whose row left keeps a To line for every recipient it last had", () => {
     const copies = toThree();
     const queue = withList(buildQueue().queue, [buildItem({ id: 3 })]);
@@ -1677,55 +1888,104 @@ describe("a relay on its way", () => {
     assert.deepEqual(["yoaida", "atrium", "gersona"].map((name) => body.includes(`${name} · 5e55a0`)), [true, true, true]);
   });
 
-  const loadWithAnswer = async (answer: { status: number; body: unknown }, urls: string[] = []) => (await loadScreenModule(QUEUE_SRC, {
-    URLSearchParams, window: { UI: uiStub() },
-    fetch: async (url: string) => { urls.push(url); return { status: answer.status, json: async () => answer.body }; },
-  })) as ScreenModule;
-  const getEnd = (module: ScreenModule) => (module.getRelayEndQ as (item: unknown, copies: unknown) => Promise<unknown>)(toThree()[0], toThree());
-
-  test("a relay whose row left reads the relay thread scoped to its recipients and finds its send by id, never the single-item read", async () => {
-    const urls: string[] = [];
-    const other = { ...toYoaida()[0], id: 500, sendId: "relay-send-2" };
-    const module = await loadWithAnswer({ status: 200, body: { items: [other, ...toThree()], nextCursor: null, refusals: [] } }, urls);
-    const found = getPlain(await getEnd(module)) as Array<{ id: number }>;
-    const [path, query] = urls[0]!.split("?");
+  // a relay gone from the list has no place to step from → its arrows dim, and neither a press nor J / K steps
+  test("a relay whose row left draws its step arrows aria-disabled and steps nowhere, by press or by key", () => {
+    const copies = toThree();
+    const { calls, queue } = buildQueue({ steps: { index: -1, count: 3, prevId: 5, nextId: 7 } });
+    const left = { ...withList(queue, [buildItem({ id: 3 })]), sheet: { kind: "left", id: 412, item: copies[0], copies } };
+    const [head] = byClass(render("QueueSheetQ", { queue: left }), "card-head");
+    const arrows = findNodes(head as RenderedNode, (node) => node.type === "button" && / item$/.test(String(node.props["aria-label"])));
+    for (const arrow of arrows) (arrow.props.onClick as (() => void) | undefined)?.();
+    for (const key of ["ArrowDown", "ArrowUp"]) call("putSteppedRowQ", { queue: left }, key);
     assert.deepEqual(
-      [urls.length, path, ownerOrdersQuerySchema.parse(Object.fromEntries(new URLSearchParams(query))), found.map((copy) => copy.id)],
-      [1, "/api/queue/owner/orders", { kind: "relay", sessionIds: RECIPIENT_IDS, limit: 30 }, [412, 413, 414]],
+      [arrows.map((arrow) => [arrow.props["aria-label"], arrow.props["aria-disabled"], Boolean(arrow.props.disabled)]), getPlain(calls)],
+      [[["Previous item", true, false], ["Next item", true, false]], []],
     );
   });
 
-  const missRows = [
-    { name: "a read that does not hold the send", answer: { status: 200, body: { items: [{ ...toYoaida()[0], id: 500, sendId: "relay-send-2" }], nextCursor: null, refusals: [] } } },
-    { name: "a failed read", answer: { status: 503, body: { error: "unavailable" } } },
-  ];
-  for (const row of missRows) {
-    test(`a relay whose row left finds no outcome on ${row.name}`, async () => assert.equal(await getEnd(await loadWithAnswer(row.answer)), null));
-  }
-
+  // the fixture's times in KST: sent Nov 19 14:20, received 14:24 the same day, lapsed Nov 22 14:20
   const lapse = (copy: Record<string, unknown>) => ({ ...copy, status: "expired", relay: { ...(copy.relay as object), lapsedAt: "2026-11-22T05:20:00.000Z" } });
   const receive = (copy: Record<string, unknown>) => ({ ...copy, status: "delivered", deliveredAt: "2026-11-19T05:24:00.000Z" });
   const ended = (lapsed: number) => toThree().map((copy, index) => (index < lapsed ? lapse(copy) : receive(copy)));
+  const REDACTION = { at: "2026-11-19T05:30:00.000Z", length: 1284 };
+  const redacted = (copies: Array<Record<string, unknown>>) => copies.map((copy) => ({ ...copy, relay: { ...(copy.relay as object), redaction: REDACTION } }));
+  const flatText = (node: RenderedNode) => collectText(node).replace(/\s+/g, " ").replace(/ \./g, ".").trim();
+
+  // layout §2 → Foot: the note line, and the quiet Redact text at its end only while a copy holds its text
   const footRows = [
-    { name: "while the read runs the read-only line stays", end: undefined, text: "Read-only. It reaches each session by itself and stays in Relay history.", ids: [] },
-    { name: "every copy received", end: ended(0), text: "ℹ Every session has received this relay.", ids: [] },
-    { name: "one copy lapsed names its recipient and id", end: ended(1), text: "ℹ This relay lapsed for yoaida 5e55a000.", ids: ["5e55a000"] },
-    { name: "two lapsed name both with their ids", end: ended(2), text: "ℹ This relay lapsed for yoaida 5e55a000 and atrium 5e55a010.", ids: ["5e55a000", "5e55a010"] },
-    { name: "three or more lapsed name their count", end: ended(3), text: "ℹ This relay lapsed for 3 sessions.", ids: [] },
-    { name: "a copy still on its way sends the owner to Relay history", end: [...ended(1).slice(0, 2), toThree()[2]], text: "ℹ This relay left the list. Relay history has its outcome.", ids: [] },
-    { name: "no outcome found", end: null, text: "ℹ This relay left the list. Relay history has its outcome.", ids: [] },
+    { name: "on its way to one session it reaches it by itself", copies: toYoaida(), props: {}, note: "Read-only. It reaches yoaida by itself.", buttons: QUIET_REDACT },
+    { name: "on its way to several it reaches each by itself", copies: toThree(), props: {}, note: "Read-only. It reaches each session by itself.", buttons: QUIET_REDACT },
+    { name: "done and received reads how and when it ended", copies: [receive(toYoaida()[0]!)], props: { isDone: true }, note: "Received · Nov 19 14:24", buttons: QUIET_REDACT },
+    { name: "done with some lapsed counts each, at the last copy's end", copies: ended(1), props: { isDone: true }, note: "2 received, 1 lapsed · Nov 22 14:20", buttons: QUIET_REDACT },
+    { name: "done with every copy lapsed reads Lapsed", copies: ended(3), props: { isDone: true }, note: "Lapsed · Nov 22 14:20", buttons: QUIET_REDACT },
+    { name: "redacted on its way keeps the note and offers nothing", copies: redacted(toYoaida()), props: {}, note: "Read-only. It reaches yoaida by itself.", buttons: [] },
+    { name: "redacted and done keeps the end line and offers nothing", copies: redacted(ended(1)), props: { isDone: true }, note: "2 received, 1 lapsed · Nov 22 14:20", buttons: [] },
+    { name: "a row that left the list says so and offers nothing", copies: toThree(), props: { hasLeft: true }, note: "ℹ This relay left the list.", buttons: [] },
   ];
   for (const row of footRows) {
-    test(`a relay's foot after its row left: ${row.name}`, () => {
-      const tree = render("RelayFootQ", { copies: toThree(), end: row.end });
-      const [region] = findNodes(tree, (node) => node.props?.role === "status");
+    test(`a relay's foot: ${row.name}`, () => {
+      const tree = render("RelayFootQ", { copies: row.copies, onReread: () => undefined, ...row.props });
+      const [note] = findNodes(tree, (node) => node.props?.role === "status");
+      const buttons = findNodes(tree, (node) => node.type === "button").map((node) => [collectText(node), node.props.className]);
+      assert.deepEqual([flatText(note as RenderedNode), buttons], [row.note, row.buttons]);
+    });
+  }
+
+  test("each To line carries its relay id after its session id, and once every copy ended its outcome and when, the lapse on another day dated", () => {
+    const lines = byClass(render("RelayWhoQ", { sender, copies: ended(1), rails: [], isDone: true }), "queue-relay-to").map(flatText);
+    assert.deepEqual(
+      lines.map((line) => [line.match(/5e55a0\d0 #\d+/)?.[0], line.replace(/^.* · /, "")]),
+      [["5e55a000 #412", "Live ⚠ Lapsed Nov 22 14:20"], ["5e55a010 #413", "Live ✓ Received 14:24"], ["5e55a020 #414", "Live ✓ Received 14:24"]],
+    );
+  });
+
+  const dateRows = [
+    { name: "one recipient reads its outcome and time", copies: [receive(toYoaida()[0]!)], date: "✓ Received 14:24 Sent 2026-11-19 14:20 KST" },
+    { name: "several read how many of each", copies: ended(1), date: "2 received, 1 lapsed Sent 2026-11-19 14:20 KST" },
+  ];
+  for (const row of dateRows) {
+    test(`a Done relay's date line: ${row.name}`, () => {
+      const tree = renderSheet({ item: row.copies[0], copies: row.copies, queue: buildQueue().queue, isDone: true });
+      assert.equal(flatText(byClass(tree, "queue-date-line")[0] as RenderedNode), row.date);
+    });
+  }
+
+  test("a redacted relay's sheet paints the page's own line from the stored time and length in the text's place, under its label with no shown-as-sent cue, its documents line kept", () => {
+    const copies = redacted(toYoaida({ body: "[relay text redacted by the owner]", linkedDocIds: [44099] }));
+    const body = flatText(byClass(renderSheet({ item: copies[0], copies, queue: buildQueue().queue }), "queue-sheet-body")[0] as RenderedNode);
+    assert.deepEqual(
+      [body.includes("Text redacted 2026-11-19 14:30 KST · it was 1,284 characters long"), body.includes("relay text redacted by the owner"), body.includes("Documents: 44099"), / wrote/.test(body), body.includes("shown as sent")],
+      [true, false, true, true, false],
+    );
+  });
+
+  test("a send with one copy still holding its text keeps that text on its sheet and its Redact text", () => {
+    const [gone, kept] = toThree();
+    const copies = [...redacted([{ ...gone!, body: "[relay text redacted by the owner]" }]), kept!];
+    const tree = renderSheet({ item: copies[0], copies, queue: buildQueue().queue });
+    assert.deepEqual([getAsSentTexts(tree), buttonLabelled(tree, "Redact text").length], [[BODY], 1]);
+  });
+
+  // layout §6 → Trust: whatever its state, a relay's sheet says whose word it is and that the queue has no login; nothing on it sends
+  const trustRows = [
+    { name: "on its way", copies: toThree(), isDone: false },
+    { name: "done", copies: ended(1), isDone: true },
+    { name: "redacted", copies: redacted(ended(1)), isDone: true },
+  ];
+  for (const row of trustRows) {
+    test(`a relay's sheet carries the standing line and the no-login sentence, and no field or ink button: ${row.name}`, () => {
+      const tree = renderSheet({ item: row.copies[0], copies: row.copies, queue: buildQueue().queue, isDone: row.isDone });
+      const text = flatText(tree);
       assert.deepEqual(
-        [collectText(region as RenderedNode).replace(/\s+/g, " ").replace(/ \./g, ".").trim(), findNodes(tree, (node) => node.props?.atom === "MachineString").map((node) => collectText(node))],
-        [row.text, row.ids],
+        [text.includes(`${NAMED} sent this as its message, not yours. It carries none of your authority.`), text.includes("No login: any local process can send as any session, or redact."), getSendControls(tree)],
+        [true, true, 0],
       );
     });
   }
 });
+
+// a field, a box, or an ink button: what a sheet would send with
+const getSendControls = (tree: RenderedNode) => findNodes(tree, (node) => ["textarea", "input"].includes(String(node.type)) || String(node.props?.className ?? "").split(" ").includes("primary")).length;
 
 describe("selection", () => {
   const groups = call("getGroupsQ", [buildItem({ id: 5, kind: "report" }), buildItem({ id: 3 }), buildItem({ id: 8, kind: "message", status: "delivered", sendId: "s", session: buildSession({ id: "b2" }) }), buildItem({ id: 7, kind: "message", status: "delivered", sendId: "s" })]);
@@ -2552,7 +2812,7 @@ describe("the ticks as the one selection", () => {
   }
 
   test("a relay with its sender and a recipient ticked is one row", () => {
-    const groups = call<Array<{ rows: Array<{ id: number; copies: unknown[] }> }>>("getListGroupsQ", relayItems, [], { profile: "" }, [SENDER_ID, relayEnds.yoaida.id]);
+    const groups = call<Array<{ rows: Array<{ id: number; copies: unknown[] }> }>>("getListGroupsQ", relayItems, { done: { items: [], nextCursor: null }, relays: { items: [], refusals: [], nextCursor: null } }, { profile: "" }, [SENDER_ID, relayEnds.yoaida.id]);
     assert.deepEqual(groups.flatMap((group) => group.rows).map((row) => [row.id, row.copies.length]), [[412, 2]]);
   });
 
@@ -2648,13 +2908,12 @@ describe("the rail foot", () => {
   ];
   for (const row of rows) test(row.name, () => assert.deepEqual(footButton(row.region), row.expected));
 
-  test("the foot at rest, both drawers closed, keeps the page scrollable on the Queue and after leaving it", async () => {
+  test("the foot at rest, its drawer closed, keeps the page scrollable on the Queue and after leaving it", async () => {
     const effects = createEffectReact();
     const doc = createFakeDocument();
     const live = (await loadScreenModule(UI_SRC, { React: effects.react, document: doc })) as { UI: Record<string, unknown> };
     const page = (await loadScreenModule(QUEUE_SRC, { React: effects.react, URLSearchParams, window: { UI: live.UI, location: { hash: "#queue" } } })) as ScreenModule;
-    const relaySignal = { status: "ready", data: { count: { refused: 1, forwarded: 0, redacted: 0 }, hasRecord: true }, error: null, busy: false };
-    const { queue } = buildQueue({ resumes: resumes(["acked"]), relaySignal });
+    const { queue } = buildQueue({ resumes: resumes(["acked"]) });
     doc.reset();
 
     const foot = effects.mount(() => (page.RailFootQ as Component)({ queue }), () => ({}));
@@ -3941,6 +4200,25 @@ describe("In delivery rows", () => {
       assert.deepEqual(findNodes(tree, (node) => typeof node.props?.className === "string" && node.props.className.startsWith("queue-row-")).map((node) => collectText(node)), row.lines);
     });
   }
+
+  // one sender reads as one name on every row; a self-declared name adds the page's own mark beside it, never in it
+  test("a sender's name reads the same on its decision row and its relay row; only a self-declared name adds the self mark, its words in the tooltips", () => {
+    const relay = getRelayThreadFixture().items.find((copy) => copy.id === 398)!;
+    const decision = buildItem({ session: buildSession({ name: "atrium" }) });
+    const unnamed = { ...relay, relay: { ...relay.relay!, sender: { ...relay.relay!.sender, selfDeclaredName: null } } };
+    const cellOf = (item: unknown) => {
+      const tree = render("RowWhoQ", { row: { id: 1, item, copies: [item] } });
+      const [name] = byClass(tree, "queue-row-name");
+      const [mark] = byClass(tree, "queue-row-mark");
+      const isMarkInName = mark !== undefined && name !== undefined && findNodes(name, (node) => node === mark).length > 0;
+      return { name: collectText(name!), tip: name?.props.title, mark: mark && { text: collectText(mark), tip: mark.props.title, isHidden: mark.props["aria-hidden"] === "true" }, isMarkInName };
+    };
+    assert.deepEqual([cellOf(decision), cellOf(relay), cellOf(unnamed)], [
+      { name: "atrium", tip: "atrium", mark: undefined, isMarkInName: false },
+      { name: "atrium", tip: "atrium (self-named)", mark: { text: "self", tip: "self-named", isHidden: true }, isMarkInName: false },
+      { name: relay.relay!.sender.sessionIdPrefix, tip: relay.relay!.sender.sessionIdPrefix, mark: undefined, isMarkInName: false },
+    ]);
+  });
 });
 
 describe("the sheet's letterhead and record", () => {
@@ -4124,7 +4402,7 @@ describe("twelve words a sentence", () => {
       .map(([label, getSentence]) => `${label} — ${getSentence({ sender: "gersona", recipient: "yoaida" })}`),
     ...noteOf(buildItem({ status: "resume_pending", skipReason: { kind: "shared_worktree", markedOccupants: [], hasUnmarkedOccupant: true } })),
     collectText(render("AnswerLineQ", { item: buildItem({ status: "answered", isAnsweredOutside: true, answeredAt: "2026-11-19T05:30:00.000Z" }) })),
-    vm.runInContext("RELAY_LOG_FOOT_Q", screen) as string,
+    vm.runInContext("RELAY_NO_LOGIN_Q", screen) as string,
   ];
 
   test("every sentence the page renders is twelve words or fewer", () => {

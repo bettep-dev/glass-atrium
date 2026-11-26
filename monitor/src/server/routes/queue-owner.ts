@@ -7,7 +7,7 @@ import { type AuditChangeCarrier, insertAudit, setAuditTarget } from "../middlew
 import { QueueRequestError } from "../queue/errors.js";
 import { IMAGE_BYTES_MAX, UPLOAD_CONTENT_TYPES, createImage, getImageFileOrThrow } from "../queue/images.js";
 import { putAnswer, putLater, putRedaction, putReply, putResend, putSeen } from "../queue/owner-items.js";
-import { getOwnerItemOrThrow, getOwnerItems, getOwnerOrders, getRecentResumes, getRelaySignal } from "../queue/owner-views.js";
+import { getOwnerItemOrThrow, getOwnerItems, getOwnerOrders, getRecentResumes } from "../queue/owner-views.js";
 import { createMessages, getOwnerSessions } from "../queue/owner-sessions.js";
 import { type PageOriginCarrier, buildPageOriginHook, getPageOrigins } from "../queue/request-gate.js";
 import {
@@ -98,9 +98,6 @@ function registerOrderHistoryRoute(app: FastifyInstance): void {
 }
 
 function registerRelayRoutes(app: FastifyInstance): void {
-  app.get("/api/queue/owner/relays/signal", async (request, reply) =>
-    handleParsed(request, reply, { route: "/api/queue/owner/relays/signal", schema: emptyBodySchema, input: request.query, work: () => getRelaySignal() }),
-  );
   // Only the id: the marker is fixed server-side → a strict empty body refuses any replacement text
   app.post<{ Params: IdParams }>("/api/queue/owner/items/:id/redact", OWNER_ROUTE_OPTIONS, async (request, reply) =>
     handleItemRequest(request, reply, {
