@@ -537,8 +537,9 @@ function ScreenArchitecture(
 		[daemonHealthState, pgState, hookState, hookFailState, liveState.data],
 	);
 
-	// re-stamped on every overlay read while drilled → the stamp a drill leaves behind is its last one
+	// stamped only while the drilled read is settled and answered → held old rows never take a later run's stamp
 	useEffectAR(() => {
+		if (payloadState.busy || payloadState.error != null) return;
 		const daemonName = payloadState.data?.daemon;
 		const rows = getDaemonRunRows(payloadState, daemonName);
 		if (!rows) return;

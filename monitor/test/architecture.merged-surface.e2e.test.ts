@@ -2794,6 +2794,31 @@ test("a daemon no longer drilled drops its held failed runs once the overlay rep
 	assert.ok(!row.includes("Needs attention") && !row.includes("runs clean"), `the row rests on the later run alone — read "${row}"`);
 });
 
+// a failed re-read of the drilled daemon's runs never carries the old rows over to a later run
+test("the drilled daemon drops its held failed runs when the overlay reports a later run and the payload re-read fails", async () => {
+	await openMap(
+		getLiveFixture({ daemons: [getDaemon(BOUND_DAEMON, "ok")] }),
+		getQueueFixture(),
+		getHealthFixture({ payload: getFailingPayload() }),
+	);
+	await openDaemonHealth(BOUND_DAEMON);
+	await waitForRegionText(BOUND_DAEMON, "runs clean");
+	await closePanel();
+	assertPartRing(await waitForPartRing(DAEMON_PART_ID, RING_WARN_CLASS), DAEMON_PART_ID, RING_WARN_CLASS);
+
+	const laterRunAt = new Date(Date.parse(DAEMON_RUN_TS) + 60 * 60_000).toISOString();
+	healthFixture = {
+		...healthFixture,
+		payloadFails: true,
+		daemons: healthFixture.daemons.map((daemon) => (daemon.daemon_name === BOUND_DAEMON ? { ...daemon, last_run_at: laterRunAt } : daemon)),
+	};
+	await refreshMap();
+
+	assertPartRing(await waitForPartRing(DAEMON_PART_ID, RING_OK_CLASS), DAEMON_PART_ID, RING_OK_CLASS);
+	const row = await page.$eval(`#arch-part-${DAEMON_PART_ID}`, (el) => el.textContent || "");
+	assert.ok(!row.includes("Needs attention") && !row.includes("runs clean"), `the row rests on the later run alone — read "${row}"`);
+});
+
 // 드릴다운이 연 노드를 따라가는지 재는 반증 케이스 — 고정 리터럴 구현은 여기서 붉어짐.
 test("AC-T9 opening a second daemon's node drills the payload request into THAT daemon", async () => {
 	await openMap(
