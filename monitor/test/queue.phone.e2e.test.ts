@@ -14,7 +14,7 @@ import {
   closeHarness, getRestReadyText, getSelfNamedFixture, type Harness, MIN_WINDOW, openHarness, openQueuePage, openShellPage, READY_TIMEOUT_MS, tickSessions, type Viewport, waitForDoneBands,
 } from "./lib/queue-render-harness.js";
 import {
-  getAnswerNotReceivedFixture, getOffViewFixture, getProseFixture, getRelayListFixture, getRelayRowFixture, getRestFixture, getScanApprovalFixture, type QueueFixture, RELAY_ROW_IDS, SCAN_IDS, SCAN_MARK_POINTS,
+  getAnswerNotReceivedFixture, getOffViewFixture, getProseFixture, getRelayListFixture, getRelayRowFixture, getRelayThreadFixture, getRestFixture, getScanApprovalFixture, type QueueFixture, RELAY_ROW_IDS, SCAN_IDS, SCAN_MARK_POINTS,
 } from "./lib/queue-render-fixtures.js";
 
 const PHONES: Viewport[] = [{ width: 360, height: 740, isMobile: true }, { width: 412, height: 915, isMobile: true }];
@@ -24,6 +24,7 @@ const SIDEBAR = 'aside[aria-label="Sidebar"]';
 const MENU_BUTTON = { name: "Open the menu" };
 const MENU = { name: "Atrium Monitor" };
 const WIDE_WINDOW: Viewport = { width: 1440, height: 900 };
+const NARROW_WINDOW: Viewport = { width: 1100, height: 900 };
 const SCOPE_TRIGGER = /^Sessions: /;
 const ORDERS_BUTTON = { name: "Orders", exact: true };
 const BACK = { name: "Back to the list" };
@@ -199,6 +200,40 @@ describe("the Queue page on a phone", () => {
     });
   });
 
+  // layout §7 pin 20: the phone's controls and dropped floors stay under 640
+  describe("leaves the desktop as it was", () => {
+    for (const viewport of [MIN_WINDOW, WIDE_WINDOW]) {
+      test(`at ${viewport.width} the sidebar stays and the page draws none of the phone's controls`, async () => {
+        const page = await openQueuePage(harness, viewport, getRestReadyText());
+        const shown = {
+          sidebar: await page.locator(SIDEBAR).isVisible(),
+          menuButton: await page.getByRole("button", MENU_BUTTON).isVisible(),
+          scopeTrigger: await page.getByRole("button", { name: SCOPE_TRIGGER }).isVisible(),
+          ordersButton: await page.getByRole("button", ORDERS_BUTTON).isVisible(),
+          viewBacks: await getShownCount(page.locator(".queue-sessions, .queue-orders").getByRole("button", BACK)),
+        };
+        await page.close();
+
+        assert.deepEqual(shown, { sidebar: true, menuButton: false, scopeTrigger: false, ordersButton: false, viewBacks: 0 });
+      });
+    }
+
+    test("at 1100 the desk keeps its 1012 floor and its three panes, the page scrolling sideways instead", async () => {
+      const page = await openQueuePage(harness, NARROW_WINDOW, getRestReadyText());
+      const desk = await page.evaluate((panes) => {
+        const node = document.querySelector<HTMLElement>(".queue-desk")!;
+        return {
+          minWidth: getComputedStyle(node).minWidth,
+          isAtFloor: node.getBoundingClientRect().width >= 1012,
+          shown: panes.filter((pane) => document.querySelector(pane)!.getClientRects().length > 0),
+        };
+      }, PANES);
+      await page.close();
+
+      assert.deepEqual(desk, { minWidth: "1012px", isAtFloor: true, shown: PANES });
+    });
+  });
+
   describe("moves the shell's nav into a menu", () => {
     test("the sidebar is not drawn, and the menu lists the sidebar's items in order with Queue current", async () => {
       const page = await openPhoneQueue(harness);
@@ -225,22 +260,6 @@ describe("the Queue page on a phone", () => {
 
       assert.deepEqual({ width: box?.width, height: box?.height, isBeforeTitle }, { width: 44, height: 44, isBeforeTitle: true });
     });
-
-    for (const viewport of [MIN_WINDOW, WIDE_WINDOW]) {
-      test(`at ${viewport.width} the sidebar stays and the page draws none of the phone's controls`, async () => {
-        const page = await openQueuePage(harness, viewport, getRestReadyText());
-        const shown = {
-          sidebar: await page.locator(SIDEBAR).isVisible(),
-          menuButton: await page.getByRole("button", MENU_BUTTON).isVisible(),
-          scopeTrigger: await page.getByRole("button", { name: SCOPE_TRIGGER }).isVisible(),
-          ordersButton: await page.getByRole("button", ORDERS_BUTTON).isVisible(),
-          viewBacks: await getShownCount(page.locator(".queue-sessions, .queue-orders").getByRole("button", BACK)),
-        };
-        await page.close();
-
-        assert.deepEqual(shown, { sidebar: true, menuButton: false, scopeTrigger: false, ordersButton: false, viewBacks: 0 });
-      });
-    }
 
     test("Esc closes the menu and returns focus to the menu button", async () => {
       const page = await openPhoneQueue(harness);
@@ -317,6 +336,45 @@ describe("the Queue page on a phone", () => {
       const gersonaIds = getRestFixture().items.filter((item) => item.status === "open" && item.session.name === "gersona").map((item) => item.id);
       assert.deepEqual({ isStillInSessions, trigger, rowIds: rowIds.sort((a, b) => a - b) }, { isStillInSessions: true, trigger: "Sessions: gersona", rowIds: gersonaIds.sort((a, b) => a - b) });
     });
+  });
+
+  // layout §7 pin 5: the page and each drawn pane's body stay inside the screen; code and table boxes scroll inside themselves
+  describe("scrolls nothing sideways in any view", () => {
+    // every sheet kind in one list: the prose report, decision and relay, the relay read's refusal, a one-line and the three-line secret approval
+    const getEveryViewFixture = () => getScanApprovalFixture({ ...getProseFixture(), relays: getRelayThreadFixture() });
+    const openRowSheet = async (page: Page, row: string, ready: string) => {
+      await page.locator(row).tap();
+      await page.locator(".queue-sheet").getByText(ready).first().waitFor({ timeout: READY_TIMEOUT_MS });
+    };
+    const SHEETS = [
+      { name: "a decision", row: "#queue-row-103", ready: "Options" },
+      { name: "a report", row: "#queue-row-101", ready: "마이그레이션 순서" },
+      { name: "a relay", row: `#queue-row-${RELAY_ROW_IDS.one}`, ready: "응답 예시 표도 함께" },
+      { name: "a refused relay", row: '.queue-row[aria-label^="Refused relay"]', ready: "Refused relay from" },
+      { name: "a one-line secret approval", row: `#queue-row-${SCAN_IDS.one}`, ready: "The line assigns a literal value." },
+      { name: "the three-line secret approval with its 4,000-character line", row: `#queue-row-${SCAN_IDS.long}`, ready: "2 of 3 lines assign a literal value." },
+    ];
+    const PLACES = [...VIEWS.map(({ name, open }) => ({ name: `the ${name} view`, open })), ...SHEETS.map(({ name, row, ready }) => ({ name, open: (page: Page) => openRowSheet(page, row, ready) }))];
+    for (const viewport of PHONES) {
+      for (const place of PLACES) {
+        test(`at ${viewport.width} in ${place.name} neither the page nor a drawn pane's body is wider than the screen`, async () => {
+          harness.fixture = getEveryViewFixture();
+          const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+          await place.open(page);
+          const widths = await page.evaluate(() => {
+            const bodies = [...document.querySelectorAll<HTMLElement>(":is(.queue-pane, .queue-orders-card) .card-body")].filter((body) => body.getClientRects().length > 0);
+            return {
+              isPageInside: document.scrollingElement!.scrollWidth <= document.documentElement.clientWidth,
+              bodies: bodies.length,
+              wide: bodies.filter((body) => body.scrollWidth > body.clientWidth).map((body) => `${body.parentElement!.className} ${body.scrollWidth}>${body.clientWidth}`),
+            };
+          });
+          await page.close();
+
+          assert.deepEqual({ isPageInside: widths.isPageInside, hasBody: widths.bodies > 0, wide: widths.wide }, { isPageInside: true, hasBody: true, wide: [] });
+        });
+      }
+    }
   });
 
   describe("draws every list row as one 44 line: name 80 · title · tag 80 · age 32", () => {
@@ -483,7 +541,7 @@ describe("the Queue page on a phone", () => {
       assert.deepEqual(foot, { isBeside: true, isAtEnd: true });
     });
 
-    test("the body's code blocks wrap inside their box and its tables scroll inside theirs, never the sheet or the page", async () => {
+    test("the body's code blocks wrap inside their box and its tables scroll inside theirs", async () => {
       harness.fixture = getProseFixture();
       const page = await openQueuePage(harness, PHONE, getRestReadyText(harness.fixture));
       // the report holding a table and a 30-line fence
@@ -494,22 +552,20 @@ describe("the Queue page on a phone", () => {
         const boxes = [...body.querySelectorAll<HTMLElement>(".prose-text :is(.prose-pre, .prose-table-frame)")];
         return {
           boxes: [...new Set(boxes.map((box) => box.className))].sort(),
-          isBodyScrolledSideways: body.scrollWidth > body.clientWidth,
           isEveryBoxInside: boxes.every((box) => box.getBoundingClientRect().right <= body.getBoundingClientRect().right + 0.5),
           isEveryTableScrolledInside: boxes.filter((box) => box.matches(".prose-table-frame")).every((box) => getComputedStyle(box).overflowX === "auto"),
-          page: document.scrollingElement!.scrollWidth <= document.documentElement.clientWidth,
         };
       });
       await page.close();
 
-      assert.deepEqual(widths, { boxes: ["prose-pre", "prose-table-frame"], isBodyScrolledSideways: false, isEveryBoxInside: true, isEveryTableScrolledInside: true, page: true });
+      assert.deepEqual(widths, { boxes: ["prose-pre", "prose-table-frame"], isEveryBoxInside: true, isEveryTableScrolledInside: true });
     });
   });
 
   // the 3-line and long-line captures at the bleed width (layout §5): every line whole on the plate, the plate inside the screen's 16 inset
   describe("draws the secret-approval card at the phone's width, every line whole", () => {
     for (const viewport of PHONES) {
-      test(`at ${viewport.width} each plate wraps inside the screen's 16 inset, each mark a whole tile, and neither the sheet nor the page scrolls sideways`, async () => {
+      test(`at ${viewport.width} each plate wraps inside the screen's 16 inset, each mark a whole tile`, async () => {
         harness.fixture = getScanApprovalFixture();
         const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
         await openSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
@@ -517,7 +573,6 @@ describe("the Queue page on a phone", () => {
           const plates = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-plate")];
           const marks = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-mark")];
           const texts = plates.flatMap((plate) => [...plate.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent ?? ""));
-          const body = document.querySelector<HTMLElement>(".queue-sheet > .card-body")!;
           return {
             plates: plates.length,
             isEveryPlateInside: plates.every((plate) => plate.getBoundingClientRect().right <= document.documentElement.clientWidth - 16),
@@ -526,16 +581,11 @@ describe("the Queue page on a phone", () => {
             isLongWrapped: plates[1]!.getBoundingClientRect().height > 20 * parseFloat(getComputedStyle(plates[1]!).lineHeight),
             isEveryTileWhole: marks.length > 0 && marks.every((mark) => mark.getClientRects().length === 1),
             hasRawMark: texts.some((text) => points.some((point) => text.includes(String.fromCodePoint(point)))),
-            isBodyScrolledSideways: body.scrollWidth > body.clientWidth,
-            isPageScrolledSideways: document.scrollingElement!.scrollWidth > document.documentElement.clientWidth,
           };
         }, [...SCAN_MARK_POINTS]);
         await page.close();
 
-        assert.deepEqual(shown, {
-          plates: 3, isEveryPlateInside: true, isEveryPlateWhole: true, isEveryPlateUncut: true, isLongWrapped: true, isEveryTileWhole: true, hasRawMark: false,
-          isBodyScrolledSideways: false, isPageScrolledSideways: false,
-        });
+        assert.deepEqual(shown, { plates: 3, isEveryPlateInside: true, isEveryPlateWhole: true, isEveryPlateUncut: true, isLongWrapped: true, isEveryTileWhole: true, hasRawMark: false });
       });
 
       test(`at ${viewport.width} each line head is two rows: the cue and the length, then the classes below them`, async () => {

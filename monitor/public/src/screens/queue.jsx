@@ -603,7 +603,7 @@ function ScreenQueue({ onRetryHarness, onReadQueueCount, onOpenMenu }) {
 	);
 }
 
-/** DOM order Sessions → the middle pane → Orders: three fixed-role columns that never stack, none put away for another (spec §3.1); a phone draws the one view `queue.view` names (base.css). */
+/** DOM order Sessions → the middle pane → Orders: above 640 three fixed-role columns, none put away for another (spec §3.1); at ≤ 640 the one view `queue.view` names (base.css). */
 function QueueDeskQ({ queue }) {
 	usePageDropGuardQ();
 	const onKeyDown = (event) => {
