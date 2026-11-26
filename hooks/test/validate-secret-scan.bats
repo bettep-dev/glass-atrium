@@ -141,6 +141,15 @@ pipe_overflow_padding() {
   [[ "${output}" == *"SEC-001"* ]] || { echo "${output}"; return 1; }
 }
 
+# File-size limit 0 → a here-string's temp file, in the hook or the scanner, kills it with SIGXFSZ (no verdict at all).
+@test "Write channel hands the scanner its text through no file: a secret still blocks with no file-size allowance" {
+  local padding
+  padding="$(pipe_overflow_padding)"
+  run bash -c 'ulimit -f 0 && exec bash "$1"' _ "${HOOK_SH}" \
+    <<<"{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/tmp/x.ts\",\"content\":\"${padding}const k = ${AWS_FIXTURE}\"}}"
+  [[ "${status}" -eq 2 && "${output}" == *"\"SEC-001\""* ]] || { echo "status ${status}: ${output}"; return 1; }
+}
+
 @test "Bash channel: a .env credential write on line 1 of a command larger than the pipe buffer still blocks, exit 2" {
   local padding
   padding="$(pipe_overflow_padding)"
@@ -226,12 +235,15 @@ set_list_fixture() {
 
 # File-size limit 0 → any write of the text to a file (a here-string's temp file) kills the scanner with SIGXFSZ;
 # text past the 64 KiB pipe buffer → newer bash also takes the temp-file path for a here-string.
-@test "scanner list-all entry puts the scanned text in no file: it lists the same rows with no file-size allowance" {
-  local text
+@test "scanner puts the scanned text in no file: each entry replies the same with no file-size allowance" {
+  local text flags=("" "${SCAN_LIST_FLAG}") replies=() i
   text="$(seq -f 'padding line %05g of ordinary source text' 1 4000)"$'\n'"const k = ${AWS_FIXTURE}"
-  run bash -c 'ulimit -f 0 && exec "$@"' _ "${SCANNER}" "${SCAN_LIST_FLAG}" <<<"${text}"
-  [[ "${status}" -eq "${SCAN_MATCH}" && "${output}" == "4001"$'\tSEC-001' ]] \
-    || { echo "status ${status}: ${output}"; return 1; }
+  replies=("SEC-001"$'\t'"AWS Access Key" "4001"$'\tSEC-001')
+  for i in "${!flags[@]}"; do
+    run bash -c 'ulimit -f 0 && exec "$@"' _ "${SCANNER}" ${flags[${i}]:+"${flags[${i}]}"} <<<"${text}"
+    [[ "${status}" -eq "${SCAN_MATCH}" && "${output}" == "${replies[${i}]}" ]] \
+      || { echo "${flags[${i}]:-no flag}: status ${status}: ${output}"; return 1; }
+  done
 }
 
 @test "scanner no-argument entry replies only the first pattern in table order, wherever it sits in the text" {

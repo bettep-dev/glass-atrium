@@ -108,7 +108,8 @@ scan_content() {
   local blob="${1}" reply="" rc=0
   [[ -z "${blob}" ]] && return 0
   [[ -f "${SCANNER}" ]] || block_scan_unavailable
-  reply="$("${BASH}" "${SCANNER}" <<<"${blob}")" || rc=$?
+  # shellcheck disable=SC2310  # the scanner's status is the verdict, read below
+  reply="$(get_scan_reply "${blob}")" || rc=$?
   [[ "${rc}" -eq "${SCAN_CLEAN}" ]] && return 0
   if [[ "${rc}" -ne "${SCAN_MATCH}" || ! "${reply}" =~ ^(SEC-[0-9]{3})$'\t'(.+)$ ]]; then
     block_scan_unavailable
@@ -123,6 +124,13 @@ scan_content() {
     "{\"pattern\":\"${code}\"}"
   [[ -z "${APPROVAL_NOTE}" ]] || _hook_emit_line "${APPROVAL_NOTE}"
   exit 2
+}
+
+# The scanner's reply over the text, fed by a pipe: a here-string spills to a temp file (bash 3.2 always, newer bash
+# past the pipe buffer); the scanner reads to EOF before it exits → the feed never dies of SIGPIPE.
+# Args: $1=text · $2=scanner flag, optional
+get_scan_reply() {
+  printf '%s\n' "${1}" | "${BASH}" "${SCANNER}" ${2:+"${2}"}
 }
 
 # Asks the monitor to consume the owner's approval of this write's SEC-013 lines, within APPROVAL_DEADLINE_S.
@@ -204,8 +212,8 @@ put_pass_log() {
 get_approval_outcome() {
   local rows index code bodies rc=0 reply
   local -a indexes=()
-  # pipe, not here-string → the text never spills to a temp file
-  rows="$(printf '%s\n' "${1}" | "${BASH}" "${SCANNER}" "${SCAN_LIST_FLAG}")" || rc=$?
+  # shellcheck disable=SC2310  # the scanner's status is the verdict, read below
+  rows="$(get_scan_reply "${1}" "${SCAN_LIST_FLAG}")" || rc=$?
   if ((rc != SCAN_MATCH)) || [[ -z "${rows}" ]]; then
     printf 'cause\tthe scanner could not list the matching lines\n'
     return 0

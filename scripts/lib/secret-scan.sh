@@ -57,8 +57,8 @@ main() {
   if (($# == 1)); then find_all_matches "${text}"; fi
   for i in "${!PATTERNS[@]}"; do
     rc=0
-    # here-string, not a pipe → no writer to lose to SIGPIPE · `--` keeps the dash-led PEM pattern an operand
-    grep -qiE -- "${PATTERNS[${i}]}" <<<"${text}" || rc=$?
+    # shellcheck disable=SC2310  # grep's status is the verdict, read below
+    get_match_rows "${text}" "${i}" >/dev/null || rc=$?
     case "${rc}" in
       0)
         # a subshell write owns no child, so no SIGCHLD interrupts it
@@ -74,20 +74,13 @@ main() {
 }
 
 # Every pattern over every line → only grep's "<index>:" prefix leaves, never the matched text.
-# Fed through pipes only: a here-string spills to a temp file (bash 3.2 always, newer bash past the pipe buffer).
 find_all_matches() {
   local text="${1}" rows="" hits i rc
   for i in "${!PATTERNS[@]}"; do
     rc=0
-    # trap cleared → the inherited ERR trap would turn grep's failure status into 1, read below as "no match"
-    # -a → an invalid-encoding byte never collapses the rows into one "binary file matches" notice
-    # grep's status alone classifies; a failed feed or row stage → 2, a refusal, never "no match"
-    hits="$(
-      trap - ERR
-      printf '%s\n' "${text}" | grep -naiE -- "${PATTERNS[${i}]}" \
-        | LC_ALL=C awk -F: -v code="${CODES[${i}]}" '{ print $1 "\t" code }' \
-        || exit "$((PIPESTATUS[0] || PIPESTATUS[2] ? 2 : PIPESTATUS[1]))"
-    )" || rc=$?
+    # trap cleared → the inherited ERR trap would turn the helper's failure status into 1, read below as "no match"
+    # shellcheck disable=SC2310  # grep's status is the verdict, read below
+    hits="$(trap - ERR && get_match_rows "${text}" "${i}")" || rc=$?
     case "${rc}" in
       0) rows+="${hits}"$'\n' ;;
       1) ;;
@@ -98,6 +91,21 @@ find_all_matches() {
   # GA-ABSORB[handled@exit-SCAN_MATCH]: a lost reply still exits with the match code, which every caller blocks on
   (printf '%s' "${rows}") || true
   exit "${SCAN_MATCH}"
+}
+
+# One pattern over every line → "<line index><TAB><code>" per matching line; status grep's own (0 match · 1 none),
+# 2 when the feed or the row stage failed, never "no match".
+# Fed through a pipe only: a here-string spills to a temp file (bash 3.2 always, newer bash past the pipe buffer).
+# grep reads to EOF (its output is a pipe, never -q) → the feed never dies of SIGPIPE.
+# Args: $1=text · $2=pattern index
+get_match_rows() {
+  # -a → an invalid-encoding byte never collapses the rows into one "binary file matches" notice
+  # `--` keeps the dash-led PEM pattern an operand
+  (
+    printf '%s\n' "${1}" | grep -naiE -- "${PATTERNS[${2}]}" \
+      | LC_ALL=C awk -F: -v code="${CODES[${2}]}" '{ print $1 "\t" code }' \
+      || exit "$((PIPESTATUS[0] || PIPESTATUS[2] ? 2 : PIPESTATUS[1]))"
+  )
 }
 
 main "$@"
