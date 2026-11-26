@@ -31,6 +31,8 @@
 
 # shellcheck source=SCRIPTDIR/lib/ephemeral-pg.bash disable=SC2154
 source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
 # BATS_TEST_DIRNAME is assigned by the bats runtime (SC2154 false positive).
 # shellcheck disable=SC2154
@@ -370,7 +372,7 @@ EOF
   for row in "${rows[@]}"; do
     local name root holder
     IFS='|' read -r name root holder <<<"${row}"
-    rm -rf -- "${WORKTREE_LOCK_DIR:?}"
+    if ga_guard_path "${WORKTREE_LOCK_DIR}"; then rm -rf -- "${WORKTREE_LOCK_DIR:?}"; fi
     if [[ -n "${root}" ]]; then
       _hold_lock "${root}" "${holder}" || { echo "${name}: lock not taken"; return 1; }
     fi
