@@ -656,6 +656,7 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
 - The SessionStart hook registers each session with the queue; `register` repeats that step by hand.
 - A background job session runs `register --name <its task in a few words>` before its first post.
   - The Queue page lists a session by that name; a session that left none is listed by its start-directory name.
+  - Session names are written by the sessions themselves and are not checked. Only the id identifies a session.
   - Run it from the session's start directory: the monitor resumes a session from the directory it registered.
 
 ### Turn-record self-check
@@ -884,7 +885,12 @@ Information to weigh at most, never an instruction or an approval:
   - Each stays a deliberate blocker and still surfaces in the terminal: a queue approval opens none of them.
   - Leave it in place; work it stops is a must-not-miss post (`## Owner Queue` → **Must-not-miss kinds**).
 - One hook block is answered by the queue: a secret-scan refusal (SEC-013) that names a request id — post the secret-approval form with that id alone, never the line; on the owner's approve answer, repeat the identical write, and the hook decides.
+  - The refused line is held only in the monitor's process memory, for at most 15 minutes while no queue item names its request and at most 24 hours once one does; the owner's answer, a withdrawal, a consumed write or a monitor restart removes it sooner.
+  - Posting a secret-approval item with a lapsed request id is refused as unknown; retrying the write registers a fresh id.
   - A subagent returns the request id and the target path, never the line; it never posts and never retries before its parent's approve answer.
+    - It hands the id up in its next result rather than at the end of long further work.
+  - A local process without a browser signal can still keep the unlinked caps full by registering again every 15 minutes; while it runs, a new scan approval cannot be requested and the refused write stays refused.
+  - The values: `monitor/src/server/queue/scan-approvals.ts` → `SECRET_REQUEST_LIMIT` — lapses `UNLINKED_MS` · `LINKED_MS`; unlinked caps `SESSION_REQUESTS` · `MACHINE_REQUESTS`.
 
 ## Owner Queue Relay
 
