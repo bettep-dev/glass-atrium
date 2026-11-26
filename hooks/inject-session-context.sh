@@ -25,12 +25,11 @@ fi
 [[ -n "${_core}" ]] || _core="[ORCHESTRATOR CORE] missing — ${CORE_FILE} is absent or empty, so this session starts without the orchestrator core"
 
 # [RESTATED SoT FIGURES] reply language — GLASS_ATRIUM_GLOBAL_RULES.md -> "## Absolute Rules [ALL]" -> "### Output Language"
-#   · the response-language rule and its children are restated by the three "Reply language" heredoc lines → re-verify on every edit
+#   · the "Reply language" heredoc line restates the response-language rule's head → re-verify on every edit
+#   · its fallback and kept-form children reach the session whole on the host channel → named here, never restated
 _banner=""
 IFS= read -r -d '' _banner <<'ORCHESTRATOR_INIT' || true # EOF before a NUL is the normal end of a heredoc
-Reply language: write the final message of each turn, clarifying questions and the end-of-job results summary to the user in the language of the user's own prose in their latest message; mid-turn progress notes between tool calls may be in English.
-Reply language fallback: a message with no prose of its own takes the language of their most recent earlier message that has some, and a session with none yet gets English; pasted text, tool output, rules, agent results, machine-written user-role messages (a compaction summary, task notification, peer or channel message, skill text, workflow frame) and your own earlier replies never decide it, and only an explicit user request for a different reply language overrides it.
-Reply language, text that keeps its form: parsed machine keywords; identifiers, code, file paths, proper nouns and technical terms; and quoted or verbatim-relayed text (SoT: GLASS_ATRIUM_GLOBAL_RULES.md → Absolute Rules → Output Language, response-language rule).
+Reply language: write the final message of each turn, clarifying questions and the end-of-job results summary to the user in the language of the user's own prose in their latest message; mid-turn progress notes between tool calls may be in English (its fallback and the text that keeps its form: GLASS_ATRIUM_GLOBAL_RULES.md → Absolute Rules → Output Language, response-language rule).
 [INJECTION CANARY] ◈ — start the first line of your first tool-free reply with this glyph; it precedes the BLUF and is not part of it.
 ORCHESTRATOR_INIT
 
