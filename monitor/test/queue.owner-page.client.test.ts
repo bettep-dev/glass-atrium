@@ -4598,19 +4598,20 @@ describe("the secret-approval card", () => {
     assert.equal(call("getActionErrorQ", { status: 409, data: { error: "secret_request_gone" }, error: null }), "Not approved: the request is gone. Nothing will pass.");
   });
 
+  // an ended request's tag word stands in for Approval where the list leaves the fact cell out
   describe("the list row carries facts, never the line", () => {
     const row = (item: unknown, isDone = false) => {
-      const cells = call<{ tags: Array<{ text: string }>; fact: string | null }>("getRowCellsQ", { item, copies: [item], isDone }, false);
-      return [cells.tags.map((tag) => tag.text), cells.fact];
+      const cells = call<{ tags: Array<{ text: string; narrowText?: string }>; fact: string | null }>("getRowCellsQ", { item, copies: [item], isDone }, false);
+      return [cells.tags.map((tag) => tag.text), cells.fact, cells.tags.flatMap((tag) => (tag.narrowText ? [tag.narrowText] : []))];
     };
     const rows = [
-      { name: "one pending line", item: scanItem(), expected: [["Approval"], "1 line"] },
-      { name: "three pending lines", item: scanItem({ scanApproval: { state: "pending", lineCount: 3, expiresAt: FAR } }), expected: [["Approval"], "3 lines"] },
-      { name: "an expired request", item: scanItem({ scanApproval: { state: "pending", lineCount: 1, expiresAt: "2020-01-01T00:00:00.000Z" } }), expected: [["Approval"], "Expired"] },
-      { name: "a gone request", item: scanItem({ scanApproval: { state: "gone", lineCount: null, expiresAt: null } }), expected: [["Approval"], "Gone"] },
-      { name: "done, approved", item: scanItem({ status: "delivered", answeredAt: FAR, answer: { code: "R1", text: null } }), isDone: true, expected: [["Approved"], "Decision"] },
-      { name: "done, declined", item: scanItem({ status: "delivered", answeredAt: FAR, answer: { code: "R2", text: null } }), isDone: true, expected: [["Declined"], "Decision"] },
-      { name: "done, withdrawn", item: scanItem({ status: "withdrawn" }), isDone: true, expected: [["Withdrawn"], "Decision"] },
+      { name: "one pending line", item: scanItem(), expected: [["Approval"], "1 line", []] },
+      { name: "three pending lines", item: scanItem({ scanApproval: { state: "pending", lineCount: 3, expiresAt: FAR } }), expected: [["Approval"], "3 lines", []] },
+      { name: "an expired request", item: scanItem({ scanApproval: { state: "pending", lineCount: 1, expiresAt: "2020-01-01T00:00:00.000Z" } }), expected: [["Approval"], "Expired", ["Expired"]] },
+      { name: "a gone request", item: scanItem({ scanApproval: { state: "gone", lineCount: null, expiresAt: null } }), expected: [["Approval"], "Gone", ["Gone"]] },
+      { name: "done, approved", item: scanItem({ status: "delivered", answeredAt: FAR, answer: { code: "R1", text: null } }), isDone: true, expected: [["Approved"], "Decision", []] },
+      { name: "done, declined", item: scanItem({ status: "delivered", answeredAt: FAR, answer: { code: "R2", text: null } }), isDone: true, expected: [["Declined"], "Decision", []] },
+      { name: "done, withdrawn", item: scanItem({ status: "withdrawn" }), isDone: true, expected: [["Withdrawn"], "Decision", []] },
     ];
     for (const entry of rows) test(entry.name, () => assert.deepEqual(row(entry.item, entry.isDone), entry.expected));
   });

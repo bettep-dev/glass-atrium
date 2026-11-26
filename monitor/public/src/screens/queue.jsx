@@ -1939,6 +1939,14 @@ function ItemSessionNameQ({ session }) {
 function RowTagsQ({ tags }) {
 	const { Badge, TONE_GLYPH } = window.UI;
 	return <>{tags.map((tag) => {
+		if (tag.narrowText) {
+			return (
+				<React.Fragment key={tag.text}>
+					<Badge fill={tag.badge} className="queue-row-tag-wide">{tag.text}</Badge>
+					<Badge fill={tag.badge} className="queue-row-tag-narrow">{tag.narrowText}</Badge>
+				</React.Fragment>
+			);
+		}
 		if (tag.badge) return <Badge key={tag.text} fill={tag.badge}>{tag.text}</Badge>;
 		if (!tag.glyph) return <span key={tag.text} className="queue-row-kind" title={tag.title}>{tag.text}</span>;
 		return (
@@ -2001,7 +2009,7 @@ function getRowCellsQ(row, isAccountShown) {
 	if (item.status === "open" && item.kind === "decision") {
 		const count = (item.options ?? []).length;
 		const fact = item.scanApproval ? getScanFactQ(item) : `${count} ${count === 1 ? "option" : "options"}`;
-		return { tags: item.isApprovalClass ? [{ text: "Approval", badge: "tag" }] : [], fact, extras };
+		return { tags: item.isApprovalClass ? [{ text: "Approval", badge: "tag", narrowText: getScanEndFactQ(item) }] : [], fact, extras };
 	}
 	if (item.status === "open" && item.kind === "report") return { tags: [], fact: null, extras };
 	return { tags: getReceiptTagsQ(copies), fact: getDeliveryFactQ(item, copies), extras };
@@ -2408,6 +2416,12 @@ function getScanFactQ(item) {
 	return `${count} ${count === 1 ? "line" : "lines"}`;
 }
 
+// an ended request's fact → the tag's word where the list leaves the fact cell out (base.css → .queue-row-tag-narrow)
+function getScanEndFactQ(item) {
+	const state = getScanStateQ(item);
+	return state === "expired" || state === "gone" ? getScanFactQ(item) : undefined;
+}
+
 function getScanEndWordQ(state) {
 	if (state === "declined") return "Declined";
 	return state === "withdrawn" ? "Withdrawn" : "Approved";
@@ -2451,7 +2465,7 @@ function ScanCardQ({ item, read }) {
 		<>
 			<ScanCaptureQ read={read} />
 			<ScanFactsQ item={item} read={read.data} isPending />
-			<ToneLineQ tone="warn">{SCAN_Q.WARNING}</ToneLineQ>
+			<div className="scan-warning"><ToneLineQ tone="warn">{SCAN_Q.WARNING}</ToneLineQ></div>
 		</>
 	);
 }
@@ -2500,7 +2514,7 @@ function ScanLineHeadQ({ value, index, count }) {
 		<p className="scan-line-head">
 			<span className={value.cue === "literal" ? "font-semibold" : "text-dim"}>{SCAN_Q.CUE[value.cue] ?? value.cue}</span>
 			<span className="tabular-nums">{`${value.length.toLocaleString("en-US")} ${value.length === 1 ? "character" : "characters"}`}</span>
-			<span>{value.classes.map((name) => SCAN_Q.CLASS[name] ?? name).join(", ")}{count > 1 && <span className="text-dim">{` · ${index + 1} of ${count}`}</span>}</span>
+			<span>{value.classes.map((name) => SCAN_Q.CLASS[name] ?? name).join(", ")}{count > 1 && <span className="text-dim whitespace-nowrap">{` · ${index + 1} of ${count}`}</span>}</span>
 		</p>
 	);
 }

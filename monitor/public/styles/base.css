@@ -99,6 +99,13 @@ label.ctl-checkbox-hit {
 .ctl-radio:hover {
 	border-color: rgb(var(--dim));
 }
+.ctl-radio:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+.ctl-radio:disabled:hover {
+	border-color: rgb(var(--faint));
+}
 .ctl-radio:checked {
 	background: rgb(var(--selected-fill));
 	border-color: rgb(var(--selected-fill));
@@ -1070,9 +1077,17 @@ label.ctl-checkbox-hit {
 	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) {
 		--queue-row-tail: 80px 32px 16px;
 	}
-	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) > .queue-row-fact {
+	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) > .queue-row-fact,
+	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) .queue-row-tag-wide {
 		display: none;
 	}
+	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) .queue-row-tag-narrow {
+		display: inline-flex;
+	}
+}
+/* an ended request's word in the tag column → only where its fact cell is left out */
+.queue-row-tag-narrow {
+	display: none;
 }
 /* the hairline is drawn inside the row → a row stays 44 */
 .queue-row + .queue-row {
@@ -1348,13 +1363,20 @@ label.ctl-checkbox-hit {
 .queue-option > .ctl-radio {
 	margin-top: calc((var(--lh-ctl-lg) - 16px) / 2);
 }
-/* a closed option: dim, no press, one reason line under its label */
+/* a closed option: code, label and sides dim at 400, no press; its one reason line under the label in ink */
 .queue-option.is-closed {
 	color: rgb(var(--dim));
 	cursor: default;
 }
 .queue-option.is-closed:hover {
 	background: none;
+}
+.queue-option.is-closed .queue-option-head {
+	font-weight: 400;
+	color: rgb(var(--dim));
+}
+.queue-option.is-closed .queue-option-reason {
+	color: rgb(var(--ink));
 }
 .queue-option-reason {
 	display: block;
@@ -1368,7 +1390,8 @@ label.ctl-checkbox-hit {
 }
 .scan-line-head {
 	display: grid;
-	grid-template-columns: 112px 104px minmax(0, 1fr);
+	grid-template-columns: 112px 128px minmax(0, 1fr);
+	column-gap: var(--space-3);
 	font-size: var(--fs-meta);
 	line-height: var(--lh-row);
 }
@@ -1402,6 +1425,13 @@ label.ctl-checkbox-hit {
 }
 .queue-sheet-body > .scan-line + .scan-facts {
 	margin-top: var(--space-6);
+}
+/* the warning guards the options → apart from the facts, close to the Options heading */
+.queue-sheet-body > .scan-warning {
+	margin-top: var(--space-6);
+}
+.queue-sheet-body > .scan-warning + .queue-kind {
+	margin-top: var(--space-3);
 }
 .scan-facts {
 	display: grid;

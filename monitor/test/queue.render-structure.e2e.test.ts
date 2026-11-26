@@ -43,9 +43,11 @@ const VIEWPORTS = [
   { width: 1728, height: 1117 },
   { width: 1920, height: 1080 },
 ] as const;
+/** @property isMobile - a phone: the page lays out at its declared width (index.html → meta viewport) and is scaled to the screen */
 interface Viewport {
   width: number;
   height: number;
+  isMobile?: boolean;
 }
 
 // §18.4's sizes beyond the desktop widths: the owner's window, the minimum and the wide display
@@ -730,8 +732,9 @@ function isOrderBefore(order: { at: bigint; id: bigint }, bound: { at: bigint; i
  * @param isClockDriven - the page's timers run on the test's clock (`page.clock.fastForward`), time still flowing from the pinned start
  * @param scale - the device scale factor, 2 for a close-up
  */
-async function openQueuePage(harness: Harness, viewport: { width: number; height: number }, readyText: string, isClockDriven = false, scale = 1): Promise<Page> {
-  const page = await harness.browser.newPage({ viewport, deviceScaleFactor: scale });
+async function openQueuePage(harness: Harness, viewport: Viewport, readyText: string, isClockDriven = false, scale = 1): Promise<Page> {
+  const { isMobile = false, ...size } = viewport;
+  const page = await harness.browser.newPage({ viewport: size, deviceScaleFactor: scale, isMobile, hasTouch: isMobile });
   // tsx keeps function names through an injected __name helper → the evaluated fact readers need it on the page
   await page.addInitScript("globalThis.__name = (fn) => fn");
   await (isClockDriven ? page.clock.install({ time: FIXTURE_NOW }) : page.clock.setFixedTime(FIXTURE_NOW));
@@ -3238,7 +3241,7 @@ describe("queue page on the mockup fixtures", () => {
   // spec 44063 §14.4's edge cases: what the page shows for each, beside the rest state
   // the owner judges the hook's own capture on the Mac and the phone: every line whole, every hidden character a whole tile
   describe("on the secret-approval fixtures", () => {
-    const PHONE: Viewport = { width: 360, height: 740 };
+    const PHONE: Viewport = { width: 360, height: 740, isMobile: true };
     const openScanPage = async (viewport: Viewport) => {
       harness.fixture = getScanApprovalFixture();
       harness.scanReadIds.length = 0;
@@ -3290,6 +3293,85 @@ describe("queue page on the mockup fixtures", () => {
       });
     }
 
+    test("on a 360 phone the page scrolls nothing sideways", async () => {
+      const page = await openScanPage(PHONE);
+      await openScanSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
+      const widths = await page.evaluate(() => ({ scroll: document.scrollingElement!.scrollWidth, layout: document.documentElement.clientWidth }));
+      await page.close();
+
+      assert.equal(widths.scroll, widths.layout, JSON.stringify(widths));
+    });
+
+    test("each line head keeps its columns at 1280: the length whole in 128 after a 12 gap, the line count never split", async () => {
+      const page = await openScanPage(MIN_WINDOW);
+      await openScanSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
+      const heads = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-line-head")].map((head) => {
+        const [, length, classes] = [...head.children] as HTMLElement[];
+        const count = classes!.querySelector<HTMLElement>("span")!;
+        const text = document.createRange();
+        text.selectNodeContents(length!);
+        return {
+          columns: getComputedStyle(head).gridTemplateColumns.split(" ").slice(0, 2), gap: getComputedStyle(head).columnGap,
+          isLengthWhole: length!.scrollWidth <= length!.clientWidth && text.getClientRects().length === 1,
+          isCountWhole: count.getClientRects().length === 1,
+        };
+      }));
+      await page.close();
+
+      assert.deepEqual(heads, Array.from({ length: 3 }, () => ({ columns: ["112px", "128px"], gap: "12px", isLengthWhole: true, isCountWhole: true })));
+    });
+
+    test("a closed Approve is drawn closed: code, label and sides dim at 400, the radio disabled-looking with no hover, its reason line in ink", async () => {
+      const page = await openScanPage(MIN_WINDOW);
+      await openScanSheet(page, SCAN_IDS.expired, "Expired: no answer within 24 hours.");
+      const radio = page.locator(`#queue-option-${SCAN_IDS.expired}-R1`);
+      const readLook = () => page.evaluate((id) => {
+        const option = document.getElementById(id)!.closest<HTMLElement>(".queue-option")!;
+        const style = (selector: string) => getComputedStyle(option.querySelector(selector)!);
+        const tone = (name: string) => `rgb(${getComputedStyle(document.documentElement).getPropertyValue(name).trim().split(/\s+/).join(", ")})`;
+        const radioStyle = getComputedStyle(document.getElementById(id)!);
+        return {
+          code: style(".queue-option-head .text-dim").color === tone("--dim"),
+          label: [style(".queue-option-head").color === tone("--dim"), style(".queue-option-head").fontWeight],
+          sides: [...option.querySelectorAll(".queue-option-sides > span")].every((side) => getComputedStyle(side).color === tone("--dim")),
+          reason: style(".queue-option-reason").color === tone("--ink"),
+          radio: [radioStyle.opacity, radioStyle.cursor, radioStyle.borderColor, getComputedStyle(option).cursor, getComputedStyle(option).backgroundColor],
+        };
+      }, `queue-option-${SCAN_IDS.expired}-R1`);
+      const rest = await readLook();
+      await radio.hover();
+      const hovered = await readLook();
+      await page.close();
+
+      assert.deepEqual({ ...rest, radio: rest.radio.slice(0, 2), option: rest.radio[3] }, { code: true, label: [true, "400"], sides: true, reason: true, radio: ["0.5", "default"], option: "default" });
+      assert.deepEqual(hovered.radio, rest.radio, "hover changes nothing on a closed option");
+    });
+
+    test("the warning line sits 24 under the facts and 12 above the Options heading", async () => {
+      const page = await openScanPage(MIN_WINDOW);
+      await openScanSheet(page, SCAN_IDS.one, "The line assigns a literal value.");
+      const gaps = await page.evaluate(() => {
+        const facts = document.querySelector(".queue-sheet .scan-facts")!.getBoundingClientRect();
+        const warning = document.querySelector(".queue-sheet .scan-warning")!.getBoundingClientRect();
+        const legend = document.querySelector(".queue-sheet .queue-options > legend")!.getBoundingClientRect();
+        return { facts: Math.round(warning.top - facts.bottom), options: Math.round(legend.top - warning.bottom) };
+      });
+      await page.close();
+
+      assert.deepEqual(gaps, { facts: 24, options: 12 });
+    });
+
+    test("at 1280, with the fact cell left out, an ended request's tag says Expired or Gone and a waiting one Approval", async () => {
+      const page = await openScanPage(MIN_WINDOW);
+      const shown = await page.evaluate((ids) => Object.fromEntries(ids.map((id) => {
+        const row = document.getElementById(`queue-row-${id}`)!;
+        return [id, [row.querySelector<HTMLElement>(".queue-row-tag")!.innerText.trim(), getComputedStyle(row.querySelector(".queue-row-fact")!).display]];
+      })), [SCAN_IDS.one, SCAN_IDS.expired, SCAN_IDS.gone]);
+      await page.close();
+
+      assert.deepEqual(shown, { [SCAN_IDS.one]: ["Approval", "none"], [SCAN_IDS.expired]: ["Expired", "none"], [SCAN_IDS.gone]: ["Gone", "none"] });
+    });
+
     test("the captured lines are read only when a waiting item's sheet opens, and its row says only how many lines", async () => {
       const page = await openScanPage(MIN_WINDOW);
       const before = [...harness.scanReadIds];
@@ -3300,22 +3382,54 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual({ before, after: harness.scanReadIds, isRowFactOnly: /, Approval, 1 line, posted /.test(row ?? "") && !/hello|world|U\+/.test(row ?? "") }, { before: [], after: [SCAN_IDS.one], isRowFactOnly: true });
     });
 
-    test("the named states are captured: the list, the sheet waiting at 1280 and 360, marks and a long line, approved, expired, gone", async (t) => {
+    test("the named states are captured: the list, each sheet state at 1280, the phone at 360 beside an ordinary decision", async (t) => {
       const dir = await getShotsDir(t);
       t.diagnostic(`secret-approval card: ${dir}`);
-      const shots = [
-        { name: "1280-list", viewport: MIN_WINDOW, id: null, ready: "" },
-        { name: "1280-sheet-pending", viewport: MIN_WINDOW, id: SCAN_IDS.one, ready: "The line assigns a literal value." },
-        { name: "360-sheet-pending", viewport: PHONE, id: SCAN_IDS.one, ready: "The line assigns a literal value." },
-        { name: "1280-sheet-marks-long-line", viewport: MIN_WINDOW, id: SCAN_IDS.long, ready: "2 of 3 lines assign a literal value." },
-        { name: "360-sheet-marks-long-line", viewport: PHONE, id: SCAN_IDS.long, ready: "2 of 3 lines assign a literal value." },
-        { name: "1280-sheet-approved", viewport: MIN_WINDOW, id: SCAN_IDS.approved, ready: "The line was dropped; its hash remains." },
-        { name: "1280-sheet-expired", viewport: MIN_WINDOW, id: SCAN_IDS.expired, ready: "Expired: no answer within 24 hours." },
-        { name: "1280-sheet-gone", viewport: MIN_WINDOW, id: SCAN_IDS.gone, ready: "Gone: the monitor restarted." },
+      const sheet = (id: number, ready: string) => (page: Page) => openScanSheet(page, id, ready);
+      const showEnd = (id: number, ready: string, selector: string) => async (page: Page) => {
+        await openScanSheet(page, id, ready);
+        await page.locator(selector).evaluate((node) => node.scrollIntoView({ block: "end" }));
+      };
+      const shots: Array<{ name: string; viewport: Viewport; setUp?: (page: Page) => Promise<void> }> = [
+        { name: "1280-list", viewport: MIN_WINDOW },
+        { name: "1280-list-delivery", viewport: MIN_WINDOW, setUp: (page) => page.locator(`#queue-row-${SCAN_IDS.approved}`).scrollIntoViewIfNeeded() },
+        { name: "1280-sheet-pending", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.one, "The line assigns a literal value.") },
+        { name: "360-sheet-pending", viewport: PHONE, setUp: sheet(SCAN_IDS.one, "The line assigns a literal value.") },
+        { name: "360-sheet-options-foot", viewport: PHONE, setUp: showEnd(SCAN_IDS.one, "The line assigns a literal value.", ".queue-sheet .queue-options") },
+        { name: "360-decision-sheet", viewport: PHONE, setUp: sheet(103, "Options") },
+        {
+          name: "1280-sheet-reading", viewport: MIN_WINDOW,
+          setUp: async (page) => {
+            await page.route("**/scan-approval", () => undefined);
+            await openScanSheet(page, SCAN_IDS.one, "Reading the captured lines…");
+          },
+        },
+        { name: "1280-sheet-read-failed", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.unread, "The captured lines could not be read.") },
+        { name: "1280-sheet-marks-long-line", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.long, "2 of 3 lines assign a literal value.") },
+        { name: "1280-sheet-long-line-tail", viewport: MIN_WINDOW, setUp: showEnd(SCAN_IDS.long, "2 of 3 lines assign a literal value.", ".queue-sheet .scan-plate >> nth=1") },
+        { name: "1280-sheet-third-plate", viewport: MIN_WINDOW, setUp: showEnd(SCAN_IDS.long, "2 of 3 lines assign a literal value.", ".queue-sheet .scan-line >> nth=2") },
+        { name: "360-sheet-marks-long-line", viewport: PHONE, setUp: sheet(SCAN_IDS.long, "2 of 3 lines assign a literal value.") },
+        { name: "1280-sheet-approved", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.approved, "The line was dropped; its hash remains.") },
+        { name: "1280-sheet-ended", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.ended, "Approval ended: used, expired or lost in a monitor restart.") },
+        { name: "1280-sheet-declined", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.declined, "The line was dropped; nothing was written.") },
+        { name: "1280-sheet-withdrawn", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.withdrawn, "The session withdrew the request. The line was dropped.") },
+        { name: "1280-sheet-expired", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.expired, "Expired: no answer within 24 hours.") },
+        { name: "1280-sheet-gone", viewport: MIN_WINDOW, setUp: sheet(SCAN_IDS.gone, "Gone: the monitor restarted.") },
+        {
+          name: "1280-sheet-conflict", viewport: MIN_WINDOW,
+          setUp: async (page) => {
+            harness.refusals.set("action", { status: 409, body: { error: "secret_request_gone" } });
+            await openScanSheet(page, SCAN_IDS.one, "The line assigns a literal value.");
+            await page.locator(`#queue-option-${SCAN_IDS.one}-R1`).check();
+            await page.locator(".queue-sheet").getByRole("button", { name: "Send answer" }).click();
+            await page.locator(".queue-sheet").getByText("Not approved: the request is gone. Nothing will pass.").waitFor();
+          },
+        },
       ];
+      t.after(() => harness.refusals.delete("action"));
       for (const shot of shots) {
         const page = await openScanPage(shot.viewport);
-        if (shot.id !== null) await openScanSheet(page, shot.id, shot.ready);
+        await shot.setUp?.(page);
         await page.screenshot({ path: join(dir, `card-${shot.name}.png`), animations: "disabled" });
         await page.close();
       }

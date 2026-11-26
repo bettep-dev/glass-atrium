@@ -828,7 +828,7 @@ export function getRelayRecordFixture(): QueueFixture {
   return { ...getRestFixture(), relays: getRelayThreadFixture() };
 }
 
-export const SCAN_IDS = { one: 801, long: 802, expired: 803, gone: 804, approved: 805 } as const;
+export const SCAN_IDS = { one: 801, long: 802, expired: 803, gone: 804, approved: 805, unread: 806, declined: 807, withdrawn: 808, ended: 809 } as const;
 
 /** The code points the owner's screen must show as tiles (security ruling item 5's list beside the C0/C1, zero-width and bidi ranges). */
 export const SCAN_MARK_POINTS = [0x09, 0x85, 0xad, 0x34f, 0x61c, 0x115f, 0x17b4, 0x180e, 0x200b, 0x202e, 0x2066, 0x2028, 0x2029, 0xa0, 0xfeff, 0xfff9] as const;
@@ -860,7 +860,8 @@ function buildScanRead(lines: string[]): ScanApprovalLines {
 
 /**
  * `rest` plus a secret approval in each state: one waiting line; three waiting lines, one of them about 4,000 characters holding every marked
- * code point and a trailing space; a waiting request past its expiry; a request gone with a restart; an approval inside its window.
+ * code point and a trailing space; a waiting request past its expiry; a request gone with a restart; an approval inside its window;
+ * a waiting request the owner read refuses. Done: a declined request, a withdrawn one, an approval past its window.
  */
 export function getScanApprovalFixture(rest: QueueFixture = getRestFixture()): QueueFixture {
   const marked = SCAN_MARK_POINTS.map((point) => `x${String.fromCodePoint(point)}`).join("");
@@ -875,10 +876,22 @@ export function getScanApprovalFixture(rest: QueueFixture = getRestFixture()): Q
       askedAt: getAt(6), status: "answered", answeredAt: getAt(2), answer: { code: "R1", text: null },
       scanApproval: { state: "approved", lineCount: 1, expiresAt: getAt(-8) },
     }),
+    buildScanItem(SCAN_IDS.unread, { askedAt: getAt(4), scanApproval: { state: "pending", lineCount: 1, expiresAt: waits } }),
+  ];
+  const done = [
+    buildScanItem(SCAN_IDS.declined, {
+      askedAt: getAt(90), status: "delivered", answeredAt: getAt(80), closedAt: getAt(80), deliveredAt: getAt(79), answer: { code: "R2", text: null },
+      scanApproval: { state: "gone", lineCount: null, expiresAt: null },
+    }),
+    buildScanItem(SCAN_IDS.withdrawn, { askedAt: getAt(120), status: "withdrawn", closedAt: getAt(110), scanApproval: { state: "gone", lineCount: null, expiresAt: null } }),
+    buildScanItem(SCAN_IDS.ended, {
+      askedAt: getAt(60), status: "delivered", answeredAt: getAt(50), closedAt: getAt(50), deliveredAt: getAt(49), answer: { code: "R1", text: null },
+      scanApproval: { state: "approved", lineCount: 1, expiresAt: getAt(40) },
+    }),
   ];
   const scanReads = {
     [SCAN_IDS.one]: buildScanRead([getScanLine(`hello${String.fromCodePoint(0x200b)}world`)]),
     [SCAN_IDS.long]: buildScanRead([getScanLine("**b** <b>x</b> ## h | a | ``` U+200B"), longLine, "const x = process.env.HOME;"]),
   };
-  return { ...rest, items: [...items, ...rest.items], scanReads };
+  return { ...rest, items: [...items, ...rest.items], done: [...done, ...(rest.done ?? [])], scanReads };
 }
