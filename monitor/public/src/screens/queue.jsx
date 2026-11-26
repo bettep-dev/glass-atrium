@@ -2193,7 +2193,7 @@ function QueueSheetQ({ queue }) {
  * @param isDone - a row under a Done band → read-only: no delivery lines, the foot how and when it ended (spec §4.6)
  */
 function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, isDone = false }) {
-	const scanRead = useScanReadQ(item);
+	const scanRead = useScanReadQ(item, queue.reload);
 	const draft = getShownDraftQ(queue.drafts[item.id] ?? {}, item, scanRead);
 	const isBusy = queue.busy.id === item.id;
 	const error = queue.busy.error?.id === item.id ? queue.busy.error.message : null;
@@ -2445,17 +2445,24 @@ function isClosedOptionQ(item, code, isOnlySafe) {
 /**
  * The owner read of a waiting request's captured lines, made when its sheet opens. Held in this sheet's state alone →
  * dropped once the request stops waiting or the sheet closes; never the list, the URL, storage or a log.
+ * @param onGone - re-reads the list: a 409 means the store no longer holds the request, so its state shows without waiting for the next check
  * @returns `{ status: "loading" | "ready" | "failed", data, retry }`
  */
-function useScanReadQ(item) {
+function useScanReadQ(item, onGone) {
 	const isPending = getScanStateQ(item) === "pending";
 	const [read, setRead] = useStateQ(EMPTY_SCAN_READ_Q);
 	const [attempt, setAttempt] = useStateQ(0);
+	const latestOnGone = useRefQ(onGone);
+	latestOnGone.current = onGone;
 	useEffectQ(() => {
 		setRead(EMPTY_SCAN_READ_Q);
 		if (!isPending) return undefined;
 		let isLive = true;
-		readScanLinesQ(item.id).then((next) => isLive && setRead(next));
+		readScanLinesQ(item.id).then(({ isGone, ...next }) => {
+			if (!isLive) return;
+			setRead(next);
+			if (isGone) latestOnGone.current();
+		});
 		return () => { isLive = false; };
 	}, [item.id, isPending, attempt]);
 	return { ...read, retry: () => setAttempt((count) => count + 1) };
@@ -2464,7 +2471,8 @@ function useScanReadQ(item) {
 // the route answers private, no-store, and the page keeps no service worker → no cache holds the reply
 async function readScanLinesQ(id) {
 	const answer = await sendOwnerRequestQ(`/items/${id}/scan-approval`);
-	return isOkAnswerQ(answer) && Array.isArray(answer.data?.lines) ? { status: "ready", data: answer.data } : { status: "failed", data: null };
+	if (isOkAnswerQ(answer) && Array.isArray(answer.data?.lines)) return { status: "ready", data: answer.data };
+	return { status: "failed", data: null, isGone: answer.status === 409 };
 }
 
 /** The card in the item text's place: the cue, each captured line's head and plate, the facts and the warning; once the request stops waiting, its state line. */
@@ -2540,17 +2548,20 @@ function ScanMarkQ({ label }) {
 }
 
 /**
- * What an approval binds, each value whole: the read's path, rule and agent, the item's session, and the server's times.
- * @param read - the owner read's reply; null → its rows are left out
+ * What an approval binds, each value whole: the request's path, rule, agent and id, the item's session, and the server's times.
+ * @param read - the owner read's reply; null → the list facts, which carry no path once the request is gone, so those rows drop
  */
 function ScanFactsQ({ item, read, isPending = false }) {
 	const { MachineString } = window.UI;
 	const facts = item.scanApproval;
+	const request = read ?? facts;
+	const isHeld = Boolean(request.path);
 	const rows = [
-		read && ["File", <MachineString>{read.path}</MachineString>],
-		read && ["Rule", <><MachineString>{read.rule}</MachineString>{SCAN_Q.RULE[read.rule] && <span className="text-dim">{` ${SCAN_Q.RULE[read.rule]}`}</span>}</>],
+		isHeld && ["File", <MachineString>{request.path}</MachineString>],
+		isHeld && ["Rule", <><MachineString>{request.rule}</MachineString>{SCAN_Q.RULE[request.rule] && <span className="text-dim">{` ${SCAN_Q.RULE[request.rule]}`}</span>}</>],
 		["Session", <><span className="font-semibold">{item.session.name}</span>{" "}<MachineString>{item.session.id}</MachineString></>],
-		read && ["Agent", read.agentType ? <MachineString>{read.agentType}</MachineString> : "Main session"],
+		isHeld && ["Agent", request.agentType ? <MachineString>{request.agentType}</MachineString> : "Main session"],
+		facts.requestId && ["Request", <MachineString>{facts.requestId}</MachineString>],
 		["Approval", isPending ? getApprovalWindowQ(item.body) : `Once, until ${window.UI.formatKstTime(facts.expiresAt)}`],
 		isPending && ["Waits", `Until ${getEndTimeQ(facts.expiresAt)}`],
 	].filter((row) => row && row[1]);

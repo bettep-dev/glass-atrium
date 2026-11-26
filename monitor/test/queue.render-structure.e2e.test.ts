@@ -3458,6 +3458,29 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { plates: 0, facts: [], approve: [true, false], isSendInk: false, alerts: [`✕ ${GONE_ANSWER}`] });
     });
 
+    test("the approved sheet keeps what the approval binds from the list, with no read of the lines after the yes", async () => {
+      const page = await openScanPage(MIN_WINDOW);
+      await openScanSheet(page, SCAN_IDS.approved, "The line was dropped; its hash remains.");
+      const labels = await page.locator(".queue-sheet .scan-facts dt").allTextContents();
+      const request = await page.locator(".queue-sheet .scan-facts dd").nth(labels.indexOf("Request")).textContent();
+      await page.close();
+
+      const { requestId } = getScanApprovalFixture().items.find((item) => item.id === SCAN_IDS.approved)!.scanApproval!;
+      assert.deepEqual({ labels, request, reads: harness.scanReadIds }, { labels: ["File", "Rule", "Session", "Agent", "Request", "Approval"], request: requestId, reads: [] });
+    });
+
+    // the list still reads pending when the sheet opens, the store has dropped it → the read's 409 re-reads the list under the 15 s check
+    test("a scan read the server answers 409 re-reads the list at once: the Gone line, no read fact", async () => {
+      const page = await openScanPage(MIN_WINDOW);
+      harness.fixture = { ...harness.fixture, items: harness.fixture.items.map((item) => (item.id === SCAN_IDS.unread ? { ...item, scanApproval: SCAN_GONE_FACTS } : item)) };
+      await selectRow(page, SCAN_IDS.unread);
+      await page.locator(".queue-sheet").getByText("Gone: the monitor restarted.").waitFor({ timeout: 5_000 });
+      const facts = await page.locator(".queue-sheet .scan-facts dt").count();
+      await page.close();
+
+      assert.deepEqual({ facts, reads: harness.scanReadIds }, { facts: 0, reads: [SCAN_IDS.unread] });
+    });
+
     test("the captured lines are read only when a waiting item's sheet opens, and its row says only how many lines", async () => {
       const page = await openScanPage(MIN_WINDOW);
       const before = [...harness.scanReadIds];

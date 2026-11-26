@@ -4418,6 +4418,9 @@ describe("the secret-approval card", () => {
   const SCAN_BODY = "Approve this write once (R1) lets the write pass once, within 10 minutes of the answer. Decline (R2) when a line holds a real password or key.";
   const SCAN_PATH = "/Users/owner/Desktop/git/glass-atrium/monitor/src/server/queue/example-config.ts";
   const FAR = "2099-11-27T05:50:00.000Z";
+  const REQUEST_ID = "5ca1ab1e-0000-4000-8000-000000000077";
+  // the list facts the server hands while its store holds the request (owner-views.ts → getScanApprovalFacts)
+  const getHeldFacts = (state: string, expiresAt: string, agentType: string | null = "glass-atrium-dev-front") => ({ state, lineCount: 1, expiresAt, path: SCAN_PATH, rule: "SEC-013", agentType, requestId: REQUEST_ID });
   // harmless parts joined at run time → an assignment the scanner never refuses
   const getLine = (value: string) => ["greeting = ", QUOTE, value, QUOTE, ";"].join("");
   const getRead = (lines: string[], agentType = "glass-atrium-dev-front") => ({
@@ -4430,7 +4433,7 @@ describe("the secret-approval card", () => {
       { code: "R1", label: "Approve this write once", pros: "The refused write lands as written.", cons: "A real secret in a line would be written to the file." },
       { code: "R2", label: "Decline", pros: "Nothing is written and the request is dropped.", cons: "The session rewrites the line." },
     ],
-    scanApproval: { state: "pending", lineCount: 1, expiresAt: FAR }, ...overrides,
+    scanApproval: getHeldFacts("pending", FAR), ...overrides,
   });
   const READY = (lines: string[], agentType?: string) => ({ status: "ready", data: getRead(lines, agentType) });
   const renderCard = (item: unknown, scanRead: unknown = READY([getLine("hello")])) => render("SheetBodyQ", { item, draft: {}, onDraft: () => undefined, cliPath: CLI_PATH, scanRead });
@@ -4523,18 +4526,79 @@ describe("the secret-approval card", () => {
     }
   });
 
-  test("the facts carry the full path, the whole session id, the rule and the agent, none cut", () => {
-    const facts = (agentType: string) => {
-      const [list] = byClass(renderCard(scanItem(), READY([getLine("hello")], agentType)), "scan-facts");
-      const cells = findNodes(list as RenderedNode, (node) => node.type === "dt" || node.type === "dd").map((node) => textOf(node));
-      return Object.fromEntries(cells.flatMap((cell, index) => (index % 2 === 0 ? [[cell, cells[index + 1]]] : [])));
-    };
+  // [label, value] per row, in the sheet's order
+  const factRows = (tree: RenderedNode) => {
+    const cells = byClass(tree, "scan-facts").flatMap((list) => findNodes(list, (node) => node.type === "dt" || node.type === "dd").map((node) => textOf(node)));
+    return cells.flatMap((cell, index) => (index % 2 === 0 ? [[cell, cells[index + 1]]] : []));
+  };
+
+  test("the facts carry the full path, the whole session id, the rule, the agent and the request id, none cut", () => {
+    const facts = (agentType: string) => Object.fromEntries(factRows(renderCard(scanItem(), READY([getLine("hello")], agentType))));
     const shown = facts("glass-atrium-dev-front");
     assert.deepEqual(shown, {
-      File: SCAN_PATH, Rule: "SEC-013 credential assignment", Session: `glass-atrium ${SESSION_ID}`, Agent: "glass-atrium-dev-front",
+      File: SCAN_PATH, Rule: "SEC-013 credential assignment", Session: `glass-atrium ${SESSION_ID}`, Agent: "glass-atrium-dev-front", Request: REQUEST_ID,
       Approval: "Once, within 10 minutes of your yes", Waits: `Until ${call<string>("getEndTimeQ", FAR)}`,
     });
     assert.deepEqual([Object.values(shown).some((value) => String(value).includes("…")), facts("").Agent], [false, "Main session"]);
+  });
+
+  // the scan read answers only while the request waits → the list facts carry what an approval binds; a gone request carries none
+  describe("without the scan read the facts come from the list while the store holds the request", () => {
+    const UNTIL = "2099-11-26T06:04:00.000Z";
+    const approved = (facts: unknown) => scanItem({ status: "answered", answeredAt: "2026-11-26T05:54:00.000Z", answer: { code: "R1", text: null }, scanApproval: facts });
+    const session = ["Session", `glass-atrium ${SESSION_ID}`];
+    const rows = [
+      {
+        name: "approved, window open", item: approved(getHeldFacts("approved", UNTIL)),
+        expected: [["File", SCAN_PATH], ["Rule", "SEC-013 credential assignment"], session, ["Agent", "glass-atrium-dev-front"], ["Request", REQUEST_ID], ["Approval", "Once, until 15:04"]],
+      },
+      {
+        name: "approved for the main session", item: approved(getHeldFacts("approved", UNTIL, null)),
+        expected: [["File", SCAN_PATH], ["Rule", "SEC-013 credential assignment"], session, ["Agent", "Main session"], ["Request", REQUEST_ID], ["Approval", "Once, until 15:04"]],
+      },
+      {
+        name: "pending, the lines still reading", item: scanItem(), read: { status: "loading", data: null },
+        expected: [["File", SCAN_PATH], ["Rule", "SEC-013 credential assignment"], session, ["Agent", "glass-atrium-dev-front"], ["Request", REQUEST_ID], ["Approval", "Once, within 10 minutes of your yes"], ["Waits", `Until ${call<string>("getEndTimeQ", FAR)}`]],
+      },
+      {
+        name: "approved, then gone", item: approved({ state: "gone", lineCount: null, expiresAt: null, path: null, rule: null, agentType: null, requestId: null }),
+        expected: [],
+      },
+    ];
+    for (const row of rows) test(row.name, () => assert.deepEqual(factRows(renderCard(row.item, row.read ?? { status: "loading", data: null })), row.expected));
+  });
+
+  describe("the sheet's own scan read", () => {
+    // one mount of the hook with its effects run and the reply settled
+    const runRead = async (item: unknown, status: number) => {
+      const paths: string[] = [];
+      let reloads = 0;
+      const stateful = createStatefulReact();
+      const page = (await loadScreenModule(QUEUE_SRC, {
+        React: stateful.react, URLSearchParams, window: { UI: uiStub(), location: { hash: "#queue" } },
+        fetch: async (path: string) => { paths.push(path); return { status, json: async () => (status === 200 ? getRead([getLine("hello")]) : { error: "secret_request_gone" }) }; },
+      })) as ScreenModule;
+      stateful.resetCursor();
+      (page.useScanReadQ as (item: unknown, onGone: () => void) => unknown)(item, () => { reloads += 1; });
+      stateful.flushEffects();
+      await new Promise((resolve) => setImmediate(resolve));
+      return { paths, reloads };
+    };
+
+    test("after the yes no request reaches the scan read route", async () => {
+      const item = scanItem({ status: "answered", answeredAt: "2026-11-26T05:54:00.000Z", answer: { code: "R1", text: null }, scanApproval: getHeldFacts("approved", FAR) });
+      assert.deepEqual(await runRead(item, 409), { paths: [], reloads: 0 });
+    });
+
+    // the list still read pending → a 409 means the store dropped it: the list's next read shows that state at once
+    const rows = [
+      { name: "a 409 re-reads the list at once", status: 409, reloads: 1 },
+      { name: "the lines on screen re-read nothing", status: 200, reloads: 0 },
+      { name: "an outage re-reads nothing", status: 503, reloads: 0 },
+    ];
+    for (const row of rows) {
+      test(row.name, async () => assert.deepEqual(await runRead(scanItem(), row.status), { paths: ["/api/queue/owner/items/77/scan-approval"], reloads: row.reloads }));
+    }
   });
 
   test("the warning line stands directly above the options and the item body is not drawn", () => {
