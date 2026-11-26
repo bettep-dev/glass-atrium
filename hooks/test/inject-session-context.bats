@@ -237,16 +237,22 @@ get_pointer_quote() {
   }
 }
 
-@test "a dozen long-titled open plans fit beside the core and five progress files under the hook cap" {
+@test "a dozen long-titled open plans fit beside the core, five progress files and a changed-since integrity line under the hook cap" {
   command -v jq >/dev/null 2>&1 || skip "jq required"
-  local rows
+  local rows memory
   rows="$(jq -cn '[range(12) | {id: (43800 + .), title: ("Plan — a direction plan whose title runs on past one hundred and forty characters, as the longest of the open plans do, so a whole title per row spends the budget " + (. | tostring)), doc_status: "implementing", last_status_model: "claude-opus-5-5"}]')"
   seed_open_plans '{"total":12,"rows":'"${rows}"','"${OPEN_STAGES_FILTER}"'}'
-  seed_tracker /p/progress-alpha-task-one.md /p/progress-beta-task-two.md /p/progress-gamma-task-three.md \
-    /p/progress-delta-task-four.md /p/progress-epsilon-task-five.md
+  # Full tracker paths, as progress-tracker.sh lists them.
+  memory=/Users/operator/.claude-personal/projects/-Users-operator/memory
+  seed_tracker "${memory}/progress-release-batch-lane-h.md" "${memory}/progress-queue-batch3-layout.md" \
+    "${memory}/progress-monitor-phone-layout.md" "${memory}/progress-hooks-down-diagnosis.md" \
+    "${memory}/progress-wiki-deadlink-lines.md"
+  record_integrity_verdict 0
+  touch -t 209901010000 "${SANDBOX}/ga/hooks/hook-a.sh"
   run_hook
   [[ "${status}" -eq 0 && "${output}" == *"[OPEN PLANS] 12 "* && "${output}" == *"clauded-docs/43811 "* ]] \
-    && [[ "${output}" != *"[OPEN PLANS] omitted"* && "${output}" == *"[CONTINUITY] "* ]] || {
+    && [[ "${output}" != *"[OPEN PLANS] omitted"* && "${output}" == *"[CONTINUITY] "* ]] \
+    && [[ "${output}" == *"1 tracked file(s) changed since"* ]] || {
     echo "exit ${status}: ${output}"
     return 1
   }

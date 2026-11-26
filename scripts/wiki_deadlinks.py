@@ -52,6 +52,7 @@ FixStatus = Literal["auto-fixed", "dry-run-ambiguous", "dry-run-no-match"]
 class DeadlinkRecord:
     """One broken wikilink found in a note."""
     source_slug: str           # note containing the broken link
+    line: int                  # 1-based line of the link in that note
     broken_link: str           # the raw [[target]] or [text](path.md) text
     link_target: str           # extracted target slug
     fix_status: FixStatus
@@ -118,37 +119,42 @@ def _strip_code_spans(text: str) -> str:
     bash test syntax like ``[[ -v var ]]`` / ``[[ -n "${x}" ]]`` inside code
     blocks would otherwise be mis-parsed by _RE_WIKILINK as broken wikilinks
     (re-reported every cycle). Mirrors wiki_dedup._extract_sentences fence-strip
-    so the two scanners share one code-span convention.
+    so the two scanners share one code-span convention; each span keeps its
+    newlines so a later match still sits on the note's own line.
     """
-    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
-    text = re.sub(r"`[^`]+`", "", text)
+    def keep_newlines(m: re.Match[str]) -> str:
+        return "\n" * m.group(0).count("\n")
+
+    text = re.sub(r"```.*?```", keep_newlines, text, flags=re.DOTALL)
+    text = re.sub(r"`[^`]+`", keep_newlines, text)
     return text
 
 
-def extract_links(text: str) -> list[tuple[str, str]]:
-    """Return list of (raw_link_text, target_slug).
+def extract_links(text: str) -> list[tuple[str, str, int]]:
+    """Return list of (raw_link_text, target_slug, line).
 
     raw_link_text: the full [[...]] or [...](...) match for replacement.
     target_slug: the slug portion (filename without .md extension).
+    line: 1-based line of the match in text.
 
     Code spans are stripped first so wikilink/md-link regexes never match
     inside fenced or inline code (bash [[ ]] test syntax is not a wikilink).
     """
     text = _strip_code_spans(text)
-    links: list[tuple[str, str]] = []
+    links: list[tuple[str, str, int]] = []
 
     for m in _RE_WIKILINK.finditer(text):
         raw = m.group(0)
         target = m.group(1).strip()
         # Strip path separators (vault-relative paths like notes/foo → foo).
         slug = Path(target).stem
-        links.append((raw, slug))
+        links.append((raw, slug, text.count("\n", 0, m.start()) + 1))
 
     for m in _RE_MD_LINK.finditer(text):
         raw = m.group(0)
         path_str = m.group(2).strip()
         slug = Path(path_str).stem
-        links.append((raw, slug))
+        links.append((raw, slug, text.count("\n", 0, m.start()) + 1))
 
     return links
 
@@ -305,7 +311,7 @@ def run_deadlinks(
         links = extract_links(text)
         result.total_links_checked += len(links)
 
-        for raw_link, target_slug in links:
+        for raw_link, target_slug, line in links:
             # Self-links are valid.
             if target_slug == source_slug:
                 continue
@@ -324,6 +330,7 @@ def run_deadlinks(
                 if ok:
                     result.auto_fixed.append(DeadlinkRecord(
                         source_slug=source_slug,
+                        line=line,
                         broken_link=raw_link,
                         link_target=target_slug,
                         fix_status="auto-fixed",
@@ -337,6 +344,7 @@ def run_deadlinks(
                     )
                     result.dry_run.append(DeadlinkRecord(
                         source_slug=source_slug,
+                        line=line,
                         broken_link=raw_link,
                         link_target=target_slug,
                         fix_status="dry-run-no-match",
@@ -348,6 +356,7 @@ def run_deadlinks(
                 # Ambiguous — manual review.
                 result.dry_run.append(DeadlinkRecord(
                     source_slug=source_slug,
+                    line=line,
                     broken_link=raw_link,
                     link_target=target_slug,
                     fix_status="dry-run-ambiguous",
@@ -359,6 +368,7 @@ def run_deadlinks(
                 # No fuzzy match found.
                 result.dry_run.append(DeadlinkRecord(
                     source_slug=source_slug,
+                    line=line,
                     broken_link=raw_link,
                     link_target=target_slug,
                     fix_status="dry-run-no-match",
@@ -485,7 +495,7 @@ def _self_test() -> int:
     # wikilink extraction.
     text = "See [[some-note]] for details. Also [[old-slug|display]] and [[note#heading]]."
     links = extract_links(text)
-    slugs_found = [s for _, s in links]
+    slugs_found = [s for _, s, _ in links]
     expected_slugs = {"some-note", "old-slug", "note"}
     if not expected_slugs.issubset(set(slugs_found)):
         failures.append(f"T1 FAIL: expected {expected_slugs}, got {slugs_found}")
@@ -514,10 +524,10 @@ def _self_test() -> int:
     # markdown link extraction.
     text2 = "See [text](other-note.md) for more."
     links2 = extract_links(text2)
-    if not any(s == "other-note" for _, s in links2):
+    if not any(s == "other-note" for _, s, _ in links2):
         failures.append(f"T2 FAIL: markdown link not extracted: {links2}")
     else:
-        print(f"T2 PASS: markdown link extraction {[s for _, s in links2]}")
+        print(f"T2 PASS: markdown link extraction {[s for _, s, _ in links2]}")
 
     # fuzzy match hit.
     all_slugs = {"new-slug", "some-unrelated-note", "another-note"}
@@ -557,7 +567,7 @@ def _self_test() -> int:
         "```\n\n"
         "Inline `[[ -z $x ]]` example too.\n"
     )
-    links6 = [s for _, s in extract_links(text6)]
+    links6 = [s for _, s, _ in extract_links(text6)]
     leaked = [s for s in links6 if s in {"-v var", "-n", "-z $x", "-v", "var"}]
     if leaked:
         failures.append(f"T6 FAIL: code-span bash test leaked as wikilinks: {leaked}")

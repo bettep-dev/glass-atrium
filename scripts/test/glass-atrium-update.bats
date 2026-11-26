@@ -2235,8 +2235,8 @@ read_calls() {
     printf '#!/usr/bin/env bash\nprintf "render-%s\\n" >>"%s"\n' "${render}" "${WORK}/renders.log" >"${WORK}/render-${render}.sh"
     chmod +x "${WORK}/render-${render}.sh"
   done
-  # the applied install's launcher; only its repair-config-binaries call belongs to this ordering
-  printf '#!/usr/bin/env bash\n[[ "$1" != repair-config-binaries ]] || printf "repair-config-binaries\\n" >>"%s"\n' "${WORK}/renders.log" >"${INSTALL}/glass-atrium"
+  # the applied install's launcher, listing the subcommand in its usage; only its repair-config-binaries call belongs to this ordering
+  printf '#!/usr/bin/env bash\n[[ "$1" != --help ]] || echo "  glass-atrium repair-config-binaries"\n[[ "$1" != repair-config-binaries ]] || printf "repair-config-binaries\\n" >>"%s"\n' "${WORK}/renders.log" >"${INSTALL}/glass-atrium"
   chmod +x "${INSTALL}/glass-atrium"
   export ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/render-env.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/render-launchd.sh"
   export ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist"
@@ -2294,7 +2294,7 @@ read_calls() {
     return 1
   }
 
-  printf '#!/usr/bin/env bash\nprintf "FATAL: config unreadable\\n" >&2\nexit 1\n' >"${INSTALL}/glass-atrium"
+  printf '#!/usr/bin/env bash\n[[ "$1" != --help ]] || { echo "  glass-atrium repair-config-binaries"; exit 0; }\nprintf "FATAL: config unreadable\\n" >&2\nexit 1\n' >"${INSTALL}/glass-atrium"
   run --separate-stderr bash -c '
     '"$(declare -f load_skill)"'
     INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
@@ -2305,6 +2305,45 @@ read_calls() {
   '
   [[ "${status}" -eq 0 && "${stderr}" == *"FATAL: config unreadable"*"WARN: "*"[paths] binaries not re-resolved"* ]] || {
     echo "status ${status}: ${stderr}"
+    return 1
+  }
+}
+
+@test "the update leaves the config binaries to a launcher without the repair subcommand, with a note rather than a failed-repair WARN, and still renders" {
+  local render
+  for render in env launchd; do
+    printf '#!/usr/bin/env bash\nprintf "render-%s\\n" >>"%s"\n' "${render}" "${WORK}/renders.log" >"${WORK}/render-${render}.sh"
+    chmod +x "${WORK}/render-${render}.sh"
+  done
+  # a launcher older than repair-config-binaries: its usage omits it and its passthrough refuses it as unknown
+  cat >"${INSTALL}/glass-atrium" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == --help ]]; then
+  printf '  glass-atrium reload-launchd  re-render the launchd jobs and reload them\n'
+  exit 0
+fi
+printf 'glass-atrium: unknown internal subcommand: %s\n' "$1" >&2
+exit 2
+STUB
+  chmod +x "${INSTALL}/glass-atrium"
+  run --separate-stderr bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_RENDER_MONITOR_ENV="'"${WORK}"'/render-env.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="'"${WORK}"'/render-launchd.sh"
+    export ATRIUM_UPDATE_ONESHOT_PLIST="'"${WORK}"'/oneshot.plist"
+    update_render_parity
+  '
+  [[ "${status}" -eq 0 ]] || {
+    echo "status ${status}: ${stderr}"
+    return 1
+  }
+  [[ "${stderr}" == *"has no repair-config-binaries subcommand"* && "${stderr}" != *"WARN: "* && "${stderr}" != *"unknown internal subcommand"* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+  [[ "$(<"${WORK}/renders.log")" == $'render-launchd\nrender-env' ]] || {
+    cat "${WORK}/renders.log"
     return 1
   }
 }

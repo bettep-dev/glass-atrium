@@ -699,11 +699,45 @@ drop_lib_a_from_current_retired() {
   mv -f "${MANIFEST}.tmp" "${MANIFEST}"
 }
 
-@test "--check: a retired key dropped from the committed map stays invisible without a reference" {
+@test "--check: exit 1 names a retired key the working map dropped from HEAD's committed map" {
   retire_lib_a_into_reference
+  git -C "${WORK}" add manifest.json
+  git -C "${WORK}" commit -qm retire-a
   drop_lib_a_from_current_retired
   run "${SCRIPT}" --check
+  [[ "${status}" -eq 1 ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"RETIRED-DROPPED (1):"* ]] || return 1
+  [[ "${output}" == *"- scripts/lib/a.sh"* ]] || return 1
+}
+
+@test "--check: exit 0 when HEAD carries no committed manifest to hold the map to" {
+  "${SCRIPT}" >/dev/null
+  git -C "${WORK}" rm -q --cached manifest.json
+  git -C "${WORK}" commit -qm untrack-manifest
+  run "${SCRIPT}" --check
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "--check: exit 1 with one named line when HEAD's committed manifest exists but cannot be read" {
+  "${SCRIPT}" >/dev/null
+  git -C "${WORK}" add manifest.json
+  git -C "${WORK}" commit -qm stamp
+  # git shim: the HEAD manifest blob passes the existence probe, its read fails as a corrupt object does
+  local shim="${WORK}/git-shim" real_git named
+  real_git="$(command -v git)"
+  mkdir -p "${shim}"
+  {
+    printf '#!/usr/bin/env bash\n'
+    # shellcheck disable=SC2016  # stub source text: expands when the stub runs
+    printf '[[ "${3:-}" == show && "${4:-}" == HEAD:./manifest.json ]] && { echo "fatal: bad object" >&2; exit 128; }\n'
+    printf 'exec %q "$@"\n' "${real_git}"
+  } >"${shim}/git"
+  chmod 755 "${shim}/git"
+  PATH="${shim}:${PATH}" run --separate-stderr "${SCRIPT}" --check
+  [[ "${status}" -eq 1 ]] || { echo "${output}${stderr}"; return 1; }
+  named="$(grep -c '^generate-manifest' <<<"${stderr}" || true)"
+  [[ "${named}" -eq 1 ]] || { echo "${stderr}"; return 1; }
+  [[ "${stderr}" == *"generate-manifest --check: HEAD manifest unreadable"* ]] || { echo "${stderr}"; return 1; }
 }
 
 @test "--check --reference: exit 1 names each reference retired key the current map dropped" {

@@ -527,6 +527,7 @@ seed_e2e() {
   cat >"${INSTALL}/glass-atrium" <<STUB
 #!/usr/bin/env bash
 printf 'launcher %s\n' "\$*" >>"${CALLS}"
+[[ "\$1" != --help ]] || echo '  glass-atrium repair-config-binaries'
 exit 0
 STUB
   chmod +x "${INSTALL}/glass-atrium"
