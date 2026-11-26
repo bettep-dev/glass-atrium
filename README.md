@@ -146,7 +146,7 @@
   - The rules loaded in every session hold only the sentences every session needs; the detail lives in reference files read on demand.
     - Always-loaded set (the global charter + the `rules/glass-atrium/*.md` files without `paths:`, 8 files): 156,912 → 69,405 UTF-16 units
       - The largest share is the always-loaded rule `rules/glass-atrium/orchestrator-role.md` (66,061 → 775 units) — its body moved to the on-demand `skills/glass-atrium-ops-orchestrator-role.md`, leaving only a stub.
-    - The main session additionally receives the orchestrator core (`scoped/orchestrator-core.md`, 7,492 units), added by the SessionStart hook.
+    - The main session additionally receives the orchestrator core (`scoped/orchestrator-core.md`, 7,504 units), added by the SessionStart hook.
     - The on-demand orchestrator skill (`skills/glass-atrium-ops-orchestrator.md`): 142,358 → 99,449 bytes
   - A CI test (`scripts/test/startup-budget.bats`) keeps the always-loaded set under 145,000 UTF-16 units.
 - **Lifecycle hook pipeline** — a set of hook scripts (`hooks/`) that mechanically enforce secrets, dangerous commands, budgets, and outcome records at every tool boundary.
@@ -186,7 +186,7 @@
     - The budget is not a monthly billing limit but a per-call hard cap that stops a single call from running away.
     - The daemon reads `daemon-config.json` once per cycle and applies it; a drift warning appears when the saved value differs from the one actually applied.
 - **Owner queue** — on the monitor's **Queue** screen you answer the decisions and reports that sessions post, and send work orders to sessions.
-  - The screen is a desk that fills one PC screen, and its three columns stay put: the session list on the left · the item list in the middle · **Orders** on the right.
+  - The screen is a desk that fills one PC screen (for a phone, see Remote access below), and its three columns stay put: the session list on the left · the item list in the middle · **Orders** on the right.
     - A decision or report picked from the list opens in the middle column as a one-page sheet in place of the list, and you answer in the input below the sheet.
     - From an open report the `←` button (Esc) returns to the list, and `J` / `K` step to the previous or next item.
   - Each session has one checkbox, and the checked sessions set the scope of the list and the order thread, and they are the sessions that receive orders.
@@ -204,7 +204,7 @@
   - It opens like any other screen, with no login or prior setup.
   - Requests from other websites are refused.
   - Answers and orders that pass through the monitor are recorded with when and by which route they arrived, and an answer the monitor did not record (written outside the monitor) is flagged on the screen.
-  - An answer sent over the monitor's route by another process on the same computer cannot be told apart from one sent from the screen.
+  - A queue answer is not proof of the owner: a process on the same computer that forges the screen's request headers can answer as the owner, and cannot be told apart from an answer sent from the screen — a secret-scan approval answer included.
   - The monitor pushes nothing into a running session.
     - A wait command the session runs in the background (`scripts/atrium-queue.sh wait`) fetches its own answers and orders.
     - So there is no command for the receiving session to approve.
@@ -240,7 +240,7 @@
       - The owner sees the lines on a card on the Queue screen and approves or declines. A warning to decline if a real password or key is present is shown with them.
       - The identical write must be retried within 10 minutes of approval to pass, and a single differing line fails it. The lines live only in the monitor's memory and vanish on restart.
       - A write caught by a token, key, or connection-string shape cannot be approved.
-    - This approval is a path for agents that follow the rules, not proof that the owner is the one answering. The queue has no login, so a process on the same Mac can fabricate an answer.
+    - This approval is a path for agents that follow the rules. That a queue answer is not proof of the owner is stated under **Owner queue** above.
 
 ## Skills: the internal quality layer
 
@@ -307,7 +307,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 ### Remote access (registered devices on the same Wi-Fi)
 
 - On a trusted network such as your home Wi-Fi, a phone or tablet browser you have registered once uses the monitor's features exactly as the Mac does.
-  - There is no mobile-only screen; the device shows the PC screen as is. Answering in the Queue and giving orders to sessions work too.
+  - On a phone held upright (screen width under 640 px) only the **Queue** screen opens as a simple one-column layout (the list · Sessions · Orders, one at a time); the other screens show the PC screen as is. Answering in the Queue and giving orders to sessions work too.
   - The **Remote access** screen, however, opens only on the Mac and does not appear on a registered device.
   - On the Mac itself you keep using it without a login, as now.
 - It is **off by default**.
