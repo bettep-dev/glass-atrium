@@ -27,7 +27,7 @@ import {
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getDoneOnlyFixture, getDoneRelaysFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
   getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneListFixture, getOneReceivedFixture, getOrderFirstFixture, getProseFixture, getHiddenSessionsFixture, getRailFixture, getRelayListFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, RELAY_ROW_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
-  getScanApprovalFixture, SCAN_IDS, SCAN_MARK_POINTS,
+  getScanApprovalFixture, SCAN_GONE_FACTS, SCAN_IDS, SCAN_MARK_POINTS,
 } from "./lib/queue-render-fixtures.js";
 import { deleteTempDirectory } from "./lib/remove-dir.js";
 
@@ -3294,7 +3294,7 @@ describe("queue page on the mockup fixtures", () => {
       await openScanSheet(page, SCAN_IDS.one, "The line assigns a literal value.");
       await page.locator(`#queue-option-${SCAN_IDS.one}-R1`).check();
       harness.refusals.set("action", { status: 409, body: { error: "secret_request_gone" } });
-      harness.fixture = { ...harness.fixture, items: harness.fixture.items.map((item) => (item.id === SCAN_IDS.one ? { ...item, scanApproval: { state: "gone", lineCount: null, expiresAt: null } } : item)) };
+      harness.fixture = { ...harness.fixture, items: harness.fixture.items.map((item) => (item.id === SCAN_IDS.one ? { ...item, scanApproval: SCAN_GONE_FACTS } : item)) };
       await page.locator(".queue-sheet").getByRole("button", { name: "Send answer" }).click();
       await page.locator(".queue-sheet").getByText("Gone: the monitor restarted.").waitFor({ timeout: 5_000 });
     };

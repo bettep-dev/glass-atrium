@@ -128,12 +128,17 @@ export interface RelayRefusalView {
   unresolvedCount: number | null;
 }
 
-/** A scan-approval item's request as the store holds it now; never a line. */
+/** A scan-approval item's request as the store holds it now; never a line, a hash, the session id or the agent id. */
 export interface ScanApprovalFacts {
-  /** gone → declined, withdrawn, expired, used, or dropped by a monitor restart */
+  /** gone → declined, withdrawn, expired, used, or dropped by a monitor restart; every other fact null */
   state: "pending" | "approved" | "gone";
   lineCount: number | null;
   expiresAt: string | null;
+  path: string | null;
+  rule: string | null;
+  agentType: string | null;
+  /** Shown, never a key: no route acts on a request id alone */
+  requestId: string | null;
 }
 
 /** The owner read of a pending request: the server's display form of each captured line beside what it binds. */
@@ -501,8 +506,16 @@ function toView(item: ItemWithRelations, factsById: Map<string, SessionFacts>): 
 function getScanApprovalFacts(requestId: string | null): ScanApprovalFacts | null {
   if (requestId === null) return null;
   const request = secretRequests.find(requestId);
-  if (request === null) return { state: "gone", lineCount: null, expiresAt: null };
-  return { state: request.state, lineCount: request.hashes.length, expiresAt: request.expiresAt.toISOString() };
+  if (request === null) return { state: "gone", lineCount: null, expiresAt: null, path: null, rule: null, agentType: null, requestId: null };
+  return {
+    state: request.state,
+    lineCount: request.hashes.length,
+    expiresAt: request.expiresAt.toISOString(),
+    path: request.path,
+    rule: request.rule,
+    agentType: request.agent.type,
+    requestId: request.id,
+  };
 }
 
 // CHECK queue_items_relay_check: sender ⇔ hop ⇔ kind relay → either null means not a relay

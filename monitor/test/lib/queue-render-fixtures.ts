@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { getImageFacts } from "../../src/server/queue/image-format.js";
 import { ITEM_TITLE_MAX, SESSION_NAME_MAX } from "../../src/server/queue/schemas.js";
 import type { ImageView } from "../../src/server/queue/images.js";
-import type { OwnerItemView, OwnerSessionView, RecentResume, RelayFacts, RelayRefusalView, RelaySender, ScanApprovalLines } from "../../src/server/queue/owner-views.js";
+import type { OwnerItemView, OwnerSessionView, RecentResume, RelayFacts, RelayRefusalView, RelaySender, ScanApprovalFacts, ScanApprovalLines } from "../../src/server/queue/owner-views.js";
 import { getLineDisplay, getLineHash } from "../../src/server/queue/scan-approvals.js";
 import type { OwnerSessionRow } from "../../src/server/queue/owner-sessions.js";
 
@@ -836,6 +836,14 @@ export const SCAN_MARK_POINTS = [0x09, 0x85, 0xad, 0x34f, 0x61c, 0x115f, 0x17b4,
 const SCAN_PATH = "/Users/owner/Desktop/git/glass-atrium/monitor/src/server/queue/example-config.ts";
 const SCAN_AGENT = "glass-atrium-dev-front";
 
+/** A request the store no longer holds: the state alone. */
+export const SCAN_GONE_FACTS: ScanApprovalFacts = { state: "gone", lineCount: null, expiresAt: null, path: null, rule: null, agentType: null, requestId: null };
+
+/** A request the store holds, pending or approved, as the owner list carries it. */
+function getScanHeldFacts(id: number, state: "pending" | "approved", lineCount: number, expiresAt: string): ScanApprovalFacts {
+  return { state, lineCount, expiresAt, path: SCAN_PATH, rule: "SEC-013", agentType: SCAN_AGENT, requestId: `5ca1ab1e-0000-4000-8000-${String(id).padStart(12, "0")}` };
+}
+
 /** The server's secret-approval item text (items.ts → SECRET_APPROVAL_ITEM) on a fixture row. */
 function buildScanItem(id: number, fields: Partial<OwnerItemView>): OwnerItemView {
   return buildItem(id, "gersona", {
@@ -868,25 +876,25 @@ export function getScanApprovalFixture(rest: QueueFixture = getRestFixture()): Q
   const longLine = `${getScanLine(`${"hello world ".repeat(330)}${marked}`)} `;
   const waits = new Date(FIXTURE_NOW + 23 * 60 * MIN_MS).toISOString();
   const items = [
-    buildScanItem(SCAN_IDS.one, { askedAt: getAt(2), scanApproval: { state: "pending", lineCount: 1, expiresAt: waits } }),
-    buildScanItem(SCAN_IDS.long, { askedAt: getAt(3), scanApproval: { state: "pending", lineCount: 3, expiresAt: waits } }),
-    buildScanItem(SCAN_IDS.expired, { askedAt: getAt(24 * 60 + 1), scanApproval: { state: "pending", lineCount: 1, expiresAt: getAt(1) } }),
-    buildScanItem(SCAN_IDS.gone, { askedAt: getAt(40), scanApproval: { state: "gone", lineCount: null, expiresAt: null } }),
+    buildScanItem(SCAN_IDS.one, { askedAt: getAt(2), scanApproval: getScanHeldFacts(SCAN_IDS.one, "pending", 1, waits) }),
+    buildScanItem(SCAN_IDS.long, { askedAt: getAt(3), scanApproval: getScanHeldFacts(SCAN_IDS.long, "pending", 3, waits) }),
+    buildScanItem(SCAN_IDS.expired, { askedAt: getAt(24 * 60 + 1), scanApproval: getScanHeldFacts(SCAN_IDS.expired, "pending", 1, getAt(1)) }),
+    buildScanItem(SCAN_IDS.gone, { askedAt: getAt(40), scanApproval: SCAN_GONE_FACTS }),
     buildScanItem(SCAN_IDS.approved, {
       askedAt: getAt(6), status: "answered", answeredAt: getAt(2), answer: { code: "R1", text: null },
-      scanApproval: { state: "approved", lineCount: 1, expiresAt: getAt(-8) },
+      scanApproval: getScanHeldFacts(SCAN_IDS.approved, "approved", 1, getAt(-8)),
     }),
-    buildScanItem(SCAN_IDS.unread, { askedAt: getAt(4), scanApproval: { state: "pending", lineCount: 1, expiresAt: waits } }),
+    buildScanItem(SCAN_IDS.unread, { askedAt: getAt(4), scanApproval: getScanHeldFacts(SCAN_IDS.unread, "pending", 1, waits) }),
   ];
   const done = [
     buildScanItem(SCAN_IDS.declined, {
       askedAt: getAt(90), status: "delivered", answeredAt: getAt(80), closedAt: getAt(80), deliveredAt: getAt(79), answer: { code: "R2", text: null },
-      scanApproval: { state: "gone", lineCount: null, expiresAt: null },
+      scanApproval: SCAN_GONE_FACTS,
     }),
-    buildScanItem(SCAN_IDS.withdrawn, { askedAt: getAt(120), status: "withdrawn", closedAt: getAt(110), scanApproval: { state: "gone", lineCount: null, expiresAt: null } }),
+    buildScanItem(SCAN_IDS.withdrawn, { askedAt: getAt(120), status: "withdrawn", closedAt: getAt(110), scanApproval: SCAN_GONE_FACTS }),
     buildScanItem(SCAN_IDS.ended, {
       askedAt: getAt(60), status: "delivered", answeredAt: getAt(50), closedAt: getAt(50), deliveredAt: getAt(49), answer: { code: "R1", text: null },
-      scanApproval: { state: "approved", lineCount: 1, expiresAt: getAt(40) },
+      scanApproval: getScanHeldFacts(SCAN_IDS.ended, "approved", 1, getAt(40)),
     }),
   ];
   const scanReads = {

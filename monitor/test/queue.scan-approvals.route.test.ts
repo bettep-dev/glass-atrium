@@ -22,7 +22,7 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerAuditLogHook } from "../src/server/middleware/audit-log.js";
 import { SECRET_APPROVAL_CODE } from "../src/server/queue/items.js";
 import { getLineDisplay, getLineHash, secretRequests } from "../src/server/queue/scan-approvals.js";
-import { getRouteClass } from "../src/server/remote/route-classes.js";
+import { REVIEWED_ROUTES, getRouteClass } from "../src/server/remote/route-classes.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
@@ -295,15 +295,42 @@ describe("owner read of a request's lines", () => {
   });
 });
 
+// The owner views show the request id → it must never work as a key
+describe("a request id authorizes nothing", () => {
+  test("every queue POST route, given only a pending or approved request's id in its path and body by another session or a page, is refused and leaves the request and its item as they were", async () => {
+    const sessionId = await seedSession();
+    const otherSessionId = await seedSession();
+    const posted = [await postApproval(sessionId, createLine()), await postApproval(sessionId, createLine(), true)];
+    const getState = () => Promise.all(posted.map(async ({ itemId, requestId }) => [secretRequests.find(requestId), await getPrisma().queueItem.findUniqueOrThrow({ where: { id: BigInt(itemId) }, select: { status: true, answerCode: true } })]));
+    const before = await getState();
+    const routes = REVIEWED_ROUTES.map((entry) => entry.route).filter((route) => route.startsWith("POST /api/queue/"));
+    const accepted: string[] = [];
+    for (const route of routes) {
+      for (const { requestId } of posted) {
+        const url = route.slice("POST ".length).replace(":id", requestId);
+        const body = route === "POST /api/queue/items" ? { kind: "secret-approval", sessionId: otherSessionId, requestId } : { requestId };
+        for (const headers of [{}, SAME_ORIGIN]) {
+          const response = await send("POST", url, body, headers);
+          if (response.statusCode < 400) accepted.push(`${route} → ${response.statusCode}`);
+        }
+      }
+    }
+    assert.ok(routes.length > 10, "the route table lists no queue POST route");
+    assert.deepEqual(accepted, []);
+    assert.deepEqual(await getState(), before);
+    assert.equal(await getPrisma().queueItem.count({ where: { sessionId: otherSessionId } }), 0);
+  });
+});
+
 describe("the line never leaves the store but by the owner read", () => {
   test("no read carries the line: the owner list, item detail and done thread carry the request facts beside the server-written title and body; the badge count, listener count and the session's own claim and fetch carry neither", async () => {
     const sessionId = await seedSession();
     const { pid } = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId }, select: { pid: true } });
     const line = createLine();
-    const { itemId } = await postApproval(sessionId, line);
+    const { itemId, requestId } = await postApproval(sessionId, line);
     const listed = await send("GET", `/api/queue/owner/items?sessionId=${sessionId}`);
     const pendingFacts = listed.json().items.find((item: { id: number }) => item.id === itemId)?.scanApproval;
-    assert.deepEqual({ ...pendingFacts, expiresAt: typeof pendingFacts?.expiresAt }, { state: "pending", lineCount: 1, expiresAt: "string" });
+    assert.deepEqual({ ...pendingFacts, expiresAt: typeof pendingFacts?.expiresAt }, { state: "pending", lineCount: 1, expiresAt: "string", path: WRITE_PATH, rule: "SEC-013", agentType: AGENT.type, requestId });
     await send("POST", `/api/queue/owner/items/${itemId}/answer`, { code: SECRET_APPROVAL_CODE.APPROVE }, SAME_ORIGIN);
     const payloads = [
       listed,
