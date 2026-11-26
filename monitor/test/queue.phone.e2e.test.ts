@@ -107,9 +107,8 @@ async function openRowSheet(page: Page, row: string, ready: string): Promise<voi
 }
 
 // a row's sheet on the phone, once it shows `ready`
-async function openSheet(page: Page, id: number, ready: string): Promise<void> {
-  await page.locator(`#queue-row-${id}`).tap();
-  await page.locator(".queue-sheet").getByText(ready).first().waitFor({ timeout: READY_TIMEOUT_MS });
+function openSheet(page: Page, id: number, ready: string): Promise<void> {
+  return openRowSheet(page, `#queue-row-${id}`, ready);
 }
 
 async function pickFromMenu(page: Page, label: string): Promise<void> {
