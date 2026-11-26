@@ -21,7 +21,20 @@ const PATH = {
   QR_PROVENANCE: resolve(VENDOR_ROOT, "qrcode-generator.provenance.json"),
   LOCKFILE: resolve(PUBLIC_ROOT, "..", "package-lock.json"),
   QR_INSTALLED: resolve(PUBLIC_ROOT, "..", "node_modules", "qrcode-generator", "dist", "qrcode.js"),
+  FONT_CAPTURES: resolve(PUBLIC_ROOT, "..", "test", "fixtures", "font-stylesheets"),
 };
+
+interface FontStylesheetCapture {
+  name: string;
+  href: string;
+  file: string;
+}
+
+// one recorded read of each external font stylesheet the shell links; Google Fonts answers per user agent → recorded as desktop Chrome (woff2)
+const FONT_STYLESHEET_CAPTURES: FontStylesheetCapture[] = [
+  { name: "Pretendard", href: "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css", file: "pretendard.min.css" },
+  { name: "JetBrains Mono", href: "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap", file: "jetbrains-mono.css" },
+];
 
 // below this the "every external script" loop could pass on a page that lost its CDN tags
 const EXTERNAL_SCRIPT_FLOOR = 10;
@@ -56,6 +69,25 @@ function getDirectives(): Map<string, string[]> {
     .filter((tokens) => tokens[0] !== "")
     .map(([name, ...sources]): [string, string[]] => [name.toLowerCase(), sources]);
   return new Map(entries);
+}
+
+function getStylesheetHrefs(): string[] {
+  return root.querySelectorAll('link[rel="stylesheet"]').map((node) => node.getAttribute("href") ?? "");
+}
+
+/** Each @font-face url() of a captured stylesheet, resolved against the URL the shell links it from. */
+function getFaceUrls(capture: FontStylesheetCapture): URL[] {
+  const css = readFileSync(resolve(PATH.FONT_CAPTURES, capture.file), "utf8");
+  const blocks = css.match(/@font-face\s*\{[^}]*\}/g) ?? [];
+  return blocks.flatMap((block) => [...block.matchAll(/url\(\s*(["']?)([^"')]+)\1\s*\)/g)].map((match) => new URL(match[2], capture.href)));
+}
+
+// CSP source path match: a path ending in "/" admits every path under it, any other path only itself
+function isFontSourceMatch(source: string, face: URL): boolean {
+  if (!/^https:\/\//.test(source)) return false;
+  const allowed = new URL(source);
+  if (allowed.origin !== face.origin) return false;
+  return allowed.pathname.endsWith("/") ? face.pathname.startsWith(allowed.pathname) : face.pathname === allowed.pathname;
 }
 
 function getInlineHashSource(node: HTMLElement): string {
@@ -109,8 +141,7 @@ describe("the shell CSP refuses every fetch kind it does not name", () => {
   // the Tailwind runtime, mermaid's SVG and document bodies write <style> elements at run time → no hash can name them
   // a source names origin + path only → the Google Fonts query (it holds ";") stays out of the policy
   test("style-src is self, each external stylesheet by origin and path, and inline for the style elements written at run time", () => {
-    const stylesheets = root.querySelectorAll('link[rel="stylesheet"]').map((node) => node.getAttribute("href") ?? "");
-    const external = stylesheets.filter((href) => /^https?:/.test(href)).map((href) => {
+    const external = getStylesheetHrefs().filter((href) => /^https?:/.test(href)).map((href) => {
       const url = new URL(href);
       return `${url.origin}${url.pathname}`;
     });
@@ -123,11 +154,20 @@ describe("the shell CSP refuses every fetch kind it does not name", () => {
     assert.deepEqual([...(getDirectives().get("img-src") ?? [])].sort(), ["'self'", "blob:", "data:"]);
   });
 
-  test("fonts come only from the font folders the two external font stylesheets point at", () => {
-    assert.deepEqual([...(getDirectives().get("font-src") ?? [])].sort(), [
-      "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/static/",
-      "https://fonts.gstatic.com/s/jetbrainsmono/",
-    ]);
+  for (const capture of FONT_STYLESHEET_CAPTURES) {
+    test(`every face the linked ${capture.name} stylesheet names loads under font-src`, () => {
+      assert.ok(getStylesheetHrefs().includes(capture.href), `index.html no longer links ${capture.href} — re-record its capture`);
+      const faces = getFaceUrls(capture);
+      assert.ok(faces.length > 0, `the ${capture.name} capture names no @font-face url — the check would be vacuous`);
+      const sources = getDirectives().get("font-src") ?? [];
+      assert.deepEqual(faces.filter((face) => !sources.some((source) => isFontSourceMatch(source, face))).map(String), []);
+    });
+  }
+
+  test("font-src names no source the captured font stylesheets load nothing from", () => {
+    const faces = FONT_STYLESHEET_CAPTURES.flatMap(getFaceUrls);
+    const sources = getDirectives().get("font-src") ?? [];
+    assert.deepEqual(sources.filter((source) => !faces.some((face) => isFontSourceMatch(source, face))), []);
   });
 });
 
