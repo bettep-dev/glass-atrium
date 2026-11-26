@@ -2978,7 +2978,7 @@ function getPartCauseAR(facts) {
 	return null;
 }
 
-// every recorded hook failure is a dropped write, retried or not — the retry only marks a connection failure
+// every recorded hook failure is a dropped write, retried or not — the retry only marks a transient database error
 function getHookLossCauseAR({ count24h, unretried24h }) {
 	const lost = `${count24h} ${count24h === 1 ? "hook write" : "hook writes"} lost in 24h`;
 	return unretried24h > 0 ? `${lost} · ${unretried24h} not retried` : `${lost} after a retry`;

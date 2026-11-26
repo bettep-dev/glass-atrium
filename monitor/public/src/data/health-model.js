@@ -58,8 +58,8 @@ const CARD_FACTS_RESOLVERS = {
   },
 
   // tone 소스 = core.hook_failures 24h recency (F08) — 설정 인벤토리는 sub-metric 강등.
-  // 실패 행 = 기록 못 하고 버린 쓰기 — retry_attempted=true 는 회복이 아니라 두 번째 연결 시도도 실패.
-  // crit = 재시도 없는 실패(연결 외 오류 → 재시도로 안 낫는 결함) · warn = 연결 실패만(일시 장애) · 집계 미수신 → 설정 기반 폴백.
+  // 실패 행 = 기록 못 하고 버린 쓰기 — retry_attempted=true 는 회복이 아니라 일시적 DB 오류로 재시도한 쓰기도 실패.
+  // crit = 재시도 없는 실패(일시적 DB 오류 아님 → 재시도로 안 낫는 결함) · warn = 일시적 DB 오류만 · 집계 미수신 → 설정 기반 폴백.
   hook(_def, { hookState, hookFailState }) {
     if (hookState.status !== 'ready') return { status: hookState.status, error: hookState.error };
     const events = hookState.data?.events || [];
