@@ -1006,19 +1006,19 @@ describe("queue filter bar", () => {
     });
   }
 
-  // one account and no account filter → nothing to choose: no bar, the first band follows the head
+  // one account and no account filter → nothing to choose: no Account filter in the bar, which holds the phone's statement on names alone
   const cardRows = [
-    { name: "open items of two accounts draw the bar", open: items, done: [], filter: { profile: "" }, hasBar: true },
-    { name: "an open and a done item of two accounts draw the bar", open: [items[0]], done: [{ ...items[1], id: 3, status: "seen", closedAt: "2026-11-10T07:00:00.000Z" }], filter: { profile: "" }, hasBar: true },
-    { name: "one account and no account filter draw no bar", open: [items[0]], done: [], filter: { profile: "" }, hasBar: false },
-    { name: "an applied account filter draws the bar whatever is loaded", open: [items[0]], done: [], filter: { profile: "personal" }, hasBar: true },
+    { name: "open items of two accounts draw the Account filter", open: items, done: [], filter: { profile: "" }, hasFilter: true },
+    { name: "an open and a done item of two accounts draw the Account filter", open: [items[0]], done: [{ ...items[1], id: 3, status: "seen", closedAt: "2026-11-10T07:00:00.000Z" }], filter: { profile: "" }, hasFilter: true },
+    { name: "one account and no account filter draw no Account filter", open: [items[0]], done: [], filter: { profile: "" }, hasFilter: false },
+    { name: "an applied account filter draws the Account filter whatever is loaded", open: [items[0]], done: [], filter: { profile: "personal" }, hasFilter: true },
   ];
   for (const row of cardRows) {
     test(`the list card: ${row.name}`, () => {
       const { queue } = buildQueue();
       const loaded = { ...withList(queue, row.open), filter: row.filter, done: { ...queue.done, thread: { ...queue.done.thread, items: row.done } } };
       const [card] = findNodes(render("QueueListQ", { queue: loaded }), (node) => node.props?.atom === "Card");
-      assert.equal(Boolean(card?.props.bar), row.hasBar);
+      assert.equal(findNodes(renderScreen(card?.props.bar) as RenderedNode, (node) => node.props?.atom === "FilterBar").length, row.hasFilter ? 1 : 0);
     });
   }
 
@@ -2653,6 +2653,30 @@ describe("the rail's statement on names", () => {
       const bar = renderScreen(card?.props.bar) as RenderedNode;
       const concealed = findNodes(bar, (node) => ["aria-hidden", "hidden", "title"].some((key) => node.props?.[key] !== undefined));
       assert.deepEqual([bar.type, collectText(bar), concealed.length], ["p", RAIL_STATEMENT, 0]);
+    });
+  }
+});
+
+// SR-3b: a sheet that draws its session's name past its head states once that names are unchecked; a sheet whose one name is its head states nothing
+const SHORT_STATEMENT = "Names are self-written and unchecked. Only the id identifies a session.";
+describe("the sheet's statement on names", () => {
+  const relaySender = { sessionIdPrefix: "9d2f4c10", profileLabel: "work", selfDeclaredName: "gersona", cwdTail: "git/gersona" };
+  const rows = [
+    { name: "an open decision", item: buildItem(), isNamedInBody: false },
+    { name: "a relay to its recipient", item: buildItem({ kind: "relay", status: "answered", options: [], sendId: "relay-send-7", relay: { hop: 0, parent: null, sender: relaySender, fetchedAt: null, redaction: null, lapsedAt: null } }), isNamedInBody: true },
+    { name: "an answered decision its live session gets at its next turn", item: buildItem({ status: "answered", answeredAt: "2026-11-10T06:20:00.000Z", answer: { code: "R2", text: null }, session: buildSession({ state: "live" }) }), isNamedInBody: true },
+    { name: "a decision its session did not acknowledge", item: buildItem({ status: "unacked", answeredAt: "2026-11-10T06:20:00.000Z", answer: { code: "R2", text: null } }), isNamedInBody: true },
+  ];
+  for (const row of rows) {
+    test(`${row.name} states it ${row.isNamedInBody ? "once, as a plain line outside the body" : "nowhere"}, as its body ${row.isNamedInBody ? "names" : "does not name"} the session`, () => {
+      const tree = renderSheet({ item: row.item, queue: buildQueue().queue });
+      const [body] = byClass(tree, "card-body");
+      const notes = findNodes(tree, (node) => typeof node.type === "string" && collectText(node) === SHORT_STATEMENT && (node.children ?? []).every((child) => typeof child === "string"));
+      const concealed = notes.flatMap((note) => ["aria-hidden", "hidden", "title", "aria-live", "role"].filter((key) => note.props?.[key] !== undefined));
+      assert.deepEqual(
+        { isNamedInBody: collectText(body!).includes(row.item.session.name), notes: notes.map((note) => note.type), concealed, isInBody: notes.some((note) => findNodes(body!, (node) => node === note).length > 0) },
+        { isNamedInBody: row.isNamedInBody, notes: row.isNamedInBody ? ["p"] : [], concealed: [], isInBody: false },
+      );
     });
   }
 });

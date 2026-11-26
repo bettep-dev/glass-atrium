@@ -2289,17 +2289,25 @@ describe("queue page on the mockup fixtures", () => {
     });
 
     // the page cannot check a name → it says so where the names are listed, read in place by eye and by a reader
-    test("at 1280 the rail's head shows the statement on names in full, in view, and in the accessibility tree", async () => {
+    // the phone's short form (SR-3b) is the phone's alone → at 1280 neither the list, Orders nor a relay's sheet draws it
+    test("at 1280 the rail's head shows the statement on names in full, in view, and in the accessibility tree, and the short form is nowhere", async () => {
       const statement = "Session names are written by the sessions themselves and are not checked. Only the id identifies a session.";
-      const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText());
+      const short = "Names are self-written and unchecked. Only the id identifies a session.";
+      harness.fixture = getRelayRowFixture();
+      const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
       const shown = await page.locator(".queue-sessions > .card-bar").evaluate((bar) => {
         const box = bar.getBoundingClientRect();
         return { text: bar.textContent, isWhole: bar.scrollHeight <= bar.clientHeight && box.height > 0 && box.top >= 0 && box.bottom <= window.innerHeight, isConcealed: bar.closest("[aria-hidden='true'], [hidden]") !== null };
       });
       const tree = await page.locator(".queue-sessions").ariaSnapshot();
+      const getShortShown = async () => [(await page.locator(".queue-screen").ariaSnapshot()).includes(short), await page.getByText(short, { exact: true }).evaluateAll((nodes) => nodes.filter((node) => node.getClientRects().length > 0).length)];
+      const atRest = await getShortShown();
+      await selectRow(page, RELAY_ROW_IDS.one);
+      await page.locator(".queue-sheet").getByText("응답 예시").first().waitFor({ timeout: READY_TIMEOUT_MS });
+      const inRelay = await getShortShown();
       await page.close();
 
-      assert.deepEqual([shown, tree.includes(statement)], [{ text: statement, isWhole: true, isConcealed: false }, true]);
+      assert.deepEqual([shown, tree.includes(statement), atRest, inRelay], [{ text: statement, isWhole: true, isConcealed: false }, true, [false, 0], [false, 0]]);
     });
 
     test("at 1280 two rail entries whose names differ only in case and a trailing space each show their 8-character id whole", async () => {

@@ -112,8 +112,11 @@ const REFERENCE_LINE_Q = "Reference only — not part of the approval.";
 const MESSAGE_Q = { MAX_TARGETS: 20 };
 const SESSIONS_Q = {
 	SOURCE: "the session list",
-	// the page checks no name → said once where the names are listed
-	STATEMENT: "Session names are written by the sessions themselves and are not checked. Only the id identifies a session.",
+	// the page checks no name → said once where the names are listed; the short form on a phone view drawing names no mark covers (NamesNoteQ)
+	STATEMENT: {
+		FULL: "Session names are written by the sessions themselves and are not checked. Only the id identifies a session.",
+		SHORT: "Names are self-written and unchecked. Only the id identifies a session.",
+	},
 };
 // a screen narrower than this (a phone in portrait) → the page lays out at the device width; pinch zoom stays (WCAG 1.4.4), the keyboard shrinks the page
 const PHONE_Q = {
@@ -1628,7 +1631,7 @@ function QueueListQ({ queue }) {
 			sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
 			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts" infoTitle="Keyboard shortcuts"
 			right={<button type="button" className="btn ghost queue-orders-open" onClick={() => queue.setView("orders")}>Orders</button>}
-			bar={isAccountAxisShownQ(loaded, queue.filter) ? <QueueFilterBarQ items={loaded} filter={queue.filter} onFilter={queue.setFilter} /> : null}
+			bar={<><NamesNoteQ />{isAccountAxisShownQ(loaded, queue.filter) && <QueueFilterBarQ items={loaded} filter={queue.filter} onFilter={queue.setFilter} />}</>}
 			foot={<ListFootQ queue={queue} offView={offView} onShowNew={putNewRowInViewQ} />} isFlush>
 			<ListBodyQ queue={queue} items={items} />
 		</Card>
@@ -1717,6 +1720,11 @@ function ScopeTitleQ({ scope, onOpen }) {
 			</button>
 		</>
 	);
+}
+
+// the statement on names under a phone view's head where that view draws a name with no mark of its own (SR-3b); drawn under 640 alone (base.css → .queue-names-note)
+function NamesNoteQ() {
+	return <p className="fs-meta text-dim queue-names-note">{SESSIONS_Q.STATEMENT.SHORT}</p>;
 }
 
 // the phone's one way back from Sessions or Orders (base.css → .queue-view-back)
@@ -2348,12 +2356,18 @@ function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, is
 	return (
 		<div className="card queue-pane queue-sheet">
 			<SheetHeadQ queue={queue}><LetterheadQ item={item} copies={copies} kind={kind} nameNote={getNameNoteQ(item.session, queue, names)} names={names} /></SheetHeadQ>
+			{isNamedInBodyQ(item, isDone) && <div className="card-bar"><NamesNoteQ /></div>}
 			<div className="card-body" tabIndex={-1}>
 				<SheetBodyQ item={item} copies={copies} rails={queue.sessions?.region.data?.sessions ?? []} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} scanRead={scanRead} />
 			</div>
 			<div className="card-foot">{getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone })}</div>
 		</div>
 	);
+}
+
+// a relay's recipients, or a line naming the item's session (CardStateQ) → a name past the head
+function isNamedInBodyQ(item, isDone) {
+	return item.kind === "relay" || (!isDone && getSessionLineQ(item) !== null);
 }
 
 function getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone }) {
@@ -2955,12 +2969,19 @@ function CardStateQ({ item, cliPath }) {
 	return (
 		<Stack gap="label">
 			<AnswerLineQ item={item} />
-			{["nextTurn", "notReachable"].includes(getReceiptQ(item)) && <p className="fs-meta text-dim">{getNextTurnSentenceQ([item.session.name], "this answer")}</p>}
+			{getSessionLineQ(item) === "nextTurn" && <p className="fs-meta text-dim">{getNextTurnSentenceQ([item.session.name], "this answer")}</p>}
 			<PullLineQ item={item} cliPath={cliPath} />
 			{notes.length === 0 && <NotReceivedLineQ item={item} cliPath={cliPath} />}
 			{notes.map((note) => <p key={getNoteKeyQ(note)} className="fs-meta text-dim"><NotePartsQ parts={note} /></p>)}
 		</Stack>
 	);
+}
+
+// the state line that names the item's session: its next turn (nextTurn, notReachable), its missing acknowledgement (NotReceivedLineQ); null when none
+function getSessionLineQ(item) {
+	const receipt = getReceiptQ(item);
+	if (receipt === "nextTurn" || receipt === "notReachable") return "nextTurn";
+	return item.status !== "open" && receipt === "notReceived" ? "notReceived" : null;
 }
 
 // an answered item waits for its live session's pull: a listening session (a wait or a listener) picks it up itself, any other one needs the owner to run the pull
@@ -2975,7 +2996,7 @@ function PullLineQ({ item, cliPath }) {
 // the ack window differs by route (pull or resume) and stays the server's → the line names no minutes
 function NotReceivedLineQ({ item, cliPath }) {
 	const { MachineString } = window.UI;
-	if (item.status === "open" || getReceiptQ(item) !== "notReceived") return null;
+	if (getSessionLineQ(item) !== "notReceived") return null;
 	const name = item.session.name;
 	return (
 		<p className="fs-meta text-dim">
@@ -3338,7 +3359,7 @@ function SessionsRegionQ({ queue }) {
 	// a rail not read yet states no count (as getOrderNoteQ with no rows)
 	const sub = view === "ready" ? `${rows.length - endedCount} live · ${endedCount} ended` : undefined;
 	return (
-		<Card className="queue-pane queue-sessions" title={<><ViewBackQ queue={queue} />Sessions</>} sub={sub} bar={<p className="fs-meta text-dim">{SESSIONS_Q.STATEMENT}</p>}
+		<Card className="queue-pane queue-sessions" title={<><ViewBackQ queue={queue} />Sessions</>} sub={sub} bar={<p className="fs-meta text-dim">{SESSIONS_Q.STATEMENT.FULL}</p>}
 			foot={<RailFootQ queue={queue} />} isFlush>
 			{view === "loading" && <div className="queue-loading"><LoadingPlaceholder label="sessions" /></div>}
 			{view === "error" && <RegionUnavailable source={SESSIONS_Q.SOURCE} error={sessions.region.error} isBusy={sessions.region.busy} onRetry={sessions.read} />}
@@ -3519,7 +3540,7 @@ function OrdersViewQ({ queue }) {
 	const scope = names.length > 0 ? `to ${names.join(", ")}` : "to every session";
 	return (
 		<section className="queue-orders" aria-label="Orders" {...zone.handlers}>
-			<Card className="queue-orders-card" title={<><ViewBackQ queue={queue} />Orders</>} sub={<span className="queue-orders-scope" title={scope}>{scope}</span>}
+			<Card className="queue-orders-card" title={<><ViewBackQ queue={queue} />Orders</>} sub={<span className="queue-orders-scope" title={scope}>{scope}</span>} bar={<NamesNoteQ />}
 				foot={<OrderComposerQ queue={queue} targets={targets} rows={rows} box={box} tray={tray} isReady={sessions.region.data !== null} />} isFlush>
 				<ThreadQ orders={orders} names={names} pageNames={getPageNamesQ(queue)} busy={queue.busy} />
 			</Card>
@@ -4274,6 +4295,7 @@ function RefusedSheetQ({ refusal, queue }) {
 	return (
 		<div className="card queue-pane queue-sheet">
 			<SheetHeadQ queue={queue}><RelayLetterheadQ kind={DONE_KIND_Q.relay} from={sender} to={to} /></SheetHeadQ>
+			<div className="card-bar"><NamesNoteQ /></div>
 			<div className="card-body" tabIndex={-1}>
 				<div className="queue-sheet-body">
 					<p className="queue-date-line">

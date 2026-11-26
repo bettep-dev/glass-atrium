@@ -531,10 +531,17 @@ label.ctl-checkbox-hit {
 .queue-menu,
 .queue-scope-trigger,
 .queue-orders-open,
-.queue-view-back {
+.queue-view-back,
+.queue-names-note,
+.card-bar:has(> .queue-names-note:only-child) {
 	display: none;
 }
 @media (max-width: 640px) {
+	/* the short statement on names (screens/queue.jsx → NamesNoteQ): the phone's alone; above 640 the rail's full one is always on screen */
+	.queue-names-note,
+	.card-bar:has(> .queue-names-note:only-child) {
+		display: block;
+	}
 	[data-route="queue"] > .shell-sidebar {
 		display: none;
 	}

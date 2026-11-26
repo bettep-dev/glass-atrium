@@ -83,6 +83,29 @@ function getShownCount(locator: Locator): Promise<number> {
   return locator.evaluateAll((nodes) => nodes.filter((node) => node.getClientRects().length > 0).length);
 }
 
+// the statement on names (SR-3, SR-3b): the rail's sentence, the short form of every other view drawing names; both end alike
+const STATEMENT = {
+  FULL: "Session names are written by the sessions themselves and are not checked. Only the id identifies a session.",
+  SHORT: "Names are self-written and unchecked. Only the id identifies a session.",
+  END: "Only the id identifies a session.",
+};
+
+// every sheet kind in one list: the prose report, decision and relay, the relay read's refusal, a one-line and the three-line secret approval
+const getEveryViewFixture = () => getScanApprovalFixture({ ...getProseFixture(), relays: getRelayThreadFixture() });
+const SHEETS = [
+  { name: "a decision", row: "#queue-row-103", ready: "Options" },
+  { name: "a report", row: "#queue-row-101", ready: "마이그레이션 순서" },
+  { name: "a relay", row: `#queue-row-${RELAY_ROW_IDS.one}`, ready: "응답 예시 표도 함께" },
+  { name: "a refused relay", row: '.queue-row[aria-label^="Refused relay"]', ready: "Refused relay from" },
+  { name: "a one-line secret approval", row: `#queue-row-${SCAN_IDS.one}`, ready: "The line assigns a literal value." },
+  { name: "the three-line secret approval with its 4,000-character line", row: `#queue-row-${SCAN_IDS.long}`, ready: "2 of 3 lines assign a literal value." },
+];
+
+async function openRowSheet(page: Page, row: string, ready: string): Promise<void> {
+  await page.locator(row).tap();
+  await page.locator(".queue-sheet").getByText(ready).first().waitFor({ timeout: READY_TIMEOUT_MS });
+}
+
 // a row's sheet on the phone, once it shows `ready`
 async function openSheet(page: Page, id: number, ready: string): Promise<void> {
   await page.locator(`#queue-row-${id}`).tap();
@@ -338,22 +361,59 @@ describe("the Queue page on a phone", () => {
     });
   });
 
+  // SR-3b: a view drawing names no mark covers states once, under its head, that names are unchecked — the rail the full sentence, every other such view the short one
+  describe("states once in each view that names are unchecked, under the view's head", () => {
+    const CLOSE_SHEET = ".queue-sheet-head .queue-back button";
+    const PLACES = [
+      { name: "list", statement: STATEMENT.SHORT, open: VIEWS[0]!.open, close: async () => undefined },
+      { name: "Sessions", statement: STATEMENT.FULL, open: VIEWS[1]!.open, close: (page: Page) => page.locator(".queue-sessions").getByRole("button", BACK).tap() },
+      { name: "Orders", statement: STATEMENT.SHORT, open: VIEWS[2]!.open, close: (page: Page) => page.locator(".queue-orders").getByRole("button", BACK).tap() },
+      ...SHEETS.filter((sheet) => ["a relay", "a refused relay", "a decision"].includes(sheet.name)).map((sheet) => ({
+        name: sheet.name, statement: sheet.name === "a decision" ? null : STATEMENT.SHORT, open: (page: Page) => openRowSheet(page, sheet.row, sheet.ready), close: (page: Page) => page.locator(CLOSE_SHEET).tap(),
+      })),
+    ];
+    // every drawn statement, measured before and after each drawn scroller is scrolled to its end
+    const getStatements = (page: Page) => page.evaluate((texts) => {
+      const nodes = [...document.querySelectorAll<HTMLElement>(".queue-screen *")].filter((node) => texts.includes(node.textContent ?? "") && node.childElementCount === 0 && node.getClientRects().length > 0);
+      const tops = nodes.map((node) => node.getBoundingClientRect().top);
+      for (const scroller of document.querySelectorAll<HTMLElement>(".queue-screen .card-body, .queue-thread")) scroller.scrollTop = scroller.scrollHeight;
+      return nodes.map((node, index) => {
+        const [box, card] = [node.getBoundingClientRect(), node.closest(".card")!];
+        const [head, body] = [card.querySelector(":scope > .card-head")!.getBoundingClientRect(), card.querySelector(":scope > .card-body")!.getBoundingClientRect()];
+        return {
+          text: node.textContent, element: `${node.tagName.toLowerCase()} ${["fs-meta", "text-dim"].filter((name) => node.classList.contains(name)).join(" ")}`,
+          isWhole: node.scrollHeight <= node.clientHeight && node.scrollWidth <= node.clientWidth && box.top >= 0 && box.bottom <= window.innerHeight,
+          isPlain: node.closest('[aria-hidden="true"], [hidden], [title], [aria-live], [role="status"], [role="log"], [role="alert"]') === null,
+          isBetweenHeadAndBody: box.top >= head.bottom - 0.5 && box.bottom <= body.top + 0.5, isFixed: Math.abs(box.top - tops[index]!) < 0.5,
+        };
+      });
+    }, [STATEMENT.FULL, STATEMENT.SHORT]);
+    const getTreeCount = async (page: Page) => (await page.locator(".queue-screen").ariaSnapshot()).split(STATEMENT.END).length - 1;
+
+    for (const viewport of PHONES) {
+      test(`at ${viewport.width} each view drawing an unmarked name shows its one statement whole, plain and fixed, and a decision whose one name is its head shows none`, async () => {
+        harness.fixture = getEveryViewFixture();
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        const shown: Record<string, unknown> = {};
+        for (const place of PLACES) {
+          await place.open(page);
+          shown[place.name] = { statements: await getStatements(page), treeCount: await getTreeCount(page) };
+          if (place.statement === null) shown[`${place.name} head`] = (await page.locator(".queue-sheet-head").textContent())?.includes("(self-named)");
+          await place.close(page);
+        }
+        await page.close();
+
+        const getExpected = (text: string) => ({ text, element: "p fs-meta text-dim", isWhole: true, isPlain: true, isBetweenHeadAndBody: true, isFixed: true });
+        assert.deepEqual(shown, Object.fromEntries(PLACES.flatMap((place) => [
+          [place.name, place.statement === null ? { statements: [], treeCount: 0 } : { statements: [getExpected(place.statement)], treeCount: 1 }],
+          ...(place.statement === null ? [[`${place.name} head`, true]] : []),
+        ])));
+      });
+    }
+  });
+
   // layout §7 pin 5: the page and each drawn pane's body stay inside the screen; code and table boxes scroll inside themselves
   describe("scrolls nothing sideways in any view", () => {
-    // every sheet kind in one list: the prose report, decision and relay, the relay read's refusal, a one-line and the three-line secret approval
-    const getEveryViewFixture = () => getScanApprovalFixture({ ...getProseFixture(), relays: getRelayThreadFixture() });
-    const openRowSheet = async (page: Page, row: string, ready: string) => {
-      await page.locator(row).tap();
-      await page.locator(".queue-sheet").getByText(ready).first().waitFor({ timeout: READY_TIMEOUT_MS });
-    };
-    const SHEETS = [
-      { name: "a decision", row: "#queue-row-103", ready: "Options" },
-      { name: "a report", row: "#queue-row-101", ready: "마이그레이션 순서" },
-      { name: "a relay", row: `#queue-row-${RELAY_ROW_IDS.one}`, ready: "응답 예시 표도 함께" },
-      { name: "a refused relay", row: '.queue-row[aria-label^="Refused relay"]', ready: "Refused relay from" },
-      { name: "a one-line secret approval", row: `#queue-row-${SCAN_IDS.one}`, ready: "The line assigns a literal value." },
-      { name: "the three-line secret approval with its 4,000-character line", row: `#queue-row-${SCAN_IDS.long}`, ready: "2 of 3 lines assign a literal value." },
-    ];
     const PLACES = [...VIEWS.map(({ name, open }) => ({ name: `the ${name} view`, open })), ...SHEETS.map(({ name, row, ready }) => ({ name, open: (page: Page) => openRowSheet(page, row, ready) }))];
     for (const viewport of PHONES) {
       for (const place of PLACES) {
@@ -614,7 +674,7 @@ describe("the Queue page on a phone", () => {
       { name: "a secret approval's sheet", open: (page: Page) => openSheet(page, SCAN.id, "2 of 3 lines assign a literal value."), prose: ["15px"] },
     ];
     // a tap target: buttons, disclosures, links outside running prose, list and rail rows; a box or a radio by the row or label that holds it
-    const CONTROLS = 'button, summary, select, a[href], [role="button"], [role="option"], [role="menuitem"]';
+    const CONTROLS = 'button, summary, select, a[href], [role="button"], [role="option"], [role="menuitem"], label.queue-rail-row';
     const getSmallTargets = (page: Page, root: string) => page.evaluate(({ root, selector }) => [...document.querySelectorAll<HTMLElement>(`${root} :is(${selector})`)]
       .filter((node) => node.getClientRects().length > 0 && getComputedStyle(node).visibility !== "hidden" && !node.closest(".prose-text"))
       .map((node) => ({ node, box: node.getBoundingClientRect() }))
