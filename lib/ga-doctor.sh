@@ -2811,9 +2811,10 @@ set_integrity_verdict() {
     return 0
   fi
   now="$(date +%s)"
+  # owner-only by design (600): the line names the install root and the settings path
   if mkdir -p -- "${dir}" 2>/dev/null && tmp="$(mktemp "${dir}/.last-verdict.XXXXXX" 2>/dev/null)" \
     && printf '%s\t%s\t%s\t%s\n' "${now}" "$1" "${GA_ROOT}" "${SETTINGS_JSON}" >"${tmp}" \
-    && mv -f -- "${tmp}" "${INTEGRITY_VERDICT}"; then
+    && chmod 600 "${tmp}" && mv -f -- "${tmp}" "${INTEGRITY_VERDICT}"; then
     return 0
   fi
   log "  note : integrity verdict not recorded (${INTEGRITY_VERDICT} unwritable) — the session-start line will read it as not yet checked"
