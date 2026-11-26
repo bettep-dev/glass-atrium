@@ -10,8 +10,10 @@ import assert from "node:assert/strict";
 
 import type { Locator, Page } from "playwright";
 
-import { closeHarness, getRestReadyText, type Harness, MIN_WINDOW, openHarness, openQueuePage, openShellPage, READY_TIMEOUT_MS, tickSessions, type Viewport } from "./lib/queue-render-harness.js";
-import { getOffViewFixture, getRestFixture } from "./lib/queue-render-fixtures.js";
+import {
+  closeHarness, getRestReadyText, getSelfNamedFixture, type Harness, MIN_WINDOW, openHarness, openQueuePage, openShellPage, READY_TIMEOUT_MS, tickSessions, type Viewport, waitForDoneBands,
+} from "./lib/queue-render-harness.js";
+import { getOffViewFixture, getRelayListFixture, getRelayRowFixture, getRestFixture, getScanApprovalFixture, type QueueFixture, RELAY_ROW_IDS, SCAN_IDS } from "./lib/queue-render-fixtures.js";
 
 const PHONES: Viewport[] = [{ width: 360, height: 740, isMobile: true }, { width: 412, height: 915, isMobile: true }];
 const PHONE = PHONES[0]!;
@@ -307,5 +309,90 @@ describe("the Queue page on a phone", () => {
       const gersonaIds = getRestFixture().items.filter((item) => item.status === "open" && item.session.name === "gersona").map((item) => item.id);
       assert.deepEqual({ isStillInSessions, trigger, rowIds: rowIds.sort((a, b) => a - b) }, { isStillInSessions: true, trigger: "Sessions: gersona", rowIds: gersonaIds.sort((a, b) => a - b) });
     });
+  });
+
+  describe("draws every list row as one 44 line: name 80 · title · tag 80 · age 32", () => {
+    for (const viewport of PHONES) {
+      // every row kind in one list: decisions, reports, secret approvals, relays on their way, Done rows and a refused relay
+      test(`at ${viewport.width} every drawn row is one 44 line of one 20 title on the phone's columns, no fact and no chevron cell drawn`, async () => {
+        harness.fixture = getScanApprovalFixture(getRelayListFixture(true));
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        await waitForDoneBands(page);
+        const facts = await page.evaluate(() => {
+          const rows = [...document.querySelectorAll<HTMLElement>(".queue-listbox .queue-row")].filter((row) => row.getClientRects().length > 0);
+          const getCells = (selector: string) => rows.flatMap((row) => [...row.querySelectorAll<Element>(`:scope > ${selector}`)]);
+          const getHeights = (nodes: Element[]) => [...new Set(nodes.map((node) => Math.round(node.getBoundingClientRect().height)))];
+          const getWidths = (selector: string) => [...new Set(getCells(selector).map((cell) => Math.round(cell.getBoundingClientRect().width)))];
+          const getShownCount = (selector: string) => getCells(selector).filter((cell) => cell.getClientRects().length > 0).length;
+          return {
+            rowHeights: getHeights(rows), titleHeights: getHeights(getCells(".queue-row-title")),
+            widths: { name: getWidths(".queue-row-who"), tag: getWidths(".queue-row-tag"), age: getWidths(".queue-row-age") },
+            shown: { fact: getShownCount(".queue-row-fact"), chevron: getShownCount(".queue-row-chevron") },
+          };
+        });
+        await page.close();
+
+        assert.deepEqual(facts, { rowHeights: [44], titleHeights: [20], widths: { name: [80], tag: [80], age: [32] }, shown: { fact: 0, chevron: 0 } });
+      });
+
+      test(`at ${viewport.width} a self-named relay sender's mark lies whole inside the 80 name cell, and each relay's title starts with →`, async () => {
+        harness.fixture = getSelfNamedFixture(getRelayRowFixture(), RELAY_ROW_IDS.one, "dashboard");
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        const rows = await page.evaluate((ids) => ids.map((id) => {
+          const row = document.getElementById(`queue-row-${id}`)!;
+          const cell = row.querySelector(":scope > .queue-row-who")!.getBoundingClientRect();
+          const mark = row.querySelector<HTMLElement>(":scope > .queue-row-who .queue-row-mark");
+          const box = mark?.getBoundingClientRect();
+          return {
+            titleStart: row.querySelector(":scope > .queue-row-title")!.textContent!.trimStart().charAt(0),
+            isMarkInside: box !== undefined && box.left >= cell.left - 0.5 && box.right <= cell.right + 0.5 && mark!.scrollWidth <= mark!.clientWidth,
+          };
+        }), [RELAY_ROW_IDS.one, RELAY_ROW_IDS.several]);
+        await page.close();
+
+        assert.deepEqual(rows, [{ titleStart: "→", isMarkInside: true }, { titleStart: "→", isMarkInside: true }]);
+      });
+    }
+
+    // the captured line's words and mark labels: the queue's list holds none of them, only its sheet's read does
+    const getCapturedWords = (fixture: QueueFixture) => [...new Set(Object.values(fixture.scanReads ?? {})
+      .flatMap((read) => read.lines.flatMap((line) => line.segments.map((segment) => ("text" in segment ? segment.text : segment.mark))))
+      .flatMap((text) => text.match(/[\p{L}\p{N}+]{3,}/gu) ?? []))];
+    const APPROVAL_TICKS = [
+      { name: "with nothing ticked", scope: async () => undefined },
+      {
+        name: "with its session ticked",
+        scope: async (page: Page) => {
+          await VIEWS[1]!.open(page);
+          await tickSessions(page, ["gersona"]);
+          await page.locator(".queue-sessions").getByRole("button", BACK).tap();
+        },
+      },
+    ];
+    for (const viewport of PHONES) {
+      for (const ticks of APPROVAL_TICKS) {
+        test(`at ${viewport.width} ${ticks.name} a secret approval's tag cell holds Approval whole, an ended one Expired or Gone, and no row says a word of its captured lines`, async () => {
+          harness.fixture = getScanApprovalFixture();
+          const words = getCapturedWords(harness.fixture);
+          const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+          await ticks.scope(page);
+          const rows = await page.evaluate(({ ids, words }) => ids.map((id) => {
+            const row = document.getElementById(`queue-row-${id}`)!;
+            const cell = row.querySelector(":scope > .queue-row-tag")!.getBoundingClientRect();
+            const badges = [...row.querySelectorAll<HTMLElement>(":scope > .queue-row-tag .pill")].filter((badge) => badge.getClientRects().length > 0);
+            const said = [row.innerText, row.getAttribute("aria-label") ?? "", ...[row, ...row.querySelectorAll("[title]")].map((node) => node.getAttribute("title") ?? "")].join("\n");
+            return {
+              tag: badges.map((badge) => badge.innerText.trim()),
+              isInside: badges.every((badge) => { const box = badge.getBoundingClientRect(); return box.left >= cell.left - 0.5 && box.right <= cell.right + 0.5 && badge.scrollWidth <= badge.clientWidth; }),
+              said: words.filter((word) => said.includes(word)),
+            };
+          }), { ids: [SCAN_IDS.one, SCAN_IDS.long, SCAN_IDS.expired, SCAN_IDS.gone], words });
+          await page.close();
+
+          assert.ok(words.includes("hello") && words.includes("U+200B"), JSON.stringify(words));
+          assert.deepEqual(rows, ["Approval", "Approval", "Expired", "Gone"].map((tag) => ({ tag: [tag], isInside: true, said: [] })));
+        });
+      }
+    }
   });
 });

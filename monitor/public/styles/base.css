@@ -1190,6 +1190,26 @@ label.ctl-checkbox-hit {
 .queue-row-tag-narrow {
 	display: none;
 }
+/* a phone row (layout §3): name 80 · title · tag 80 · age 32 on every band — the fact and the chevron left out, the fact kept in the
+   row's title and name, the whole row the target; .queue-listbox → level with the 536 rule above, later so it wins */
+@media (max-width: 640px) {
+	.queue-row {
+		--queue-row-name: 80px;
+	}
+	.queue-listbox :is([data-cols=""], [data-cols="fact"]) > .queue-row {
+		--queue-row-tail: 32px;
+	}
+	.queue-listbox :is([data-cols="tag"], [data-cols="tag fact"]) > .queue-row {
+		--queue-row-tail: 80px 32px;
+	}
+	.queue-row > :is(.queue-row-fact, .queue-row-chevron),
+	.queue-row .queue-row-tag-wide {
+		display: none;
+	}
+	.queue-row .queue-row-tag-narrow {
+		display: inline-flex;
+	}
+}
 /* the hairline is drawn inside the row → a row stays 44 */
 .queue-row + .queue-row {
 	box-shadow: inset 0 1px 0 rgb(var(--line));

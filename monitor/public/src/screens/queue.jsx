@@ -1971,7 +1971,8 @@ function QueueRowQ({ row, names = null, isSelected, isNew = false, cols, view, o
 			{cols.includes("tag") && <span className="queue-row-tag"><RowTagsQ tags={cells.tags} /></span>}
 			{cols.includes("fact") && <span className="queue-row-fact">{cells.fact}</span>}
 			<span className="queue-row-age" title={formatKstDateTime(at)}>{getRowAgeQ(at)}</span>
-			<Icon name="chevR" size={16} className="queue-row-chevron" />
+			{/* a display class → Icon sets no inline display, so the phone's rule can leave the chevron out */}
+			<Icon name="chevR" size={16} className="queue-row-chevron block" />
 		</div>
 	);
 }
