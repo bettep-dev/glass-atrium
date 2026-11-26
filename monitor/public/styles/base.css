@@ -99,6 +99,13 @@ label.ctl-checkbox-hit {
 .ctl-radio:hover {
 	border-color: rgb(var(--dim));
 }
+.ctl-radio:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+.ctl-radio:disabled:hover {
+	border-color: rgb(var(--faint));
+}
 .ctl-radio:checked {
 	background: rgb(var(--selected-fill));
 	border-color: rgb(var(--selected-fill));
@@ -1070,9 +1077,17 @@ label.ctl-checkbox-hit {
 	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) {
 		--queue-row-tail: 80px 32px 16px;
 	}
-	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) > .queue-row-fact {
+	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) > .queue-row-fact,
+	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) .queue-row-tag-wide {
 		display: none;
 	}
+	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) .queue-row-tag-narrow {
+		display: inline-flex;
+	}
+}
+/* an ended request's word in the tag column → only where its fact cell is left out */
+.queue-row-tag-narrow {
+	display: none;
 }
 /* the hairline is drawn inside the row → a row stays 44 */
 .queue-row + .queue-row {
@@ -1347,6 +1362,104 @@ label.ctl-checkbox-hit {
 }
 .queue-option > .ctl-radio {
 	margin-top: calc((var(--lh-ctl-lg) - 16px) / 2);
+}
+/* a closed option: code, label and sides dim at 400, no press; its one reason line under the label in ink */
+.queue-option.is-closed {
+	color: rgb(var(--dim));
+	cursor: default;
+}
+.queue-option.is-closed:hover {
+	background: none;
+}
+.queue-option.is-closed .queue-option-head {
+	font-weight: 400;
+	color: rgb(var(--dim));
+}
+.queue-option.is-closed .queue-option-reason {
+	color: rgb(var(--ink));
+}
+.queue-option-reason {
+	display: block;
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+}
+/* the secret-approval card: the cue, per captured line its head and plate, the facts; a plate is the line whole — wrapped, never cut, folded or scrolled */
+.scan-cue {
+	font-size: var(--fs-body);
+	color: rgb(var(--ink));
+}
+.scan-line-head {
+	display: grid;
+	grid-template-columns: 112px 128px minmax(0, 1fr);
+	column-gap: var(--space-3);
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+}
+.scan-line > .scan-plate {
+	margin-top: var(--gap-stack);
+}
+.scan-plate {
+	padding: var(--space-2) var(--space-3);
+	background: rgb(var(--sunken));
+	border-radius: var(--radius-control);
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	font-size: var(--fs-meta);
+	line-height: 1.5;
+	color: rgb(var(--ink));
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+/* a hidden character's tile: never the character, never split across rows, adjacent tiles apart */
+.scan-mark {
+	display: inline-block;
+	margin-inline: var(--space-0_5);
+	padding-inline: var(--space-1);
+	border-radius: var(--radius-inline);
+	background: rgb(var(--dim));
+	color: rgb(var(--surface));
+	font-family: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui, sans-serif;
+	font-size: var(--fs-meta);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.queue-sheet-body > .scan-line + .scan-facts {
+	margin-top: var(--space-6);
+}
+/* the warning guards the options → apart from the facts, close to the Options heading */
+.queue-sheet-body > .scan-warning {
+	margin-top: var(--space-6);
+}
+.queue-sheet-body > .scan-warning + .queue-kind {
+	margin-top: var(--space-3);
+}
+.scan-facts {
+	display: grid;
+	grid-template-columns: 64px minmax(0, 1fr);
+	gap: var(--gap-stack) var(--space-3);
+	margin-bottom: 0;
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+}
+.scan-facts > dt {
+	font-weight: 600;
+	color: rgb(var(--dim));
+}
+.scan-facts > dd {
+	min-width: 0;
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+	.queue-sheet {
+		--card-pad: var(--space-4);
+	}
+	.scan-line-head {
+		grid-template-columns: 112px minmax(0, 1fr);
+	}
+	.scan-line-head > :last-child {
+		grid-column: 1 / -1;
+	}
 }
 .queue-option > .ctl-radio:focus-visible {
 	outline: none;

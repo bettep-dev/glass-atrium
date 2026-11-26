@@ -272,3 +272,19 @@ describe("the Mac-only admin paths on the remote listener", () => {
     });
   });
 });
+
+describe("the session-only scan-approval paths on the remote listener", () => {
+  test("refuse a registered device before the handler, with a route_denied row", async () => {
+    const paths = ["/api/queue/scan-approvals", "/api/queue/scan-approvals/consume"];
+    await runRolledBack(async () => {
+      const caller = await addDevice("Owner iPhone");
+      for (const url of paths) {
+        events.length = 0;
+        const response = await app.inject({ method: "POST", url, remoteAddress: PHONE, headers: { ...asPageMutation(caller.presented), "content-type": "application/json" }, payload: "{}" });
+        await nextTurn();
+        assert.deepEqual([response.statusCode, JSON.parse(response.body)], [403, { error: "route_not_available" }], url);
+        assert.deepEqual(events.map((event) => event.actionKind), ["remote.route_denied"], url);
+      }
+    });
+  });
+});

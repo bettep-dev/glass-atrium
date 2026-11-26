@@ -7,7 +7,7 @@ import { type AuditChangeCarrier, insertAudit, setAuditTarget } from "../middlew
 import { QueueRequestError } from "../queue/errors.js";
 import { IMAGE_BYTES_MAX, UPLOAD_CONTENT_TYPES, createImage, getImageFileOrThrow } from "../queue/images.js";
 import { putAnswer, putLater, putRedaction, putReply, putResend, putSeen } from "../queue/owner-items.js";
-import { getOwnerItemOrThrow, getOwnerItems, getOwnerOrders, getRecentResumes } from "../queue/owner-views.js";
+import { getOwnerItemOrThrow, getOwnerItems, getOwnerOrders, getRecentResumes, getScanApprovalLinesOrThrow } from "../queue/owner-views.js";
 import { createMessages, getOwnerSessions } from "../queue/owner-sessions.js";
 import { type PageOriginCarrier, buildPageOriginHook, getPageOrigins } from "../queue/request-gate.js";
 import {
@@ -36,12 +36,15 @@ const IMAGE_SERVE_HEADERS = {
   "content-security-policy": "default-src 'none'; sandbox",
   "cache-control": "private, max-age=31536000, immutable",
 } as const;
+// a captured line may be a real secret → no cache on the Mac, the phone or between them keeps a copy
+const SCAN_APPROVAL_HEADERS = { "cache-control": "private, no-store" } as const;
 
 type ItemTransition = (id: number) => Promise<void>;
 
 export async function ownerRoutesPlugin(app: FastifyInstance, options: QueueRouteOptions): Promise<void> {
   app.addHook("onRequest", buildPageOriginHook(getPageOrigins(options.port)));
   registerReadRoutes(app, options.cliPath);
+  registerScanApprovalReadRoute(app);
   registerRecentResumesRoute(app);
   registerOrderHistoryRoute(app);
   registerRelayRoutes(app);
@@ -71,6 +74,19 @@ function registerReadRoutes(app: FastifyInstance, cliPath: string): void {
       work: (id) => getOwnerItemOrThrow(id),
     }),
   );
+}
+
+function registerScanApprovalReadRoute(app: FastifyInstance): void {
+  app.get<{ Params: IdParams }>("/api/queue/owner/items/:id/scan-approval", async (request, reply) => {
+    // set before the id and query checks → their 400s carry it too
+    reply.headers(SCAN_APPROVAL_HEADERS);
+    return handleItemRequest(request, reply, {
+      route: "/api/queue/owner/items/:id/scan-approval",
+      schema: emptyBodySchema,
+      input: request.query,
+      work: (id) => getScanApprovalLinesOrThrow(id),
+    });
+  });
 }
 
 // page-level record: reads Delivery rows, not the owner list → a resume of a delivered item stays listed

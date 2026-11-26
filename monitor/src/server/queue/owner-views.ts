@@ -18,6 +18,7 @@ import { QueueRequestError } from "./errors.js";
 import { ITEM_IMAGES_ARGS, type ImageView, getImageViews } from "./images.js";
 import { TERMINAL } from "./registry.js";
 import { buildResumeInFlightSql } from "./resume-claim.js";
+import { type SecretLineView, secretRequests } from "./scan-approvals.js";
 import type { OwnerListQuery, OwnerOrdersQuery, RecentResumesQuery } from "./schemas.js";
 
 /** The item states the count route and the item views flag as deviations. */
@@ -127,6 +128,22 @@ export interface RelayRefusalView {
   unresolvedCount: number | null;
 }
 
+/** A scan-approval item's request as the store holds it now; never a line. */
+export interface ScanApprovalFacts {
+  /** gone → declined, withdrawn, expired, used, or dropped by a monitor restart */
+  state: "pending" | "approved" | "gone";
+  lineCount: number | null;
+  expiresAt: string | null;
+}
+
+/** The owner read of a pending request: the server's display form of each captured line beside what it binds. */
+export interface ScanApprovalLines {
+  path: string;
+  rule: string;
+  agentType: string;
+  lines: SecretLineView[];
+}
+
 /** How the owner's answer was made; its time is the item's `answeredAt`. */
 export interface AnswerRecord {
   route: QueueAnswerRoute;
@@ -169,6 +186,8 @@ export interface OwnerItemView {
   canResend: boolean;
   /** null on every kind but a relay. */
   relay: RelayFacts | null;
+  /** null on every item but a secret-approval decision. */
+  scanApproval: ScanApprovalFacts | null;
 }
 
 /** A history page; the relay thread adds the refusal records of the page's time span. */
@@ -288,6 +307,20 @@ export async function getOwnerItemOrThrow(id: number): Promise<OwnerItemView> {
   const [view] = await buildViews([item]);
   if (view === undefined) throw new Error(`item ${id} view not built`);
   return view;
+}
+
+/**
+ * The one read of a request's captured lines → the owner's screen; lines leave the store only while it is pending.
+ * @throws QueueRequestError — 404 `unknown_item` · 404 `not_scan_approval` · 409 `secret_request_gone` (approved, declined, expired or used)
+ */
+export async function getScanApprovalLinesOrThrow(id: number): Promise<ScanApprovalLines> {
+  const item = await getPrisma().queueItem.findUnique({ where: { id: BigInt(id) }, select: { secretRequestId: true } });
+  if (item === null) throw new QueueRequestError(404, "unknown_item", "item not found");
+  if (item.secretRequestId === null) throw new QueueRequestError(404, "not_scan_approval", "item is not a scan approval");
+  const request = secretRequests.find(item.secretRequestId);
+  const lines = secretRequests.findLines(item.secretRequestId);
+  if (request === null || lines === null) throw new QueueRequestError(409, "secret_request_gone", "the request's lines are gone: approved, declined, expired or used");
+  return { path: request.path, rule: request.rule, agentType: request.agent.type, lines };
 }
 
 /**
@@ -461,7 +494,15 @@ function toView(item: ItemWithRelations, factsById: Map<string, SessionFacts>): 
     skipReason: item.status === "resume_pending" ? getSkipReason(item, factsById) : null,
     canResend: canResend({ kind: item.kind, status: item.status, nextAttempt: item.nextAttempt, isSessionMarked, resumeAttempts: resumes.map((resume) => resume.attempt) }),
     relay: getRelayFacts(item),
+    scanApproval: getScanApprovalFacts(item.secretRequestId),
   };
+}
+
+function getScanApprovalFacts(requestId: string | null): ScanApprovalFacts | null {
+  if (requestId === null) return null;
+  const request = secretRequests.find(requestId);
+  if (request === null) return { state: "gone", lineCount: null, expiresAt: null };
+  return { state: request.state, lineCount: request.hashes.length, expiresAt: request.expiresAt.toISOString() };
 }
 
 // CHECK queue_items_relay_check: sender ⇔ hop ⇔ kind relay → either null means not a relay

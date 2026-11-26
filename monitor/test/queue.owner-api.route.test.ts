@@ -12,11 +12,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import "dotenv/config";
 
 import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fastify";
+import { Client } from "pg";
 
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerAuditLogHook } from "../src/server/middleware/audit-log.js";
+import { SECRET_APPROVAL_CODE } from "../src/server/queue/items.js";
 import { RELAY_REDACTION_MARKER } from "../src/server/queue/owner-items.js";
+import { SECRET_REQUEST_LIMIT, getLineHash, secretRequests } from "../src/server/queue/scan-approvals.js";
 import { registerQueueRoutes, resolveQueueRouteOptions } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
@@ -196,6 +199,39 @@ describe("page origin", () => {
   });
 });
 
+describe("request validation", () => {
+  // a key name may be text the caller wrote → a refusal never repeats it
+  test("every owner route answers an unknown key without its name", async () => {
+    const itemId = await seedDecision(await seedSession());
+    const key = `unknownkey${randomUUID().replaceAll("-", "")}`;
+    const rows = [
+      { route: `GET /api/queue/owner/items?${key}=1`, body: undefined },
+      { route: `GET /api/queue/owner/items/${itemId}?${key}=1`, body: undefined },
+      { route: `GET /api/queue/owner/items/${itemId}/scan-approval?${key}=1`, body: undefined },
+      { route: `GET /api/queue/owner/resumes?${key}=1`, body: undefined },
+      { route: `GET /api/queue/owner/orders?kind=item&${key}=1`, body: undefined },
+      { route: `GET /api/queue/owner/sessions?${key}=1`, body: undefined },
+      { route: `POST /api/queue/owner/items/${itemId}/redact`, body: {} },
+      { route: `POST /api/queue/owner/items/${itemId}/answer`, body: { code: "R1" } },
+      { route: `POST /api/queue/owner/items/${itemId}/reply`, body: { text: "Hold it." } },
+      { route: `POST /api/queue/owner/items/${itemId}/later`, body: {} },
+      { route: `POST /api/queue/owner/items/${itemId}/seen`, body: {} },
+      { route: `POST /api/queue/owner/items/${itemId}/resend`, body: {} },
+      { route: "POST /api/queue/owner/messages/send", body: { sessionIds: [randomUUID()], text: "Rebase onto main." } },
+      { route: `POST /api/queue/owner/images?name=shot.png&${key}=1`, body: {} },
+    ];
+    const replies = [];
+    for (const row of rows) {
+      const [method, url] = row.route.split(" ") as ["GET" | "POST", string];
+      const isQueryKey = url.includes(key);
+      const response = await send(method, url, row.body === undefined || isQueryKey ? row.body : { ...row.body, [key]: 1 });
+      replies.push([row.route, response.statusCode, response.json().error, response.body.includes(key)]);
+    }
+    assert.deepEqual(replies, rows.map((row) => [row.route, 400, "invalid_input", false]));
+    assert.equal((await getItemRow(itemId)).status, "open");
+  });
+});
+
 describe("answer record", () => {
   test("an answer and a reply stamp the route and the page-origin signal in the same write as the answer", async () => {
     const sessionId = await seedSession();
@@ -323,6 +359,142 @@ describe("answer, reply, seen", () => {
     assert.equal((await send("GET", "/api/queue/owner/items/999999999999")).statusCode, 404);
   });
 });
+
+describe("scan-approval answer and withdraw", () => {
+  interface PostedApproval {
+    sessionId: string;
+    requestId: string;
+    itemId: number;
+    /** The captured line's text, unique per request → its absence from a response is checkable. */
+    line: string;
+  }
+
+  const writePath = "/Users/owner/Desktop/git/glass-atrium/monitor/src/server/config.ts";
+
+  /** A request as the hook registers it, and its item as the session's secret-approval post creates it. */
+  const postApproval = async (): Promise<PostedApproval> => {
+    const sessionId = await seedSession();
+    const line = `sentinel_${randomUUID().replaceAll("-", "")} = 3`;
+    const requestId = secretRequests.create({
+      sessionId,
+      agent: { id: "a3f9c2d17b4e8f05", type: "glass-atrium-dev-node" },
+      path: writePath,
+      rule: "SEC-013",
+      lines: [{ text: line, hash: getLineHash(line) }],
+    });
+    const posted = await send("POST", "/api/queue/items", { kind: "secret-approval", sessionId, requestId }, { headers: {} });
+    assert.equal(posted.statusCode, 201, posted.body);
+    return { sessionId, requestId, itemId: posted.json().id, line };
+  };
+  const answer = (itemId: number, code: string) => send("POST", `/api/queue/owner/items/${itemId}/answer`, { code });
+  /** The hook's retry of the refused write: same session, path and rule, the captured line's hash. */
+  const consumeWrite = (posted: PostedApproval) => secretRequests.consume({ sessionId: posted.sessionId, path: writePath, rule: "SEC-013", hashes: [getLineHash(posted.line)] });
+
+  /** An approve answered while another connection holds the item row; `whileWaiting` runs once the answer waits on it. */
+  const approveAgainstHeldRow = async (itemId: number, whileWaiting: (blocker: Client) => Promise<void>): Promise<LightMyRequestResponse> => {
+    const blocker = new Client({ connectionString: process.env.DATABASE_URL });
+    await blocker.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(`SELECT 1 FROM "monitor"."queue_items" WHERE "id" = $1 FOR UPDATE`, [itemId]);
+      const answering = answer(itemId, SECRET_APPROVAL_CODE.APPROVE);
+      await waitForBlockedBackend(blocker);
+      await whileWaiting(blocker);
+      await blocker.query("COMMIT");
+      return await answering;
+    } finally {
+      await blocker.end();
+    }
+  };
+
+  test("the owner's approve turns the request approved for exactly ten minutes from the recorded yes, its line removed and its hash kept", async () => {
+    const { requestId, itemId, line } = await postApproval();
+    const response = await answer(itemId, SECRET_APPROVAL_CODE.APPROVE);
+    const item = await getItemRow(BigInt(itemId));
+    const request = secretRequests.find(requestId);
+    assert.equal(response.statusCode, 200, response.body);
+    assert.ok(item.answeredAt !== null && request !== null, "approve recorded no answer or kept no request");
+    assert.deepEqual([item.answerCode, request.state, request.hashes, secretRequests.findLines(requestId)], [SECRET_APPROVAL_CODE.APPROVE, "approved", [getLineHash(line)], null]);
+    assert.equal(request.expiresAt.getTime() - item.answeredAt.getTime(), SECRET_REQUEST_LIMIT.APPROVED_MS);
+    assert.ok(!response.body.includes(line), "the approve response echoes the captured line");
+  });
+
+  test("a write retried while the approve's answer waits on the item row is refused; once the answer commits it passes", async () => {
+    const posted = await postApproval();
+    let waitingConsume: string | null = "not run";
+    const response = await approveAgainstHeldRow(posted.itemId, async () => {
+      waitingConsume = consumeWrite(posted);
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual([waitingConsume, consumeWrite(posted)], [null, posted.requestId]);
+  });
+
+  test("a request that leaves the store while the approve's answer waits keeps the recorded answer and approves nothing", async () => {
+    const posted = await postApproval();
+    const response = await approveAgainstHeldRow(posted.itemId, async () => {
+      secretRequests.delete(posted.requestId);
+    });
+    const item = await getItemRow(BigInt(posted.itemId));
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual([item.status, item.answerCode, secretRequests.find(posted.requestId), consumeWrite(posted)], ["answered", SECRET_APPROVAL_CODE.APPROVE, null, null]);
+  });
+
+  test("the owner's decline records the answer and removes the request", async () => {
+    const { requestId, itemId } = await postApproval();
+    const response = await answer(itemId, SECRET_APPROVAL_CODE.DECLINE);
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual([(await getItemRow(BigInt(itemId))).answerCode, secretRequests.find(requestId)], [SECRET_APPROVAL_CODE.DECLINE, null]);
+  });
+
+  test("an approve of a request no longer in the store is a conflict that records no answer and carries ids only; the item still takes a decline", async () => {
+    const { requestId, itemId, line } = await postApproval();
+    secretRequests.delete(requestId);
+    const refused = await answer(itemId, SECRET_APPROVAL_CODE.APPROVE);
+    const item = await getItemRow(BigInt(itemId));
+    assert.deepEqual([refused.statusCode, refused.json().error, item.status, item.answerCode], [409, "secret_request_gone", "open", null]);
+    assert.ok(!refused.body.includes(line), "the conflict response echoes the captured line");
+    assert.equal((await answer(itemId, SECRET_APPROVAL_CODE.DECLINE)).statusCode, 200);
+  });
+
+  test("an approve whose answer write loses to a concurrent close approves nothing: the request stays pending", async () => {
+    const { requestId, itemId } = await postApproval();
+    const response = await approveAgainstHeldRow(itemId, async (blocker) => {
+      await blocker.query(`UPDATE "monitor"."queue_items" SET "status" = 'withdrawn' WHERE "id" = $1`, [itemId]);
+    });
+    assert.deepEqual([response.statusCode, response.json().error, secretRequests.find(requestId)?.state], [409, "not_open", "pending"]);
+  });
+
+  test("the session's withdraw removes its item's request, pending or approved; a refused withdraw keeps it", async () => {
+    const rows = [
+      { name: "open item, pending request", prepare: async (_: PostedApproval) => {}, status: 200, isKept: false },
+      { name: "approved, not yet acked", prepare: async (posted: PostedApproval) => void (await answer(posted.itemId, SECRET_APPROVAL_CODE.APPROVE)), status: 200, isKept: false },
+      {
+        name: "delivering, not withdrawable",
+        prepare: async (posted: PostedApproval) => void (await getPrisma().queueItem.update({ where: { id: BigInt(posted.itemId) }, data: { status: "delivering" } })),
+        status: 409,
+        isKept: true,
+      },
+    ];
+    for (const row of rows) {
+      const posted = await postApproval();
+      await row.prepare(posted);
+      const response = await send("POST", `/api/queue/items/${posted.itemId}/withdraw`, { sessionId: posted.sessionId }, { headers: {} });
+      assert.deepEqual([response.statusCode, secretRequests.find(posted.requestId) !== null], [row.status, row.isKept], `${row.name}: ${response.body}`);
+    }
+  });
+});
+
+/** Resolves once another backend waits on a lock `blocker` holds; bounded, so a request that never blocks fails the test. */
+async function waitForBlockedBackend(blocker: Client): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const { rows } = await blocker.query(
+      "SELECT count(*)::int AS n FROM pg_stat_activity WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid))",
+    );
+    if (rows[0].n > 0) return;
+    await delay(25);
+  }
+  throw new Error("the answer never waited on the held item row");
+}
 
 describe("close time", () => {
   test("an owner act that leaves open closes the item, at the answer time when it answers; one that stays open does not", async () => {

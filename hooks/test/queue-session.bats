@@ -598,3 +598,46 @@ run_lib() {
     return 1
   }
 }
+
+@test "a body given as - reaches the monitor from stdin byte for byte and never rides curl's argument list" {
+  start_stub
+  local sentinel body_file="${BATS_TEST_TMPDIR}/body.json" route=/api/queue/scan-approvals
+  sentinel="stdin-body-sentinel-$$-${RANDOM}"
+  printf '{"note": "%s",\n "text": "caf\303\251 \\"quoted\\""}' "${sentinel}" >"${body_file}"
+  # shellcheck disable=SC2016  # the inner script expands its own arguments
+  run --separate-stderr bash -c 'set -Eeuo pipefail; source "$1"; queue_send POST "$2" - <"$3"' \
+    _ "${GA}/scripts/lib/queue-session.sh" "${route}" "${body_file}"
+  [[ "${status}" -eq 0 && "${output##*$'\n'}" == 200 ]] || {
+    echo "status=${status} output=${output} stderr=${stderr}"
+    return 1
+  }
+  local content_type
+  content_type="$(jq -r --arg p "${route}" 'select(.path == $p) | .headers["content-type"]' "${BATS_TEST_TMPDIR}/requests.log")"
+  [[ "$(request_body "${route}")" == "$(<"${body_file}")" && "${content_type}" == application/json ]] || {
+    cat "${BATS_TEST_TMPDIR}/requests.log"
+    return 1
+  }
+  if grep -qF -- "${sentinel}" "${BATS_TEST_TMPDIR}/curl-argv.log"; then
+    cat "${BATS_TEST_TMPDIR}/curl-argv.log"
+    return 1
+  fi
+}
+
+# File-size limit 0 → any write of the body to a file kills the call with SIGXFSZ; a body past the 64 KiB pipe buffer
+# → a here-string or a spooled copy would take that path. The argv-recording shim writes a file, so the real curl runs.
+@test "a body given as - reaches the monitor with no file written, past the pipe buffer" {
+  start_stub
+  local body_file="${BATS_TEST_TMPDIR}/body.json" route=/api/queue/scan-approvals
+  jq -cn --arg pad "$(seq -f 'padding line %05g' 1 6000)" '{note: $pad}' >"${body_file}"
+  # shellcheck disable=SC2016  # the inner script expands its own arguments
+  run --separate-stderr bash -c 'set -Eeuo pipefail; source "$1"; PATH="${PATH#*:}"; ulimit -S -f 0
+    queue_send POST "$2" - <"$3"' _ "${GA}/scripts/lib/queue-session.sh" "${route}" "${body_file}"
+  [[ "${status}" -eq 0 && "${output##*$'\n'}" == 200 ]] || {
+    echo "status=${status} output=${output} stderr=${stderr}"
+    return 1
+  }
+  [[ "$(request_body "${route}")" == "$(<"${body_file}")" && ! -s "${BATS_TEST_TMPDIR}/curl-argv.log" ]] || {
+    cat "${BATS_TEST_TMPDIR}/curl-argv.log"
+    return 1
+  }
+}

@@ -9,6 +9,7 @@ import { getQueueCliPath } from "./envelope.js";
 import { getQueueImageDir } from "./images.js";
 import { getProcessStartTime } from "./process-start-time.js";
 import { deleteLeftoverCaptureDirs, findClaudePath, spawnClaudeLauncher } from "./resume-spawn.js";
+import { secretRequests } from "./scan-approvals.js";
 import { type SweepDeps, deleteTokenFiles, deleteUnusedImages, runSweepPass } from "./sweep.js";
 
 const SWEEP_INTERVAL_MS = 30_000;
@@ -69,6 +70,9 @@ function withStopSignal(deps: SweepDeps, stopSignal: AbortSignal): SweepDeps {
 
 async function runScheduledPass(deps: SweepDeps, isStart: boolean): Promise<void> {
   try {
+    // in memory, ahead of the database steps → a failing database never holds an expired captured line
+    const expiredCount = secretRequests.deleteExpired(deps.now());
+    if (expiredCount > 0) logger.info({ expiredCount }, "scan approval requests expired — removed from the store");
     if (isStart && deps.resume !== undefined) await deleteLeftoverCaptureDirs(deps.resume.captureDir);
     await runSweepPass(deps);
     await deleteTokenFiles(deps);

@@ -1439,6 +1439,7 @@ model QueueSession {
 ///     or approval class, never open or seen · parent, fetch and redaction stamps on a relay only
 ///   - relay_redacted_at ⇔ relay_redacted_length (1..4000) · relay_closed_at ⇔ a relay in withdrawn (lapsed)
 ///   - closed_at ⇔ a decision or report not open; stamped by trigger queue_items_set_closed_at (answer time, else the closing write's time)
+///   - secret_request_id only on an approval-class decision taking no free text
 /// Per-entry option shape and unique codes → the post route's Zod schema (a CHECK cannot iterate the array).
 model QueueItem {
   id                BigInt          @id @default(autoincrement())
@@ -1482,6 +1483,8 @@ model QueueItem {
   relayClosedAt     DateTime?       @map("relay_closed_at") @db.Timestamptz(6)
   // The owner's wait ended; written by the database trigger only → no code path sets it
   closedAt          DateTime?       @map("closed_at") @db.Timestamptz(6)
+  // The scan-approval request this item asks the owner about (scan-approvals.ts, process memory only) → one item per request
+  secretRequestId   String?         @unique(map: "queue_items_secret_request_id_key") @map("secret_request_id") @db.Uuid
   updatedAt         DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   session       QueueSession     @relation("QueueItemRecipient", fields: [sessionId], references: [sessionId], onDelete: Restrict, onUpdate: Restrict)

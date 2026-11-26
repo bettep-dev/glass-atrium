@@ -20,6 +20,7 @@ import { UNUSED_IMAGE_TTL_MS, createImage } from "../src/server/queue/images.js"
 import { getProcessStartTime } from "../src/server/queue/process-start-time.js";
 import { createMessages } from "../src/server/queue/owner-sessions.js";
 import { registerSession } from "../src/server/queue/registry.js";
+import { SECRET_REQUEST_LIMIT, getLineHash, secretRequests } from "../src/server/queue/scan-approvals.js";
 import { startQueueScheduler } from "../src/server/queue/scheduler.js";
 import { type SweepDeps, deleteTokenFiles, deleteUnusedImages, runSweepPass } from "../src/server/queue/sweep.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
@@ -293,6 +294,30 @@ describe("scheduler start sweep", () => {
     await scheduler.stop();
 
     assert.equal(await getStatus(itemId), "unacked");
+  });
+});
+
+describe("scan-approval expiry", () => {
+  test("a scheduler pass removes the scan-approval requests expired at its clock and keeps the unexpired ones", async () => {
+    const createRequest = (): string => {
+      const line = `sentinel_${randomUUID().replaceAll("-", "")} = 3`;
+      return secretRequests.create({
+        sessionId: randomUUID(),
+        agent: { id: "a3f9c2d17b4e8f05", type: "glass-atrium-dev-node" },
+        path: "/Users/owner/Desktop/git/glass-atrium/monitor/src/server/config.ts",
+        rule: "SEC-013",
+        lines: [{ text: line, hash: getLineHash(line) }],
+      });
+    };
+    const approvedId = createRequest();
+    secretRequests.approve(approvedId);
+    const pendingId = createRequest();
+    const clock = new Date(Date.now() + SECRET_REQUEST_LIMIT.APPROVED_MS + MINUTE_MS);
+
+    const scheduler = startQueueScheduler(buildDeps([], { now: () => clock }), 60 * MINUTE_MS);
+    await scheduler.stop();
+
+    assert.deepEqual([secretRequests.find(approvedId), secretRequests.find(pendingId)?.state], [null, "pending"]);
   });
 });
 

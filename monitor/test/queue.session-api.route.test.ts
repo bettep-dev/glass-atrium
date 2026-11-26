@@ -14,12 +14,13 @@ import { fileURLToPath } from "node:url";
 
 import "dotenv/config";
 
-import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyServerOptions, type LightMyRequestResponse } from "fastify";
 
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { ANSWERED_IDS_LIMIT, PULL, WAIT_FRESH_MS, isSessionWaiting } from "../src/server/queue/delivery.js";
 import { AWAITING_IDS_LIMIT } from "../src/server/queue/registry.js";
+import { getLineHash, secretRequests } from "../src/server/queue/scan-approvals.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows, withQueueRowsExclusive } from "./lib/queue-rows-lock.js";
@@ -55,8 +56,8 @@ after(async () => {
   deleteDirectory(fixtureRoot);
 });
 
-async function buildApp(): Promise<FastifyInstance> {
-  const instance = Fastify({ logger: false });
+async function buildApp(logger: FastifyServerOptions["logger"] = false): Promise<FastifyInstance> {
+  const instance = Fastify({ logger });
   instance.get("/api/root-probe", async () => ({ ok: true }));
   await registerQueueRoutes(instance, { port: PORT, homeDir: dir.home, cliPath: CLI_PATH, imageDir: path.join(fixtureRoot, "images"), scannerPath: "/opt/atrium-test/scripts/lib/secret-scan.sh" });
   await instance.ready();
@@ -598,6 +599,33 @@ describe("post and get by id", () => {
     }
   });
 
+  // a key name may be text the caller wrote → a refusal never repeats it
+  test("every session route answers an unknown key without its name", async () => {
+    const sessionId = await seedSession();
+    const key = `unknownkey${randomUUID().replaceAll("-", "")}`;
+    const rows = [
+      { route: "POST /api/queue/sessions/register", body: { sessionId, pid: 4242, derivedName: "s" } },
+      { route: "POST /api/queue/sessions/deregister", body: { sessionId } },
+      { route: "POST /api/queue/items", body: { kind: "report", sessionId, title: "Done", body: "Merged." } },
+      { route: `GET /api/queue/items/1?sessionId=${sessionId}&${key}=1`, body: undefined },
+      { route: "POST /api/queue/pending", body: { sessionId } },
+      { route: "POST /api/queue/items/1/ack", body: { sessionId, msgId: randomUUID() } },
+      { route: "POST /api/queue/pending/count", body: { sessionId, pid: 4242 } },
+      { route: "POST /api/queue/items/1/withdraw", body: { sessionId } },
+      { route: "POST /api/queue/peers", body: { sessionId } },
+      { route: "POST /api/queue/relay", body: { sessionId, to: ["abcd1234"], text: "Rebase onto main." } },
+      { route: "POST /api/queue/scan-approvals", body: { sessionId } },
+      { route: "POST /api/queue/scan-approvals/consume", body: { sessionId } },
+    ];
+    const replies = [];
+    for (const row of rows) {
+      const [method, url] = row.route.split(" ") as ["GET" | "POST", string];
+      const response = await send(method, url, row.body === undefined ? undefined : { ...row.body, [key]: 1 });
+      replies.push([row.route, response.statusCode, response.json().error, response.body.includes(key)]);
+    }
+    assert.deepEqual(replies, rows.map((row) => [row.route, 400, "invalid_input", false]));
+  });
+
   test("answers 404 for an unknown session or item and 400 for a malformed id", async () => {
     const sessionId = await seedSession();
     const unknownSession = await send("POST", "/api/queue/items", decision(randomUUID()));
@@ -606,6 +634,163 @@ describe("post and get by id", () => {
     assert.equal(unknownSession.statusCode, 404);
     assert.equal(unknownItem.statusCode, 404);
     assert.equal(malformed.statusCode, 400);
+  });
+});
+
+interface HookPayloads {
+  subagent: { session_id: string; agent_id: string; agent_type: string; tool_input: { file_path: string } };
+}
+
+// fixture-only: a hand-written subagent PreToolUse payload, not a capture → which session id a live subagent payload carries is not shown here
+const hookPayloads: HookPayloads = JSON.parse(readFileSync(new URL("./fixtures/subagent-hook-payloads.json", import.meta.url), "utf8"));
+
+describe("secret-approval post", () => {
+  /** A request as the hook registers it from the subagent payload: that payload's session id, its agent as information. */
+  const createRequest = (sessionId: string): string => {
+    const text = `retries_${randomUUID().slice(0, 8)} = 3`;
+    return secretRequests.create({
+      sessionId,
+      agent: { id: hookPayloads.subagent.agent_id, type: hookPayloads.subagent.agent_type },
+      path: hookPayloads.subagent.tool_input.file_path,
+      rule: "SEC-013",
+      lines: [{ text, hash: getLineHash(text) }],
+    });
+  };
+  const approvalPost = (sessionId: string, requestId: string, extra: object = {}): object => ({ kind: "secret-approval", sessionId, requestId, ...extra });
+  const findLinkedItem = (requestId: string) => getPrisma().queueItem.findUnique({ where: { secretRequestId: requestId } });
+  const getOptionLabels = (options: Prisma.JsonValue): Record<string, string> => {
+    assert.ok(Array.isArray(options), "options are not an array");
+    return Object.fromEntries(
+      options.map((option) => {
+        assert.ok(option !== null && typeof option === "object" && !Array.isArray(option), "option is not an object");
+        return [String(option.code), String(option.label)];
+      }),
+    );
+  };
+
+  test("a request posted by the session id of the hook payload it was registered from becomes an open approval-class decision linked to it, the request still pending", async () => {
+    const sessionId = hookPayloads.subagent.session_id;
+    trackedSessionIds.push(sessionId);
+    await seedSession({ sessionId });
+    const requestId = createRequest(sessionId);
+    const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+    const item = await findLinkedItem(requestId);
+    assert.equal(posted.statusCode, 201, posted.body);
+    assert.deepEqual(
+      [Number(item?.id), item?.kind, item?.isApprovalClass, item?.isFreeTextAllowed, item?.status],
+      [posted.json().id, "decision", true, false, "open"],
+    );
+    assert.equal(secretRequests.find(requestId)?.state, "pending");
+  });
+
+  test("the server writes the item text: the same title, body and options for every request, the body naming the approving option", async () => {
+    const items = [];
+    for (let index = 0; index < 2; index += 1) {
+      const sessionId = await seedSession();
+      const requestId = createRequest(sessionId);
+      await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+      items.push(await findLinkedItem(requestId));
+    }
+    const [first, second] = items;
+    assert.ok(first && second, "an approval post stored no linked item");
+    const labels = getOptionLabels(first.options);
+    assert.deepEqual([second.title, second.body, second.options, second.recommendedCode], [first.title, first.body, first.options, first.recommendedCode]);
+    assert.deepEqual(Object.keys(labels), ["R1", "R2"]);
+    assert.ok(first.body.includes(`${labels.R1} (R1)`), first.body);
+  });
+
+  test("refuses a request that is not this session's, not pending or already linked, and links no further item", async () => {
+    const sessionId = await seedSession();
+    const rows = [
+      { name: "registered under another session id", prepare: async () => createRequest(await seedSession()), status: 404, error: "unknown_secret_request", linked: 0 },
+      { name: "never registered", prepare: async () => randomUUID(), status: 404, error: "unknown_secret_request", linked: 0 },
+      {
+        name: "registered, then declined, so gone from the store",
+        prepare: async () => {
+          const requestId = createRequest(sessionId);
+          secretRequests.delete(requestId);
+          return requestId;
+        },
+        status: 404,
+        error: "unknown_secret_request",
+        linked: 0,
+      },
+      {
+        name: "already approved",
+        prepare: async () => {
+          const requestId = createRequest(sessionId);
+          secretRequests.approve(requestId);
+          return requestId;
+        },
+        status: 409,
+        error: "secret_request_not_pending",
+        linked: 0,
+      },
+      {
+        name: "already linked to an item",
+        prepare: async () => {
+          const requestId = createRequest(sessionId);
+          await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+          return requestId;
+        },
+        status: 409,
+        error: "secret_request_linked",
+        linked: 1,
+      },
+    ];
+    for (const row of rows) {
+      const requestId = await row.prepare();
+      const response = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+      const linked = await getPrisma().queueItem.count({ where: { secretRequestId: requestId } });
+      assert.deepEqual([response.statusCode, response.json().error, linked], [row.status, row.error, row.linked], row.name);
+    }
+  });
+
+  test("rejects a post carrying any field beyond the session and request ids, and stores nothing", async () => {
+    const sessionId = await seedSession();
+    const requestId = createRequest(sessionId);
+    const extras = [
+      { title: "Approve the config write" },
+      { body: "The retries line is a false positive." },
+      { options: [{ code: "R1", label: "Approve", pros: "", cons: "" }, { code: "R2", label: "Decline", pros: "", cons: "" }] },
+      { recommendedCode: "R1" },
+      { isApprovalClass: true },
+      { isFreeTextAllowed: true },
+      { linkedDocIds: [] },
+      { text: "Please approve." },
+      { agentId: hookPayloads.subagent.agent_id },
+      { requestSessionId: await seedSession() },
+    ];
+    for (const extra of extras) {
+      const response = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId, extra));
+      assert.deepEqual([response.statusCode, response.json().error], [400, "invalid_input"], Object.keys(extra).join());
+    }
+    assert.equal(await findLinkedItem(requestId), null);
+  });
+
+  test("a malformed post echoes none of its field values in the response or the log", async () => {
+    const logLines: string[] = [];
+    const logged = await buildApp({ level: "trace", stream: { write: (line: string) => { logLines.push(line); } } });
+    try {
+      const sentinel = ["SENTINEL", randomUUID()].join("-");
+      const sessionId = await seedSession();
+      const bodies = [
+        { kind: "secret-approval", sessionId, requestId: sentinel },
+        { kind: "secret-approval", sessionId: sentinel, requestId: randomUUID() },
+        approvalPost(sessionId, randomUUID(), { note: sentinel }),
+        { kind: sentinel, sessionId, requestId: randomUUID() },
+      ];
+      const responses = [];
+      for (const body of bodies) {
+        responses.push(await logged.inject({ method: "POST", url: "/api/queue/items", headers: { host: HOST }, payload: body }));
+      }
+      assert.deepEqual(responses.map((response) => response.statusCode), [400, 400, 400, 400]);
+      assert.ok(logLines.length > 0, "the logger captured no line → its half of the check is empty");
+      assert.deepEqual(responses.filter((response) => response.body.includes(sentinel)).map((response) => response.body), []);
+      assert.deepEqual(logLines.filter((line) => line.includes(sentinel)), []);
+    } finally {
+      await logged.close();
+    }
   });
 });
 

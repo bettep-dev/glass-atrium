@@ -30,9 +30,11 @@ readonly QUEUE_ID_PREFIX_SHAPE='^[0-9a-f]{8}$'
 readonly QUEUE_PROFILE_LABEL_SHAPE='^[A-Za-z0-9._-]{1,64}$'
 # the sources the monitor sets on an item or a claim (items.ts → QueueItemView.source); any other reads as unknown
 readonly QUEUE_SOURCE_SHAPE='^(owner|peer)$'
-# the fields a session sets per kind; the session id and the kind come from the environment and the dispatch
+# the fields a session sets per kind; the session id and the kind come from the environment and the dispatch; a
+# secret-approval names its scan-approval request alone → the monitor writes that item's text from the hook's capture
 readonly QUEUE_ITEM_FIELDS='{"report":["body","isFreeTextAllowed","linkedDocIds","title"],
-  "decision":["body","isApprovalClass","isFreeTextAllowed","linkedDocIds","options","recommendedCode","title"]}'
+  "decision":["body","isApprovalClass","isFreeTextAllowed","linkedDocIds","options","recommendedCode","title"],
+  "secret-approval":["requestId"]}'
 # the adapter's tool descriptions the CLI's usage text shares, by tool name; the relay text cap is the monitor's
 # (schemas.ts → RELAY_TEXT_MAX, test-bound)
 # shellcheck disable=SC2034  # read by both front ends
@@ -127,15 +129,12 @@ queue_get_error_reason() {
     || printf 'unreadable reply\n'
 }
 
-# <kind report|decision> <item JSON> [is last act: true] → {id, kind, isAwaiting, next}; an item awaiting an answer gets
-# its awaiting mark, and next names the wait step (queue_get_wait_step). As the turn's last act it also writes the turn's
-# record, form posted with this id, and adds isRecorded.
+# <kind report|decision|secret-approval> <item JSON> [is last act: true] → {id, kind, isAwaiting, next}; an item
+# awaiting an answer gets its awaiting mark, and next names the wait step (queue_get_wait_step). As the turn's last act
+# it also writes the turn's record, form posted with this id, and adds isRecorded.
 queue_create_item() {
   local kind="$1" session_id body reply id is_recorded=""
-  [[ "${kind}" == report || "${kind}" == decision ]] || {
-    queue_put_error 64 invalid "the kind must be report or decision"
-    return
-  }
+  queue_check_item_form "${kind}" "$2" || return
   session_id="$(queue_require_session_id)" || {
     queue_put_back "$?" "${session_id}"
     return
@@ -164,6 +163,27 @@ queue_create_item() {
   queue_print_post_result "${kind}" "${session_id}" "${id}" "$2" "${is_recorded}"
 }
 
+# <kind> <item JSON> → 0 for a report or a decision, or a secret-approval whose item, its kind key aside, is its UUID
+# request id alone; else the error document and 64 — a title, body or options from the session is refused, never dropped
+queue_check_item_form() {
+  local is_bare id
+  case "$1" in
+    report | decision) return 0 ;;
+    secret-approval) ;;
+    *)
+      queue_put_error 64 invalid "the kind must be report, decision or secret-approval"
+      return
+      ;;
+  esac
+  is_bare="$(jq -r 'objects | del(.kind) | keys == ["requestId"]' <<<"$2" 2>/dev/null)" || is_bare=""
+  id="$(jq -r '.requestId? | strings' <<<"$2" 2>/dev/null)" || id=""
+  if [[ "${is_bare}" != true ]]; then
+    queue_put_error 64 invalid "a secret-approval post carries the request id alone: no title, body, options or other field — the monitor writes its text"
+  elif ! [[ "${id}" =~ ${QUEUE_UUID_SHAPE} ]]; then
+    queue_put_error 64 invalid "a secret-approval post's request id is the UUID its secret-scan refusal named"
+  fi
+}
+
 # <kind> <session id> <item JSON> → the request body: the kind's named fields only, session id and kind applied last;
 # non-zero for anything but a JSON object
 queue_build_item_body() {
@@ -172,11 +192,11 @@ queue_build_item_body() {
       + {kind: $kind, sessionId: $sessionId}' <<<"$3" 2>/dev/null
 }
 
-# <kind> <session id> <item id> <item JSON> <is recorded: true, false or empty> → the post result; a decision, or a
-# report allowing a reply, awaits
+# <kind> <session id> <item id> <item JSON> <is recorded: true, false or empty> → the post result; a decision or a
+# secret-approval, or a report allowing a reply, awaits
 queue_print_post_result() {
   local is_awaiting next=""
-  is_awaiting="$(jq -r --arg kind "$1" '$kind == "decision" or .isFreeTextAllowed == true' <<<"$4")"
+  is_awaiting="$(jq -r --arg kind "$1" '$kind != "report" or .isFreeTextAllowed == true' <<<"$4")"
   if [[ "${is_awaiting}" == true ]]; then
     queue_put_awaiting_item "$2" "$3"
     next="$(queue_get_wait_step "$2")"

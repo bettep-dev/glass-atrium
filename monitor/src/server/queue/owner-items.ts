@@ -3,18 +3,21 @@
 
 import type { Prisma, QueueItem, QueueItemStatus } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
+import { logger } from "../logger.js";
 import type { PageOriginSignal } from "../request-guards.js";
 import { QueueRequestError } from "./errors.js";
 import { putItemImages } from "./images.js";
+import { SECRET_APPROVAL_CODE } from "./items.js";
 import { canResend } from "./owner-views.js";
 import { lockSession } from "./registry.js";
+import { secretRequests } from "./scan-approvals.js";
 import type { AnswerBody, ReplyBody } from "./schemas.js";
 
 const RESENDABLE: QueueItemStatus[] = ["unacked", "expired", "resume_pending"];
 /** The one text a redacted relay carries in place of its title and body; no request supplies another. */
 export const RELAY_REDACTION_MARKER = "[relay text redacted by the owner]";
 
-/** Answer + its record (route, page-origin signal) in one guarded write. */
+/** Answer + its record (route, page-origin signal) in one guarded write; a secret-approval item's answer also decides its request. */
 export async function putAnswer(id: number, body: AnswerBody, signal: PageOriginSignal): Promise<void> {
   const item = await getOpenItemOrThrow(id, "decision");
   if (body.code !== undefined && !getOptionCodes(item.options).includes(body.code)) {
@@ -24,15 +27,8 @@ export async function putAnswer(id: number, body: AnswerBody, signal: PageOrigin
   if ((body.text !== undefined || body.attachmentIds.length > 0) && !item.isFreeTextAllowed) {
     throw new QueueRequestError(400, "free_text_not_allowed", "this item takes an option code only");
   }
-  // one transaction → no answer stands without its images, and a failed image claim records no answer
-  await getPrisma().$transaction(async (tx) => {
-    await putOpenTransition(
-      id,
-      { status: "answered", answerCode: body.code ?? null, answerText: body.text ?? null, answeredAt: new Date(), answerRoute: "answer", answerSignal: signal },
-      tx,
-    );
-    await putItemImages(tx, [BigInt(id)], body.attachmentIds);
-  });
+  if (item.secretRequestId === null) await putAnswerRow(id, body, signal);
+  else await putScanApprovalAnswer(id, item.secretRequestId, body, signal);
 }
 
 export async function putReply(id: number, body: ReplyBody, signal: PageOriginSignal): Promise<void> {
@@ -100,6 +96,43 @@ export async function putRedaction(id: number, record: (tx: Prisma.TransactionCl
     if (moved === 0) await throwNotRedactable(tx, id);
     await record(tx);
   });
+}
+
+async function putAnswerRow(id: number, body: AnswerBody, signal: PageOriginSignal, answeredAt: Date = new Date()): Promise<void> {
+  // one transaction → no answer stands without its images, and a failed image claim records no answer
+  await getPrisma().$transaction(async (tx) => {
+    await putOpenTransition(
+      id,
+      { status: "answered", answerCode: body.code ?? null, answerText: body.text ?? null, answeredAt, answerRoute: "answer", answerSignal: signal },
+      tx,
+    );
+    await putItemImages(tx, [BigInt(id)], body.attachmentIds);
+  });
+}
+
+/**
+ * The owner's answer on a secret-approval item decides its scan-approval request; logs carry ids only.
+ * - approve: the request is checked pending before the answer's write → a gone or expired request is a 409, no answer recorded
+ * - it turns approved only after the answer commits → no write passes while the answer waits, or when it never commits
+ * - the 10 minutes run from the recorded answer time · a request gone by the commit → the answer stands, nothing approved
+ * - decline: the request is removed once the answer is recorded
+ */
+async function putScanApprovalAnswer(id: number, requestId: string, body: AnswerBody, signal: PageOriginSignal): Promise<void> {
+  if (body.code !== SECRET_APPROVAL_CODE.APPROVE) {
+    await putAnswerRow(id, body, signal);
+    if (secretRequests.delete(requestId)) logger.info({ itemId: id, requestId }, "scan approval request declined by the owner — removed from the store");
+    return;
+  }
+  secretRequests.assertPending(requestId);
+  const answeredAt = new Date();
+  await putAnswerRow(id, body, signal, answeredAt);
+  try {
+    secretRequests.approve(requestId, answeredAt);
+  } catch (error) {
+    logger.warn({ err: error, itemId: id, requestId }, "scan approval answer recorded but its request left the store before the commit — nothing approved");
+    return;
+  }
+  logger.info({ itemId: id, requestId }, "scan approval request approved by the owner — lines removed, hashes kept");
 }
 
 async function throwNotRedactable(tx: Prisma.TransactionClient, id: number): Promise<never> {

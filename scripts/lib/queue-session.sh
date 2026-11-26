@@ -159,14 +159,16 @@ queue_get_socket_path() {
   if [[ "${socket}" == /* ]]; then printf '%s\n' "${socket}"; fi
 }
 
-# <method> <route> [json body] [max seconds] → the reply body, then a last line holding the HTTP status;
-# non-zero only with no reply at all (unreachable or slow).
+# <method> <route> [json body | - for the body on stdin] [max seconds] → the reply body, then a last line holding
+# the HTTP status; non-zero only with no reply at all (unreachable or slow).
 queue_send() {
   local method="$1" route="$2" body="${3:-}" max_time="${4:-${QUEUE_MAX_TIME_S}}" port
   port="$(atrium_monitor_port 2>/dev/null)" || return 1
   local -a args=(--silent --connect-timeout "${QUEUE_CONNECT_TIMEOUT_S}" --max-time "${max_time}"
     --request "${method}" --write-out '\n%{http_code}')
   if [[ -n "${body}" ]]; then
+    # curl reads a stdin body itself → a body that must stay off every argument list never reaches one
+    [[ "${body}" != - ]] || body=@-
     args+=(--header 'content-type: application/json' --data-binary "${body}")
   fi
   curl "${args[@]}" "http://127.0.0.1:${port}${route}" 2>/dev/null

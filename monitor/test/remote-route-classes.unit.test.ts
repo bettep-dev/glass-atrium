@@ -113,6 +113,13 @@ const ANSWER_IMAGES_CID = "2026-11-23T1845_queue-batch2-server_6e0b";
 const IMAGE_PATH_ROWS_CID = "2026-11-23T2100_queue-batch2-page_4a7c";
 // the relay-signal row removed with its route and the orders reason re-signed for its Done-part callers: every other row's route, class and order kept
 const SIGNAL_REMOVAL_CID = "2026-11-25T1530_qb3-server_5e2a";
+// the scan-approval register, consume and owner-read rows appended after row 119, the answer and session item-post reasons re-signed in place (two reads, parts A and B)
+const SCAN_APPROVAL_CIDS = ["2026-11-26T1135_sa-verdict-a_1c7e", "2026-11-26T1135_sa-verdict-b_9a02"];
+const SIGNED_SCAN_APPROVAL_LINES = [
+  "POST /api/queue/scan-approvals agent",
+  "POST /api/queue/scan-approvals/consume agent",
+  "GET /api/queue/owner/items/:id/scan-approval page",
+];
 const SIGNED_AGENT_PIN_LINE = "PUT /api/model-config/agents page";
 // the 108-row table of the re-sign and the devices re-sign
 const SIGN_IN_TABLE = { rowCount: 108, sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8" };
@@ -124,8 +131,10 @@ const ACCESS_TABLE = { rowCount: 115, sha256: "7d37fe46bdd516c51cc2a9c1e0083619f
 const MERGED_TABLE = { rowCount: 119, sha256: "2cc9a6d9344907ac72b66d563d028258452a6c2b9a857ed00893d131a3dbc8a6" };
 // the 120-row table with the agent pin row still class agent → not a prefix of the live table
 const AGENT_PIN_TABLE = { rowCount: 120, sha256: "38fd87db9eea6512dbedfc059638dfa49224b5632aa0fd6214b77b8a18a7547f" };
+// the 119-row table the scan-approval rows extend → its digest still verifies over the live table's leading rows
+const SIGNAL_REMOVAL_TABLE = { rowCount: 119, sha256: "a67d39760625054c89ca4100a4e50e016dc7794ddb5d9ecc97d28e27afc68719" };
 // the signed table, held here → any class change in route-classes.ts also needs a test edit naming its verdict
-const SIGNED_TABLE = { rowCount: 119, sha256: "a67d39760625054c89ca4100a4e50e016dc7794ddb5d9ecc97d28e27afc68719" };
+const SIGNED_TABLE = { rowCount: 122, sha256: "b5ddf7d330dc063e9a379869de99f0c2558e063c45a0b4517a55fa64052039dd" };
 // the 120-row table of the models-screen, answer-images and image-path sign-offs → not a prefix of the live table
 const IMAGE_PATH_TABLE = { rowCount: 120, sha256: "d1fd15c26c6a43165056170d9c596c7bd6ec930f1b2b60340bdd484469829db4" };
 
@@ -216,9 +225,9 @@ describe("reviewer sign-offs", () => {
     assert.deepEqual({ rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy }, { ...SIGNED_TABLE, supersededBy: undefined });
   });
 
-  test("the latest sign-off names the reviewer and the signal-removal verdict", () => {
+  test("the latest sign-off names the reviewer and the scan-approval verdicts", () => {
     const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
-    assert.deepEqual({ reviewer: latest?.reviewer, cids: latest?.cids }, { reviewer: "glass-atrium-sec-guard", cids: [SIGNAL_REMOVAL_CID] });
+    assert.deepEqual({ reviewer: latest?.reviewer, cids: latest?.cids }, { reviewer: "glass-atrium-sec-guard", cids: SCAN_APPROVAL_CIDS });
   });
 
   test("every superseded table an append extended and no removal cut still verifies over the live table's leading rows, so new rows were appended, not inserted", () => {
@@ -226,6 +235,7 @@ describe("reviewer sign-offs", () => {
       { name: "before the pending-count append", table: SIGN_IN_TABLE },
       { name: "before the access and relay appends", table: SUPERSEDED_TABLE },
       { name: "before the relay append", table: ACCESS_TABLE },
+      { name: "before the scan-approval append", table: SIGNAL_REMOVAL_TABLE },
     ];
     for (const row of rows) assert.equal(getRouteClassDigest(REVIEWED_ROUTES.slice(0, row.table.rowCount)), row.table.sha256, row.name);
   });
@@ -255,13 +265,14 @@ describe("reviewer sign-offs", () => {
         [[MODELS_SCREEN_CID], IMAGE_PATH_TABLE.rowCount, IMAGE_PATH_TABLE.sha256, ANSWER_IMAGES_CID],
         [[ANSWER_IMAGES_CID], IMAGE_PATH_TABLE.rowCount, IMAGE_PATH_TABLE.sha256, IMAGE_PATH_ROWS_CID],
         [[IMAGE_PATH_ROWS_CID], IMAGE_PATH_TABLE.rowCount, IMAGE_PATH_TABLE.sha256, SIGNAL_REMOVAL_CID],
+        [[SIGNAL_REMOVAL_CID], SIGNAL_REMOVAL_TABLE.rowCount, SIGNAL_REMOVAL_TABLE.sha256, SCAN_APPROVAL_CIDS[0]],
       ],
     );
   });
 
   test("every row past the first 94 is the reviewer's signed line at its place", () => {
     const added = REVIEWED_ROUTES.slice(FIRST_SIGNED_ROW_COUNT).map((entry) => `${entry.route} ${entry.cls}`);
-    assert.deepEqual(added, [...SIGNED_REMOTE_LINES, SIGNED_PENDING_COUNT_LINE, ...SIGNED_ACCESS_LINES, ...SIGNED_RELAY_LINES, SIGNED_AGENT_PIN_LINE]);
+    assert.deepEqual(added, [...SIGNED_REMOTE_LINES, SIGNED_PENDING_COUNT_LINE, ...SIGNED_ACCESS_LINES, ...SIGNED_RELAY_LINES, SIGNED_AGENT_PIN_LINE, ...SIGNED_SCAN_APPROVAL_LINES]);
   });
 
   test("the re-sign's class changes are in the table as signed", () => {

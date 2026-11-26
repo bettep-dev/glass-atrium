@@ -147,6 +147,16 @@ const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", rep
 // a relay copy whose session never took it: its Done row's tag, its fact and its outcome on the sheet
 const RELAY_LAPSED_Q = "Lapsed";
 const ORDER_NOTE_Q = { NO_RELAY_RECIPIENT: "No recipient of this relay takes orders now." };
+// a secret-approval card's page words: the cue and class names for the server's codes, the fixed warning, the closed-Approve reason, the gone answer
+const SCAN_Q = {
+	CUE: { literal: "Literal value", environment: "Env reference", identifier: "Name reference", member: "Field reference" },
+	CLASS: { lower: "a–z", upper: "A–Z", digit: "0–9", space: "space", symbol: "symbol", "non-ascii": "non-ASCII" },
+	RULE: { "SEC-013": "credential assignment" },
+	WARNING: "If any line holds a real password or key, decline.",
+	CLOSED: "Approve needs the captured lines on screen.",
+	GONE_ANSWER: "Not approved: the request is gone. Nothing will pass.",
+};
+const EMPTY_SCAN_READ_Q = Object.freeze({ status: "loading", data: null });
 const COMPOSER_ERROR_Q = {
 	noAnswer: "Pick an option or write an answer, then send.",
 	noOrder: "Write the order, then send.",
@@ -703,10 +713,12 @@ function putSheetEntryQ({ queue, target }) {
 	queue.selectRow(row.id);
 }
 
-function putPickedOptionQ({ queue, index }) {
+// a closed option (a secret approval's Approve before its lines are on screen) answers the key as its disabled radio answers a press
+function putPickedOptionQ({ queue, index, root }) {
 	const item = getSheetOpenItemQ(queue.sheet);
 	const option = item?.kind === "decision" ? (item.options ?? [])[index] : undefined;
-	if (option) queue.setDraft(item.id, { code: option.code, error: null });
+	if (!option || root?.getElementById(`queue-option-${item.id}-${option.code}`)?.disabled) return;
+	queue.setDraft(item.id, { code: option.code, error: null });
 }
 
 function getSheetOpenItemQ(sheet) {
@@ -1533,6 +1545,7 @@ async function sendActionQ({ id, action, body, setBusy, setDrafts, reload, onRet
 function getActionErrorQ(answer) {
 	const outage = getOutageStepQ(answer);
 	if (outage !== null) return outage;
+	if (answer.data?.error === "secret_request_gone") return SCAN_Q.GONE_ANSWER;
 	if (answer.status === 409) return "Refused: the item changed state. The list shows where it is now.";
 	return getRefusalReasonQ(answer) ?? "The monitor refused this action. Try again.";
 }
@@ -1926,6 +1939,14 @@ function ItemSessionNameQ({ session }) {
 function RowTagsQ({ tags }) {
 	const { Badge, TONE_GLYPH } = window.UI;
 	return <>{tags.map((tag) => {
+		if (tag.narrowText) {
+			return (
+				<React.Fragment key={tag.text}>
+					<Badge fill={tag.badge} className="queue-row-tag-wide">{tag.text}</Badge>
+					<Badge fill={tag.badge} className="queue-row-tag-narrow">{tag.narrowText}</Badge>
+				</React.Fragment>
+			);
+		}
 		if (tag.badge) return <Badge key={tag.text} fill={tag.badge}>{tag.text}</Badge>;
 		if (!tag.glyph) return <span key={tag.text} className="queue-row-kind" title={tag.title}>{tag.text}</span>;
 		return (
@@ -1987,7 +2008,8 @@ function getRowCellsQ(row, isAccountShown) {
 	if (row.isDone) return { tags: [item.kind === "relay" ? getRelayEndTagQ(copies) : getEndQ(item)], fact: DONE_KIND_Q[item.kind], extras };
 	if (item.status === "open" && item.kind === "decision") {
 		const count = (item.options ?? []).length;
-		return { tags: item.isApprovalClass ? [{ text: "Approval", badge: "tag" }] : [], fact: `${count} ${count === 1 ? "option" : "options"}`, extras };
+		const fact = item.scanApproval ? getScanFactQ(item) : `${count} ${count === 1 ? "option" : "options"}`;
+		return { tags: item.isApprovalClass ? [{ text: "Approval", badge: "tag", narrowText: getScanEndFactQ(item) }] : [], fact, extras };
 	}
 	if (item.status === "open" && item.kind === "report") return { tags: [], fact: null, extras };
 	return { tags: getReceiptTagsQ(copies), fact: getDeliveryFactQ(item, copies), extras };
@@ -1998,6 +2020,7 @@ function getRowCellsQ(row, isAccountShown) {
  * followed — then a withdraw; any other end is a report marked read.
  */
 function getEndQ(item) {
+	if (item.scanApproval) return { text: getScanEndWordQ(getScanStateQ(item)) };
 	if (item.isAnsweredOutside) return { text: "Answered", title: "Answered outside the Queue page." };
 	if (item.answeredAt && item.kind === "report") return { text: "Replied" };
 	if (item.answeredAt) return { text: item.answer?.code ? `Answer ${item.answer.code}` : "Answered", title: ANSWER_ROUTE_LABEL_Q[item.answerRecord?.route] };
@@ -2170,7 +2193,8 @@ function QueueSheetQ({ queue }) {
  * @param isDone - a row under a Done band → read-only: no delivery lines, the foot how and when it ended (spec §4.6)
  */
 function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, isDone = false }) {
-	const draft = queue.drafts[item.id] ?? {};
+	const scanRead = useScanReadQ(item);
+	const draft = getShownDraftQ(queue.drafts[item.id] ?? {}, item, scanRead);
 	const isBusy = queue.busy.id === item.id;
 	const error = queue.busy.error?.id === item.id ? queue.busy.error.message : null;
 	const kind = isDone ? DONE_KIND_Q[item.kind] : getKindWordQ(item);
@@ -2178,7 +2202,7 @@ function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, is
 		<div className="card queue-pane queue-sheet">
 			<SheetHeadQ queue={queue}><LetterheadQ item={item} copies={copies} kind={kind} nameNote={getNameNoteQ(item.session, queue)} /></SheetHeadQ>
 			<div className="card-body" tabIndex={-1}>
-				<SheetBodyQ item={item} copies={copies} rails={queue.sessions?.region.data?.sessions ?? []} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} />
+				<SheetBodyQ item={item} copies={copies} rails={queue.sessions?.region.data?.sessions ?? []} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} scanRead={scanRead} />
 			</div>
 			<div className="card-foot">{getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone })}</div>
 		</div>
@@ -2340,7 +2364,8 @@ function getDateTimeQ(iso) {
 }
 
 // a done item's delivery lines (receipt, pull, not received) belong to In delivery → its sheet keeps the answer record alone
-function SheetBodyQ({ item, copies = [item], rails = [], draft, onDraft, cliPath, isDone = false }) {
+// a secret approval draws its card in the text's place: the item body's facts are the card's rows, so the body stays in the answered fold
+function SheetBodyQ({ item, copies = [item], rails = [], draft, onDraft, cliPath, isDone = false, scanRead = EMPTY_SCAN_READ_Q }) {
 	const isAnsweredDecision = item.kind === "decision" && Boolean(item.answeredAt);
 	return (
 		<div className="queue-sheet-body">
@@ -2351,8 +2376,9 @@ function SheetBodyQ({ item, copies = [item], rails = [], draft, onDraft, cliPath
 			{item.kind === "relay" ? <RelayBlockQ item={item} copies={copies} rails={rails} isDone={isDone} /> : (
 				<>
 					<h3 className="queue-sheet-title">{item.title}</h3>
-					{isAnsweredDecision ? <YourAnswerQ item={item} isDone={isDone} /> : <ItemTextQ item={item} />}
-					{item.kind === "decision" && item.status === "open" && <OptionsQ item={item} draft={draft} onDraft={onDraft} />}
+					{item.scanApproval && <ScanCardQ item={item} read={scanRead} />}
+					{isAnsweredDecision ? <YourAnswerQ item={item} isDone={isDone} /> : !item.scanApproval && <ItemTextQ item={item} />}
+					{item.kind === "decision" && item.status === "open" && <OptionsQ item={item} draft={draft} onDraft={onDraft} isOnlySafe={isScanClosedQ(item, scanRead)} />}
 					{isDone ? <AnswerLineQ item={item} /> : <CardStateQ item={item} cliPath={cliPath} />}
 					{isAnsweredDecision && <OriginalQuestionQ item={item} />}
 					{item.resumes.length > 0 && <ResumeRecordListQ resumes={item.resumes} profileLabel={item.session.profileLabel} />}
@@ -2360,6 +2386,202 @@ function SheetBodyQ({ item, copies = [item], rails = [], draft, onDraft, cliPath
 			)}
 		</div>
 	);
+}
+
+/**
+ * A secret approval's request on the page: the list read's state, its expiry judged against now on each read and on open.
+ * The recommended option is the server's Decline → an answer with it declined, any other approved; no copy of the server's codes.
+ * @returns "pending" | "expired" | "gone" | "approved" | "ended" | "declined" | "withdrawn"; null on any other item
+ */
+function getScanStateQ(item, now = Date.now()) {
+	const facts = item.scanApproval;
+	if (!facts) return null;
+	if (item.status === "withdrawn") return "withdrawn";
+	if (item.answeredAt) return item.answer?.code === item.recommendedCode ? "declined" : getApprovedStateQ(facts, now);
+	if (facts.state !== "pending") return "gone";
+	return Date.parse(facts.expiresAt) <= now ? "expired" : "pending";
+}
+
+// no end note from the store → used, expired or dropped by a restart read alike once the window is over
+function getApprovedStateQ(facts, now) {
+	return facts.state === "approved" && Date.parse(facts.expiresAt) > now ? "approved" : "ended";
+}
+
+// an open row's fact: its line count while the request waits, else how it ended
+function getScanFactQ(item) {
+	const state = getScanStateQ(item);
+	if (state === "expired") return "Expired";
+	if (state !== "pending") return "Gone";
+	const count = item.scanApproval.lineCount;
+	return `${count} ${count === 1 ? "line" : "lines"}`;
+}
+
+// an ended request's fact → the tag's word where the list leaves the fact cell out (base.css → .queue-row-tag-narrow)
+function getScanEndFactQ(item) {
+	const state = getScanStateQ(item);
+	return state === "expired" || state === "gone" ? getScanFactQ(item) : undefined;
+}
+
+function getScanEndWordQ(state) {
+	if (state === "declined") return "Declined";
+	return state === "withdrawn" ? "Withdrawn" : "Approved";
+}
+
+// Approve opens only on a waiting request whose lines are on screen
+function isScanClosedQ(item, read) {
+	return Boolean(item.scanApproval) && (getScanStateQ(item) !== "pending" || read.status !== "ready");
+}
+
+// a closed option is never the picked one → the options and the foot read nothing picked (layout §3 → conflict on approve)
+function getShownDraftQ(draft, item, read) {
+	return isClosedOptionQ(item, draft.code, isScanClosedQ(item, read)) ? { ...draft, code: undefined } : draft;
+}
+
+// the lines off screen → every option but the recommended Decline closed
+function isClosedOptionQ(item, code, isOnlySafe) {
+	return isOnlySafe && code !== undefined && code !== item.recommendedCode;
+}
+
+/**
+ * The owner read of a waiting request's captured lines, made when its sheet opens. Held in this sheet's state alone →
+ * dropped once the request stops waiting or the sheet closes; never the list, the URL, storage or a log.
+ * @returns `{ status: "loading" | "ready" | "failed", data, retry }`
+ */
+function useScanReadQ(item) {
+	const isPending = getScanStateQ(item) === "pending";
+	const [read, setRead] = useStateQ(EMPTY_SCAN_READ_Q);
+	const [attempt, setAttempt] = useStateQ(0);
+	useEffectQ(() => {
+		setRead(EMPTY_SCAN_READ_Q);
+		if (!isPending) return undefined;
+		let isLive = true;
+		readScanLinesQ(item.id).then((next) => isLive && setRead(next));
+		return () => { isLive = false; };
+	}, [item.id, isPending, attempt]);
+	return { ...read, retry: () => setAttempt((count) => count + 1) };
+}
+
+// the route answers private, no-store, and the page keeps no service worker → no cache holds the reply
+async function readScanLinesQ(id) {
+	const answer = await sendOwnerRequestQ(`/items/${id}/scan-approval`);
+	return isOkAnswerQ(answer) && Array.isArray(answer.data?.lines) ? { status: "ready", data: answer.data } : { status: "failed", data: null };
+}
+
+/** The card in the item text's place: the cue, each captured line's head and plate, the facts and the warning; once the request stops waiting, its state line. */
+function ScanCardQ({ item, read }) {
+	const state = getScanStateQ(item);
+	if (state !== "pending") return <ScanEndQ item={item} state={state} />;
+	return (
+		<>
+			<ScanCaptureQ read={read} />
+			<ScanFactsQ item={item} read={read.data} isPending />
+			<div className="scan-warning"><ToneLineQ tone="warn">{SCAN_Q.WARNING}</ToneLineQ></div>
+		</>
+	);
+}
+
+function ScanCaptureQ({ read }) {
+	if (read.status === "loading") return <p className="scan-state fs-meta text-dim">Reading the captured lines…</p>;
+	if (read.status === "failed") {
+		return (
+			<div className="scan-state queue-note-failure">
+				<ToneLineQ tone="warn">The captured lines could not be read.</ToneLineQ>
+				<button type="button" className="btn ghost sm" onClick={read.retry}>Retry</button>
+			</div>
+		);
+	}
+	const { lines } = read.data;
+	return (
+		<>
+			<ScanCueQ lines={lines} />
+			{lines.map((line, index) => (
+				<div key={`${index}-${line.hash}`} className="scan-line">
+					<ScanLineHeadQ value={line.value} index={index} count={lines.length} />
+					<ScanPlateQ segments={line.segments} />
+				</div>
+			))}
+		</>
+	);
+}
+
+// one ⚠ for the cue, on the summary alone
+function ScanCueQ({ lines }) {
+	const { text, isLiteral } = getCueSummaryQ(lines);
+	if (!isLiteral) return <p className="scan-cue">{text}</p>;
+	return <p className="scan-cue"><span aria-hidden="true" className="text-warn">{`${window.UI.TONE_GLYPH.warn} `}</span><span className="font-semibold">{text}</span></p>;
+}
+
+function getCueSummaryQ(lines) {
+	const literal = lines.filter((line) => line.value.cue === "literal").length;
+	if (lines.length === 1) return literal ? { text: "The line assigns a literal value.", isLiteral: true } : { text: "The line assigns a reference, not a literal value.", isLiteral: false };
+	if (literal > 0) return { text: `${literal} of ${lines.length} lines assign a literal value.`, isLiteral: true };
+	return { text: `None of the ${lines.length} lines assigns a literal value.`, isLiteral: false };
+}
+
+// the server's cue, length and classes as they are, nothing recomputed
+function ScanLineHeadQ({ value, index, count }) {
+	return (
+		<p className="scan-line-head">
+			<span className={value.cue === "literal" ? "font-semibold" : "text-dim"}>{SCAN_Q.CUE[value.cue] ?? value.cue}</span>
+			<span className="tabular-nums">{`${value.length.toLocaleString("en-US")} ${value.length === 1 ? "character" : "characters"}`}</span>
+			<span>{value.classes.map((name) => SCAN_Q.CLASS[name] ?? name).join(", ")}{count > 1 && <span className="text-dim whitespace-nowrap">{` · ${index + 1} of ${count}`}</span>}</span>
+		</p>
+	);
+}
+
+// the server's segments in order: a text run one text node, a mark one tile — never HTML, Markdown or a link; wraps, never cut
+function ScanPlateQ({ segments }) {
+	return <div className="scan-plate" dir="ltr">{segments.map((segment, index) => (typeof segment.mark === "string" ? <ScanMarkQ key={index} label={segment.mark} /> : segment.text))}</div>;
+}
+
+function ScanMarkQ({ label }) {
+	const name = `hidden character ${label}`;
+	return <span className="scan-mark" role="img" aria-label={name} title={name}>{label}</span>;
+}
+
+/**
+ * What an approval binds, each value whole: the read's path, rule and agent, the item's session, and the server's times.
+ * @param read - the owner read's reply; null → its rows are left out
+ */
+function ScanFactsQ({ item, read, isPending = false }) {
+	const { MachineString } = window.UI;
+	const facts = item.scanApproval;
+	const rows = [
+		read && ["File", <MachineString>{read.path}</MachineString>],
+		read && ["Rule", <><MachineString>{read.rule}</MachineString>{SCAN_Q.RULE[read.rule] && <span className="text-dim">{` ${SCAN_Q.RULE[read.rule]}`}</span>}</>],
+		["Session", <><span className="font-semibold">{item.session.name}</span>{" "}<MachineString>{item.session.id}</MachineString></>],
+		read && ["Agent", read.agentType ? <MachineString>{read.agentType}</MachineString> : "Main session"],
+		["Approval", isPending ? getApprovalWindowQ(item.body) : `Once, until ${window.UI.formatKstTime(facts.expiresAt)}`],
+		isPending && ["Waits", `Until ${getEndTimeQ(facts.expiresAt)}`],
+	].filter((row) => row && row[1]);
+	return <dl className="scan-facts">{rows.map(([label, value]) => <React.Fragment key={label}><dt>{label}</dt><dd>{value}</dd></React.Fragment>)}</dl>;
+}
+
+// the server's item body states the approval window → its figure, never a page constant; none found → no row
+function getApprovalWindowQ(body) {
+	const minutes = /within (\d+) minutes/.exec(body)?.[1];
+	return minutes ? `Once, within ${minutes} minutes of your yes` : null;
+}
+
+// the request no longer waits → its line in the plates' place; an open approval keeps what it binds
+function ScanEndQ({ item, state }) {
+	const at = item.answeredAt ? window.UI.formatKstTime(item.answeredAt) : "";
+	return (
+		<>
+			{state === "approved"
+				? <div className="scan-state"><ToneLineQ tone="ok">{`Approved ${at}. The line was dropped; its hash remains.`}</ToneLineQ></div>
+				: <p className="scan-state fs-meta text-dim">{getScanEndLineQ(state, at)}</p>}
+			{state === "approved" && <ScanFactsQ item={item} read={null} />}
+		</>
+	);
+}
+
+function getScanEndLineQ(state, at) {
+	if (state === "ended") return "Approval ended: used, expired or lost in a monitor restart.";
+	if (state === "declined") return `Declined ${at}. The line was dropped; nothing was written.`;
+	if (state === "withdrawn") return "The session withdrew the request. The line was dropped.";
+	if (state === "expired") return "Expired: no answer within 24 hours. The line was dropped.";
+	return "Gone: the monitor restarted. The session must ask again.";
 }
 
 /**
@@ -2493,29 +2715,33 @@ function DocumentsLineQ({ item }) {
 	);
 }
 
-// no option preselected → the recommended answer is never one press away
-function OptionsQ({ item, draft, onDraft }) {
+/**
+ * No option preselected → the recommended answer is never one press away.
+ * @param isOnlySafe - every option but the recommended one closed, with its reason (a secret approval whose lines are not on screen)
+ */
+function OptionsQ({ item, draft, onDraft, isOnlySafe = false }) {
 	return (
 		<fieldset className="queue-options queue-kind">
 			<legend>Options</legend>
 			{(item.options ?? []).map((option) => (
 				<OptionRowQ key={option.code} itemId={item.id} option={option} isRecommended={option.code === item.recommendedCode}
-					isChecked={draft.code === option.code} onPick={() => onDraft({ code: option.code })} />
+					isChecked={draft.code === option.code} isClosed={isClosedOptionQ(item, option.code, isOnlySafe)} onPick={() => onDraft({ code: option.code })} />
 			))}
 		</fieldset>
 	);
 }
 
-function OptionRowQ({ itemId, option, isRecommended, isChecked, onPick }) {
+function OptionRowQ({ itemId, option, isRecommended, isChecked, isClosed = false, onPick }) {
 	const { Badge } = window.UI;
 	return (
-		<label className="queue-option">
-			<input id={`queue-option-${itemId}-${option.code}`} type="radio" className="ctl-radio" name={`queue-options-${itemId}`} checked={isChecked} onChange={onPick} />
+		<label className={isClosed ? "queue-option is-closed" : "queue-option"}>
+			<input id={`queue-option-${itemId}-${option.code}`} type="radio" className="ctl-radio" name={`queue-options-${itemId}`} checked={isChecked} disabled={isClosed} onChange={onPick} />
 			<span className="min-w-0">
 				<span className="queue-option-head">
 					<span><span className="text-dim">{option.code}</span>{` ${option.label}`}</span>
 					{isRecommended && <Badge fill="tag">Recommended</Badge>}
 				</span>
+				{isClosed && <span className="queue-option-reason">{SCAN_Q.CLOSED}</span>}
 				{(option.pros || option.cons) && (
 					<span className="queue-option-sides">
 						{option.pros && <><span className="queue-label">Pros</span><span>{option.pros}</span></>}
