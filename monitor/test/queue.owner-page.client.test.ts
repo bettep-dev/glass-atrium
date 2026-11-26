@@ -1663,10 +1663,6 @@ describe("a relay on its way", () => {
       shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}, 1 next turn` },
     },
     {
-      name: "with one session ticked the name column is left out and the title names both ends", copies: toYoaida(), isNameShown: false,
-      shape: { who: null, mark: null, title: `${NAMED} → yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
-    },
-    {
       name: "a redacted relay reads Text redacted where its title stood", copies: toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } }), isNameShown: true,
       shape: { who: "aidl", mark: "self", title: "→ yoaida Text redacted", tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: Text redacted` },
     },
@@ -1678,6 +1674,32 @@ describe("a relay on its way", () => {
       assert.match(String(findNodes(tree, (node) => node.props?.role === "option")[0]?.props["aria-label"]), /, sent \S+ ago$/);
     });
   }
+
+  // one session ticked → the sender leads the title cell as the name column draws it: the cut name, then the page's own mark outside it and
+  // outside the cut recipient and title; the full sender words in the name's tooltip and the row's accessible name, the cell's tooltip the title
+  test("with one session ticked the title cell leads with the sender's name and its self mark, each its own part before the recipient and title", () => {
+    const tree = renderRow(toYoaida(), false);
+    const [cell] = byClass(tree, "queue-row-title");
+    const partOf = (node: unknown) => {
+      const part = node as RenderedNode;
+      return { className: part.props?.className, text: collectText(part).replace(/\s+/g, " ").trim(), tip: part.props?.title, isHidden: part.props?.["aria-hidden"] === "true" };
+    };
+    const [from, ends] = (cell?.children ?? []).filter((child) => typeof child === "object" && child !== null) as RenderedNode[];
+    assert.deepEqual({
+      cell: { names: byClass(tree, "queue-row-who").length, tip: cell?.props.title, parts: [from, ends].map((part) => part?.props.className) },
+      from: findNodes(from!, (node) => node !== from && String(node.props?.className ?? "").startsWith("queue-row-")).map(partOf),
+      ends: collectText(ends!).replace(/\s+/g, " ").trim(),
+      label: getRowShape(tree).label,
+    }, {
+      cell: { names: 0, tip: TITLE, parts: ["queue-row-from", "queue-row-ends"] },
+      from: [
+        { className: "queue-row-name", text: "aidl", tip: NAMED, isHidden: false },
+        { className: "queue-row-mark", text: "self", tip: "self-named", isHidden: true },
+      ],
+      ends: `→ yoaida ${TITLE}`,
+      label: `Relay from ${NAMED} to yoaida: ${TITLE}`,
+    });
+  });
 
   test("a redacted relay's stored text is drawn nowhere on its row or its sheet", () => {
     const copies = toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } });

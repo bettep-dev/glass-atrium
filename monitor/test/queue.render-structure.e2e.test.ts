@@ -816,6 +816,11 @@ async function showMoreDone(page: Page): Promise<void> {
   await page.locator(".queue-row--done").last().scrollIntoViewIfNeeded();
 }
 
+// relay copy `id` sent under a name its sender gave itself
+function getSelfNamedFixture(fixture: QueueFixture, id: number, selfDeclaredName: string): QueueFixture {
+  return { ...fixture, items: fixture.items.map((item) => (item.id === id && item.relay !== null ? { ...item, relay: { ...item.relay, sender: { ...item.relay.sender, selfDeclaredName } } } : item)) };
+}
+
 async function tickSessions(page: Page, names: string[]): Promise<void> {
   for (const name of names) await page.getByLabel(`Select ${name}`).check();
 }
@@ -1788,9 +1793,10 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(heights.filter((row) => !row.isRowHeight), []);
   });
 
-  // one sender reads as one name on every row; a self-declared name's mark stands whole beside it, outside the cut, its words in the tooltips
-  test("a sender's name paints the same on its decision, refused and relay rows at 1280, 1440 and 1568, and only a self-named relay row adds the whole self mark", async () => {
-    harness.fixture = getRelayListFixture(true);
+  // one sender reads as one name on every row; a self-declared name's mark stands whole beside it, outside the cut, its words in the tooltips;
+  // the fixture's longest name, nine letters, self-named on relay 421 → name and mark still whole in the name column, every title on one x
+  test("a sender's name paints the same on its decision, refused and relay rows at 1280, 1440 and 1568, and only a self-named relay row adds the whole self mark, a nine-letter name whole beside it and every title on one x", async () => {
+    harness.fixture = getSelfNamedFixture(getRelayListFixture(true), RELAY_ROW_IDS.one, "portfolio");
     const shown = [];
     for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
       const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
@@ -1805,6 +1811,7 @@ describe("queue page on the mockup fixtures", () => {
           name: name.textContent, painted: isWhole(name) ? name.textContent : "cut", isSelfNamed: name.title.endsWith(" (self-named)"),
           mark: mark && { text: mark.textContent, tip: mark.title, isHidden: mark.getAttribute("aria-hidden") === "true", isWhole: isWhole(mark) && !name.contains(mark) },
           label: [" to ", ": "].some((end) => row.getAttribute("aria-label")?.includes(`from ${name.title}${end}`)),
+          titleAt: Math.round(row.querySelector(".queue-row-title")!.getBoundingClientRect().left),
         }];
       }));
       await page.close();
@@ -1812,7 +1819,8 @@ describe("queue page on the mockup fixtures", () => {
     }
 
     const byName = shown.flatMap(({ width, rows }) => [...new Set(rows.map((row) => row.name))].map((name) => ({ width, name, painted: [...new Set(rows.filter((row) => row.name === name).map((row) => row.painted))] })));
-    assert.ok(shown.every(({ rows }) => rows.some((row) => row.isSelfNamed) && rows.some((row) => !row.isSelfNamed)), "each width paints self-named and recorded names");
+    assert.ok(shown.every(({ rows }) => rows.some((row) => row.name === "portfolio" && row.isSelfNamed) && rows.some((row) => !row.isSelfNamed)), "each width paints the self-named nine-letter name and recorded names");
+    assert.deepEqual(shown.map(({ width, rows }) => ({ width, titleAts: new Set(rows.map((row) => row.titleAt)).size })), shown.map(({ width }) => ({ width, titleAts: 1 })), "every title on one x");
     assert.deepEqual(byName.filter(({ painted }) => painted.length > 1 || painted[0] === "cut"), [], "a sender's name paints whole and alike on every row");
     assert.deepEqual(
       shown.flatMap(({ width, rows }) => rows.map((row) => ({ width, mark: row.mark, label: row.label }))),
@@ -1835,6 +1843,30 @@ describe("queue page on the mockup fixtures", () => {
 
     assert.ok(facts.rows > 0, "the ticked session has rows");
     assert.deepEqual({ names: facts.names, titleStarts: facts.titleStarts }, { names: 0, titleStarts: [facts.labelStart] });
+  });
+
+  // one session ticked → the sender rides the title cell; a long name the peer gave itself is cut there, never the page's mark beside it
+  test("with one session ticked a relay's title cell at 1280 cuts a long self-declared sender name and keeps its self mark whole before the recipient", async () => {
+    harness.fixture = getSelfNamedFixture(getRelayRowFixture(), RELAY_ROW_IDS.one, EDGE_LONG_SESSION_NAME);
+    const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+    await tickSessions(page, ["yoaida"]);
+    await page.locator(".queue-row-title .queue-row-mark").first().waitFor();
+    const cell = await page.evaluate((named) => {
+      const name = [...document.querySelectorAll<HTMLElement>(".queue-row-title .queue-row-name")].find((one) => one.title === named)!;
+      const title = name.closest(".queue-row-title")!.getBoundingClientRect();
+      const mark = name.parentElement!.querySelector<HTMLElement>(".queue-row-mark")!;
+      const [nameBox, markBox] = [name.getBoundingClientRect(), mark.getBoundingClientRect()];
+      const ends = name.closest(".queue-row-title")!.querySelector<HTMLElement>(".queue-row-ends")!;
+      return {
+        isNameCut: getComputedStyle(name).textOverflow === "ellipsis" && name.scrollWidth > name.clientWidth,
+        mark: { text: mark.textContent, isOutsideName: !name.contains(mark), isWhole: mark.scrollWidth <= mark.clientWidth && markBox.left >= nameBox.right - 0.5 && markBox.right <= title.right + 0.5 },
+        ends: { text: ends.textContent?.startsWith("→ yoaida "), isAfterMark: ends.getBoundingClientRect().left >= markBox.right && ends.getBoundingClientRect().width > 0 },
+        label: name.closest(".queue-row")!.getAttribute("aria-label")?.startsWith(`Relay from ${named} to yoaida: `),
+      };
+    }, `${EDGE_LONG_SESSION_NAME} (self-named)`);
+    await page.close();
+
+    assert.deepEqual(cell, { isNameCut: true, mark: { text: "self", isOutsideName: true, isWhole: true }, ends: { text: true, isAfterMark: true }, label: true });
   });
 
   // spec §11: the desk's keys on the real page, and the inset ring on the rows the cards clip
@@ -3373,22 +3405,22 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { text: EDGE_LONG_SESSION_NAME, height: 44, isCut: true, isInsideRail: true });
     });
 
-    // spec §4.2 → Column rule, §14.3: one 44 line — name 80 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
+    // spec §4.2 → Column rule, §14.3: one 44 line — name 104 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
     // either side of the title; a band draws the tag and the fact column only while one of its rows fills it, then on every row, an empty
     // cell keeping its width; a column a band leaves out gives the title its width (tag 88, fact 72); under 160 of title (1280, names shown,
-    // tag drawn) the fact column is left out, and the 1280 title still holds about 12 Hangul.
+    // tag drawn) the fact column is left out, so a drawn title never holds less than 160.
     // The edge fixture's 100-character session is one recipient of a seven-session order → the name fixture sends one open item from it;
     // the Done bands (spec §4.6), relays on their way (spec §9.9) and Done and refused relays beside decisions and reports (layout §6 → Shared x) follow the same rule
-    test("with nothing ticked every list row, open, done, a relay on its way, a Done relay or a refused one, is one 44 line on its band's columns at 1280, 1440 and 1568: tag and fact drawn only in a band whose rows fill them, each drawn column at one x in every band, the title taking a left-out column's width, at least 200 of it at 1280, a 100-character name cut inside its 80", async () => {
+    test("with nothing ticked every list row, open, done, a relay on its way, a Done relay or a refused one, is one 44 line on its band's columns at 1280, 1440 and 1568: tag and fact drawn only in a band whose rows fill them, each drawn column at one x in every band, the title taking a left-out column's width, at least 160 of it at 1280, a 100-character name cut inside its 104", async () => {
       // each cell's x from the row's start and its width; a cell the band does not draw → `-`
       const getLayout = (width: number, cols: string) => {
         const isTagShown = cols.split(" ").includes("tag");
-        const isFactShown = cols.split(" ").includes("fact") && !(isTagShown && width < 512);
+        const isFactShown = cols.split(" ").includes("fact") && !(isTagShown && width < 536);
         const trailing = [isTagShown ? 80 : 0, isFactShown ? 64 : 0, 32, 16];
         const drawn = trailing.filter((cell) => cell > 0);
-        const title = width - 32 - 80 - drawn.reduce((sum, one) => sum + one) - 8 * (1 + drawn.length) - 8;
+        const title = width - 32 - 104 - drawn.reduce((sum, one) => sum + one) - 8 * (1 + drawn.length) - 8;
         let x = 16;
-        return [[80, 12], [title, 12], ...trailing.map((cell) => [cell, cell === 0 ? 0 : 8])].map(([cell, after]) => {
+        return [[104, 12], [title, 12], ...trailing.map((cell) => [cell, cell === 0 ? 0 : 8])].map(([cell, after]) => {
           const at = cell === 0 ? "-" : `${x}+${cell}`;
           x += cell! + after!;
           return at;
@@ -3432,7 +3464,7 @@ describe("queue page on the mockup fixtures", () => {
       );
       assert.deepEqual(shown.filter((one) => one.width < 1568).map((one) => one.rowWidths[0]), [482, 482, 482, 482, 586, 586, 586, 586], "the panes of DESK_WIDTHS, less the card's two 1 px borders");
       const titles1280 = shown.filter((one) => one.width === 1280).flatMap((one) => one.bands.map((band) => Number(band.layouts[0]?.split(" ")[1]?.split("+")[1])));
-      assert.ok(titles1280.every((title) => title >= 200), `the 1280 title holds 200: ${titles1280}`);
+      assert.ok(titles1280.every((title) => title >= 160), `the 1280 title holds 160: ${titles1280}`);
     });
 
     // spec §9.3 / §18.4 27: the thread's recipient row holds the long name the rail holds — one cut line, the receipt and Resend whole beside it

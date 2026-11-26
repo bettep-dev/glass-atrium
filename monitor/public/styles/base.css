@@ -1033,11 +1033,12 @@ label.ctl-checkbox-hit {
 	padding: var(--space-1_5) var(--card-pad);
 	white-space: nowrap;
 }
-/* a row (spec §4.2): one 20 line between 12 paddings → 44 — name 80 · title · tag 80 · fact 64 · age 32 · chevron 16;
-   8 between columns, the title's 4 margins making its 12 on either side. 80 holds "12 sessions" whole.
+/* a row (spec §4.2): one 20 line between 12 paddings → 44 — name 104 · title · tag 80 · fact 64 · age 32 · chevron 16;
+   8 between columns, the title's 4 margins making its 12 on either side. 104 holds a nine-letter name and its self mark whole.
    Template = the name lead + its band's tail (data-cols) → one band, one set of columns; a column a band leaves out gives the title its width */
 .queue-row {
-	--queue-row-lead: 80px minmax(0, 1fr);
+	--queue-row-name: 104px;
+	--queue-row-lead: var(--queue-row-name) minmax(0, 1fr);
 	display: grid;
 	grid-template-columns: var(--queue-row-lead) var(--queue-row-tail);
 	column-gap: var(--space-2);
@@ -1065,7 +1066,7 @@ label.ctl-checkbox-hit {
 }
 /* under 160 of title the fact column is left out, its fact kept in the row's title and name — at the 1280 list only a band
    drawing the tag beside the names; every other band keeps 160 there */
-@container queue-list (width < 512px) {
+@container queue-list (width < 536px) {
 	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) {
 		--queue-row-tail: 80px 32px 16px;
 	}
@@ -1124,6 +1125,7 @@ label.ctl-checkbox-hit {
 }
 .queue-row-title,
 .queue-row-name,
+.queue-row-ends,
 .queue-row-fact {
 	overflow: hidden;
 	white-space: nowrap;
@@ -1137,6 +1139,17 @@ label.ctl-checkbox-hit {
 	color: rgb(var(--faint));
 	text-decoration: underline dotted;
 	text-underline-offset: 2px;
+}
+/* one session ticked → the sender leads the title cell as the name column draws it, never wider than that column:
+   its name cut first, its mark whole, then the rest of the title cut on its own */
+.queue-row-title:has(> .queue-row-from) {
+	display: flex;
+	gap: var(--space-1);
+}
+.queue-row-from {
+	display: flex;
+	flex: none;
+	max-width: var(--queue-row-name);
 }
 /* up to two count atoms, worst first; both fit the 80 */
 .queue-row-tag {

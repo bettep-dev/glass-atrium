@@ -1883,25 +1883,31 @@ function getCopiesNameQ(copies) {
  */
 function getRowTitleQ(row, isNameShown, names) {
 	const { item } = row;
+	const from = isNameShown ? null : <RowWhoQ row={row} names={names} />;
 	if (row.refusal) {
-		const { sender, to, reason } = getRefusalEndsQ(row.refusal, names);
-		return getArrowTitleQ({ from: sender, to, text: reason, isQuiet: true }, isNameShown);
+		const { to, reason } = getRefusalEndsQ(row.refusal, names);
+		return getArrowTitleQ({ from, to, text: reason, isQuiet: true });
 	}
 	if (item.kind !== "relay") return <span className="queue-row-title" title={item.title}>{item.title}</span>;
 	const isRedacted = item.relay.redaction !== null;
-	const ends = { from: getSenderLabelQ(item.relay.sender), to: getCopiesNameQ(row.copies), text: getRelayTitleQ(item), isQuiet: isRedacted };
-	return getArrowTitleQ({ ...ends, tip: isRedacted ? undefined : item.title }, isNameShown);
+	return getArrowTitleQ({ from, to: getCopiesNameQ(row.copies), text: getRelayTitleQ(item), isQuiet: isRedacted, tip: isRedacted ? undefined : item.title });
 }
 
-// `from → to text`, `from` left to the name column when it is drawn; a quiet text is dim 400
-function getArrowTitleQ({ from, to, text, isQuiet, tip }, isNameShown) {
-	return (
-		<span className="queue-row-title" title={tip}>
-			{!isNameShown && from}
-			<span className="font-normal text-dim">{isNameShown ? "→ " : " → "}</span>
+// `→ to text`; with the name column left out the sender leads as that column draws it, name and mark outside the cut of the rest
+function getArrowTitleQ({ from, to, text, isQuiet, tip }) {
+	const ends = (
+		<>
+			<span className="font-normal text-dim">{"→ "}</span>
 			{to}
 			{" "}
 			<span className={isQuiet ? "font-normal text-dim" : undefined}>{text}</span>
+		</>
+	);
+	if (from === null) return <span className="queue-row-title" title={tip}>{ends}</span>;
+	return (
+		<span className="queue-row-title" title={tip}>
+			<span className="queue-row-from">{from}</span>
+			<span className="queue-row-ends">{ends}</span>
 		</span>
 	);
 }
