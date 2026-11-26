@@ -420,20 +420,24 @@ get_hash() {
   printf '%s' "${1}" | get_line_hashes
 }
 
-@test "an approved SEC-013 write passes once: consume carries the tuple and the line hash, the log only ids and hashes" {
-  local hash expected log
+# The log lasts at 0644 and an unsalted line hash of a short secret can be guessed back → the log holds no hash.
+@test "an approved SEC-013 write passes once: consume carries the tuple and the line hashes, the log the stamp, rule, request id and approved-line count" {
+  local upper="PASS""WORD" first second expected log
+  upper="${upper}: hunter2hunter2"
   use_monitor_stub
   set_reply 200 "{\"decision\":\"pass\",\"requestId\":\"${REQUEST_ID}\"}"
-  hash="$(get_hash "${CRED_FIXTURE}")"
-  run_hook "$(get_session_envelope "const a = 1"$'\n'"${CRED_FIXTURE}"$'\n'"const b = 2")"
+  first="$(get_hash "${CRED_FIXTURE}")"
+  second="$(get_hash "${upper}")"
+  run_hook "$(get_session_envelope "${CRED_FIXTURE}"$'\n'"const a = 1"$'\n'"${upper}")"
   [[ "${status}" -eq 0 && -z "${output}" ]] || { echo "status ${status}: ${output}"; return 1; }
-  expected="$(jq -cnS --arg s "${SESSION_ID}" --arg p "${TARGET}" --arg h "${hash}" \
-    '{sessionId:$s,path:$p,rule:"SEC-013",hashes:[$h]}')"
+  expected="$(jq -cnS --arg s "${SESSION_ID}" --arg p "${TARGET}" --arg a "${first}" --arg b "${second}" \
+    '{sessionId:$s,path:$p,rule:"SEC-013",hashes:[$a,$b]}')"
   [[ "$(get_request_body "${CONSUME_ROUTE}")" == "${expected}" && "$(request_count)" -eq 1 ]] \
     || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
   log="$(cat "${GA_DATA_ROOT}/logs/validate-secret-scan.log")"
-  [[ "${log}" == *"${REQUEST_ID}"* && "${log}" == *"${hash}"* && "${log}" != *"${CRED_FIXTURE}"* ]] \
+  [[ "${log}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\ SEC-013\ approved\ write\ passed\ request=${REQUEST_ID}\ lines=2$ ]] \
     || { echo "log: ${log}"; return 1; }
+  [[ ! "${log}" =~ [0-9a-f]{64} && "${log}" != *"${CRED_FIXTURE}"* ]] || { echo "log: ${log}"; return 1; }
 }
 
 @test "an unapproved SEC-013 write gets the rule's own refusal, naming the registered request id and the one route, never the line" {

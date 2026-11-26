@@ -138,7 +138,7 @@ get_scan_reply() {
 }
 
 # Asks the monitor to consume the owner's approval of this write's SEC-013 lines, within APPROVAL_DEADLINE_S.
-# Returns 0 only on the monitor's pass, with a hash-only log line; else 1 with APPROVAL_NOTE the refusal's added line.
+# Returns 0 only on the monitor's pass, with a hash-free log line; else 1 with APPROVAL_NOTE the refusal's added line.
 # Args: $1=scanned blob
 is_approved_write() {
   local outcome status=0
@@ -198,14 +198,15 @@ get_request_note() {
     "${APPROVAL_PREFIX}" "${1}"
 }
 
-# One line per approved pass → which approval let which line hashes through; ids and hashes only.
+# One line per approved pass → which approval let how many lines through; no hash — the log lasts at 0644 and
+# an unsalted hash of a short line can be guessed back.
 # Args: $1=request id · $2=hashes joined by commas
 put_pass_log() {
-  local stamp
+  local stamp commas="${2//[!,]/}"
   stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || stamp=unknown-time
   mkdir -p -- "${HOOK_LOG_DIR}" 2>/dev/null || return 0
   # GA-ABSORB[benign]: the pass is the monitor's consume; a lost log line never turns it into a refusal
-  (printf '%s %s approved write passed request=%s hashes=%s\n' "${stamp}" "${APPROVABLE_RULE}" "${1}" "${2}") \
+  (printf '%s %s approved write passed request=%s lines=%s\n' "${stamp}" "${APPROVABLE_RULE}" "${1}" "$((${#commas} + 1))") \
     >>"${HOOK_LOG_DIR}/validate-secret-scan.log" 2>/dev/null || true
 }
 
