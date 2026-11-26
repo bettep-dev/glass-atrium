@@ -6,8 +6,6 @@ import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import { QueueRequestError } from "../src/server/queue/errors.js";
@@ -23,9 +21,8 @@ import {
 const FIELD_LENGTH = SECRET_REQUEST_LIMIT.FIELD_LENGTH;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
-const HERE = path.dirname(fileURLToPath(import.meta.url));
 const VECTORS: { lines: Array<{ name: string; text: string; sha256: string }> } = JSON.parse(
-  readFileSync(path.join(HERE, "fixtures", "scan-approval-vectors.json"), "utf8"),
+  readFileSync(new URL("../../hooks/test/fixtures/scan-approval-vectors.json", import.meta.url), "utf8"),
 );
 const CONFIG_PATH = "/Users/dev/projects/shop/src/config/database.ts";
 const LINE = {

@@ -29,7 +29,7 @@ SCAN_CLEAN=0
 SCAN_MATCH=3
 SCAN_LIST_FLAG="--list-all"
 # the line-hash vectors the monitor's getLineHash is pinned by → the hook must hash every one the same way
-VECTORS="${BATS_TEST_DIRNAME}/../../monitor/test/fixtures/scan-approval-vectors.json"
+VECTORS="${BATS_TEST_DIRNAME}/fixtures/scan-approval-vectors.json"
 APPROVAL_LIB="${BATS_TEST_DIRNAME}/../lib/scan-approval.sh"
 # shellcheck source-path=SCRIPTDIR source=lib/queue-monitor-stub.bash
 source "${BATS_TEST_DIRNAME}/lib/queue-monitor-stub.bash"

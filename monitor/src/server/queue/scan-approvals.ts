@@ -234,7 +234,7 @@ export class SecretRequestRepository {
 export const secretRequests = new SecretRequestRepository();
 
 /**
- * The one canonical line hash; the hook implements the same spec, both pinned by test/fixtures/scan-approval-vectors.json.
+ * The one canonical line hash; the hook implements the same spec, both pinned by hooks/test/fixtures/scan-approval-vectors.json.
  * - a line: the raw bytes between LF separators of the field the hook scans (content for Write, new_string for Edit)
  * - a CR stays part of its line · no trailing newline added · no Unicode normalization
  * - SHA-256 over the line's UTF-8 bytes → lowercase hex

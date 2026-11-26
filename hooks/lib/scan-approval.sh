@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scan-approval.sh — the hook side of an owner-approved secret-scan write: the line hash the monitor binds an
 # approval to. One canonical spec, the monitor's (monitor/src/server/queue/scan-approvals.ts → getLineHash);
-# both sides are pinned by monitor/test/fixtures/scan-approval-vectors.json.
+# both sides are pinned by hooks/test/fixtures/scan-approval-vectors.json.
 # Bash 3.2+ (macOS stock); python3, which the secret-scan hook already requires.
 
 # shellcheck disable=SC2317  # source-context-unaware false positive on this double-source guard
