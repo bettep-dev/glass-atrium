@@ -20,6 +20,7 @@ import {
   getLineHash,
 } from "../src/server/queue/scan-approvals.js";
 
+const FIELD_LENGTH = SECRET_REQUEST_LIMIT.FIELD_LENGTH;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -109,6 +110,10 @@ describe("register", () => {
     { name: "one byte past the byte cap", input: buildInput([tooLong]), code: "secret_request_size" },
     { name: "a line holding an LF", input: buildInput([`${LINE.host}\n${LINE.port}`]), code: "secret_line_malformed" },
     { name: "a line holding a lone surrogate", input: buildInput([`label = "\uD83D"`]), code: "secret_line_malformed" },
+    { name: "a session id past its length cap", input: buildInput([LINE.host], { sessionId: "8".repeat(FIELD_LENGTH.SESSION_ID + 1) }), code: "secret_request_field_length" },
+    { name: "a path past its length cap", input: buildInput([LINE.host], { path: `/${"p".repeat(FIELD_LENGTH.PATH)}` }), code: "secret_request_field_length" },
+    { name: "an agent id past its length cap", input: buildInput([LINE.host], { agent: { id: "a".repeat(FIELD_LENGTH.AGENT_ID + 1), type: "glass-atrium-dev-node" } }), code: "secret_request_field_length" },
+    { name: "an agent type past its length cap", input: buildInput([LINE.host], { agent: { id: "a1b2c3d4e5f6", type: "t".repeat(FIELD_LENGTH.AGENT_TYPE + 1) } }), code: "secret_request_field_length" },
   ];
   for (const row of refusals) {
     test(`${row.name} is refused`, () => {
@@ -117,6 +122,17 @@ describe("register", () => {
       assert.equal(getRefusalCode(() => store.create(row.input)), row.code);
     });
   }
+
+  test("a session id, path, agent id and agent type each at its length cap are accepted", () => {
+    const { store } = createStore();
+    const input = buildInput([LINE.host], {
+      sessionId: "8".repeat(FIELD_LENGTH.SESSION_ID),
+      path: `/${"p".repeat(FIELD_LENGTH.PATH - 1)}`,
+      agent: { id: "a".repeat(FIELD_LENGTH.AGENT_ID), type: "t".repeat(FIELD_LENGTH.AGENT_TYPE) },
+    });
+
+    assert.equal(store.find(store.create(input))?.state, "pending");
+  });
 
   test("a refusal's message names no line text", () => {
     const { store } = createStore();
@@ -215,6 +231,16 @@ describe("approve", () => {
     store.approve(id, yesAt);
 
     assert.deepEqual(store.find(id)?.expiresAt, new Date(yesAt.getTime() + 10 * MINUTE_MS));
+  });
+
+  test("a caller time later than the store's clock never extends the approval past 10 minutes", () => {
+    const { store, clock, advance } = createStore();
+    const input = buildInput([LINE.host]);
+    const id = store.create(input);
+    store.approve(id, new Date(clock.at.getTime() + HOUR_MS));
+    advance(11 * MINUTE_MS);
+
+    assert.equal(store.consume(buildWrite(input)), null);
   });
 
   test("a request checked pending stays pending: its lines kept, no write consumes it", () => {
@@ -399,15 +425,16 @@ describe("owner display", () => {
   const expandRanges = (ranges: ReadonlyArray<readonly [number, number]>): number[] =>
     ranges.flatMap(([first, last]) => Array.from({ length: last - first + 1 }, (_, index) => first + index));
 
-  // non-ASCII spaces, Hangul fillers, Khmer inherent vowels, grapheme joiner, Mongolian and Unicode variation selectors
+  // non-ASCII spaces, Hangul fillers, Khmer inherent vowels, grapheme joiner, Mongolian and Unicode variation selectors,
+  // braille blank, musical null notehead
   const namedMarkRanges = [
     [0x00a0, 0x00a0], [0x1680, 0x1680], [0x2000, 0x200a], [0x202f, 0x202f], [0x205f, 0x205f], [0x3000, 0x3000],
     [0x115f, 0x1160], [0x3164, 0x3164], [0xffa0, 0xffa0], [0x17b4, 0x17b5], [0x034f, 0x034f], [0x180b, 0x180f],
-    [0xfe00, 0xfe0f], [0xe0100, 0xe01ef],
+    [0xfe00, 0xfe0f], [0xe0100, 0xe01ef], [0x2800, 0x2800], [0x1d159, 0x1d159],
   ] as const;
 
-  test("every control, format, surrogate, separator and named invisible or look-alike code point is shown as a mark", () => {
-    const markedCategory = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
+  test("every control, format, surrogate, separator, combining mark, private-use, unassigned and named invisible or look-alike code point is shown as a mark", () => {
+    const markedCategory = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\p{Mn}\p{Me}\p{Co}\p{Cn}]/u;
     const categoryMembers = expandRanges([[0, 0x10ffff]]).filter((codePoint) => markedCategory.test(String.fromCodePoint(codePoint)));
     const members = [...categoryMembers, ...expandRanges(namedMarkRanges)];
 
@@ -465,6 +492,20 @@ describe("owner display", () => {
 
     assert.deepEqual(value, { cue: "literal", length: 5, classes: ["lower", "upper", "digit", "symbol", "non-ascii"] });
   });
+
+  const keyScripts = [
+    { name: "a Cyrillic letter in the key", text: `dbP\u0430ss = "Xy9";`, classes: ["lower", "upper", "digit", "key: cyrillic"] },
+    { name: "a Greek letter in the prefix", text: `exp\u03bfrt const dbPass = "Xy9";`, classes: ["lower", "upper", "digit", "key: greek"] },
+    { name: "a fullwidth Latin letter in the key", text: `\uff44bPass = "Xy9";`, classes: ["lower", "upper", "digit", "key: latin"] },
+    { name: "a Hangul key and a Cyrillic comment", text: `\uc554\ud638 = "Xy9"; // \u043f\u0430\u0440\u043e\u043b\u044c`, classes: ["lower", "upper", "digit", "key: cyrillic", "key: hangul"] },
+    { name: "a letter of a script with no own entry", text: `\u1200dbPass = "Xy9";`, classes: ["lower", "upper", "digit", "key: other"] },
+    { name: "a non-ASCII value beside an ASCII key", text: `dbPass = "\u0425y9";`, classes: ["lower", "digit", "non-ascii"] },
+  ];
+  for (const row of keyScripts) {
+    test(`${row.name}: the classes carry one key entry per non-ASCII script outside the value`, () => {
+      assert.deepEqual(getLineDisplay(row.text).value.classes, row.classes);
+    });
+  }
 
   test("a quoted value's space is its own class", () => {
     assert.deepEqual(getLineDisplay(`dbPass = "ab cd";`).value.classes, ["lower", "space"]);

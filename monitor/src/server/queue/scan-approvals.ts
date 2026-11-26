@@ -15,6 +15,8 @@ export const SECRET_REQUEST_LIMIT = {
   MACHINE_REQUESTS: 64,
   PENDING_MS: 24 * 60 * 60_000,
   APPROVED_MS: 10 * 60_000,
+  // UTF-16 code units, as Zod's string max counts → the register schema takes these caps
+  FIELD_LENGTH: { SESSION_ID: 36, PATH: 4096, AGENT_ID: 64, AGENT_TYPE: 128 },
 } as const;
 
 // the generic credential-assignment rule only → token, key and connection-string shapes stay unapprovable
@@ -64,12 +66,17 @@ export type ValueCue = "literal" | "identifier" | "member" | "environment";
 
 export type ValueClass = "lower" | "upper" | "digit" | "space" | "symbol" | "non-ascii";
 
+/** A non-ASCII script found in the line outside the value; a script with no own entry is `other`. */
+export type KeyScript = (typeof KEY_SCRIPTS)[number][0] | "other";
+
+export type LineClass = ValueClass | `key: ${KeyScript}`;
+
 export interface LineValue {
   readonly cue: ValueCue;
   /** Code points, not UTF-16 units. */
   readonly length: number;
-  /** In `VALUE_CLASS_ORDER`. */
-  readonly classes: readonly ValueClass[];
+  /** The value's classes in `VALUE_CLASS_ORDER`, then one `key: <script>` per non-ASCII script outside the value. */
+  readonly classes: readonly LineClass[];
 }
 
 export interface LineDisplay {
@@ -124,12 +131,14 @@ export class SecretRequestRepository {
   /**
    * The owner's yes: the request turns approved for 10 minutes and its lines are removed from the store (hashes kept).
    * Lines are immutable after register and the id is a fresh UUID → the approved hashes are the ones the owner was shown.
-   * @param approvedAt - the time of the yes → the 10 minutes run from it, however late the request turns approved
+   * @param approvedAt - the time of the yes → the 10 minutes run from it, however late the request turns approved;
+   * a time later than the store's clock counts as the store's now
    * @throws QueueRequestError 409 — `secret_request_gone` (unknown, declined or expired) · `secret_request_not_pending`
    */
   approve(id: string, approvedAt: Date = this.now()): void {
     const request = this.getPendingOrThrow(id);
-    const expiresAt = new Date(approvedAt.getTime() + SECRET_REQUEST_LIMIT.APPROVED_MS);
+    const startMs = Math.min(approvedAt.getTime(), this.now().getTime());
+    const expiresAt = new Date(startMs + SECRET_REQUEST_LIMIT.APPROVED_MS);
     this.requests.set(id, { ...request, state: "approved", lines: null, expiresAt });
   }
 
@@ -203,6 +212,7 @@ export class SecretRequestRepository {
     return request;
   }
 
+  // the agent is no part of the match → a second agent's same tuple returns the first agent's request
   private findRepeat(input: SecretRequestInput): string | null {
     const hashes = input.lines.map((line) => line.hash);
     for (const request of this.requests.values()) {
@@ -242,15 +252,26 @@ export function getLineDisplay(line: string): LineDisplay {
   return { segments: getSegments(line), value: getLineValue(line) };
 }
 
-// controls, lone surrogates, line/paragraph separators, every space but U+0020 + the format and default-ignorable set
+// controls, lone surrogates, separators, every space but U+0020, combining marks, private-use, unassigned, the blank
+// glyphs braille blank + musical null notehead, + the format and default-ignorable set
 const MARKED = new RegExp(
-  String.raw`[\p{Cc}\p{Cs}\p{Zl}\p{Zp}\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]|${INVISIBLE_CHARACTER.source}`,
+  String.raw`[\p{Cc}\p{Cs}\p{Zl}\p{Zp}\p{Mn}\p{Me}\p{Co}\p{Cn}\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000\u2800\u{1D159}]|${INVISIBLE_CHARACTER.source}`,
   "u",
 );
 const LONE_SURROGATE = /\p{Cs}/u;
 const QUOTES = new Set(["\"", "'", "`"]);
 const CUE_ORDER: readonly ValueCue[] = ["literal", "identifier", "member", "environment"];
 const VALUE_CLASS_ORDER: readonly ValueClass[] = ["lower", "upper", "digit", "space", "symbol", "non-ascii"];
+// look-alike-prone and widely written scripts, in class order; Common = shared symbols, Inherited = combining marks
+const KEY_SCRIPTS = [
+  ["latin", /\p{Script=Latin}/u], ["greek", /\p{Script=Greek}/u], ["cyrillic", /\p{Script=Cyrillic}/u],
+  ["armenian", /\p{Script=Armenian}/u], ["georgian", /\p{Script=Georgian}/u], ["cherokee", /\p{Script=Cherokee}/u],
+  ["coptic", /\p{Script=Coptic}/u], ["hebrew", /\p{Script=Hebrew}/u], ["arabic", /\p{Script=Arabic}/u],
+  ["devanagari", /\p{Script=Devanagari}/u], ["thai", /\p{Script=Thai}/u], ["hangul", /\p{Script=Hangul}/u],
+  ["han", /\p{Script=Han}/u], ["hiragana", /\p{Script=Hiragana}/u], ["katakana", /\p{Script=Katakana}/u],
+  ["common", /\p{Script=Common}/u], ["inherited", /\p{Script=Inherited}/u],
+] as const;
+const KEY_SCRIPT_ORDER: readonly KeyScript[] = [...KEY_SCRIPTS.map(([name]) => name), "other"];
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/u;
 const MEMBER = /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+$/u;
 const SHELL_VARIABLE = /^\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})$/u;
@@ -266,6 +287,7 @@ const ENVIRONMENT_KEY_OPENER = /(?:\benviron|\benv|\bENV)\s*\[\s*$|(?:\bgetenv|\
 
 function assertRequestInput(input: SecretRequestInput): void {
   if (input.rule !== APPROVABLE_RULE) throw new QueueRequestError(400, "secret_rule_not_approvable", `only ${APPROVABLE_RULE} refusals can be approved`);
+  assertFieldLengths(input);
   const bytes = input.lines.reduce((sum, line) => sum + Buffer.byteLength(line.text, "utf8"), 0);
   const { REQUEST_LINES, REQUEST_BYTES } = SECRET_REQUEST_LIMIT;
   if (input.lines.length === 0 || input.lines.length > REQUEST_LINES || bytes > REQUEST_BYTES) {
@@ -274,6 +296,19 @@ function assertRequestInput(input: SecretRequestInput): void {
   for (const line of input.lines) {
     if (line.text.includes("\n") || LONE_SURROGATE.test(line.text)) throw new QueueRequestError(400, "secret_line_malformed", "a captured line holds an LF or a lone surrogate");
     if (getLineHash(line.text) !== line.hash) throw new QueueRequestError(400, "secret_line_hash_mismatch", "a captured line does not hash to the hash sent with it");
+  }
+}
+
+function assertFieldLengths(input: SecretRequestInput): void {
+  const { FIELD_LENGTH } = SECRET_REQUEST_LIMIT;
+  const fields = [
+    [input.sessionId, FIELD_LENGTH.SESSION_ID],
+    [input.path, FIELD_LENGTH.PATH],
+    [input.agent.id, FIELD_LENGTH.AGENT_ID],
+    [input.agent.type, FIELD_LENGTH.AGENT_TYPE],
+  ] as const;
+  if (fields.some(([value, max]) => value.length > max)) {
+    throw new QueueRequestError(400, "secret_request_field_length", "a session id, path, agent id or agent type is past its length cap");
   }
 }
 
@@ -315,15 +350,32 @@ function getMark(char: string): string {
 }
 
 function getLineValue(line: string): LineValue {
+  const { cue, text } = getCuedValue(line);
+  const found = new Set([...text].map(getValueClass));
+  const classes: LineClass[] = VALUE_CLASS_ORDER.filter((name) => found.has(name));
+  return { cue, length: [...text].length, classes: [...classes, ...getKeyClasses(line, text)] };
+}
+
+function getCuedValue(line: string): { cue: ValueCue; text: string } {
   const assigned = getAssignedText(line);
-  if (assigned === null) return buildValue("literal", line.trim());
+  if (assigned === null) return { cue: "literal", text: line.trim() };
   const literal = findQuotedLiteral(assigned);
-  if (literal !== null) return buildValue("literal", literal);
+  if (literal !== null) return { cue: "literal", text: literal };
   // a bare word is a literal in dotenv, YAML and INI → a reference cue needs a code terminator or declaration
   const hasCodeEvidence = /[;,]\s*$/u.test(line) || /^\s*(?:const|let|var|val)\s/u.test(line);
   const values = getAssignedValues(assigned).map((value) => ({ value, cue: getReferenceCue(value, hasCodeEvidence) }));
   const first = values.sort((left, right) => CUE_ORDER.indexOf(left.cue) - CUE_ORDER.indexOf(right.cue))[0];
-  return first === undefined ? buildValue("literal", assigned.trim()) : buildValue(first.cue, first.value);
+  return first === undefined ? { cue: "literal", text: assigned.trim() } : { cue: first.cue, text: first.value };
+}
+
+// the value is a substring of the line → removing any occurrence of it leaves the same characters
+function getKeyClasses(line: string, value: string): LineClass[] {
+  const found = new Set([...line.replace(value, "")].filter((char) => char.charCodeAt(0) > 0x7f).map(getKeyScript));
+  return KEY_SCRIPT_ORDER.filter((name) => found.has(name)).map((name) => `key: ${name}` as const);
+}
+
+function getKeyScript(char: string): KeyScript {
+  return KEY_SCRIPTS.find(([, pattern]) => pattern.test(char))?.[0] ?? "other";
 }
 
 // text after the first `=` or `:` outside quotes; comparison, arrow and scope operators are skipped
@@ -391,11 +443,6 @@ function getReferenceCue(value: string, hasCodeEvidence: boolean): ValueCue {
   if (!hasCodeEvidence) return "literal";
   if (IDENTIFIER.test(value)) return "identifier";
   return MEMBER.test(value) ? "member" : "literal";
-}
-
-function buildValue(cue: ValueCue, value: string): LineValue {
-  const found = new Set([...value].map(getValueClass));
-  return { cue, length: [...value].length, classes: VALUE_CLASS_ORDER.filter((name) => found.has(name)) };
 }
 
 function getValueClass(char: string): ValueClass {

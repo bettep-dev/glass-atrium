@@ -132,12 +132,13 @@ export const postItemBodySchema = z.discriminatedUnion("kind", [reportSchema, de
 const lineHash = z.string().regex(/^[0-9a-f]{64}$/u);
 // line count, the request's byte total and the rule are the store's checks; one line over the store's byte limit is refused here, before the store
 const lineText = z.string().refine((text) => Buffer.byteLength(text, "utf8") <= SECRET_REQUEST_LIMIT.REQUEST_BYTES);
-const scanTarget = { sessionId, path: absolutePath, rule: z.string().max(16) };
+const scanFieldLength = SECRET_REQUEST_LIMIT.FIELD_LENGTH;
+const scanTarget = { sessionId: sessionId.max(scanFieldLength.SESSION_ID), path: absolutePath.max(scanFieldLength.PATH), rule: z.string().max(16) };
 
 /** The hook's capture of a refused write; the main session has no agent id → an empty id and type. */
 export const scanApprovalRegisterBodySchema = z.strictObject({
   ...scanTarget,
-  agent: z.strictObject({ id: z.string().max(64), type: z.string().max(128) }),
+  agent: z.strictObject({ id: z.string().max(scanFieldLength.AGENT_ID), type: z.string().max(scanFieldLength.AGENT_TYPE) }),
   lines: z.array(z.strictObject({ text: lineText, hash: lineHash })),
 });
 
