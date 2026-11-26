@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck disable=SC2154,SC2312  # BATS_* and run results are set by bats; a masked status fails its comparison
 # validate-secret-scan.sh — envelope-driven smoke (plan clauded-docs/284 T5).
 #
 # PreToolUse(Write|Edit|Bash) security gate, one surface with two channels:
@@ -30,6 +31,12 @@ SCAN_LIST_FLAG="--list-all"
 # the line-hash vectors the monitor's getLineHash is pinned by → the hook must hash every one the same way
 VECTORS="${BATS_TEST_DIRNAME}/../../monitor/test/fixtures/scan-approval-vectors.json"
 APPROVAL_LIB="${BATS_TEST_DIRNAME}/../lib/scan-approval.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/queue-monitor-stub.bash
+source "${BATS_TEST_DIRNAME}/lib/queue-monitor-stub.bash"
+SESSION_ID="5b2e8c41-9d3a-4f6e-8a1b-2c7d9e0f4a63"
+REQUEST_ID="0c9d8e7f-6a5b-4c3d-9e2f-1a0b9c8d7e6f"
+CONSUME_ROUTE=/api/queue/scan-approvals/consume
+REGISTER_ROUTE=/api/queue/scan-approvals
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
@@ -41,6 +48,10 @@ setup() {
   CRED_FIXTURE="password"
   CRED_FIXTURE="${CRED_FIXTURE}=supersecret123"
   set_pattern_rows
+}
+
+teardown() {
+  stop_stub
 }
 
 # One row per pattern class: row name · expected code · expected pattern name · synthetic text.
@@ -308,4 +319,123 @@ make_hook_layout() {
     printf 'expected:\n%s\nactual:\n%s\n' "${expected}" "${actual}"
     return 1
   }
+}
+
+# A stand-in monitor of the test's own and every root under the test's tmp → never the live monitor, its port or log.
+# Sets TARGET, the write's path, whose parent's real path the hook resolves.
+use_monitor_stub() {
+  export HOME="${BATS_TEST_TMPDIR}/home" GA_ROOT="${BATS_TEST_TMPDIR}/ga-root"
+  export GA_DATA_ROOT="${HOME}/.glass-atrium"
+  mkdir -p "${BATS_TEST_TMPDIR}/project" "${HOME}"
+  TARGET="$(cd -P -- "${BATS_TEST_TMPDIR}/project" && pwd -P)/app.ts"
+  start_stub
+}
+
+# A main-session Write envelope carrying $1 as content to TARGET.
+get_session_envelope() {
+  jq -cn --arg c "${1}" --arg p "${TARGET}" --arg s "${SESSION_ID}" \
+    '{session_id:$s,tool_name:"Write",tool_input:{file_path:$p,content:$c}}'
+}
+
+# Today's refusal for SEC-013, the hook's first stderr line.
+get_cred_refusal() {
+  jq -cnS '{hook:"validate-secret-scan",error_code:"SEC-013",severity:"block",
+    message:"Secret pattern detected: Generic credential assignment",
+    suggestion:"Replace the hardcoded secret with an environment-variable reference (core-security.md -> Secret Management)",
+    context:{pattern:"SEC-013"}}'
+}
+
+# The body the stub received on route $1 (the n-th such request with $2, default the first), sorted keys.
+get_request_body() {
+  jq -cs --arg r "${1}" --argjson n "${2:-1}" '[.[] | select(.path == $r)][$n - 1].body // empty' \
+    "${BATS_TEST_TMPDIR}/requests.log" | jq -r 'select(. != null)' | jq -cS .
+}
+
+# The canonical line hash of $1 (the vectors pin get_line_hashes).
+get_hash() {
+  # shellcheck source-path=SCRIPTDIR source=../lib/scan-approval.sh
+  source "${APPROVAL_LIB}"
+  printf '%s' "${1}" | get_line_hashes
+}
+
+@test "an approved SEC-013 write passes once: consume carries the tuple and the line hash, the log only ids and hashes" {
+  local hash expected log
+  use_monitor_stub
+  set_reply 200 "{\"decision\":\"pass\",\"requestId\":\"${REQUEST_ID}\"}"
+  hash="$(get_hash "${CRED_FIXTURE}")"
+  run_hook "$(get_session_envelope "const a = 1"$'\n'"${CRED_FIXTURE}"$'\n'"const b = 2")"
+  [[ "${status}" -eq 0 && -z "${output}" ]] || { echo "status ${status}: ${output}"; return 1; }
+  expected="$(jq -cnS --arg s "${SESSION_ID}" --arg p "${TARGET}" --arg h "${hash}" \
+    '{sessionId:$s,path:$p,rule:"SEC-013",hashes:[$h]}')"
+  [[ "$(get_request_body "${CONSUME_ROUTE}")" == "${expected}" && "$(request_count)" -eq 1 ]] \
+    || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
+  log="$(cat "${GA_DATA_ROOT}/logs/validate-secret-scan.log")"
+  [[ "${log}" == *"${REQUEST_ID}"* && "${log}" == *"${hash}"* && "${log}" != *"${CRED_FIXTURE}"* ]] \
+    || { echo "log: ${log}"; return 1; }
+}
+
+@test "an unapproved SEC-013 write is refused as today, naming the registered request id and the one route, never the line" {
+  local hash expected
+  use_monitor_stub
+  set_nth_reply 1 409 '{"error":"scan_approval_refused","decision":"refuse"}'
+  set_nth_reply 2 200 "{\"requestId\":\"${REQUEST_ID}\"}"
+  hash="$(get_hash "${CRED_FIXTURE}")"
+  run_hook "$(get_session_envelope "${CRED_FIXTURE}")"
+  [[ "${status}" -eq 2 && "${#lines[@]}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
+  [[ "$(jq -cS . <<<"${lines[0]}")" == "$(get_cred_refusal)" ]] || { echo "${lines[0]}"; return 1; }
+  [[ "${lines[1]}" == *"${REQUEST_ID}"* && "${lines[1]}" == *"secret-approval"* && "${output}" != *"${CRED_FIXTURE}"* ]] \
+    || { echo "${output}"; return 1; }
+  expected="$(jq -cnS --arg s "${SESSION_ID}" --arg p "${TARGET}" --arg t "${CRED_FIXTURE}" --arg h "${hash}" \
+    '{sessionId:$s,path:$p,rule:"SEC-013",agent:{id:"",type:""},lines:[{text:$t,hash:$h}]}')"
+  [[ "$(get_request_body "${REGISTER_ROUTE}")" == "${expected}" ]] || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
+}
+
+@test "a SEC-013 write that another rule also matches is refused as today with nothing sent to the monitor" {
+  local names=() texts=() pem="-----BEGIN RSA PRIVATE"" KEY-----" marker='{"type": "service''_account"}' i
+  use_monitor_stub
+  names=("a PEM header on the same line" "a service-account marker on another line")
+  texts=("${CRED_FIXTURE} ${pem}" "${CRED_FIXTURE}"$'\n'"${marker}")
+  for i in "${!names[@]}"; do
+    run_hook "$(get_session_envelope "${texts[${i}]}")"
+    [[ "${status}" -eq 2 && "$(jq -cS . <<<"${lines[0]}")" == "$(get_cred_refusal)" && "$(request_count)" -eq 0 ]] \
+      || { echo "${names[${i}]}: status ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "a write of several SEC-013 lines asks for an approval of every one, so an approval of fewer never covers it" {
+  local upper="PASS""WORD" first second expected
+  upper="${upper}: hunter2hunter2"
+  use_monitor_stub
+  set_nth_reply 1 409 '{"error":"scan_approval_refused","decision":"refuse"}'
+  set_nth_reply 2 200 "{\"requestId\":\"${REQUEST_ID}\"}"
+  first="$(get_hash "${CRED_FIXTURE}")"
+  second="$(get_hash "${upper}")"
+  run_hook "$(get_session_envelope "${CRED_FIXTURE}"$'\n'"const a = 1"$'\n'"${upper}")"
+  [[ "${status}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
+  expected="$(jq -cn --arg a "${first}" --arg b "${second}" '[$a, $b]')"
+  [[ "$(get_request_body "${CONSUME_ROUTE}" | jq -c .hashes)" == "${expected}" ]] \
+    || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
+}
+
+@test "the repeat of a write that passed is asked about again and refused once the monitor has nothing to consume" {
+  local envelope
+  use_monitor_stub
+  set_nth_reply 1 200 "{\"decision\":\"pass\",\"requestId\":\"${REQUEST_ID}\"}"
+  set_nth_reply 2 409 '{"error":"scan_approval_refused","decision":"refuse"}'
+  set_nth_reply 3 200 "{\"requestId\":\"${REQUEST_ID}\"}"
+  envelope="$(get_session_envelope "${CRED_FIXTURE}")"
+  run_hook "${envelope}"
+  [[ "${status}" -eq 0 ]] || { echo "first: status ${status}: ${output}"; return 1; }
+  run_hook "${envelope}"
+  [[ "${status}" -eq 2 && "${lines[1]}" == *"${REQUEST_ID}"* ]] || { echo "repeat: status ${status}: ${output}"; return 1; }
+  [[ -n "$(get_request_body "${CONSUME_ROUTE}" 2)" ]] || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
+}
+
+@test "with no monitor running a SEC-013 write is refused exactly as today plus one cause line" {
+  use_monitor_stub
+  stop_stub
+  run_hook "$(get_session_envelope "${CRED_FIXTURE}")"
+  [[ "${status}" -eq 2 && "${#lines[@]}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
+  [[ "$(jq -cS . <<<"${lines[0]}")" == "$(get_cred_refusal)" && "${lines[1]}" == *"monitor"* ]] \
+    || { echo "${output}"; return 1; }
 }
