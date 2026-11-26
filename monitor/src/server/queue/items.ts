@@ -1,7 +1,10 @@
 // Queue items, session side: post, get by id (owning session only), the source facts of a pull claim, and the count-only badge numbers.
 
+import { setTimeout } from "node:timers/promises";
+
 import { Prisma, type QueueItem, type QueueItemKind } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
+import { logger } from "../logger.js";
 import type { PullClaim } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { ITEM_IMAGES_ARGS, type SessionImageView, getSessionImageViews } from "./images.js";
@@ -11,6 +14,8 @@ import { SECRET_REQUEST_LIMIT, secretRequests } from "./scan-approvals.js";
 import type { PostItemBody, SecretApprovalBody } from "./schemas.js";
 
 const APPROVE_LABEL = "Approve this write once";
+
+const UNLINKED_ITEM_DELETE = { ATTEMPTS: 3, PAUSE_MS: 100 } as const;
 
 /** A secret-approval item's two option codes; the owner's answer with one of them approves or declines the linked request. */
 export const SECRET_APPROVAL_CODE = { APPROVE: "R1", DECLINE: "R2" } as const;
@@ -141,14 +146,29 @@ async function assertSecretRequestLinkable(tx: Prisma.TransactionClient, body: S
   if (linked !== null) throw new QueueRequestError(409, "secret_request_linked", "scan approval request already has its item");
 }
 
-/** Links the request once its item has committed; a request lapsed or a ceiling reached by then → the item is removed and the post fails. */
+/** Links the request once its item has committed; a request lapsed or a ceiling reached by then → the item is removed and the post fails with the link error. */
 async function linkSecretRequest(itemId: number, requestId: string): Promise<void> {
   try {
     secretRequests.link(requestId);
   } catch (error) {
-    await getPrisma().queueItem.delete({ where: { id: BigInt(itemId) } });
+    await deleteUnlinkedItem(itemId, requestId);
     throw error;
   }
+}
+
+/** A few tries against a transient database error; an item still left names a request the store no longer holds → one error log: the ids and the database error, never a line. */
+async function deleteUnlinkedItem(itemId: number, requestId: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= UNLINKED_ITEM_DELETE.ATTEMPTS; attempt += 1) {
+    if (attempt > 1) await setTimeout(UNLINKED_ITEM_DELETE.PAUSE_MS);
+    try {
+      await getPrisma().queueItem.delete({ where: { id: BigInt(itemId) } });
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  logger.error({ err: lastError, itemId, requestId }, "secret-approval item left after its refused link — its removal failed, the item names a request the store does not hold");
 }
 
 function buildItemRow(body: PostItemBody): Prisma.QueueItemUncheckedCreateInput {

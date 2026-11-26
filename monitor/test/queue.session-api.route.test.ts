@@ -18,6 +18,7 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions, type LightMyR
 
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { logger } from "../src/server/logger.js";
 import { ANSWERED_IDS_LIMIT, PULL, WAIT_FRESH_MS, isSessionWaiting } from "../src/server/queue/delivery.js";
 import { QueueRequestError } from "../src/server/queue/errors.js";
 import { AWAITING_IDS_LIMIT } from "../src/server/queue/registry.js";
@@ -726,6 +727,46 @@ describe("secret-approval post", () => {
 
     const linked = await getPrisma().queueItem.count({ where: { secretRequestId: requestId } });
     assert.deepEqual([posted.statusCode, posted.json().error, linked], [409, "secret_request_gone", 0]);
+  });
+
+  describe("a refused link whose item removal fails keeps the link error as the post's answer", () => {
+    const rows = [
+      { name: "a removal failing once is retried: no item left naming the request, nothing logged", failures: 1, linked: 0, errorLogs: 0 },
+      { name: "a removal failing every try stops: the item left behind is logged once with its item and request ids", failures: Infinity, linked: 1, errorLogs: 1 },
+    ];
+    for (const row of rows) {
+      test(row.name, async (t) => {
+        t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+        const sessionId = await seedSession();
+        const requestId = createRequest(sessionId);
+        interceptTransaction(t, () => t.mock.timers.tick(SECRET_REQUEST_LIMIT.UNLINKED_MS));
+        const items = getPrisma().queueItem;
+        const original = items.delete;
+        let failed = 0;
+        const failingDelete = (args: Parameters<typeof original>[0]) => {
+          if (failed >= row.failures) return original.call(items, args);
+          failed += 1;
+          return Promise.reject(new Error("connection terminated unexpectedly"));
+        };
+        // a transient database error on the compensating delete; mock.method finds no method on the Prisma delegate → a plain swap
+        // the cast holds: the stub forwards the one argument unchanged, and a non-generic stub cannot spell the generic delete signature
+        items.delete = failingDelete as unknown as typeof original;
+        t.after(() => {
+          items.delete = original;
+        });
+        const error = t.mock.method(logger, "error", () => undefined);
+
+        const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+
+        const left = await getPrisma().queueItem.findMany({ where: { secretRequestId: requestId }, select: { id: true } });
+        assert.deepEqual([posted.statusCode, posted.json().error, left.length, error.mock.callCount()], [409, "secret_request_gone", row.linked, row.errorLogs]);
+        for (const call of error.mock.calls) {
+          const [context] = call.arguments as unknown as [{ itemId: number; requestId: string }];
+          assert.deepEqual([context.itemId, context.requestId], [Number(left[0]?.id), requestId]);
+          assert.ok(!JSON.stringify(context).includes("retries_"), "the log carries a captured line");
+        }
+      });
+    }
   });
 
   test("a request past its 15-minute lapse is refused as unknown and links no item", async (t) => {
