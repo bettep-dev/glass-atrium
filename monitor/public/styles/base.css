@@ -1348,6 +1348,89 @@ label.ctl-checkbox-hit {
 .queue-option > .ctl-radio {
 	margin-top: calc((var(--lh-ctl-lg) - 16px) / 2);
 }
+/* a closed option: dim, no press, one reason line under its label */
+.queue-option.is-closed {
+	color: rgb(var(--dim));
+	cursor: default;
+}
+.queue-option.is-closed:hover {
+	background: none;
+}
+.queue-option-reason {
+	display: block;
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+}
+/* the secret-approval card: the cue, per captured line its head and plate, the facts; a plate is the line whole — wrapped, never cut, folded or scrolled */
+.scan-cue {
+	font-size: var(--fs-body);
+	color: rgb(var(--ink));
+}
+.scan-line-head {
+	display: grid;
+	grid-template-columns: 112px 104px minmax(0, 1fr);
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+}
+.scan-line > .scan-plate {
+	margin-top: var(--gap-stack);
+}
+.scan-plate {
+	padding: var(--space-2) var(--space-3);
+	background: rgb(var(--sunken));
+	border-radius: var(--radius-control);
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	font-size: var(--fs-meta);
+	line-height: 1.5;
+	color: rgb(var(--ink));
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+/* a hidden character's tile: never the character, never split across rows, adjacent tiles apart */
+.scan-mark {
+	display: inline-block;
+	margin-inline: var(--space-0_5);
+	padding-inline: var(--space-1);
+	border-radius: var(--radius-inline);
+	background: rgb(var(--dim));
+	color: rgb(var(--surface));
+	font-family: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui, sans-serif;
+	font-size: var(--fs-meta);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.queue-sheet-body > .scan-line + .scan-facts {
+	margin-top: var(--space-6);
+}
+.scan-facts {
+	display: grid;
+	grid-template-columns: 64px minmax(0, 1fr);
+	gap: var(--gap-stack) var(--space-3);
+	margin-bottom: 0;
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+}
+.scan-facts > dt {
+	font-weight: 600;
+	color: rgb(var(--dim));
+}
+.scan-facts > dd {
+	min-width: 0;
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+	.queue-sheet {
+		--card-pad: var(--space-4);
+	}
+	.scan-line-head {
+		grid-template-columns: 112px minmax(0, 1fr);
+	}
+	.scan-line-head > :last-child {
+		grid-column: 1 / -1;
+	}
+}
 .queue-option > .ctl-radio:focus-visible {
 	outline: none;
 }

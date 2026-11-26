@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 import { getImageFacts } from "../../src/server/queue/image-format.js";
 import { ITEM_TITLE_MAX, SESSION_NAME_MAX } from "../../src/server/queue/schemas.js";
 import type { ImageView } from "../../src/server/queue/images.js";
-import type { OwnerItemView, OwnerSessionView, RecentResume, RelayFacts, RelayRefusalView, RelaySender } from "../../src/server/queue/owner-views.js";
+import type { OwnerItemView, OwnerSessionView, RecentResume, RelayFacts, RelayRefusalView, RelaySender, ScanApprovalLines } from "../../src/server/queue/owner-views.js";
+import { getLineDisplay, getLineHash } from "../../src/server/queue/scan-approvals.js";
 import type { OwnerSessionRow } from "../../src/server/queue/owner-sessions.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -36,6 +37,8 @@ export interface QueueFixture {
   relays: RelayThreadFixture;
   /** The history read's kind `item` (spec §4.6): decisions and reports no longer open; unset → none. */
   done?: OwnerItemView[];
+  /** The owner read of a waiting secret approval's captured lines, by item id; unset or absent → the request is gone. */
+  scanReads?: Record<number, ScanApprovalLines>;
 }
 
 const SESSION_IDS = {
@@ -109,7 +112,7 @@ function buildItem(id: number, key: SessionKey, fields: Partial<OwnerItemView>):
     isFreeTextAllowed: true, isApprovalClass: false, status: "open", queuePosition: id, deferCount: 0, nextAttempt: 1,
     answer: { code: null, text: null }, askedAt: getAt(9), answeredAt: null, deliveredAt: null, closedAt: null, sendId: null,
     attachments: [], answerRecord: null, isAnsweredOutside: false, session: buildSessionView(key), resumes: [],
-    deviation: null, skipReason: null, canResend: false, relay: null,
+    deviation: null, skipReason: null, canResend: false, relay: null, scanApproval: null,
     ...fields,
   };
 }
@@ -823,4 +826,59 @@ export function getRelayListFixture(isRefusalListCut = false): QueueFixture {
 /** The rest state with the relay thread fixture's sends and refusal in the relay read. */
 export function getRelayRecordFixture(): QueueFixture {
   return { ...getRestFixture(), relays: getRelayThreadFixture() };
+}
+
+export const SCAN_IDS = { one: 801, long: 802, expired: 803, gone: 804, approved: 805 } as const;
+
+/** The code points the owner's screen must show as tiles (security ruling item 5's list beside the C0/C1, zero-width and bidi ranges). */
+export const SCAN_MARK_POINTS = [0x09, 0x85, 0xad, 0x34f, 0x61c, 0x115f, 0x17b4, 0x180e, 0x200b, 0x202e, 0x2066, 0x2028, 0x2029, 0xa0, 0xfeff, 0xfff9] as const;
+
+const SCAN_PATH = "/Users/owner/Desktop/git/glass-atrium/monitor/src/server/queue/example-config.ts";
+const SCAN_AGENT = "glass-atrium-dev-front";
+
+/** The server's secret-approval item text (items.ts → SECRET_APPROVAL_ITEM) on a fixture row. */
+function buildScanItem(id: number, fields: Partial<OwnerItemView>): OwnerItemView {
+  return buildItem(id, "gersona", {
+    title: "Secret-scan refusal: approve one write?",
+    body: "Approve this write once (R1) lets the write this request names pass the secret-scan hook once: the same lines, file, rule and session, within 10 minutes of the answer. Decline (R2) when a line holds a real password or key: the session then writes an environment-variable reference instead.",
+    options: [
+      { code: "R1", label: "Approve this write once", pros: "The refused write lands as written.", cons: "A real secret in a line would be written to the file." },
+      { code: "R2", label: "Decline", pros: "Nothing is written and the request is dropped.", cons: "The session rewrites the line, e.g. as an environment-variable reference." },
+    ],
+    recommendedCode: "R2", isFreeTextAllowed: false, isApprovalClass: true, ...fields,
+  });
+}
+
+// harmless parts joined at run time → assignments the scanner never refuses
+function getScanLine(value: string): string {
+  return ["greeting = ", String.fromCharCode(34), value, String.fromCharCode(34), ";"].join("");
+}
+
+function buildScanRead(lines: string[]): ScanApprovalLines {
+  return { path: SCAN_PATH, rule: "SEC-013", agentType: SCAN_AGENT, lines: lines.map((line) => ({ hash: getLineHash(line), ...getLineDisplay(line) })) };
+}
+
+/**
+ * `rest` plus a secret approval in each state: one waiting line; three waiting lines, one of them about 4,000 characters holding every marked
+ * code point and a trailing space; a waiting request past its expiry; a request gone with a restart; an approval inside its window.
+ */
+export function getScanApprovalFixture(rest: QueueFixture = getRestFixture()): QueueFixture {
+  const marked = SCAN_MARK_POINTS.map((point) => `x${String.fromCodePoint(point)}`).join("");
+  const longLine = `${getScanLine(`${"hello world ".repeat(330)}${marked}`)} `;
+  const waits = new Date(FIXTURE_NOW + 23 * 60 * MIN_MS).toISOString();
+  const items = [
+    buildScanItem(SCAN_IDS.one, { askedAt: getAt(2), scanApproval: { state: "pending", lineCount: 1, expiresAt: waits } }),
+    buildScanItem(SCAN_IDS.long, { askedAt: getAt(3), scanApproval: { state: "pending", lineCount: 3, expiresAt: waits } }),
+    buildScanItem(SCAN_IDS.expired, { askedAt: getAt(24 * 60 + 1), scanApproval: { state: "pending", lineCount: 1, expiresAt: getAt(1) } }),
+    buildScanItem(SCAN_IDS.gone, { askedAt: getAt(40), scanApproval: { state: "gone", lineCount: null, expiresAt: null } }),
+    buildScanItem(SCAN_IDS.approved, {
+      askedAt: getAt(6), status: "answered", answeredAt: getAt(2), answer: { code: "R1", text: null },
+      scanApproval: { state: "approved", lineCount: 1, expiresAt: getAt(-8) },
+    }),
+  ];
+  const scanReads = {
+    [SCAN_IDS.one]: buildScanRead([getScanLine(`hello${String.fromCodePoint(0x200b)}world`)]),
+    [SCAN_IDS.long]: buildScanRead([getScanLine("**b** <b>x</b> ## h | a | ``` U+200B"), longLine, "const x = process.env.HOME;"]),
+  };
+  return { ...rest, items: [...items, ...rest.items], scanReads };
 }

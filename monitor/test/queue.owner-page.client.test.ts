@@ -13,6 +13,7 @@ import { dirname, resolve } from "node:path";
 import { imageUploadQuerySchema, messageBodySchema, ownerOrdersQuerySchema, replyBodySchema } from "../src/server/queue/schemas.js";
 import { getImageFacts } from "../src/server/queue/image-format.js";
 import { IMAGE_BYTES_MAX } from "../src/server/queue/images.js";
+import { getLineDisplay, getLineHash } from "../src/server/queue/scan-approvals.js";
 import { collectText, createEffectReact, createFakeDocument, createStatefulReact, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { FIXTURE_NOW, FIXTURE_SESSION_IDS, getRelayThreadFixture } from "./lib/queue-render-fixtures.js";
 
@@ -4408,5 +4409,220 @@ describe("twelve words a sentence", () => {
   test("every sentence the page renders is twelve words or fewer", () => {
     const texts = strings();
     assert.deepEqual([texts.every((text) => text.length > 0), getLongSentences(texts)], [true, []], JSON.stringify(texts));
+  });
+});
+
+// the owner judges the hook's own capture → the server's display form drawn as it is, never the line as markup, never cut
+describe("the secret-approval card", () => {
+  const QUOTE = String.fromCharCode(34);
+  const SCAN_BODY = "Approve this write once (R1) lets the write pass once, within 10 minutes of the answer. Decline (R2) when a line holds a real password or key.";
+  const SCAN_PATH = "/Users/owner/Desktop/git/glass-atrium/monitor/src/server/queue/example-config.ts";
+  const FAR = "2099-11-27T05:50:00.000Z";
+  // harmless parts joined at run time → an assignment the scanner never refuses
+  const getLine = (value: string) => ["greeting = ", QUOTE, value, QUOTE, ";"].join("");
+  const getRead = (lines: string[], agentType = "glass-atrium-dev-front") => ({
+    path: SCAN_PATH, rule: "SEC-013", agentType,
+    lines: lines.map((line) => ({ hash: getLineHash(line), ...getLineDisplay(line) })),
+  });
+  const scanItem = (overrides: Record<string, unknown> = {}) => buildItem({
+    id: 77, title: "Secret-scan refusal: approve one write?", body: SCAN_BODY, isFreeTextAllowed: false, isApprovalClass: true, recommendedCode: "R2",
+    options: [
+      { code: "R1", label: "Approve this write once", pros: "The refused write lands as written.", cons: "A real secret in a line would be written to the file." },
+      { code: "R2", label: "Decline", pros: "Nothing is written and the request is dropped.", cons: "The session rewrites the line." },
+    ],
+    scanApproval: { state: "pending", lineCount: 1, expiresAt: FAR }, ...overrides,
+  });
+  const READY = (lines: string[], agentType?: string) => ({ status: "ready", data: getRead(lines, agentType) });
+  const renderCard = (item: unknown, scanRead: unknown = READY([getLine("hello")])) => render("SheetBodyQ", { item, draft: {}, onDraft: () => undefined, cliPath: CLI_PATH, scanRead });
+  const plates = (tree: RenderedNode) => byClass(tree, "scan-plate");
+  const childrenOf = (node: RenderedNode) => (node.children ?? []).flat(Infinity as 1) as Array<RenderedNode | string>;
+  // the host elements as the browser lays them out: component and fragment wrappers unwrapped
+  const hostChildren = (node: RenderedNode): RenderedNode[] => childrenOf(node).flatMap((child) => {
+    if (typeof child !== "object" || child === null) return [];
+    return child.type === "Fragment" || /^[A-Z]/.test(String(child.type)) ? hostChildren(child) : [child];
+  });
+  // the words as read: collectText joins every node with a space
+  const textOf = (node: RenderedNode | string | undefined) => collectText((node ?? null) as RenderedNode).replace(/\s+/g, " ").trim();
+  const asSegment = (child: RenderedNode | string) => (typeof child === "string" ? { text: child } : { mark: collectText(child) });
+  const optionInputs = (tree: RenderedNode) => findNodes(tree, (node) => node.type === "input" && node.props?.type === "radio");
+
+  describe("a mark segment draws its tile, never the raw character", () => {
+    const rows = [
+      { name: "C0 control: TAB", cp: 0x09 }, { name: "C1 control", cp: 0x85 }, { name: "soft hyphen", cp: 0xad }, { name: "combining grapheme joiner", cp: 0x34f },
+      { name: "Arabic letter mark", cp: 0x61c }, { name: "Hangul filler", cp: 0x115f }, { name: "Khmer inherent vowel", cp: 0x17b4 }, { name: "Mongolian vowel separator", cp: 0x180e },
+      { name: "zero-width space", cp: 0x200b }, { name: "bidi override U+202E", cp: 0x202e }, { name: "bidi isolate U+2066", cp: 0x2066 }, { name: "line separator", cp: 0x2028 },
+      { name: "no-break space", cp: 0xa0 }, { name: "byte order mark", cp: 0xfeff }, { name: "interlinear annotation", cp: 0xfff9 },
+    ];
+    for (const row of rows) {
+      test(row.name, () => {
+        const char = String.fromCodePoint(row.cp);
+        const label = `U+${row.cp.toString(16).toUpperCase().padStart(4, "0")}`;
+        const [plate] = plates(renderCard(scanItem(), READY([getLine(`a${char}b`)])));
+        const texts = childrenOf(plate as RenderedNode).filter((child): child is string => typeof child === "string");
+        const tiles = byClass(plate as RenderedNode, "scan-mark");
+        assert.deepEqual(
+          { isRawShown: texts.some((text) => text.includes(char)), tiles: tiles.map((tile) => [collectText(tile), tile.props.role, tile.props["aria-label"]]) },
+          { isRawShown: false, tiles: [[label, "img", `hidden character ${label}`]] },
+        );
+      });
+    }
+
+    test("a trailing space is a tile at the plate's end", () => {
+      const [plate] = plates(renderCard(scanItem(), READY([`${getLine("hello")} `])));
+      assert.deepEqual(asSegment(childrenOf(plate as RenderedNode).at(-1)!), { mark: "U+0020" });
+    });
+  });
+
+  test("each plate's children are the server's segments in order, nothing else", () => {
+    const line = getLine(`a${String.fromCodePoint(0x200b)}b${String.fromCodePoint(0x202e)}c`);
+    const [plate] = plates(renderCard(scanItem(), READY([line])));
+    assert.deepEqual([childrenOf(plate as RenderedNode).map(asSegment), plate!.props.dir], [getPlain(getLineDisplay(line).segments), "ltr"]);
+  });
+
+  test("a line holding markup characters is drawn as its text, never as elements", () => {
+    const line = getLine("**b** <b>x</b> ## h | a | ``` <a href=x>y</a>");
+    const [plate] = plates(renderCard(scanItem(), READY([line])));
+    const elements = findNodes(plate as RenderedNode, (node) => typeof node.type === "string" && node !== plate).map((node) => node.type);
+    assert.deepEqual([elements, collectText(plate as RenderedNode)], [[], line]);
+  });
+
+  test("the literal text U+200B makes no tile, a real U+200B exactly one", () => {
+    const tiles = (line: string) => byClass(plates(renderCard(scanItem(), READY([line])))[0] as RenderedNode, "scan-mark").length;
+    assert.deepEqual([tiles(getLine("U+200B")), tiles(getLine(`x${String.fromCodePoint(0x200b)}y`))], [0, 1]);
+  });
+
+  test("3 captured lines make 3 plates in file order, each led by its own line head with the cue first", () => {
+    const lines = [getLine("one"), "const x = process.env.HOME;", "const x = config.field;"];
+    const tree = renderCard(scanItem({ scanApproval: { state: "pending", lineCount: 3, expiresAt: FAR } }), READY(lines));
+    const blocks = byClass(tree, "scan-line").map((block) => [hostChildren(byClass(block, "scan-line-head")[0] as RenderedNode).map(textOf), collectText(plates(block)[0] as RenderedNode)] as const);
+    assert.deepEqual(blocks.map(([head, plate]) => [head[0], plate]), [["Literal value", lines[0]], ["Env reference", lines[1]], ["Field reference", lines[2]]]);
+    assert.deepEqual(blocks.map(([head]) => head[2]!.split(" · ")[1]), ["1 of 3", "2 of 3", "3 of 3"]);
+  });
+
+  test("the line head shows the server's length and classes", () => {
+    const line = getLine(`Ab9 ${String.fromCodePoint(0xe9)}${"x".repeat(1200)}`);
+    const { value } = getLineDisplay(line);
+    const [head] = byClass(renderCard(scanItem(), READY([line])), "scan-line-head");
+    assert.deepEqual(childrenOf(head as RenderedNode).map((child) => collectText(child as RenderedNode)), ["Literal value", `${value.length.toLocaleString("en-US")} characters`, "a–z, A–Z, 0–9, space, non-ASCII"]);
+  });
+
+  describe("the cue summary is the first part after the title", () => {
+    const rows = [
+      { name: "one literal line", lines: [getLine("hello")], expected: "⚠ The line assigns a literal value." },
+      { name: "one reference line", lines: ["const x = other;"], expected: "The line assigns a reference, not a literal value." },
+      { name: "some of several lines literal", lines: [getLine("a"), "const x = other;", getLine("b")], expected: "⚠ 2 of 3 lines assign a literal value." },
+      { name: "none of several lines literal", lines: ["const x = other;", "const x = config.field;", "const x = process.env.HOME;"], expected: "None of the 3 lines assigns a literal value." },
+    ];
+    for (const row of rows) {
+      test(row.name, () => {
+        const [body] = byClass(renderCard(scanItem(), READY(row.lines)), "queue-sheet-body");
+        const parts = hostChildren(body as RenderedNode);
+        const titleAt = parts.findIndex((part) => part.type === "h3");
+        assert.deepEqual([parts[titleAt + 1]?.props.className, textOf(parts[titleAt + 1])], ["scan-cue", row.expected]);
+      });
+    }
+  });
+
+  test("the facts carry the full path, the whole session id, the rule and the agent, none cut", () => {
+    const facts = (agentType: string) => {
+      const [list] = byClass(renderCard(scanItem(), READY([getLine("hello")], agentType)), "scan-facts");
+      const cells = findNodes(list as RenderedNode, (node) => node.type === "dt" || node.type === "dd").map((node) => textOf(node));
+      return Object.fromEntries(cells.flatMap((cell, index) => (index % 2 === 0 ? [[cell, cells[index + 1]]] : [])));
+    };
+    const shown = facts("glass-atrium-dev-front");
+    assert.deepEqual(shown, {
+      File: SCAN_PATH, Rule: "SEC-013 credential assignment", Session: `glass-atrium ${SESSION_ID}`, Agent: "glass-atrium-dev-front",
+      Approval: "Once, within 10 minutes of your yes", Waits: `Until ${call<string>("getEndTimeQ", FAR)}`,
+    });
+    assert.deepEqual([Object.values(shown).some((value) => String(value).includes("…")), facts("").Agent], [false, "Main session"]);
+  });
+
+  test("the warning line stands directly above the options and the item body is not drawn", () => {
+    const [body] = byClass(renderCard(scanItem()), "queue-sheet-body");
+    const parts = hostChildren(body as RenderedNode);
+    const optionsAt = parts.findIndex((part) => part.type === "fieldset");
+    assert.equal(textOf(parts[optionsAt - 1]), "⚠ If any line holds a real password or key, decline.");
+    assert.equal(collectText(body as RenderedNode).includes(SCAN_BODY), false);
+  });
+
+  describe("Approve stays closed until the captured lines are on screen; Decline stays open", () => {
+    const past = "2020-01-01T00:00:00.000Z";
+    const rows = [
+      { name: "reading the capture", item: scanItem(), read: { status: "loading", data: null }, expected: [true, false] },
+      { name: "the read failed", item: scanItem(), read: { status: "failed", data: null }, expected: [true, false] },
+      { name: "the request expired", item: scanItem({ scanApproval: { state: "pending", lineCount: 1, expiresAt: past } }), read: { status: "loading", data: null }, expected: [true, false] },
+      { name: "the request is gone", item: scanItem({ scanApproval: { state: "gone", lineCount: null, expiresAt: null } }), read: { status: "loading", data: null }, expected: [true, false] },
+      { name: "the lines are on screen", item: scanItem(), read: READY([getLine("hello")]), expected: [false, false] },
+    ];
+    for (const row of rows) test(row.name, () => assert.deepEqual(optionInputs(renderCard(row.item, row.read)).map((input) => Boolean(input.props.disabled)), row.expected));
+
+    test("key 1 picks nothing while Approve is closed, and picks it once open", () => {
+      const pick = (isDisabled: boolean) => {
+        const { calls, queue } = buildQueue({ sheet: { kind: "item", id: 77, item: scanItem() } });
+        call("putPickedOptionQ", { queue, index: 0, root: { getElementById: (id: string) => (id === "queue-option-77-R1" ? { disabled: isDisabled } : null) } });
+        return calls.filter(([name]) => name === "setDraft").length;
+      };
+      assert.deepEqual([pick(true), pick(false)], [0, 1]);
+    });
+  });
+
+  describe("each state says its words in the lines' place", () => {
+    const answered = (code: string, state: string, expiresAt: string | null) => scanItem({ status: "answered", answeredAt: "2026-11-26T05:54:00.000Z", answer: { code, text: null }, scanApproval: { state, lineCount: 1, expiresAt } });
+    const rows = [
+      { name: "reading the capture", item: scanItem(), read: { status: "loading", data: null }, expected: "Reading the captured lines…" },
+      { name: "the read failed", item: scanItem(), read: { status: "failed", data: null }, expected: "⚠ The captured lines could not be read. Retry" },
+      { name: "approved, window open", item: answered("R1", "approved", FAR), expected: "✓ Approved 14:54. The line was dropped; its hash remains." },
+      { name: "approved, request gone", item: answered("R1", "gone", null), expected: "Approval ended: used, expired or lost in a monitor restart." },
+      { name: "approved, window over", item: answered("R1", "approved", "2020-01-01T00:00:00.000Z"), expected: "Approval ended: used, expired or lost in a monitor restart." },
+      { name: "declined", item: answered("R2", "gone", null), expected: "Declined 14:54. The line was dropped; nothing was written." },
+      { name: "withdrawn", item: scanItem({ status: "withdrawn", scanApproval: { state: "gone", lineCount: null, expiresAt: null } }), expected: "The session withdrew the request. The line was dropped." },
+      { name: "pending expired", item: scanItem({ scanApproval: { state: "pending", lineCount: 1, expiresAt: "2020-01-01T00:00:00.000Z" } }), expected: "Expired: no answer within 24 hours. The line was dropped." },
+      { name: "gone after a monitor restart", item: scanItem({ scanApproval: { state: "gone", lineCount: null, expiresAt: null } }), expected: "Gone: the monitor restarted. The session must ask again." },
+    ];
+    for (const row of rows) {
+      test(row.name, () => {
+        const tree = renderCard(row.item, row.read ?? READY([getLine("hello")]));
+        assert.deepEqual([textOf(byClass(tree, "scan-state")[0]), plates(tree).length], [row.expected, 0]);
+      });
+    }
+  });
+
+  test("an approval reads its server end time and turns ended one second past it", () => {
+    const item = scanItem({ status: "answered", answeredAt: "2026-11-26T05:54:00.000Z", answer: { code: "R1", text: null }, scanApproval: { state: "approved", lineCount: 1, expiresAt: "2099-11-26T06:04:00.000Z" } });
+    const [approval] = findNodes(renderCard(item), (node) => node.type === "dd" && collectText(node).startsWith("Once"));
+    const end = Date.parse("2099-11-26T06:04:00.000Z");
+    assert.deepEqual([textOf(approval as RenderedNode), call("getScanStateQ", item, end - 1000), call("getScanStateQ", item, end + 1000)], ["Once, until 15:04", "approved", "ended"]);
+  });
+
+  test("Send answer on a gone request says nothing passes", () => {
+    assert.equal(call("getActionErrorQ", { status: 409, data: { error: "secret_request_gone" }, error: null }), "Not approved: the request is gone. Nothing will pass.");
+  });
+
+  describe("the list row carries facts, never the line", () => {
+    const row = (item: unknown, isDone = false) => {
+      const cells = call<{ tags: Array<{ text: string }>; fact: string | null }>("getRowCellsQ", { item, copies: [item], isDone }, false);
+      return [cells.tags.map((tag) => tag.text), cells.fact];
+    };
+    const rows = [
+      { name: "one pending line", item: scanItem(), expected: [["Approval"], "1 line"] },
+      { name: "three pending lines", item: scanItem({ scanApproval: { state: "pending", lineCount: 3, expiresAt: FAR } }), expected: [["Approval"], "3 lines"] },
+      { name: "an expired request", item: scanItem({ scanApproval: { state: "pending", lineCount: 1, expiresAt: "2020-01-01T00:00:00.000Z" } }), expected: [["Approval"], "Expired"] },
+      { name: "a gone request", item: scanItem({ scanApproval: { state: "gone", lineCount: null, expiresAt: null } }), expected: [["Approval"], "Gone"] },
+      { name: "done, approved", item: scanItem({ status: "delivered", answeredAt: FAR, answer: { code: "R1", text: null } }), isDone: true, expected: [["Approved"], "Decision"] },
+      { name: "done, declined", item: scanItem({ status: "delivered", answeredAt: FAR, answer: { code: "R2", text: null } }), isDone: true, expected: [["Declined"], "Decision"] },
+      { name: "done, withdrawn", item: scanItem({ status: "withdrawn" }), isDone: true, expected: [["Withdrawn"], "Decision"] },
+    ];
+    for (const entry of rows) test(entry.name, () => assert.deepEqual(row(entry.item, entry.isDone), entry.expected));
+  });
+
+  test("the sheet reads the captured lines once, from the owner read route, only while the request is pending", async () => {
+    const paths: string[] = [];
+    const read = getRead([getLine("hello")]);
+    const page = (await loadScreenModule(QUEUE_SRC, {
+      URLSearchParams, window: { UI: uiStub(), location: { hash: "#queue" } },
+      fetch: async (path: string) => { paths.push(path); return { status: 200, json: async () => read }; },
+    })) as ScreenModule;
+    const answer = getPlain(await (page.readScanLinesQ as (id: number) => Promise<unknown>)(77));
+    assert.deepEqual([paths, answer], [["/api/queue/owner/items/77/scan-approval"], { status: "ready", data: read }]);
   });
 });

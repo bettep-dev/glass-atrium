@@ -27,6 +27,7 @@ import {
   FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getDoneOnlyFixture, getDoneRelaysFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
   getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneListFixture, getOneReceivedFixture, getOrderFirstFixture, getProseFixture, getHiddenSessionsFixture, getRailFixture, getRelayListFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, RELAY_ROW_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
+  getScanApprovalFixture, SCAN_IDS, SCAN_MARK_POINTS,
 } from "./lib/queue-render-fixtures.js";
 import { deleteTempDirectory } from "./lib/remove-dir.js";
 
@@ -547,12 +548,14 @@ interface Harness {
   /** Set → the first page of the item list offers this cursor, so the list foot shows Show more. */
   moreCursor: string | null;
   uploads: number;
+  /** The item ids the owner read of captured lines was asked for, in order. */
+  scanReadIds: number[];
 }
 
 async function openHarness(): Promise<Harness> {
   const app = Fastify({ logger: false });
   const harness: Harness = {
-    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, heldDesk: null, heldAct: null, isListDown: false, moreCursor: null, uploads: 0,
+    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, heldDesk: null, heldAct: null, isListDown: false, moreCursor: null, uploads: 0, scanReadIds: [],
   };
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   registerFixtureRoutes(app, harness);
@@ -586,6 +589,14 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
     return { sessions: harness.fixture.sessions.filter((row) => includeHidden || !row.isHidden), hasMore: false };
   });
   app.get("/api/queue/owner/resumes", async () => ({ resumes: harness.fixture.resumes }));
+  // the owner read of captured lines (queue-owner.ts): private, no-store on every reply; no waiting request → 409 secret_request_gone
+  app.get<{ Params: { id: string } }>("/api/queue/owner/items/:id/scan-approval", async (request, reply) => {
+    const id = Number(request.params.id);
+    harness.scanReadIds.push(id);
+    const read = harness.fixture.scanReads?.[id];
+    reply.headers({ "cache-control": "private, no-store" });
+    return read === undefined ? reply.code(409).send({ error: "secret_request_gone" }) : read;
+  });
   app.get("/api/queue/owner/orders", async (request) => {
     await harness.heldDesk;
     const query = ownerOrdersQuerySchema.parse(request.query);
@@ -3225,6 +3236,94 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec 44063 §14.4's edge cases: what the page shows for each, beside the rest state
+  // the owner judges the hook's own capture on the Mac and the phone: every line whole, every hidden character a whole tile
+  describe("on the secret-approval fixtures", () => {
+    const PHONE: Viewport = { width: 360, height: 740 };
+    const openScanPage = async (viewport: Viewport) => {
+      harness.fixture = getScanApprovalFixture();
+      harness.scanReadIds.length = 0;
+      return openQueuePage(harness, viewport, getScanApprovalFixture().items[0]!.title);
+    };
+    const openScanSheet = async (page: Page, id: number, ready: string) => {
+      await selectRow(page, id);
+      await page.locator(".queue-sheet").getByText(ready).first().waitFor();
+    };
+
+    for (const viewport of [MIN_WINDOW, PHONE]) {
+      test(`at ${viewport.width} wide the long line wraps whole, each mark a whole tile, and the sheet scrolls nothing sideways`, async () => {
+        const page = await openScanPage(viewport);
+        await openScanSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
+        const shown = await page.evaluate((points) => {
+          const plates = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-plate")];
+          const marks = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-mark")];
+          const texts = plates.flatMap((plate) => [...plate.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent ?? ""));
+          const body = document.querySelector<HTMLElement>(".queue-sheet > .card-body")!;
+          const getRgb = (value: string) => (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+          const getLuminance = (rgb: number[]) => {
+            const [r, g, b] = rgb.map((channel) => { const c = channel / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+            return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+          };
+          const getRatio = (one: string, two: string) => {
+            const [high, low] = [getLuminance(getRgb(one)), getLuminance(getRgb(two))].sort((a, b) => b - a);
+            return (high! + 0.05) / (low! + 0.05);
+          };
+          const tile = getComputedStyle(marks[0]!);
+          return {
+            plates: plates.length,
+            isBodyScrolledSideways: body.scrollWidth > body.clientWidth,
+            isEveryPlateWhole: plates.every((plate) => plate.scrollWidth === plate.clientWidth && plate.scrollHeight === plate.clientHeight),
+            isEveryPlateUncut: plates.every((plate) => { const style = getComputedStyle(plate); return style.textOverflow !== "ellipsis" && style.maxHeight === "none" && style.overflowX !== "auto"; }),
+            isLongWrapped: plates[1]!.getBoundingClientRect().height > 20 * parseFloat(getComputedStyle(plates[1]!).lineHeight),
+            isEveryTileWhole: marks.every((mark) => mark.getClientRects().length === 1),
+            labels: marks.map((mark) => mark.textContent),
+            hasRawMark: texts.some((text) => points.some((point) => text.includes(String.fromCodePoint(point)))),
+            contrast: { tileText: getRatio(tile.color, tile.backgroundColor) >= 4.5, tilePlate: getRatio(tile.backgroundColor, getComputedStyle(plates[1]!).backgroundColor) >= 3 },
+          };
+        }, [...SCAN_MARK_POINTS]);
+        await page.close();
+
+        const labels = [...SCAN_MARK_POINTS.map((point) => `U+${point.toString(16).toUpperCase().padStart(4, "0")}`), "U+0020"];
+        assert.deepEqual(shown, {
+          plates: 3, isBodyScrolledSideways: false, isEveryPlateWhole: true, isEveryPlateUncut: true, isLongWrapped: true,
+          isEveryTileWhole: true, labels, hasRawMark: false, contrast: { tileText: true, tilePlate: true },
+        });
+      });
+    }
+
+    test("the captured lines are read only when a waiting item's sheet opens, and its row says only how many lines", async () => {
+      const page = await openScanPage(MIN_WINDOW);
+      const before = [...harness.scanReadIds];
+      const row = await page.locator(`#queue-row-${SCAN_IDS.one}`).getAttribute("aria-label");
+      await openScanSheet(page, SCAN_IDS.one, "The line assigns a literal value.");
+      await page.close();
+
+      assert.deepEqual({ before, after: harness.scanReadIds, isRowFactOnly: /, Approval, 1 line, posted /.test(row ?? "") && !/hello|world|U\+/.test(row ?? "") }, { before: [], after: [SCAN_IDS.one], isRowFactOnly: true });
+    });
+
+    test("the named states are captured: the list, the sheet waiting at 1280 and 360, marks and a long line, approved, expired, gone", async (t) => {
+      const dir = await getShotsDir(t);
+      t.diagnostic(`secret-approval card: ${dir}`);
+      const shots = [
+        { name: "1280-list", viewport: MIN_WINDOW, id: null, ready: "" },
+        { name: "1280-sheet-pending", viewport: MIN_WINDOW, id: SCAN_IDS.one, ready: "The line assigns a literal value." },
+        { name: "360-sheet-pending", viewport: PHONE, id: SCAN_IDS.one, ready: "The line assigns a literal value." },
+        { name: "1280-sheet-marks-long-line", viewport: MIN_WINDOW, id: SCAN_IDS.long, ready: "2 of 3 lines assign a literal value." },
+        { name: "360-sheet-marks-long-line", viewport: PHONE, id: SCAN_IDS.long, ready: "2 of 3 lines assign a literal value." },
+        { name: "1280-sheet-approved", viewport: MIN_WINDOW, id: SCAN_IDS.approved, ready: "The line was dropped; its hash remains." },
+        { name: "1280-sheet-expired", viewport: MIN_WINDOW, id: SCAN_IDS.expired, ready: "Expired: no answer within 24 hours." },
+        { name: "1280-sheet-gone", viewport: MIN_WINDOW, id: SCAN_IDS.gone, ready: "Gone: the monitor restarted." },
+      ];
+      for (const shot of shots) {
+        const page = await openScanPage(shot.viewport);
+        if (shot.id !== null) await openScanSheet(page, shot.id, shot.ready);
+        await page.screenshot({ path: join(dir, `card-${shot.name}.png`), animations: "disabled" });
+        await page.close();
+      }
+      const sizes = await Promise.all(shots.map((shot) => getPngSize(join(dir, `card-${shot.name}.png`))));
+      assert.deepEqual(sizes, shots.map((shot) => ({ width: shot.viewport.width, height: shot.viewport.height })));
+    });
+  });
+
   describe("on the edge-case fixtures", () => {
     test("a 9-option decision lists its nine options in the author's order with none picked, and its row reads 9 options", async () => {
       const page = await openEdgePage(harness);
