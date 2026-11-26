@@ -11,6 +11,7 @@ import { getImageFacts } from "../../src/server/queue/image-format.js";
 import { ITEM_TITLE_MAX, SESSION_NAME_MAX } from "../../src/server/queue/schemas.js";
 import type { ImageView } from "../../src/server/queue/images.js";
 import type { OwnerItemView, OwnerSessionView, RecentResume, RelayFacts, RelayRefusalView, RelaySender, ScanApprovalFacts, ScanApprovalLines } from "../../src/server/queue/owner-views.js";
+import { getSessionIdPrefix } from "../../src/server/queue/owner-views.js";
 import { getLineDisplay, getLineHash } from "../../src/server/queue/scan-approvals.js";
 import type { OwnerSessionRow } from "../../src/server/queue/owner-sessions.js";
 
@@ -427,7 +428,7 @@ const EDGE_IMAGES: FixtureImage[] = Array.from({ length: 8 }, (_, index) => {
 export const EDGE_FIXTURE_IMAGES: ReadonlyMap<string, FixtureImage> = new Map(EDGE_IMAGES.map((image) => [image.view.id, image]));
 
 function buildEdgeSession(id: string, name: string, awaiting: number): { view: OwnerSessionView; row: OwnerSessionRow } {
-  const view: OwnerSessionView = { ...buildSessionView("atrium"), id, name };
+  const view: OwnerSessionView = { ...buildSessionView("atrium"), id, sessionIdPrefix: getSessionIdPrefix(id), name };
   const row: OwnerSessionRow = { ...buildSessionRow("atrium", { awaiting, inDelivery: 0 }, 12), id, sessionIdPrefix: id.slice(0, 8), name };
   return { view, row };
 }
@@ -551,7 +552,7 @@ export const NOT_LISTENING_IDS = {
 } as const;
 
 function buildNotListeningSession(id: string, name: string, state: "live" | "stale", inDelivery: number): { view: OwnerSessionView; row: OwnerSessionRow } {
-  const view: OwnerSessionView = { ...buildSessionView("atrium"), id, name, state, isWaiting: false };
+  const view: OwnerSessionView = { ...buildSessionView("atrium"), id, sessionIdPrefix: getSessionIdPrefix(id), name, state, isWaiting: false };
   const row: OwnerSessionRow = { ...buildSessionRow("atrium", { awaiting: 0, inDelivery }, 7), id, sessionIdPrefix: id.slice(0, 8), name, state, isWaiting: false };
   return { view, row };
 }
@@ -599,7 +600,8 @@ const NOT_LISTENING_ORDERS = [
 const WIDE_ROLL_UP_NAMES = ["wiki", "docs", "billing", "search", "mobile"];
 
 function buildWideRollUpSession(name: string, index: number): OwnerSessionView {
-  return { ...buildSessionView("atrium"), id: `c5d6e7f8-7a8b-4c9d-8e0f-1a2b3c4d5e${index.toString(16).padStart(2, "0")}`, name };
+  const id = `c5d6e7f8-7a8b-4c9d-8e0f-1a2b3c4d5e${index.toString(16).padStart(2, "0")}`;
+  return { ...buildSessionView("atrium"), id, sessionIdPrefix: getSessionIdPrefix(id), name };
 }
 
 const NOT_LISTENING_EDGE_ORDERS = [

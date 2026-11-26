@@ -14,6 +14,7 @@ import { imageUploadQuerySchema, messageBodySchema, ownerOrdersQuerySchema, repl
 import { getImageFacts } from "../src/server/queue/image-format.js";
 import { IMAGE_BYTES_MAX } from "../src/server/queue/images.js";
 import { getLineDisplay, getLineHash } from "../src/server/queue/scan-approvals.js";
+import { getSessionIdPrefix } from "../src/server/queue/owner-views.js";
 import { collectText, createEffectReact, createFakeDocument, createStatefulReact, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { FIXTURE_NOW, FIXTURE_SESSION_IDS, getRelayThreadFixture } from "./lib/queue-render-fixtures.js";
 
@@ -67,7 +68,7 @@ const CLI_PATH = "/Volumes/tools/atrium/scripts/atrium-queue.sh";
 const READY_RESUMES = { status: "ready", data: [], error: null, busy: false };
 
 function buildSession(overrides: Record<string, unknown> = {}) {
-  return {
+  const session = {
     id: SESSION_ID,
     name: "glass-atrium",
     isNameRegistered: true,
@@ -81,6 +82,7 @@ function buildSession(overrides: Record<string, unknown> = {}) {
     marker: null,
     ...overrides,
   };
+  return { sessionIdPrefix: getSessionIdPrefix(String(session.id)), ...session };
 }
 
 function buildItem(overrides: Record<string, unknown> = {}) {

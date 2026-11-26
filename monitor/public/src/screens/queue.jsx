@@ -1904,7 +1904,7 @@ function getPageNamesQ(queue) {
 function getLoadedSessionsQ(queue) {
 	const items = [...(queue.list.data?.items ?? []), ...(queue.done?.thread.items ?? []), ...(queue.relays?.thread.items ?? []), ...(queue.orders?.thread.items ?? [])];
 	const senders = items.filter((item) => item.relay).map(({ relay: { sender } }) => ({ prefix: sender.sessionIdPrefix, who: getSenderWhoQ(sender), place: sender.cwdTail }));
-	const views = items.map(({ session }) => ({ prefix: getSessionPrefixQ(session), who: getSessionWhoQ(session), place: session.cwdTail }));
+	const views = items.map(({ session }) => ({ prefix: session.sessionIdPrefix, who: getSessionWhoQ(session), place: session.cwdTail }));
 	const rail = (queue.sessions?.region?.data?.sessions ?? []).map((row) => ({ prefix: row.sessionIdPrefix, who: getSessionWhoQ(row), place: row.cwdTail }));
 	return [...senders, ...views, ...rail];
 }
@@ -1945,10 +1945,6 @@ function getPageWhoQ(who, prefix, names) {
 // the id the page's names hold for a prefix (getPageNamesQ); undefined where its name is mistaken for no other
 function getPageIdQ(prefix, names) {
 	return names?.get(prefix)?.idPrefix;
-}
-
-function getSessionPrefixQ(session) {
-	return session.id.slice(0, SESSION_PREFIX_LENGTH_Q);
 }
 
 // the 8-character id where a name drawn beside it could be mistaken for another session's
@@ -2031,13 +2027,13 @@ function getRowWhoQ(row, names) {
 	if (row.refusal) return getRefusalEndsQ(row.refusal, names).who;
 	if (row.item.kind === "relay") return getPageWhoQ(getSenderWhoQ(row.item.relay.sender), row.item.relay.sender.sessionIdPrefix, names);
 	if (row.copies.length > 1) return { name: getCopiesNameQ(row.copies), isSelfNamed: false };
-	return getPageWhoQ(getSessionWhoQ(row.copies[0].session), getSessionPrefixQ(row.copies[0].session), names);
+	return getPageWhoQ(getSessionWhoQ(row.copies[0].session), row.copies[0].session.sessionIdPrefix, names);
 }
 
 // a relay's recipient end: `3 sessions`, or the one session's name with its id where the page's names hold one
 function getCopiesToQ(copies, names) {
 	const to = { name: getCopiesNameQ(copies), isSelfNamed: false };
-	return copies.length > 1 ? to : getPageWhoQ(to, getSessionPrefixQ(copies[0].session), names);
+	return copies.length > 1 ? to : getPageWhoQ(to, copies[0].session.sessionIdPrefix, names);
 }
 
 // one session's name, or `3 sessions` for a send to several
@@ -2457,7 +2453,7 @@ function SheetHeadQ({ queue, children }) {
 function getNameNoteQ(session, queue, names) {
 	const items = queue.list.data?.items ?? [];
 	const isManyAccounts = new Set(items.map((item) => item.session.profileLabel)).size > 1;
-	return { idPrefix: getPageIdQ(getSessionPrefixQ(session), names), account: (isManyAccounts && session.profileLabel) || undefined };
+	return { idPrefix: getPageIdQ(session.sessionIdPrefix, names), account: (isManyAccounts && session.profileLabel) || undefined };
 }
 
 // the head's h2 content: read as `Decision from gersona`; the session's account, directory and id ride its title ·
@@ -3838,7 +3834,7 @@ function getOrderTextQ(item) {
 // the session name and its receipt, and nothing else; Resend only where the queue names it (canResend); a refused resend says why under the row
 function RecipientRowQ({ copy, pageNames = null, busy, onResend }) {
 	const { formatKstTime, MachineString } = window.UI;
-	const idPrefix = getPageIdQ(getSessionPrefixQ(copy.session), pageNames);
+	const idPrefix = getPageIdQ(copy.session.sessionIdPrefix, pageNames);
 	const receipt = getReceiptQ(copy);
 	const time = receipt === "received" && copy.deliveredAt ? [{ text: formatKstTime(copy.deliveredAt) }] : [];
 	const refusal = busy?.error?.id === copy.id ? busy.error.message : null;
