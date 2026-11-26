@@ -31,10 +31,9 @@ if str(_HOOKS_DIR) not in sys.path:
 
 from _pg_connect import CONNECT_TIMEOUT_SEC, RETRY_BACKOFF_SEC
 
-_WRITER = _HOOKS_DIR / "_pg-write.py"
 # private port → a libpq that ignored PGHOST would find no /tmp socket and fail fast
 _FAKE_PORT = 59321
-# above the 1 s connect that lost rows, half a timeout below the shared one
+# half the shared timeout → past a 1 s connect, so a shorter timeout loses the row
 _SLOW_START_SEC = CONNECT_TIMEOUT_SEC / 2
 # hung database → two write connects, one backoff, then the failure-record connect
 _HUNG_CONNECTS = 3
@@ -59,7 +58,7 @@ _OUTCOME = {
 _WRITERS = [
     (
         "_pg-write.py (advisory-subagent-budget)",
-        [str(_WRITER), "pg-write-test", "core.agent_events"],
+        [str(_HOOKS_DIR / "_pg-write.py"), "pg-write-test", "core.agent_events"],
         json.dumps(_ROW),
     ),
     (
