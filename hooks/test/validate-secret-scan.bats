@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# shellcheck disable=SC2154,SC2312  # BATS_* and run results are set by bats; a masked status fails its comparison
+# shellcheck disable=SC2030,SC2031,SC2154,SC2312  # BATS_* and run results are set by bats, a helper reads the run it follows; a masked status fails its comparison
 # validate-secret-scan.sh — envelope-driven smoke (plan clauded-docs/284 T5).
 #
 # PreToolUse(Write|Edit|Bash) security gate, one surface with two channels:
@@ -438,4 +438,177 @@ get_hash() {
   [[ "${status}" -eq 2 && "${#lines[@]}" -eq 2 ]] || { echo "status ${status}: ${output}"; return 1; }
   [[ "$(jq -cS . <<<"${lines[0]}")" == "$(get_cred_refusal)" && "${lines[1]}" == *"monitor"* ]] \
     || { echo "${output}"; return 1; }
+}
+
+# Today's SEC-013 refusal plus exactly one added line holding $2, never the line → else prints row $1 and fails.
+check_cause_refusal() {
+  [[ "${status}" -eq 2 && "${#lines[@]}" -eq 2 && "$(jq -cS . <<<"${lines[0]}")" == "$(get_cred_refusal)" ]] \
+    && [[ "${lines[1]}" == "SEC-013 approval: "*"${2}"* && "${output}" != *"${CRED_FIXTURE}"* ]] \
+    || { echo "${1}: status ${status}: ${output}"; return 1; }
+}
+
+# A directory linking every command on PATH but $1 → the hook runs as on a host without that command.
+make_path_without() {
+  local bin="${BATS_TEST_TMPDIR}/without-${1}" dir entry
+  local -a dirs=()
+  mkdir -p "${bin}"
+  IFS=: read -r -a dirs <<<"${PATH}"
+  for dir in "${dirs[@]}"; do
+    for entry in "${dir}"/*; do
+      if [[ "${entry##*/}" != "${1}" && -x "${entry}" && ! -e "${bin}/${entry##*/}" ]]; then
+        ln -s "${entry}" "${bin}/${entry##*/}"
+      fi
+    done
+  done
+  printf '%s\n' "${bin}"
+}
+
+@test "a consume reply that is not exactly a 200 pass or a 409 refusal refuses the write with one cause line and registers nothing" {
+  local names=() codes=() bodies=() pass="\"requestId\":\"${REQUEST_ID}\"" i sent=0
+  use_monitor_stub
+  names=("a reply that is not JSON" "a JSON reply without the decision field" "a pass under HTTP 201"
+    "a pass under HTTP 500" "a decision in another case" "a decision with a trailing line break"
+    "a decision that is not a string" "a 409 without the refuse decision")
+  codes=(200 200 201 500 200 200 200 409)
+  bodies=("decision=pass" "{${pass}}" "{\"decision\":\"pass\",${pass}}" "{\"decision\":\"pass\",${pass}}"
+    "{\"decision\":\"Pass\",${pass}}" "{\"decision\":\"pass\\n\",${pass}}" "{\"decision\":true,${pass}}"
+    '{"error":"scan_approval_refused"}')
+  for i in "${!names[@]}"; do
+    set_reply "${codes[${i}]}" "${bodies[${i}]}"
+    run_hook "$(get_session_envelope "${CRED_FIXTURE}")"
+    sent=$((sent + 1))
+    check_cause_refusal "${names[${i}]}" "consume reply" || return 1
+    [[ "$(request_count)" -eq "${sent}" ]] || { echo "${names[${i}]}: a register followed"; return 1; }
+  done
+}
+
+@test "a register the monitor does not answer with a request id refuses the write with one cause line naming why" {
+  local names=() codes=() bodies=() causes=() i
+  use_monitor_stub
+  names=("a hash the monitor computes differently" "a request over the size limit" "the session's request cap"
+    "a reply that is not JSON" "a request id that is not a UUID")
+  codes=(400 422 429 200 200)
+  bodies=('{"error":"secret_line_hash_mismatch"}' '{"error":"secret_request_size"}' '{"error":"secret_request_cap"}'
+    "request=${REQUEST_ID}" '{"requestId":"not-a-uuid"}')
+  causes=("HTTP 400, secret_line_hash_mismatch" "HTTP 422, secret_request_size" "HTTP 429, secret_request_cap"
+    "HTTP 200, no readable code" "could not run")
+  for i in "${!names[@]}"; do
+    set_nth_reply $((2 * i + 1)) 409 '{"error":"scan_approval_refused","decision":"refuse"}'
+    set_nth_reply $((2 * i + 2)) "${codes[${i}]}" "${bodies[${i}]}"
+    run_hook "$(get_session_envelope "${CRED_FIXTURE}")"
+    check_cause_refusal "${names[${i}]}" "${causes[${i}]}" || return 1
+  done
+}
+
+@test "a payload with no usable session id or no real target directory refuses the write with one cause line and sends nothing" {
+  local names=() envelopes=() causes=() i
+  use_monitor_stub
+  names=("no session_id" "an empty session_id" "a session_id that is not a string"
+    "a target whose parent directory does not exist" "a relative target path")
+  envelopes=(
+    "$(jq -cn --arg c "${CRED_FIXTURE}" --arg p "${TARGET}" '{tool_name:"Write",tool_input:{file_path:$p,content:$c}}')"
+    "$(get_session_envelope "${CRED_FIXTURE}" | jq -c '.session_id = ""')"
+    "$(get_session_envelope "${CRED_FIXTURE}" | jq -c '.session_id = 42')"
+    "$(get_session_envelope "${CRED_FIXTURE}" | jq -c --arg p "${TARGET%/*}/missing/app.ts" '.tool_input.file_path = $p')"
+    "$(get_session_envelope "${CRED_FIXTURE}" | jq -c '.tool_input.file_path = "project/app.ts"')"
+  )
+  causes=(session_id session_id session_id "real parent directory" "real parent directory")
+  for i in "${!names[@]}"; do
+    run_hook "${envelopes[${i}]}"
+    check_cause_refusal "${names[${i}]}" "${causes[${i}]}" || return 1
+  done
+  [[ "$(request_count)" -eq 0 ]] || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
+}
+
+# Another session's, another path's or an expired approval is the monitor's refusal (its store pins each); the hook's
+# half is the tuple it asks about — the payload's session and the target's real path, never the environment's.
+@test "the consume asks about the payload's session and the target's real path, so the monitor's refusal of any other approval refuses the write" {
+  local expected
+  use_monitor_stub
+  ln -s "${TARGET%/*}" "${BATS_TEST_TMPDIR}/linked"
+  set_nth_reply 1 409 '{"error":"scan_approval_refused","decision":"refuse"}'
+  set_nth_reply 2 200 "{\"requestId\":\"${REQUEST_ID}\"}"
+  CLAUDE_CODE_SESSION_ID="9f8e7d6c-5b4a-4c3d-8e2f-1a0b9c8d7e6f" run_hook "$(get_session_envelope "${CRED_FIXTURE}" \
+    | jq -c --arg p "${BATS_TEST_TMPDIR}/linked/app.ts" '.tool_input.file_path = $p | .agent_id = "a1" | .agent_type = "dev"')"
+  check_cause_refusal "monitor refusal" "${REQUEST_ID}" || return 1
+  expected="$(jq -cn --arg s "${SESSION_ID}" --arg p "${TARGET}" '[$s, $p]')"
+  [[ "$(get_request_body "${CONSUME_ROUTE}" | jq -c '[.sessionId, .path]')" == "${expected}" \
+    && "$(get_request_body "${REGISTER_ROUTE}" | jq -c '[.sessionId, .path]')" == "${expected}" ]] \
+    || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
+}
+
+@test "a monitor that hangs refuses the write with one cause line, and a call outliving its own timeouts ends at the deadline with no child left" {
+  local bin="${BATS_TEST_TMPDIR}/bin" mark="29.${RANDOM}" started
+  use_monitor_stub
+  set_reply hang ""
+  started="${SECONDS}"
+  run_hook "$(get_session_envelope "${CRED_FIXTURE}")"
+  check_cause_refusal "a monitor holding the request open" "did not answer" || return 1
+  mkdir -p "${bin}"
+  printf '#!/bin/sh\nexec sleep %s\n' "${mark}" >"${bin}/curl"
+  chmod +x "${bin}/curl"
+  PATH="${bin}:${PATH}" run_hook "$(get_session_envelope "${CRED_FIXTURE}")"
+  check_cause_refusal "a monitor call that never returns" "deadline" || return 1
+  ((SECONDS - started < 20)) || { echo "took $((SECONDS - started)) s"; return 1; }
+  run pgrep -f "sleep ${mark}"
+  [[ "${status}" -eq 1 ]] || { echo "the stalled call outlived the hook: ${output}"; return 1; }
+}
+
+@test "with curl absent a SEC-013 write is refused as today plus one cause line" {
+  local bin
+  use_monitor_stub
+  bin="$(make_path_without curl)"
+  PATH="${bin}" run_hook "$(get_session_envelope "${CRED_FIXTURE}")"
+  check_cause_refusal "curl absent" "curl" || return 1
+  [[ "$(request_count)" -eq 0 ]] || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
+}
+
+@test "with python3 absent a SEC-013 write is refused by the existing SEC-017 refusal with nothing sent" {
+  local bin
+  use_monitor_stub
+  bin="$(make_path_without python3)"
+  PATH="${bin}" run_hook "$(get_session_envelope "${CRED_FIXTURE}")"
+  [[ "${status}" -eq 2 && "${output}" == *'"SEC-017"'* && "${output}" != *"${CRED_FIXTURE}"* ]] \
+    || { echo "status ${status}: ${output}"; return 1; }
+  [[ "$(request_count)" -eq 0 ]] || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
+}
+
+@test "a captured line reaches only the monitor's register: never the hook's log, its stderr, a process argument list or a data directory" {
+  local bin="${BATS_TEST_TMPDIR}/bin" ps_log="${BATS_TEST_TMPDIR}/ps.log" sentinel line refused passed
+  use_monitor_stub
+  export TMPDIR="${BATS_TEST_TMPDIR}/tmp"
+  mkdir -p "${bin}" "${TMPDIR}"
+  sentinel="Qx${RANDOM}${RANDOM}sentinel"
+  line="pass""word=${sentinel}"
+  # every monitor call snapshots every process's argument list first
+  printf '#!/bin/sh\nps -A -ww -o args= >>"%s"\nexec "%s" "$@"\n' "${ps_log}" "$(command -v curl)" >"${bin}/curl"
+  chmod +x "${bin}/curl"
+  set_nth_reply 1 409 '{"error":"scan_approval_refused","decision":"refuse"}'
+  set_nth_reply 2 200 "{\"requestId\":\"${REQUEST_ID}\"}"
+  set_nth_reply 3 200 "{\"decision\":\"pass\",\"requestId\":\"${REQUEST_ID}\"}"
+  PATH="${bin}:${PATH}" run_hook "$(get_session_envelope "${line}")"
+  refused="${status} ${output}"
+  PATH="${bin}:${PATH}" run_hook "$(get_session_envelope "${line}")"
+  passed="${status} ${output}"
+  [[ "${refused}" == "2 "* && "${passed}" == "0 " && "$(get_request_body "${REGISTER_ROUTE}")" == *"${sentinel}"* ]] \
+    || { printf 'refused: %s\npassed: %s\n' "${refused}" "${passed}"; return 1; }
+  [[ "${refused}" != *"${sentinel}"* && "$(wc -l <"${ps_log}")" -gt 3 && -s "${GA_DATA_ROOT}/logs/validate-secret-scan.log" ]] \
+    || { echo "${refused}"; return 1; }
+  mkdir -p "${GA_ROOT}"
+  # status 1 alone → searched and not found; 2 (an unreadable root) is no evidence
+  run grep -rl -- "${sentinel}" "${ps_log}" "${HOME}" "${TMPDIR}" "${GA_ROOT}"
+  [[ "${status}" -eq 1 ]] || { echo "status ${status}: ${output}"; return 1; }
+}
+
+# The approval's decision comes only from the consume reply → the hook and its helpers call no queue reader of an
+# item, an answer or a claim, and name no monitor route but the two scan-approval routes.
+@test "no code path in the hook or its helpers reads a queue answer as proof" {
+  local files=() name used="" routes
+  files=("${HOOK_SH}" "${APPROVAL_LIB}" "${BATS_TEST_DIRNAME}/../lib/bounded-wait.sh")
+  for name in $(grep -oE '^queue_[a-z_]+\(\)' "${BATS_TEST_DIRNAME}/../../scripts/lib/queue-session.sh" | tr -d '()'); do
+    if grep -qw -- "${name}" "${files[@]}"; then used+="${name} "; fi
+  done
+  [[ "${used}" == "queue_send queue_get_reply_code queue_get_reply_body " ]] || { echo "calls: ${used}"; return 1; }
+  routes="$(grep -ohE '/api/[A-Za-z0-9_/.-]+' "${files[@]}" | sort -u | tr '\n' ' ')"
+  [[ "${routes}" == "/api/queue/scan-approvals /api/queue/scan-approvals/consume " ]] || { echo "routes: ${routes}"; return 1; }
 }

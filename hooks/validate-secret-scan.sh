@@ -81,11 +81,12 @@ print(json.dumps(dict(target, hashes=hashes)))
 texts = [{"text": line.decode("utf-8"), "hash": digest} for line, digest in zip(picked, hashes)]
 print(json.dumps(dict(target, agent=agent, lines=texts)))
 print(",".join(hashes))'
-# reply body on stdin → the string value of the key named by the argument; exit 1 for any other shape
+# reply body on stdin → the string value of the key named by the argument; exit 1 for any other shape, a line break
+# included → the caller's $( ) cannot strip "pass\n" into "pass"
 readonly REPLY_VALUE_PY='import json, sys
 d = json.load(sys.stdin)
 value = d.get(sys.argv[1]) if isinstance(d, dict) else None
-if not isinstance(value, str):
+if not isinstance(value, str) or "\n" in value:
     sys.exit(1)
 print(value)'
 
