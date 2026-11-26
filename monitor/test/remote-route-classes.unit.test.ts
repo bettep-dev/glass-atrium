@@ -115,6 +115,8 @@ const IMAGE_PATH_ROWS_CID = "2026-11-23T2100_queue-batch2-page_4a7c";
 const SIGNAL_REMOVAL_CID = "2026-11-25T1530_qb3-server_5e2a";
 // the scan-approval register, consume and owner-read rows appended after row 119, the answer and session item-post reasons re-signed in place (two reads, parts A and B)
 const SCAN_APPROVAL_CIDS = ["2026-11-26T1135_sa-verdict-a_1c7e", "2026-11-26T1135_sa-verdict-b_9a02"];
+// five queue reasons re-signed in place for the scan-approval facts, caps and link removal: route, class and order kept, so the 122-row digest stays
+const SCAN_REASONS_CID = "2026-11-27T0140_q-signoff_9b2d";
 const SIGNED_SCAN_APPROVAL_LINES = [
   "POST /api/queue/scan-approvals agent",
   "POST /api/queue/scan-approvals/consume agent",
@@ -225,9 +227,9 @@ describe("reviewer sign-offs", () => {
     assert.deepEqual({ rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy }, { ...SIGNED_TABLE, supersededBy: undefined });
   });
 
-  test("the latest sign-off names the reviewer and the scan-approval verdicts", () => {
+  test("the latest sign-off names the reviewer and the scan-reasons verdict", () => {
     const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
-    assert.deepEqual({ reviewer: latest?.reviewer, cids: latest?.cids }, { reviewer: "glass-atrium-sec-guard", cids: SCAN_APPROVAL_CIDS });
+    assert.deepEqual({ reviewer: latest?.reviewer, cids: latest?.cids }, { reviewer: "glass-atrium-sec-guard", cids: [SCAN_REASONS_CID] });
   });
 
   test("every superseded table an append extended and no removal cut still verifies over the live table's leading rows, so new rows were appended, not inserted", () => {
@@ -266,6 +268,7 @@ describe("reviewer sign-offs", () => {
         [[ANSWER_IMAGES_CID], IMAGE_PATH_TABLE.rowCount, IMAGE_PATH_TABLE.sha256, IMAGE_PATH_ROWS_CID],
         [[IMAGE_PATH_ROWS_CID], IMAGE_PATH_TABLE.rowCount, IMAGE_PATH_TABLE.sha256, SIGNAL_REMOVAL_CID],
         [[SIGNAL_REMOVAL_CID], SIGNAL_REMOVAL_TABLE.rowCount, SIGNAL_REMOVAL_TABLE.sha256, SCAN_APPROVAL_CIDS[0]],
+        [SCAN_APPROVAL_CIDS, SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, SCAN_REASONS_CID],
       ],
     );
   });

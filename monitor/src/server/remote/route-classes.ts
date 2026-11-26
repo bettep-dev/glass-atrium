@@ -76,6 +76,8 @@ const SIGNAL_REMOVAL_CID = "2026-11-25T1530_qb3-server_5e2a";
 // the scan-approval register, consume and owner-read rows appended after row 119 (route-class-verdict.md, parts A and B) → the 119-row digest still verifies as its prefix
 const SCAN_APPROVAL_CID = "2026-11-26T1135_sa-verdict-a_1c7e";
 const SCAN_APPROVAL_B_CID = "2026-11-26T1135_sa-verdict-b_9a02";
+// five queue reasons re-signed in place for the scan-approval facts, caps and link removal (q-signoff.md): route, class and order kept → same digest
+const SCAN_REASONS_CID = "2026-11-27T0140_q-signoff_9b2d";
 
 /** Append-only history; the last entry covers the whole live table and is the one the test checks. */
 export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
@@ -647,6 +649,25 @@ export const ROUTE_CLASS_SIGNOFFS: readonly RouteClassSignoff[] = [
     // B2 a secret-approval post links only a pending request of the posting session with no item yet, and the item's title, body and options are server text
     // open, not blocking (part B 5): a local process can fill the 64-request machine cap for the 24 h pending life; the hook then refuses, failing closed
     cids: [SCAN_APPROVAL_CID, SCAN_APPROVAL_B_CID],
+    rowCount: 122,
+    sha256: "b5ddf7d330dc063e9a379869de99f0c2558e063c45a0b4517a55fa64052039dd",
+    supersededBy: SCAN_REASONS_CID,
+  },
+  {
+    reviewer: "glass-atrium-sec-guard",
+    stream: "S5",
+    // every row carried unchanged in route, class and order, so the 122-row digest of the entry before it still verifies;
+    // five reasons re-signed in place: GET /api/queue/owner/items and GET /api/queue/owner/orders (page), GET /api/queue/owner/items/:id (agent),
+    // POST /api/queue/scan-approvals (agent) and POST /api/queue/items (agent)
+    // the scan clauses of the owner-list, orders and single-item reasons equal the SR-2 ruling text (sr2-ruling.md, items 4 and 5) by exact string comparison
+    // A1-A4, B1 and B2 of the entry before it stand, not re-judged by this verdict; its open condition restated below; conditions of this sign-off — a later change that breaks one needs a new sign-off:
+    // C1 owner views expose only request.agent.type from the request's agent, never the request's session id, agent id, lines or hashes; a gone request yields state alone
+    // C2 no route acts on a request id alone; consume carries no id, and an id already linked is refused 409
+    // C3 the 8 and 64 caps count only unlinked pending requests; linked requests count only toward the 256 ceiling, which is checked both in the item transaction and at link; a cap refuses and never evicts
+    // C4 a refused link removes the committed item (3 tries), and the post answers with the link error; an item that cannot be removed is logged once with its item id, request id and the db error, never a line
+    // C5 approving an item whose request is gone answers 409 and records nothing
+    // open, not blocking (part B 5): a local process can fill the 64-request machine cap of unlinked pending requests, re-registering each 15-minute lapse; the hook then refuses, failing closed (lapse: SECRET_REQUEST_LIMIT.UNLINKED_MS)
+    cids: [SCAN_REASONS_CID],
     rowCount: 122,
     sha256: "b5ddf7d330dc063e9a379869de99f0c2558e063c45a0b4517a55fa64052039dd",
   },

@@ -378,6 +378,36 @@ describe("decline and withdraw", () => {
   });
 });
 
+// the owner views name a held request's state → a third value, a declined one included, needs a new route sign-off
+describe("held state", () => {
+  const transitions: Array<{ name: string; arrange: (fixture: ReturnType<typeof createStore>) => string }> = [
+    { name: "registered", arrange: ({ store }) => store.create(buildInput([LINE.host])) },
+    { name: "linked", arrange: ({ store }) => { const id = store.create(buildInput([LINE.host])); store.link(id); return id; } },
+    { name: "approved", arrange: ({ store }) => { const id = store.create(buildInput([LINE.host])); store.approve(id); return id; } },
+    { name: "linked and approved", arrange: ({ store }) => { const id = store.create(buildInput([LINE.host])); store.link(id); store.approve(id); return id; } },
+    { name: "declined", arrange: ({ store }) => { const id = store.create(buildInput([LINE.host])); store.delete(id); return id; } },
+    { name: "consumed", arrange: ({ store }) => { const input = buildInput([LINE.host]); const id = store.create(input); store.approve(id); store.consume(buildWrite(input)); return id; } },
+    { name: "lapsed", arrange: ({ store, advance }) => { const id = store.create(buildInput([LINE.host])); advance(UNLINKED_MS); return id; } },
+  ];
+
+  test("every store transition leaves a request pending, approved or out of the store, so a decline removes it rather than marking it", () => {
+    const states = transitions.map((row) => {
+      const fixture = createStore();
+      return [row.name, fixture.store.find(row.arrange(fixture))?.state ?? null];
+    });
+
+    assert.deepEqual(Object.fromEntries(states), {
+      registered: "pending",
+      linked: "pending",
+      approved: "approved",
+      "linked and approved": "approved",
+      declined: null,
+      consumed: null,
+      lapsed: null,
+    });
+  });
+});
+
 describe("consume", () => {
   const approve = (lines: string[]) => {
     const fixture = createStore();
