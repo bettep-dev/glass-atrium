@@ -162,7 +162,7 @@ audit_body() {
   done
 }
 
-@test "a title code counts as an ID unless a non-test product file defines that whole code for an emitter" {
+@test "a title code counts as an ID unless a non-test product file defines that whole code for an emitter or in a code table it reads" {
   local tree="${TS_TMP}/tree"
   write_fixture "${tree}/hooks/guard.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -186,12 +186,20 @@ warn_tripped_check "VGATE-SIZE-001" "plan too large"
 # emit_error "TKT-12" is how the ticket fix would read
 true # warn_tripped_check "TKT-13"
 EOF
+  write_fixture "${tree}/scripts/lib/scanner.sh" <<'EOF'
+#!/usr/bin/env bash
+readonly -a CODES=(SCAN-001 SCAN-002)
+readonly -a RETIRED=(SCAN-009)
+printf '%s\t%s\n' "${CODES[${i}]}" "match"
+EOF
   write_fixture "${tree}/hooks/test/fixture.sh" <<'EOF'
 emit_error "TST-001" "block" "fixture only"
 EOF
   local -a table=(
     $'codes from a read table an emitter consumes\x1fbats\x1fGIT-001 and GIT-004 block the command\x1f0'
     $'a code from a bash array an emitter consumes\x1fbats\x1fSEC-002 blocks a token\x1f0'
+    $'a code from a code table its own file reads, with no emitter in that file\x1fbats\x1fSCAN-002 blocks a token\x1f0'
+    $'a code from a code table its file never reads\x1fbats\x1fSCAN-009 blocks a token\x1f1'
     $'a quoted literal of a case-arm warn_tripped_check call\x1fbats\x1fHAR-001 blocks a harness write\x1f0'
     $'the first argument of hook_require_python3\x1fbats\x1fSEC-017 needs python3\x1f0'
     $'the second argument of hook_require_python3_unless_empty\x1fbats\x1fSEC-018 needs python3\x1f0'

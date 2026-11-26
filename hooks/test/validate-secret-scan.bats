@@ -355,7 +355,7 @@ for line in get_lines(sys.stdin.buffer.read()):
     print(get_line_hash(line))'
 }
 
-@test "line hash: every shared vector hashes to the monitor's pinned SHA-256, as one line" {
+@test "line hash: every shared vector hashes to the monitor's pinned sha256 digest, as one line" {
   local count i name expected actual
   count="$(jq '.lines | length' "${VECTORS}")"
   [[ "${count}" -gt 0 ]] || {

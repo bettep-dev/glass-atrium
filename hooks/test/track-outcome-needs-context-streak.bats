@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # track-outcome-needs-context-streak.bats — the per-agent-id needs_context streak in track-outcome.sh:
-# the fire whose streak reaches the threshold carries one replace-do-not-continue advisory (DATA-081).
+# the fire whose streak reaches the threshold carries one replace-do-not-continue advisory.
 #
 # The streak keys by agent id, never agent type: a teammate resumed by message fires SubagentStop under
 # the same agent id each time, while parallel teammates of one type each carry their own id.
