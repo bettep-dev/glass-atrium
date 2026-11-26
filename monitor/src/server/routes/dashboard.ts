@@ -205,8 +205,7 @@ async function handleCostTimeseries(
     // (00:00–08:59 KST renders yesterday-as-today). Bound as a bind param (::date).
     const { day: todayIso, time: cutTime } = getBucketTzClock(new Date());
     const hasPriorWindow = request.query.prior_window === "1" || request.query.prior_window === "true";
-    // generate_series fills gap days with zero rows (LEFT JOIN). Interval embedded
-    // via Prisma.raw is safe here because `days` was validated against allowlist.
+    // generate_series fills gap days with zero rows (LEFT JOIN).
     const dayWindow = buildDayWindow(todayIso, days);
     const [rows, priorWindow] = await Promise.all([
       prisma.$queryRaw<TimeseriesRow[]>`
@@ -258,13 +257,13 @@ async function handleCostTimeseries(
  * Same row filter as the series (every kind) → a filtered prior alone would bias the delta.
  */
 async function findCostPriorWindow(
-  windowLowerBound: Prisma.Sql,
+  firstDay: Prisma.Sql,
   days: number,
   cutTime: string,
 ): Promise<CostTimeseriesPriorWindow> {
   const [row] = await getPrisma().$queryRaw<PriorWindowRow[]>`
     WITH bounds AS (
-      SELECT (${windowLowerBound})::date - ${days}::int AS period_start, (${windowLowerBound})::date AS period_end
+      SELECT (${firstDay})::date - ${days}::int AS period_start, (${firstDay})::date AS period_end
     )
     SELECT
       b.period_start,
