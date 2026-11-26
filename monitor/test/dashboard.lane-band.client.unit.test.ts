@@ -118,16 +118,16 @@ test("every down part becomes one harness row naming the parts", () => {
   assert.equal(rows[0]!.id, "harness");
   assert.equal(rows[0]!.tone, "crit");
   assert.equal(rows[0]!.target, "architecture", "the row routes to the screen that owns the fact");
-  assert.ok(rows[0]!.detail?.includes("PostgreSQL"), "the parts are named, not just counted");
-  assert.equal(rows[0]!.title, "2 system parts are down", "the shared noun for the watched parts");
+  assert.equal(rows[0]!.title, "2 system parts are down: PostgreSQL · autoagent", "the count and the named parts on one line");
+  assert.equal(rows[0]!.detail, undefined, "no second line under the title");
 });
 
 // a part needing attention is a warning, never a down part — a down part outranks it on the one harness row
 describe("the harness row is a warning for parts needing attention and critical once any part is down", () => {
   const rows = [
-    { name: "one part needs attention", over: { cautionNames: ["Hooks"] }, tone: "warn", title: "1 system part needs attention", detail: "Hooks" },
-    { name: "two parts need attention", over: { partsOk: 5, cautionNames: ["Hooks", "autoagent"] }, tone: "warn", title: "2 system parts need attention", detail: "Hooks · autoagent" },
-    { name: "a down part beside one needing attention", over: { partsOk: 4, downNames: ["PostgreSQL"], cautionNames: ["Hooks"] }, tone: "crit", title: "1 system part is down", detail: "PostgreSQL" },
+    { name: "one part needs attention", over: { cautionNames: ["Hooks"] }, tone: "warn", title: "1 system part needs attention: Hooks" },
+    { name: "two parts need attention", over: { partsOk: 5, cautionNames: ["Hooks", "autoagent"] }, tone: "warn", title: "2 system parts need attention: Hooks · autoagent" },
+    { name: "a down part beside one needing attention", over: { partsOk: 4, downNames: ["PostgreSQL"], cautionNames: ["Hooks"] }, tone: "crit", title: "1 system part is down: PostgreSQL" },
   ];
   for (const row of rows) {
     test(row.name, () => {
@@ -135,7 +135,7 @@ describe("the harness row is a warning for parts needing attention and critical 
       assert.equal(alarms.length, 1);
       assert.deepEqual(
         { tone: alarms[0]!.tone, title: alarms[0]!.title, detail: alarms[0]!.detail, target: alarms[0]!.target },
-        { tone: row.tone, title: row.title, detail: row.detail, target: "architecture" },
+        { tone: row.tone, title: row.title, detail: undefined, target: "architecture" },
       );
     });
   }
@@ -447,7 +447,7 @@ test("a firing stat never restates its alarm: the harness stat leaves the down p
     const [alarm] = dash.buildAlarms({ harness, costState: LOADING, installKind: "hidden" });
     const statText = [stat.context, ...stat.notes].join(" ");
     for (const name of row.downNames) {
-      assert.ok(String(alarm.detail).includes(name), `${row.name}: the alarm row names ${name}`);
+      assert.ok(String(alarm.title).includes(name), `${row.name}: the alarm row names ${name}`);
       assert.ok(!statText.includes(name), `${row.name}: the stat never names ${name} — "${statText}"`);
     }
   }
@@ -794,7 +794,7 @@ test("part names keep their hyphens unbreakable wherever the page lists them", (
   const [row] = dash.buildAlarms({ harness, costState: kpi(10, 10), installKind: "hidden" });
   const lists = [
     { where: "stat coverage note", text: stat.notes.join(" "), name: /Chromium‑Export/ },
-    { where: "lane row detail", text: row?.detail ?? "", name: /glass‑atrium‑wiki‑curator/ },
+    { where: "lane row title", text: row?.title ?? "", name: /glass‑atrium‑wiki‑curator/ },
   ];
 
   for (const { where, text, name } of lists) {

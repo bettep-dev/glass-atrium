@@ -774,7 +774,8 @@ function buildAlarms(sources) {
   return rows.sort((a, b) => (SEVERITY_RANK[b.tone] || 0) - (SEVERITY_RANK[a.tone] || 0));
 }
 
-// down parts → crit; otherwise parts needing attention → warn, in the System map's word for a warning part
+// down parts → crit; otherwise parts needing attention → warn, in the System map's word for a warning part;
+// the count and the parts read as one line, a long list wrapping between names
 function buildHarnessAlarm({ harness }) {
   if (!harness || harness.status !== 'ready') return null;
   const isDown = harness.downNames.length > 0;
@@ -782,8 +783,7 @@ function buildHarnessAlarm({ harness }) {
   if (names.length === 0) return null;
   return {
     tone: isDown ? 'crit' : 'warn',
-    title: `${names.length} system ${describePartState(names.length, isDown)}`,
-    detail: joinPartNames(names),
+    title: `${names.length} system ${describePartState(names.length, isDown)}: ${joinPartNames(names)}`,
     isHeld: hasHeldPartRead(harness),
     target: 'architecture',
     targetLabel: 'System map',
