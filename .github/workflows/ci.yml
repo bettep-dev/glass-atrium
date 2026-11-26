@@ -407,8 +407,19 @@ jobs:
           # a shallow checkout keeps the ref without the object, so every row would skip.
           fetch-depth: 0
 
+      # Every download the action makes goes through api.github.com, rate-limited per
+      # shared runner IP when unauthenticated (a 403 fails the step) → pinned version
+      # (no `releases/latest` lookup, cache key carries it), the job token for its reads,
+      # and no helper libraries (no suite loads them, see the job header).
       - name: Install bats
         uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
+        with:
+          bats-version: 1.14.0
+          github-token: ${{ github.token }}
+          support-install: false
+          assert-install: false
+          detik-install: false
+          file-install: false
 
       # `bats --jobs` shells out to GNU parallel; without it bats silently degrades
       # to serial. Install it explicitly so the parallel invocation below is honored.
