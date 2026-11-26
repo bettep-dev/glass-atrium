@@ -134,7 +134,7 @@ PING='{"jsonrpc":"2.0","id":90,"method":"ping"}'
     "post|[.inputSchema.properties.title, .inputSchema.properties.body] | all(.description | contains(\"required on a report or a decision\"))" \
     "post|.inputSchema.properties.kind.enum == [\"report\",\"decision\",\"secret-approval\"] and .inputSchema.properties.requestId.type == \"string\"" \
     "post|.description | contains(\"a secret-scan refusal that names a request id\") and contains(\"requestId alone\")" \
-    "post|.description | contains(\"returns the request id to its parent\") and contains(\"never retries the write before that approve answer\")" \
+    "post|.description | contains(\"A subagent returns the request id and the target path, never the line; it never posts and never retries before its parent's approve answer.\")" \
     "relay|.description | contains(\"at most ${limit} characters\")"; do
     IFS='|' read -r name filter <<<"${row}"
     get_response 2 | jq -e --arg n "${name}" ".result.tools[] | select(.name == \$n) | ${filter}" >/dev/null || {

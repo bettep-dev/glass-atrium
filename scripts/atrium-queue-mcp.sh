@@ -65,7 +65,7 @@ readonly SERVER_INSTRUCTIONS
 
 IFS= read -r -d '' TOOLS <<'JSON' || true # GA-ABSORB[benign]: status 1 at the text's end
 {"tools":[
-{"name":"post","description":"Post a report or a decision to the owner's Queue page; the result names the item id and whether to start a wait. Kind secret-approval answers a secret-scan refusal that names a request id: send its requestId alone, never the refused line, a title, a body or options — the monitor writes the item from the hook's own capture. On the owner's approve answer, repeat the identical write; the hook decides. A subagent never posts: it returns the request id to its parent and never retries the write before that approve answer.",
+{"name":"post","description":"Post a report or a decision to the owner's Queue page; the result names the item id and whether to start a wait. Kind secret-approval answers a secret-scan refusal that names a request id: send its requestId alone, never the refused line, a title, a body or options — the monitor writes the item from the hook's own capture. On the owner's approve answer, repeat the identical write; the hook decides. A subagent returns the request id and the target path, never the line; it never posts and never retries before its parent's approve answer.",
  "inputSchema":{"type":"object","additionalProperties":false,"required":["kind"],"properties":{
   "kind":{"type":"string","enum":["report","decision","secret-approval"]},
   "title":{"type":"string","description":"required on a report or a decision"},
