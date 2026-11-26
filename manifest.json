@@ -1895,7 +1895,7 @@
     "scripts/llm-preflight.sh": "1a969af60f04a3164c9664a20bfc5d39371e7a06775aa95dd8508f612000e614",
     "scripts/migrate-claude-to-ga-data.sh": "437dc35578ded69c160b16f95a5fac112d563b7e483cb34d8a50db9239fb5e53",
     "scripts/monitor-log-rotate.sh": "9d77c7087ef93a4c76ca9f9d3c07eee7510af8e5e87fa5c859f005a4085c4143",
-    "scripts/naming-ratchet-baseline.txt": "f21bf504410a6f1e35e4163966e1fc9045e4cd944e8a74a240f8d6dbdf2d590b",
+    "scripts/naming-ratchet-baseline.txt": "20019fff26dd93a036342155b4788f7b159871c8aa985fb8651cc43a4ac64025",
     "scripts/naming-ratchet.sh": "27679dea477b8f92cba9195d0bce8854b7b225751b97513ad977415ff4a73d79",
     "scripts/pg-backup.sh": "7449b01203a4f6b24491fa3a6528cb4f2d5106eb68f08394c9523b12e1acbed2",
     "scripts/pii-scan.sh": "4dcaec44e734d75573e985c0ea68e93c39e33bea2751127d0f2daebb0e95eee2",
