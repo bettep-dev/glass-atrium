@@ -90,6 +90,9 @@ const STATEMENT = {
   END: "Only the id identifies a session.",
 };
 
+const DECISION = getRestFixture().items.find((item) => item.id === 103)!;
+const LONG_SCAN_READY = "2 of 3 lines assign a literal value.";
+
 // every sheet kind in one list: the prose report, decision and relay, the relay read's refusal, a one-line and the three-line secret approval
 const getEveryViewFixture = () => getScanApprovalFixture({ ...getProseFixture(), relays: getRelayThreadFixture() });
 const SHEETS = [
@@ -98,7 +101,7 @@ const SHEETS = [
   { name: "a relay", row: `#queue-row-${RELAY_ROW_IDS.one}`, ready: "응답 예시 표도 함께" },
   { name: "a refused relay", row: '.queue-row[aria-label^="Refused relay"]', ready: "Refused relay from" },
   { name: "a one-line secret approval", row: `#queue-row-${SCAN_IDS.one}`, ready: "The line assigns a literal value." },
-  { name: "the three-line secret approval with its 4,000-character line", row: `#queue-row-${SCAN_IDS.long}`, ready: "2 of 3 lines assign a literal value." },
+  { name: "the three-line secret approval with its 4,000-character line", row: `#queue-row-${SCAN_IDS.long}`, ready: LONG_SCAN_READY },
 ];
 
 async function openRowSheet(page: Page, row: string, ready: string): Promise<void> {
@@ -536,8 +539,6 @@ describe("the Queue page on a phone", () => {
   });
 
   describe("opens an item as one sheet, its head in two rows and its answer in reach of the thumb", () => {
-    const DECISION = getRestFixture().items.find((item) => item.id === 103)!;
-
     test("the head holds back, the count, previous and next on its first row and the letterhead whole across the second; previous and next 44 by 44, 4 apart", async () => {
       const page = await openPhoneQueue(harness);
       await openSheet(page, DECISION.id, DECISION.title);
@@ -569,7 +570,7 @@ describe("the Queue page on a phone", () => {
     const FEET = [
       { name: "a decision", getFixture: getRestFixture, id: DECISION.id, ready: DECISION.title, buttons: [/^Send answer/, /^Answer later$/], unfold: async () => undefined },
       {
-        name: "a secret approval, no text box", getFixture: () => getScanApprovalFixture(), id: SCAN_IDS.long, ready: "2 of 3 lines assign a literal value.", buttons: [/^Send answer/, /^Answer later$/],
+        name: "a secret approval, no text box", getFixture: () => getScanApprovalFixture(), id: SCAN_IDS.long, ready: LONG_SCAN_READY, buttons: [/^Send answer/, /^Answer later$/],
         unfold: async () => undefined,
       },
       {
@@ -641,7 +642,7 @@ describe("the Queue page on a phone", () => {
       test(`at ${viewport.width} each plate wraps inside the screen's 16 inset, each mark a whole tile`, async () => {
         harness.fixture = getScanApprovalFixture();
         const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
-        await openSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
+        await openSheet(page, SCAN_IDS.long, LONG_SCAN_READY);
         const shown = await page.evaluate((points) => {
           const plates = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-plate")];
           const marks = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-mark")];
@@ -664,7 +665,7 @@ describe("the Queue page on a phone", () => {
       test(`at ${viewport.width} each line head is two rows: the cue and the length, then the classes below them`, async () => {
         harness.fixture = getScanApprovalFixture();
         const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
-        await openSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
+        await openSheet(page, SCAN_IDS.long, LONG_SCAN_READY);
         const heads = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-line-head")].map((head) => {
           const [cue, length, classes] = [...head.children].map((cell) => cell.getBoundingClientRect());
           return { isLengthBesideCue: length!.top < cue!.bottom && length!.left >= cue!.right, isClassesBelow: classes!.top >= Math.max(cue!.bottom, length!.bottom) };
@@ -678,13 +679,12 @@ describe("the Queue page on a phone", () => {
 
   // every view of the phone layout (layout §6): a 44 target per control, type never under the 13 floor
   describe("keeps every target 44 and every text at 13 or more", () => {
-    const SCAN = getScanApprovalFixture().items.find((item) => item.id === SCAN_IDS.long)!;
     const PLACES = [
       { name: "the list", open: async () => undefined, prose: [] },
       { name: "Sessions", open: VIEWS[1]!.open, prose: [] },
       { name: "Orders", open: VIEWS[2]!.open, prose: [] },
-      { name: "a decision's sheet", open: (page: Page) => openSheet(page, 103, getRestFixture().items.find((item) => item.id === 103)!.title), prose: ["15px"] },
-      { name: "a secret approval's sheet", open: (page: Page) => openSheet(page, SCAN.id, "2 of 3 lines assign a literal value."), prose: ["15px"] },
+      { name: "a decision's sheet", open: (page: Page) => openSheet(page, DECISION.id, DECISION.title), prose: ["15px"] },
+      { name: "a secret approval's sheet", open: (page: Page) => openSheet(page, SCAN_IDS.long, LONG_SCAN_READY), prose: ["15px"] },
     ];
     // a tap target: buttons, disclosures, links outside running prose, list and rail rows; a box or a radio by the row or label that holds it
     const CONTROLS = 'button, summary, select, a[href], [role="button"], [role="option"], [role="menuitem"], label.queue-rail-row';
