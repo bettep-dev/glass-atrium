@@ -7,7 +7,7 @@ import test, { type TestContext, after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -230,17 +230,15 @@ describe("register", () => {
     }
   });
 
-  test("stores the realpath of a /tmp cwd", async () => {
-    const tmpCwd = mkdtempSync("/tmp/queue-api-cwd-");
-    try {
-      const sessionId = trackSessionId();
-      const response = await send("POST", "/api/queue/sessions/register", { sessionId, pid: process.pid, cwd: tmpCwd });
-      const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
-      assert.equal(response.statusCode, 200);
-      assert.equal(stored.cwd, `/private${tmpCwd}`);
-    } finally {
-      deleteDirectory(tmpCwd);
-    }
+  test("stores the realpath of a cwd reached through a symlink", async () => {
+    const target = makeFixtureDir("cwd-target");
+    const link = path.join(fixtureRoot, `cwd-link-${randomUUID().slice(0, 8)}`);
+    symlinkSync(target, link, "dir");
+    const sessionId = trackSessionId();
+    const response = await send("POST", "/api/queue/sessions/register", { sessionId, pid: process.pid, cwd: link });
+    const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+    assert.equal(response.statusCode, 200);
+    assert.equal(stored.cwd, target);
   });
 
   test("derives the worktree root from the nearest .git entry above the cwd", async () => {
