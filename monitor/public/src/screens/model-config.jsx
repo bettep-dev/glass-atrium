@@ -1027,15 +1027,10 @@ function AgentCountCellMC({ count, isModelMissing }) {
 			<span className="fs-body font-medium text-ink tabular-nums" style={isModelMissing ? TWIN_HIDDEN_STYLE_MC : TWIN_CELL_STYLE_MC} aria-hidden={isModelMissing ? "true" : undefined}>
 				{`${count} selected`}
 			</span>
+			{/* one text split in both states → the alert sets one width shown or hidden; only the word's aria-hidden changes */}
 			<span role="alert" className="fs-meta text-crit" style={isModelMissing ? TWIN_CELL_STYLE_MC : TWIN_HIDDEN_STYLE_MC}>
-				{isModelMissing ? (
-					<>
-						<span aria-hidden="true">✕ </span>
-						{AGENT_MISSING_MODEL_MC}
-					</>
-				) : (
-					<span aria-hidden="true">{`✕ ${AGENT_MISSING_MODEL_MC}`}</span>
-				)}
+				<span aria-hidden="true">✕ </span>
+				<span aria-hidden={isModelMissing ? undefined : "true"}>{AGENT_MISSING_MODEL_MC}</span>
 			</span>
 		</span>
 	);

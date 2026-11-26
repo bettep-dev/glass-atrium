@@ -1,6 +1,6 @@
 // Documents ledger row states measured in a real browser on the shipped tokens.css, base.css and the screen's own style block:
 // the fill each state paints under the shared table hover, the pending-delete cue matching its twin, and each text pair's contrast on that fill.
-// Runner: npx tsx --test test/clauded-docs.ledger-row-states.e2e.test.ts — needs an installed chromium; no network, no app server.
+// Runner: npx tsx --test test/clauded-docs.ledger-row-states.e2e.test.ts — needs an installed chromium and CDN network (the house face); no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { resolve, dirname } from "node:path";
@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 import type { Browser, Page } from "playwright";
-import { chromium } from "playwright";
 
+import { createBrowser, setHouseFace } from "./lib/house-face.js";
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { getRoleKeyCss } from "./lib/role-keys.js";
 import { compositeOver, contrastRatio, parseColor, type Rgba } from "./lib/wcag-contrast.js";
@@ -148,7 +148,7 @@ let browser: Browser;
 let ledger: Ledger;
 
 before(async () => {
-  browser = await chromium.launch();
+  browser = await createBrowser();
   ledger = await readLedger();
 });
 
@@ -380,6 +380,7 @@ describe("the Status floor holds the stage glyph, word and row menu on one line"
     await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
     await page.addStyleTag({ path: resolve(STYLES, "base.css") });
     await page.addStyleTag({ content: SCREEN_CSS });
+    await setHouseFace(page);
     for (const id of STAGE_FACES.flatMap((face) => [`capped-${face.id}`, `natural-${face.id}`]))
       // runs in the page → no named helper (see readRowStyles)
       readings[id] = await page.evaluate((rowId) => {

@@ -19,11 +19,11 @@ import "dotenv/config";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import type { Browser, BrowserContext, Locator, Page } from "playwright";
-import { chromium } from "playwright";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerClaudedDocsRoutes } from "../src/server/routes/clauded-docs.js";
 import { resetDocsRootCache } from "../src/server/clauded-docs/storage.js";
+import { createBrowser } from "./lib/house-face.js";
 import { getBelowFloorText } from "./lib/painted-text.js";
 
 // shared fixtures.
@@ -99,7 +99,7 @@ before(async () => {
     serverUrl = `http://127.0.0.1:${sockAddr.port}`;
   }
 
-  browser = await chromium.launch({ headless: true });
+  browser = await createBrowser();
 });
 
 after(async () => {

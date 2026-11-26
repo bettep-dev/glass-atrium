@@ -12,7 +12,9 @@ import { fileURLToPath } from "node:url";
 
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
-import { chromium, type Page } from "playwright";
+import type { Page } from "playwright";
+
+import { createBrowser } from "./lib/house-face.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
@@ -132,7 +134,7 @@ async function withInstrumentationPage(
   for (const [path, payload] of Object.entries(regions)) app.get(path, async () => payload);
   app.get("/api/*", async () => ({ rows: [] }));
   const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
-  const browser = await chromium.launch({ headless: true });
+  const browser = await createBrowser();
 
   try {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
