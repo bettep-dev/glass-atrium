@@ -1,9 +1,9 @@
-"""Connect-tolerance tests for the hook database writer (hooks/_pg-write.py).
+"""Connect-tolerance tests for the hook database writers (hooks/_pg_connect.py).
 
-The writer runs inside a synchronous PreToolUse hook, so its connect timeout trades a
-slow Postgres backend start against how long it can stall a tool call. A fake Postgres
+Every writer runs inside a synchronous hook, so the shared connect timeout trades a
+slow Postgres backend start against how long it can stall the session. A fake Postgres
 on a private Unix socket (real libpq client, never the live database) delays its
-startup reply; the writer runs through its own CLI.
+startup reply; each writer runs through the entry point its hook calls.
 
 Run with either runner:
     uv run --with pytest pytest hooks/test/test_pg_write.py -v
@@ -25,20 +25,89 @@ import unittest
 from pathlib import Path
 from typing import ClassVar
 
-_WRITER = Path(__file__).resolve().parent.parent / "_pg-write.py"
+_HOOKS_DIR = Path(__file__).resolve().parent.parent
+if str(_HOOKS_DIR) not in sys.path:
+    sys.path.insert(0, str(_HOOKS_DIR))
+
+from _pg_connect import CONNECT_TIMEOUT_SEC, RETRY_BACKOFF_SEC
+
+_WRITER = _HOOKS_DIR / "_pg-write.py"
 # private port → a libpq that ignored PGHOST would find no /tmp socket and fail fast
 _FAKE_PORT = 59321
-# a hook write never stalls a tool call longer than this (stated worst case + interpreter start)
-_HOOK_STALL_CEILING_SEC = 11.0
+# above the 1 s connect that lost rows, half a timeout below the shared one
+_SLOW_START_SEC = CONNECT_TIMEOUT_SEC / 2
+# hung database → two write connects, one backoff, then the failure-record connect
+_HUNG_CONNECTS = 3
+_HUNG_WAIT_SEC = _HUNG_CONNECTS * CONNECT_TIMEOUT_SEC
+_HUNG_WORST_SEC = _HUNG_WAIT_SEC + RETRY_BACKOFF_SEC
+# slack = loaded-runner interpreter start + driver import; the connect count pins the attempts
+_HOOK_STALL_CEILING_SEC = _HUNG_WORST_SEC + CONNECT_TIMEOUT_SEC
 _ROW = {
     "event_ts": "2026-11-26T19:35:12.481+09:00",
     "event_name": "SubagentStart",
     "agent_id": "a7f3c2e91b",
     "agent_type": "glass-atrium-dev-python",
 }
+_OUTCOME = {
+    "timestamp": "2026-11-26T19:35:40.112+09:00",
+    "agent": "glass-atrium-dev-python",
+    "task_type": "bug-fix",
+    "result": "done",
+    "agent_id": "a7f3c2e91b",
+}
+# each writer as its hook calls it: (row name, argv, stdin)
+_WRITERS = [
+    (
+        "_pg-write.py (advisory-subagent-budget)",
+        [str(_WRITER), "pg-write-test", "core.agent_events"],
+        json.dumps(_ROW),
+    ),
+    (
+        "_pg_dual_write.py single row (agent-tracker)",
+        [str(_HOOKS_DIR / "_pg_dual_write.py")],
+        json.dumps(
+            {
+                "hook_name": "agent-tracker",
+                "target_table": "core.agent_events",
+                "payload_ref": _ROW["agent_id"],
+                "row": _ROW,
+            }
+        ),
+    ),
+    (
+        "_pg_dual_write.py batch (cost-tracker)",
+        [str(_HOOKS_DIR / "_pg_dual_write.py")],
+        json.dumps(
+            {
+                "hook_name": "cost-tracker",
+                "target_table": "core.agent_events",
+                "payload_ref": _ROW["agent_id"],
+                "rows": [_ROW],
+            }
+        ),
+    ),
+    (
+        "_pg_outcome_dualwrite.py (track-outcome)",
+        [str(_HOOKS_DIR / "_pg_outcome_dualwrite.py")],
+        json.dumps({"outcome": _OUTCOME}),
+    ),
+    (
+        "_pg_learning_dualwrite.py (learning-aggregator)",
+        [
+            "-c",
+            (
+                "import sys; sys.path.insert(0, sys.argv[1]); import _pg_learning_dualwrite as w; "
+                "w.update_aggregator_state('learning-aggregator', None)"
+            ),
+            str(_HOOKS_DIR),
+        ],
+        "",
+    ),
+]
 
 try:
-    import psycopg2  # noqa: F401 — the writer's driver; absent → the writer exits before any connect
+    import psycopg  # noqa: F401 — the sibling writers' driver
+    import psycopg2  # noqa: F401 — _pg-write.py's driver; absent → a writer exits before any connect
 
     _HAS_DRIVER = True
 except ImportError:
@@ -72,6 +141,7 @@ class _FakePostgres:
 
     def __init__(self, socket_dir: Path, delay: float | None) -> None:
         self.delay = delay
+        self.connects = 0
         self.queries: list[str] = []
         self._stopped = threading.Event()
         self._path = socket_dir / f".s.PGSQL.{_FAKE_PORT}"
@@ -92,6 +162,7 @@ class _FakePostgres:
                 conn, _ = self._server.accept()
             except OSError:  # accept poll timeout, or the socket closed by close()
                 continue
+            self.connects += 1
             threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
 
     def _serve(self, conn: socket.socket) -> None:
@@ -148,7 +219,7 @@ class _FakePostgres:
 
 
 @unittest.skipUnless(
-    _HAS_DRIVER, "psycopg2 not installed — the writer cannot connect at all"
+    _HAS_DRIVER, "psycopg / psycopg2 not installed — a writer cannot connect at all"
 )
 class ConnectTolerance(unittest.TestCase):
     def setUp(self) -> None:
@@ -161,7 +232,9 @@ class ConnectTolerance(unittest.TestCase):
         self.addCleanup(fake.close)
         return fake
 
-    def _run_writer(self) -> tuple[subprocess.CompletedProcess, float]:
+    def _run_writer(
+        self, argv: list[str] | None = None, stdin: str | None = None
+    ) -> tuple[subprocess.CompletedProcess, float]:
         env = {
             k: v
             for k, v in os.environ.items()
@@ -169,10 +242,11 @@ class ConnectTolerance(unittest.TestCase):
         }
         env.update(PGHOST=str(self.socket_dir), PGPORT=str(_FAKE_PORT))
         started = time.monotonic()
+        _, default_argv, default_stdin = _WRITERS[0]
         result = subprocess.run(
-            [sys.executable, str(_WRITER), "pg-write-test", "core.agent_events"],
+            [sys.executable, *(argv or default_argv)],
             check=False,
-            input=json.dumps(_ROW),
+            input=default_stdin if stdin is None else stdin,
             capture_output=True,
             text=True,
             env=env,
@@ -181,7 +255,7 @@ class ConnectTolerance(unittest.TestCase):
         return result, time.monotonic() - started
 
     def test_a_slow_backend_start_still_writes_the_row(self) -> None:
-        fake = self._start_fake(delay=2.0)
+        fake = self._start_fake(delay=_SLOW_START_SEC)
         result, _ = self._run_writer()
         self.assertEqual(result.returncode, 0, result.stderr)
         inserts = [
@@ -190,16 +264,25 @@ class ConnectTolerance(unittest.TestCase):
         self.assertEqual(len(inserts), 1, f"row lost; writer stderr: {result.stderr}")
         self.assertNotIn("error_kind", result.stderr)
 
-    def test_an_unreachable_database_fails_within_the_hook_stall_ceiling(self) -> None:
-        rows = [("hung: accepts, never answers", True), ("absent: no listener", False)]
-        for name, is_listening in rows:
+    def test_an_absent_database_fails_within_the_hook_stall_ceiling(self) -> None:
+        result, elapsed = self._run_writer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('"error_kind"', result.stderr)
+        self.assertLess(elapsed, _HOOK_STALL_CEILING_SEC, f"{elapsed:.1f}s")
+
+    def test_every_writer_waits_out_the_shared_connect_timeout_on_a_hung_database(
+        self,
+    ) -> None:
+        for name, argv, stdin in _WRITERS:
             with self.subTest(name):
-                fake = self._start_fake(delay=None) if is_listening else None
-                result, elapsed = self._run_writer()
-                if fake is not None:
-                    fake.close()
-                self.assertEqual(result.returncode, 0, result.stderr)
+                fake = self._start_fake(delay=None)
+                result, elapsed = self._run_writer(argv, stdin)
+                fake.close()
                 self.assertIn('"error_kind"', result.stderr)
+                self.assertEqual(fake.connects, _HUNG_CONNECTS, result.stderr)
+                self.assertGreaterEqual(
+                    elapsed, _HUNG_WAIT_SEC, f"{name}: {elapsed:.1f}s"
+                )
                 self.assertLess(
                     elapsed, _HOOK_STALL_CEILING_SEC, f"{name}: {elapsed:.1f}s"
                 )

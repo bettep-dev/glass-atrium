@@ -3,7 +3,7 @@
 #
 # Invoked as a subprocess AFTER the bash hook has appended its JSONL line; this
 # is the SECOND write, so its failure MUST NOT lose data and MUST NOT block the
-# Claude session (exit 0 always). Failure handling: 1 retry with 100 ms backoff,
+# Claude session (exit 0 always). Failure handling: 1 retry after RETRY_BACKOFF_SEC,
 # then a structured stderr log + best-effort core.hook_failures INSERT (errors
 # swallowed to avoid recursion). Connection is Unix-socket-only via
 # psycopg.connect("dbname=glass_atrium") — never -h/-p/host=/127.0.0.1/localhost.
@@ -24,6 +24,8 @@ import json
 import sys
 import time
 from types import SimpleNamespace
+
+from _pg_connect import CONNECT_TIMEOUT_SEC, RETRY_BACKOFF_SEC
 
 # psycopg lives in user site-packages, on sys.path by default (PEP 370).
 try:
@@ -218,11 +220,11 @@ def _build_insert_sql(table, cols):
     )
 
 
-def _try_insert(table, row_dict, connect_timeout=1):
+def _try_insert(table, row_dict):
     cols = list(row_dict.keys())
     sql = _build_insert_sql(table, cols)
     values = [row_dict[c] for c in cols]
-    with psycopg.connect("dbname=glass_atrium", connect_timeout=connect_timeout) as conn:
+    with psycopg.connect("dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC) as conn:
         with conn.cursor() as cur:
             cur.execute(sql, values)
         conn.commit()
@@ -232,7 +234,7 @@ def _record_hook_failure(hook_name, target_table, error_kind, payload_ref, retry
     # Best-effort secondary INSERT; any exception is swallowed to avoid recursing
     # into the same failure path.
     try:
-        with psycopg.connect("dbname=glass_atrium", connect_timeout=1) as conn:
+        with psycopg.connect("dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO core.hook_failures "
@@ -312,7 +314,7 @@ def _get_absent_columns(conn, hook_name, table, rows):
     return additive - present
 
 
-def _insert_batch(hook_name, target_table, payload_ref, rows, connect_timeout=1):
+def _insert_batch(hook_name, target_table, payload_ref, rows):
     """Write every row in `rows` through ONE connection.
 
     The single-row entry point pays a fresh process + psycopg import + connect PER
@@ -332,7 +334,7 @@ def _insert_batch(hook_name, target_table, payload_ref, rows, connect_timeout=1)
         # current caller guards with `if batch:`, so this only shields a future
         # empty-batch caller from a pointless connect.
         return 0
-    # Connect ONCE, retrying the connect a single time (100 ms backoff) to match
+    # Connect ONCE, retrying the connect a single time (RETRY_BACKOFF_SEC) to match
     # the transient-failure tolerance the per-row path had per invocation. A total
     # connect failure loud-fails every row via stderr and returns the full count.
     conn = None
@@ -341,14 +343,14 @@ def _insert_batch(hook_name, target_table, payload_ref, rows, connect_timeout=1)
         try:
             conn = psycopg.connect(
                 "dbname=glass_atrium",
-                connect_timeout=connect_timeout,
+                connect_timeout=CONNECT_TIMEOUT_SEC,
                 autocommit=True,
             )
             break
         except Exception as exc:  # noqa: BLE001 — classify + loud-fail below
             connect_exc = exc
             if attempt == 1:
-                time.sleep(0.1)  # backoff before the single connect retry
+                time.sleep(RETRY_BACKOFF_SEC)
     if conn is None:
         error_kind = _classify_error(connect_exc)
         error_class = type(connect_exc).__name__
@@ -411,7 +413,7 @@ def _insert_batch(hook_name, target_table, payload_ref, rows, connect_timeout=1)
                     row_exc = exc
                     if attempt == 1:
                         retry_attempted = True
-                        time.sleep(0.1)  # backoff before the single retry
+                        time.sleep(0.1)  # per-row retry on the open connection, not a connect → N rows × a short wait
             if row_exc is not None:
                 _emit_row_failure(
                     hook_name, target_table, payload_ref, _classify_error(row_exc),
@@ -469,7 +471,7 @@ def _run_single(hook_name, target_table, payload_ref, row, start_ns):
             last_exc = exc
             if attempt == 1:
                 retry_attempted = True
-                time.sleep(0.1)  # backoff before the single retry
+                time.sleep(RETRY_BACKOFF_SEC)
 
     # Both attempts failed — fail loud and skip.
     error_kind = _classify_error(last_exc)

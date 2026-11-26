@@ -49,6 +49,7 @@ except ImportError as exc:
 # daemon's reason templates runs where psycopg is absent. Unguarded — a failure
 # there is a packaging fault, not a degradable condition.
 from _learning_log_limits import LEARNING_LOG_REASON_MAX
+from _pg_connect import CONNECT_TIMEOUT_SEC, RETRY_BACKOFF_SEC
 
 from _outcome_signal import (  # noqa: F401 — re-export surface, see above
     negative_signal_hits,
@@ -180,7 +181,7 @@ def _classify_error(exc):
 def _record_hook_failure(target_table, error_kind, payload_ref, retry_attempted):
     """Best-effort secondary INSERT into core.hook_failures. ANY exception swallowed."""
     try:
-        with psycopg.connect("dbname=glass_atrium", connect_timeout=1) as conn:
+        with psycopg.connect("dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO core.hook_failures "
@@ -225,7 +226,7 @@ def _emit_stderr_failure(op_name, target_table, error_kind, error_class,
 
 
 # ---------------------------------------------------------------------------
-# Generic UPSERT runner with 1 retry + 100 ms backoff
+# Generic UPSERT runner with 1 retry after RETRY_BACKOFF_SEC
 # ---------------------------------------------------------------------------
 
 def _run_with_retry(op_name, target_table, payload_ref, fn):
@@ -253,7 +254,7 @@ def _run_with_retry(op_name, target_table, payload_ref, fn):
             last_exc = exc
             if attempt == 1:
                 retry_attempted = True
-                time.sleep(0.1)
+                time.sleep(RETRY_BACKOFF_SEC)
 
     error_kind = _classify_error(last_exc)
     error_class = type(last_exc).__name__
@@ -384,7 +385,7 @@ def upsert_learning_pattern(
         # autocommit=False so SELECT-validate-UPSERT runs in one transaction,
         # closing the race between reading old_status and the UPSERT.
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(_LEARNING_LOG_SELECT_SQL, (pattern_signature,))
@@ -454,7 +455,7 @@ def reject_learning_pattern(pattern_id: int, reason: str) -> int | None:
 
     def _do():
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -541,7 +542,7 @@ def discharge_learning_pattern(pattern_id: int, reason: str) -> DischargeResult:
         updated.clear()
         committed.clear()
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -644,7 +645,7 @@ def put_learning_pattern_status(
         updated.clear()
         committed.clear()
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(_LEARNING_LOG_STATUS_SQL, params)
@@ -714,7 +715,7 @@ def update_aggregator_state(
 
     def _do():
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(_AGGREGATOR_STATE_UPSERT_SQL, row)
@@ -789,7 +790,7 @@ def insert_audit_queue_rows(rows: list[dict]) -> int:
 
     def _do():
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.executemany(_AUDIT_QUEUE_INSERT_SQL, clean)
@@ -852,7 +853,7 @@ def insert_liveness_observation(
 
     try:
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(_LIVENESS_INSERT_SQL, row)

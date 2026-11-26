@@ -11234,6 +11234,7 @@ AA = SimpleNamespace(
                 "hooks/lib/worktree-lock.sh",
                 "hooks/lib/style_ref_match.py",
                 "hooks/_learning_log_limits.py",
+                "hooks/_pg_connect.py",
                 "hooks/ga_paths.py",
                 "hooks/daemon_config.py",
                 "hooks/compliance_telemetry.py",

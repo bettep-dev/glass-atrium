@@ -32,6 +32,8 @@ import sys
 import time
 from typing import Any
 
+from _pg_connect import CONNECT_TIMEOUT_SEC, RETRY_BACKOFF_SEC
+
 # psycopg2 is the installed driver (psycopg 3 is not available system-wide).
 # Const-16 Unix-socket-only requirement; psycopg2 honors
 # this when no host= is passed (libpq defaults to /tmp socket).
@@ -45,11 +47,6 @@ except ImportError as e:
         % str(e).replace('"', "'")
     )
     sys.exit(0)
-
-
-# slow backend start ↔ PreToolUse stall; hung-postmaster worst case = 3 connects + backoff
-CONNECT_TIMEOUT_SEC = 3
-RETRY_BACKOFF_SEC = 0.5
 
 
 # Identifier allowlist — table + column names are f-string-interpolated into the
