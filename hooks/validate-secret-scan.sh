@@ -26,17 +26,14 @@ else
   }
 fi
 
-# WHY fail-closed: field extraction degrades to EMPTY without python3 (tool_name
-# mis-detects, content scans nothing), which would let a credential write through
-# unscanned. A secret gate MUST refuse rather than silently allow — block here so
-# no unscanned write can proceed on a python3-less PATH.
+# python3 reads every payload value → its absence is named here; a payload it cannot read is refused below, never
+# scanned as empty
 hook_require_python3 "SEC-017" \
   "Secret scan unavailable: python3 is required to parse hook input"
 
 # Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
 export -n INPUT CMD CONTENT input blob cmd
 INPUT=$(hook_read_input)
-TOOL_NAME=$(hook_get_field "${INPUT}" "tool_name")
 
 # The content patterns and their scan live in the shared scanner, found through this file's real path — a symlinked
 # copy has no scripts/ beside it; exit contract: the scanner's header.
@@ -57,10 +54,25 @@ readonly APPROVAL_DEADLINE_S=6
 readonly APPROVAL_PREFIX="${APPROVABLE_RULE} approval:"
 readonly HASH_LIST_SHAPE='^[0-9a-f]{64}(,[0-9a-f]{64})*$'
 readonly REPLY_CODE_SHAPE='^[a-z_]{1,64}$'
-# the text the scanner sees → an approval binds the same lines
-readonly SCANNED_FIELD_PY='def get_scanned_field(d):
+# the text the scanner sees → an approval binds the same lines; a lone surrogate → U+FFFD, the character a UTF-8
+# write of the text puts on disk; a field that is not text raises
+readonly SCANNED_FIELD_PY='import re
+def get_written_text(text):
+    return re.sub("[\ud800-\udfff]", "�", text)
+def get_scanned_field(d):
     ti = d.get("tool_input", {})
-    return ti.get("content", "") + ti.get("new_string", "")'
+    return get_written_text(ti.get("content", "") + ti.get("new_string", ""))'
+# payload on stdin, tool_name · command · scanned as the argument → that value's UTF-8 bytes; exit 1 for a payload it
+# cannot read (not JSON, not an object, the value not text)
+readonly PAYLOAD_TEXT_PY='import json, sys
+d = json.load(sys.stdin)
+if sys.argv[1] == "tool_name":
+    text = get_written_text(d.get("tool_name", ""))
+elif sys.argv[1] == "command":
+    text = get_written_text(d.get("tool_input", {}).get("command", ""))
+else:
+    text = get_scanned_field(d)
+sys.stdout.buffer.write(text.encode("utf-8"))'
 # payload on stdin, rule then the 1-based lines to approve as arguments → the consume body, the register body, the
 # hashes joined by commas; exit 65 no session_id, 66 a target path with no real parent directory
 readonly APPROVAL_BODIES_PY='import json, os, sys
@@ -274,6 +286,20 @@ block_scan_unavailable() {
   exit 2
 }
 
+block_payload_unreadable() {
+  emit_error "SEC-017" "block" \
+    "Secret scan unavailable: the hook payload could not be read as text" \
+    "Repeat the call with text fields; a payload the scan cannot read is refused, never passed unscanned" \
+    "{\"unreadable\":\"payload\"}"
+  exit 2
+}
+
+# One payload value for the scan → its text; status 1 when the payload cannot be read.
+# Args: $1=tool_name · command · scanned
+get_payload_text() {
+  printf '%s\n' "${INPUT}" | python3 -I -c "${SCANNED_FIELD_PY}"$'\n'"${PAYLOAD_TEXT_PY}" "${1}" 2>/dev/null
+}
+
 # Bash channel (HIGH SIGNAL ONLY).
 # Block a credential VALUE written into a dotenv/secrets file via Bash.
 # Anti-FP gate: require BOTH a secrets-file write target AND a credential value
@@ -347,15 +373,18 @@ scan_bash_command() {
   fi
 }
 
+# shellcheck disable=SC2310  # an unreadable payload is a refusal, never an errexit
+TOOL_NAME="$(get_payload_text tool_name)" || block_payload_unreadable
 if [[ "${TOOL_NAME}" == "Bash" ]]; then
-  CMD=$(hook_get_tool_input "${INPUT}" "command")
+  # shellcheck disable=SC2310  # an unreadable payload is a refusal, never an errexit
+  CMD="$(get_payload_text command)" || block_payload_unreadable
   scan_bash_command "${CMD}"
   exit 0
 fi
 
 # Default (Write|Edit): scan combined content + new_string.
-CONTENT=$(printf '%s\n' "${INPUT}" | python3 -c "${SCANNED_FIELD_PY}"$'\n''import sys, json
-print(get_scanned_field(json.load(sys.stdin)))' 2>/dev/null) || CONTENT=""
+# shellcheck disable=SC2310  # an unreadable payload is a refusal, never an errexit
+CONTENT="$(get_payload_text scanned)" || block_payload_unreadable
 
 scan_content "${CONTENT}"
 exit 0

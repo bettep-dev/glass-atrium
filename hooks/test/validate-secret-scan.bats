@@ -149,6 +149,47 @@ pipe_overflow_padding() {
   [[ "${output}" == *"SEC-016"* ]] || { echo "${output}"; return 1; }
 }
 
+# JSON on stdin → every "@@" inside a string value becomes a lone surrogate, the JSON escape \ud800.
+get_surrogate_json() {
+  python3 -I -c 'import json, sys
+def get_value(v):
+    if isinstance(v, str):
+        return v.replace("@@", "\ud800")
+    return {key: get_value(item) for key, item in v.items()} if isinstance(v, dict) else v
+print(json.dumps(get_value(json.load(sys.stdin))))'
+}
+
+@test "a lone surrogate beside a secret never makes the payload read as empty: every channel still refuses the secret" {
+  local names=() envelopes=() codes=() i
+  names=("Write content" "Edit new_string" "Bash command")
+  envelopes=(
+    "$(jq -cn --arg c "@@"$'\n'"const k = ${AWS_FIXTURE}" '{tool_name:"Write",tool_input:{file_path:"/tmp/x.ts",content:$c}}')"
+    "$(jq -cn --arg c "@@"$'\n'"const k = ${AWS_FIXTURE}" '{tool_name:"Edit",tool_input:{file_path:"/tmp/x.ts",old_string:"a",new_string:$c}}')"
+    "$(jq -cn --arg c "echo ${CRED_FIXTURE} > .env # @@" '{tool_name:"Bash",tool_input:{command:$c}}')"
+  )
+  codes=(SEC-001 SEC-001 SEC-016)
+  for i in "${!names[@]}"; do
+    run_hook "$(get_surrogate_json <<<"${envelopes[${i}]}")"
+    [[ "${status}" -eq 2 && "${output}" == *"\"${codes[${i}]}\""* ]] \
+      || { echo "${names[${i}]}: status ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "a payload the hook cannot read is refused with one SEC-017 line, never scanned as empty" {
+  local names=() envelopes=() i
+  names=("JSON cut short" "a root that is not an object" "a Write content that is not text"
+    "an Edit new_string that is not text" "a Bash command that is not text")
+  envelopes=('{"tool_name":"Write","tool_input":{"file_path":"/tmp/x.ts","content":' '["Write"]'
+    '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x.ts","content":42}}'
+    '{"tool_name":"Edit","tool_input":{"file_path":"/tmp/x.ts","old_string":"a","new_string":["b"]}}'
+    '{"tool_name":"Bash","tool_input":{"command":{"argv":["ls"]}}}')
+  for i in "${!names[@]}"; do
+    run_hook "${envelopes[${i}]}"
+    [[ "${status}" -eq 2 && "${#lines[@]}" -eq 1 && "$(jq -r .error_code <<<"${lines[0]}")" == SEC-017 ]] \
+      || { echo "${names[${i}]}: status ${status}: ${output}"; return 1; }
+  done
+}
+
 @test "scanner stdin entry: every pattern class replies its code and name, never the text" {
   local i
   for i in "${!ROW_NAMES[@]}"; do
@@ -390,6 +431,19 @@ get_hash() {
   [[ "$(get_request_body "${REGISTER_ROUTE}")" == "${expected}" ]] || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
 }
 
+# U+FFFD → the character a UTF-8 write puts on disk for a lone surrogate, so the scan and the approval see the file's text.
+@test "a SEC-013 line holding a lone surrogate is scanned and registered with U+FFFD in the surrogate's place" {
+  local text="${CRED_FIXTURE}"$'\xef\xbf\xbd' expected
+  use_monitor_stub
+  set_nth_reply 1 409 '{"error":"scan_approval_refused","decision":"refuse"}'
+  set_nth_reply 2 200 "{\"requestId\":\"${REQUEST_ID}\"}"
+  run_hook "$(get_session_envelope "${CRED_FIXTURE}@@" | get_surrogate_json)"
+  check_cause_refusal "lone surrogate" "${REQUEST_ID}" || return 1
+  expected="$(jq -cnS --arg t "${text}" --arg h "$(get_hash "${text}")" '[{text:$t,hash:$h}]')"
+  [[ "$(get_request_body "${REGISTER_ROUTE}" | jq -c .lines)" == "${expected}" ]] \
+    || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
+}
+
 @test "a SEC-013 write that another rule also matches gets the rule's own refusal with nothing sent to the monitor" {
   local names=() texts=() pem="-----BEGIN RSA PRIVATE"" KEY-----" marker='{"type": "service''_account"}' i
   use_monitor_stub
@@ -504,15 +558,17 @@ make_path_without() {
   local names=() envelopes=() causes=() i
   use_monitor_stub
   names=("no session_id" "an empty session_id" "a session_id that is not a string"
-    "a target whose parent directory does not exist" "a relative target path")
+    "a target whose parent directory does not exist" "a relative target path" "a target path holding a lone surrogate")
   envelopes=(
     "$(jq -cn --arg c "${CRED_FIXTURE}" --arg p "${TARGET}" '{tool_name:"Write",tool_input:{file_path:$p,content:$c}}')"
     "$(get_session_envelope "${CRED_FIXTURE}" | jq -c '.session_id = ""')"
     "$(get_session_envelope "${CRED_FIXTURE}" | jq -c '.session_id = 42')"
     "$(get_session_envelope "${CRED_FIXTURE}" | jq -c --arg p "${TARGET%/*}/missing/app.ts" '.tool_input.file_path = $p')"
     "$(get_session_envelope "${CRED_FIXTURE}" | jq -c '.tool_input.file_path = "project/app.ts"')"
+    "$(get_session_envelope "${CRED_FIXTURE}" | jq -c --arg p "${TARGET%/*}/app@@.ts" '.tool_input.file_path = $p' \
+      | get_surrogate_json)"
   )
-  causes=(session_id session_id session_id "real parent directory" "real parent directory")
+  causes=(session_id session_id session_id "real parent directory" "real parent directory" "could not be built")
   for i in "${!names[@]}"; do
     run_hook "${envelopes[${i}]}"
     check_cause_refusal "${names[${i}]}" "${causes[${i}]}" || return 1
