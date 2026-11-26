@@ -2973,9 +2973,15 @@ function getPartBoxAR(row, nodeIndex) {
 function getPartCauseAR(facts) {
 	if (facts.isStale) return "Missed its expected run";
 	if (facts.pgOk === false) return "Database not reachable";
-	if (facts.unretried24h > 0) return `${facts.unretried24h} unretried failures in 24h`;
+	if (facts.count24h > 0) return getHookLossCauseAR(facts);
 	if (facts.daemon?.effective_status === "error") return "Its last run reported an error";
 	return null;
+}
+
+// every recorded hook failure is a dropped write, retried or not — the retry only marks a connection failure
+function getHookLossCauseAR({ count24h, unretried24h }) {
+	const lost = `${count24h} ${count24h === 1 ? "hook write" : "hook writes"} lost in 24h`;
+	return unretried24h > 0 ? `${lost} · ${unretried24h} not retried` : `${lost} after a retry`;
 }
 
 // the row's DOM id

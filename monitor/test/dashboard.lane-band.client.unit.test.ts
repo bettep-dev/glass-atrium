@@ -52,6 +52,7 @@ interface Fold {
   partsTotal: number;
   downNames: string[];
   uncheckedNames: string[];
+  cautionNames: string[];
   version?: string | null;
   kpi?: Record<string, number | null> | null;
   error?: string | null;
@@ -78,7 +79,7 @@ const dash = await buildScreenSandbox<DashHelpers>(DASH_SRC);
 // Every part the shell polls answered healthy — the hook chain rides the harness wave too.
 const HEALTHY: Fold = {
   status: "ready", partsOk: 5, partsChecked: 5, partsTotal: 5,
-  downNames: [], uncheckedNames: [], version: "1.0.0",
+  downNames: [], uncheckedNames: [], cautionNames: [], version: "1.0.0",
 };
 const LOADING = { status: "loading", data: null, error: null };
 const ERRORED = { status: "error", data: null, error: "HTTP 500" };
@@ -119,6 +120,36 @@ test("every down part becomes one harness row naming the parts", () => {
   assert.equal(rows[0]!.target, "architecture", "the row routes to the screen that owns the fact");
   assert.ok(rows[0]!.detail?.includes("PostgreSQL"), "the parts are named, not just counted");
   assert.equal(rows[0]!.title, "2 system parts are down", "the shared noun for the watched parts");
+});
+
+// a part needing attention is a warning, never a down part — a down part outranks it on the one harness row
+describe("the harness row is a warning for parts needing attention and critical once any part is down", () => {
+  const rows = [
+    { name: "one part needs attention", over: { cautionNames: ["Hooks"] }, tone: "warn", title: "1 system part needs attention", detail: "Hooks" },
+    { name: "two parts need attention", over: { partsOk: 5, cautionNames: ["Hooks", "autoagent"] }, tone: "warn", title: "2 system parts need attention", detail: "Hooks · autoagent" },
+    { name: "a down part beside one needing attention", over: { partsOk: 4, downNames: ["PostgreSQL"], cautionNames: ["Hooks"] }, tone: "crit", title: "1 system part is down", detail: "PostgreSQL" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const alarms = dash.buildAlarms({ harness: { ...HEALTHY, ...row.over }, costState: kpi(10, 10), installKind: "hidden" });
+      assert.equal(alarms.length, 1);
+      assert.deepEqual(
+        { tone: alarms[0]!.tone, title: alarms[0]!.title, detail: alarms[0]!.detail, target: alarms[0]!.target },
+        { tone: row.tone, title: row.title, detail: row.detail, target: "architecture" },
+      );
+    });
+  }
+});
+
+test("a part needing attention keeps the parts-up count and trips the stat line, which names it", () => {
+  const stat = statOf(
+    dash.buildStats({ harness: { ...HEALTHY, cautionNames: ["Hooks"] }, costState: kpi(10, 10), agentsState: LOADING, outcomesState: LOADING }),
+    "harness",
+  );
+  assert.deepEqual(
+    { tone: stat.tone, value: stat.value, context: stat.context, isContextTripped: stat.isContextTripped },
+    { tone: "warn", value: "5 of 5 up", context: "Hooks needs attention", isContextTripped: true },
+  );
 });
 
 test("an unavailable harness fold raises no alarm — absence is not a fault", () => {
