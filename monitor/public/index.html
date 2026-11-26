@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<!-- No mobile layout → a phone shows the desktop layout zoomed out; desktop browsers ignore the declaration -->
+<!-- A phone lays every route out at 1280, zoomed out; the Queue route on a phone screen alone takes the device width (app.jsx → setViewport rewrites this tag); desktop browsers ignore it -->
 <meta name="viewport" content="width=1280" />
 <!-- Shell CSP — any script in this origin can call owner routes with the session cookie → only these exact files and the two inline scripts by hash; editing an inline script means updating its hash (test/app-shell.supply-chain.static.test.ts) -->
 <!-- Every other fetch kind → default-src 'none'; style-src keeps 'unsafe-inline' because the Tailwind runtime, mermaid's SVG and document bodies write <style> elements at run time -->

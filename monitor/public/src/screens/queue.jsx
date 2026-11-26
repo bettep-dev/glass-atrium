@@ -111,10 +111,14 @@ const REFERENCE_LINE_Q = "Reference only — not part of the approval.";
 // targets per send: the send route refuses more (schemas.ts → messageBodySchema; the page test binds the two)
 const MESSAGE_Q = { MAX_TARGETS: 20 };
 const SESSIONS_Q = {
-	STACK_BELOW_PX: 640,
 	SOURCE: "the session list",
 	// the page checks no name → said once where the names are listed
 	STATEMENT: "Session names are written by the sessions themselves and are not checked. Only the id identifies a session.",
+};
+// a screen narrower than this (a phone in portrait) → the page lays out at the device width; pinch zoom stays (WCAG 1.4.4), the keyboard shrinks the page
+const PHONE_Q = {
+	BELOW_PX: 640,
+	VIEWPORT: "width=device-width, initial-scale=1, interactive-widget=resizes-content",
 };
 // one description every box of the rail shares (spec §9.1 → What says so before the first press)
 const RAIL_HINT_Q = {
@@ -191,6 +195,14 @@ const UPLOADS_Q = new Map();
 function getQueueNavBadge(countState) {
 	const badges = getCountBadgesQ(countState);
 	return badges?.length ? { queue: { badges } } : {};
+}
+
+/**
+ * The Queue route's viewport declaration on this screen; null keeps the shell's own (index.html).
+ * @param screen - `window.screen`: the device width in the current orientation, never the layout width (always 1280 under the shell's tag)
+ */
+function getPhoneViewport(screen) {
+	return screen?.width < PHONE_Q.BELOW_PX ? PHONE_Q.VIEWPORT : null;
 }
 
 /**
@@ -575,20 +587,21 @@ function isTickedQ(item, ids) {
 
 /**
  * @param onReadQueueCount - the shell's count read (app.jsx) → the nav badge follows the page's own tick
+ * @param onOpenMenu - opens the shell's nav in a drawer: the phone layout draws no sidebar
  */
-function ScreenQueue({ onRetryHarness, onReadQueueCount }) {
+function ScreenQueue({ onRetryHarness, onReadQueueCount, onOpenMenu }) {
 	const { TypeScaleStyle } = window.UI;
 	const queue = useQueueStateQ({ onRetryHarness, onReadQueueCount });
 	return (
 		<div className="queue-screen">
 			<TypeScaleStyle />
-			<QueueHeaderQ queue={queue} />
+			<QueueHeaderQ queue={queue} onOpenMenu={onOpenMenu} />
 			<QueueDeskQ queue={queue} />
 		</div>
 	);
 }
 
-/** DOM order Sessions → the middle pane → Orders: three fixed-role columns that never stack, and none is put away for another (spec §3.1). */
+/** DOM order Sessions → the middle pane → Orders: three fixed-role columns that never stack, none put away for another (spec §3.1); a phone shows the middle pane alone (base.css). */
 function QueueDeskQ({ queue }) {
 	usePageDropGuardQ();
 	const onKeyDown = (event) => {
@@ -774,9 +787,15 @@ function getPaneFocusQ(root, currentId) {
 }
 
 // one status line and no button: the page checks on its own cadence (POLL_Q) and after each owner act (spec §3.1) · a failed resume or session read shows in its own region
-function QueueHeaderQ({ queue }) {
-	const { PageHeader } = window.UI;
-	return <PageHeader title={QUEUE_TITLE_Q} freshness={<QueueFreshnessQ list={queue.list} failedChecks={queue.failedChecks} />} />;
+// the menu button shows on the phone layout alone (base.css → .queue-menu)
+function QueueHeaderQ({ queue, onOpenMenu }) {
+	const { PageHeader, Icon } = window.UI;
+	const menu = (
+		<button type="button" className="btn ghost icon queue-menu" aria-label="Open the menu" title="Open the menu" onClick={onOpenMenu}>
+			<Icon name="menu" size={16} />
+		</button>
+	);
+	return <PageHeader title={QUEUE_TITLE_Q} back={menu} freshness={<QueueFreshnessQ list={queue.list} failedChecks={queue.failedChecks} />} />;
 }
 
 /**
@@ -4322,4 +4341,4 @@ function getRelayOutcomeQ(copy) {
 
 window.ScreenQueue = ScreenQueue;
 // shell reads the nav slot
-window.QueueNav = { getQueueNavBadge, getQueueTitle };
+window.QueueNav = { getQueueNavBadge, getQueueTitle, getPhoneViewport };

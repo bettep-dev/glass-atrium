@@ -1256,12 +1256,13 @@ describe("queue page on the mockup fixtures", () => {
     });
   });
 
-  test("the page header holds no button and one status line, Checks every 15s, and no Queue button is named New order, Clear or Refresh", async () => {
+  test("the page header draws no button and one status line, Checks every 15s, and no Queue button is named New order, Clear or Refresh", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     const head = await page.evaluate(() => ({
       line: [...document.querySelectorAll(".page-head [role=status]")].map((node) => node.textContent?.trim()),
-      headButtons: document.querySelectorAll(".page-head button").length,
+      // the phone's menu button stays in the DOM, undrawn above 640
+      headButtons: [...document.querySelectorAll(".page-head button")].filter((node) => node.getClientRects().length > 0).length,
       named: [...document.querySelectorAll(".queue-screen button")].map((node) => (node.getAttribute("aria-label") ?? node.textContent ?? "").trim())
         .filter((name) => /^(New order|Clear|Refresh)/.test(name)),
     }));
@@ -1911,7 +1912,7 @@ describe("queue page on the mockup fixtures", () => {
 
     const SHEET_SIZES = [
       { name: "at 1280 wide", viewport: MIN_WINDOW },
-      { name: "under phone emulation at the page's 1280 layout width", viewport: PHONE },
+      { name: "on a 360-wide phone, laid out at its own width,", viewport: PHONE },
     ];
     for (const { name, viewport } of SHEET_SIZES) {
       test(`${name} the long line wraps whole, each mark a whole tile, and the sheet scrolls nothing sideways`, async () => {
@@ -1954,7 +1955,7 @@ describe("queue page on the mockup fixtures", () => {
       });
     }
 
-    test("under phone emulation at the page's 1280 layout width the page scrolls nothing sideways", async () => {
+    test("on a 360-wide phone, laid out at its own width, the page scrolls nothing sideways", async () => {
       const page = await openScanPage(PHONE);
       await openScanSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
       const widths = await page.evaluate(() => ({ scroll: document.scrollingElement!.scrollWidth, layout: document.documentElement.clientWidth }));

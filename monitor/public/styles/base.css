@@ -494,7 +494,7 @@ label.ctl-checkbox-hit {
 	height: calc(100dvh - 2 * var(--gap-page));
 	min-height: 608px;
 }
-/* three fixed-role columns at every width (spec §3.2): the rail steps with the viewport; the middle pane is the 66ch page and its two
+/* three fixed-role columns above the phone's 640 (spec §3.2): the rail steps with the viewport; the middle pane is the 66ch page and its two
    32 gutters, yielding only where Orders would drop under its minimum; Orders takes the rest. The ch resolves on the desk's 15px text.
    Under 1440 Orders yields 48 → the rail keeps "All sessions" whole and a list title holds about 12 Hangul */
 .queue-desk {
@@ -525,6 +525,53 @@ label.ctl-checkbox-hit {
 }
 @media (min-width: 2560px) {
 	.queue-desk { --queue-rail-w: 280px; }
+}
+/* the Queue page on a phone (screens/queue.jsx → PHONE_Q): the header's menu replaces the shell's sidebar, the desk drops its
+   desktop floors, the pane bleeds to the screen's edges with its content on the header's 16 inset. Other routes keep 1280 → never match */
+.queue-menu {
+	display: none;
+}
+@media (max-width: 640px) {
+	[data-route="queue"] > .shell-sidebar {
+		display: none;
+	}
+	/* after .btn.icon's 32 square → the phone's 44 target */
+	.queue-menu.btn.icon {
+		display: inline-flex;
+		width: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+		height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+	}
+	.queue-screen {
+		min-height: 0;
+	}
+	/* one column: the middle pane (the list, or the sheet in its place) is the one pane shown */
+	.queue-desk {
+		grid-template-columns: minmax(0, 1fr);
+		min-width: 0;
+		min-height: 0;
+		margin-inline: calc(-1 * var(--gap-page));
+		margin-block-end: calc(-1 * var(--gap-page));
+	}
+	.queue-desk > :is(.queue-sessions, .queue-orders) {
+		display: none;
+	}
+	.queue-desk :is(.queue-pane, .queue-orders-card) {
+		border-radius: 0;
+		border-inline-width: 0;
+		border-block-end-width: 0;
+	}
+	/* the two acts drop under the device label, each a 44 target; the spacer's own row gap is taken back */
+	.remote-banner {
+		flex-wrap: wrap;
+		padding-inline: var(--gap-page);
+	}
+	.remote-banner > .flex-1 {
+		flex-basis: 100%;
+		margin-block-start: calc(-1 * var(--gap-control));
+	}
+	.remote-banner > .btn {
+		min-height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+	}
 }
 /* the Sessions rail (spec §9.1): the All sessions band, a row per session, each one 44 line on fixed columns — box · state mark ·
    name · tag · count. The bands share every column → the box or the Ended chevron in the box column, a band's label on the names' column;

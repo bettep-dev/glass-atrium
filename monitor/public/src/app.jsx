@@ -1,5 +1,5 @@
 // 앱 셸 — sidebar + screen routing + Tweaks panel
-const { useState: useS, useEffect: useE, useRef: useR, useCallback: useC } = React;
+const { useState: useS, useEffect: useE, useLayoutEffect: useLE, useRef: useR, useCallback: useC } = React;
 
 // NAV 메뉴 — id=해시 라우팅 키 · badge=폴링 주입
 const NAV = [
@@ -95,8 +95,6 @@ function getNavBadgesWorstFirst(badges) {
 }
 
 function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
-	const { Icon, Badge, getBadgeCount } = window.UI;
-	const dynamicBadges = { ...harnessToNavBadges(harness), ...agentsToNavBadges(agentsState), ...queueBadges };
 	return (
 		<aside aria-label="Sidebar" className="shell-sidebar flex-shrink-0 border-r border-line h-screen sticky top-0 flex flex-col bg-elev">
 			<div className="shell-brand px-4 py-4 border-b border-line">
@@ -111,56 +109,65 @@ function Sidebar({ active, onNav, harness, agentsState, queueBadges }) {
 					</div>
 				</div>
 			</div>
-			<nav aria-label="Primary" className="flex-1 p-2 overflow-y-auto">
-				<div className="space-y-0.5">
-					{NAV_ITEMS.map((n) => {
-						// dynamicBadges 키 존재 = polled (null 이어도 정적 fallback 차단)
-						const hasDyn =
-							dynamicBadges &&
-							Object.prototype.hasOwnProperty.call(dynamicBadges, n.id);
-						const dyn = hasDyn ? dynamicBadges[n.id] : null;
-						// 합성 신호는 `badges` 배열, 단일 신호는 `badge`/`badgeTone` — 둘 다 동일 슬롯 렌더.
-						const badges = getNavBadgesWorstFirst(
-							dyn?.badges ??
-								(hasDyn
-									? dyn?.badge
-										? [dyn]
-										: []
-									: n.badge
-										? [{ badge: n.badge, badgeTone: n.badgeTone }]
-										: []),
-						);
-						return (
-							<button
-								key={n.id}
-								className={`nav-item ${active === n.id ? "active" : ""}`}
-								aria-current={active === n.id ? "page" : undefined}
-								onClick={() => onNav(n.id)}
-								title={n.label}
-							>
-								<Icon name={n.icon} size={14} />
-								{/* min-w-0 + truncate — 영문 라벨 + 복수 배지 동시 표시 시 220px 초과분은 라벨 말줄임 (배지는 shrink-0 보존). */}
-								<span className="rail-hide flex-1 min-w-0 truncate">{n.label}</span>
-								{badges.map((b, i) => {
-									// FilledBadge caps only a number child → the numeral is capped here, inside the glyph + description children
-									const numeral = /^\d+$/.test(b.badge) ? getBadgeCount(Number(b.badge)) : b.badge;
-									// one shell for every count → severity rides on the glyph alone, in its tone colour
-									const glyph = b.glyph && <span aria-hidden="true" className={`text-${b.badgeTone}`}>{`${b.glyph} `}</span>;
-									// description = what AT hears instead of the bare numeral
-									const text = <span aria-hidden={b.description ? "true" : undefined}>{numeral}</span>;
-									const description = b.description && <span className="sr-only">{`, ${b.description}`}</span>;
-									return (
-										<Badge key={i} role="count" fill="tag" title={b.title} className="nav-count">
-											{glyph}{text}{description}
-										</Badge>
-									);
-								})}
-							</button>
-						);
-					})}
-				</div>
-			</nav>
+			<NavList active={active} onNav={onNav} harness={harness} agentsState={agentsState} queueBadges={queueBadges} />
 		</aside>
+	);
+}
+
+// the shell's one nav list, badges included → hosted by the sidebar and by the phone layout's menu drawer
+function NavList({ active, onNav, harness, agentsState, queueBadges }) {
+	const { Icon, Badge, getBadgeCount } = window.UI;
+	const dynamicBadges = { ...harnessToNavBadges(harness), ...agentsToNavBadges(agentsState), ...queueBadges };
+	return (
+		<nav aria-label="Primary" className="flex-1 p-2 overflow-y-auto">
+			<div className="space-y-0.5">
+				{NAV_ITEMS.map((n) => {
+					// dynamicBadges 키 존재 = polled (null 이어도 정적 fallback 차단)
+					const hasDyn =
+						dynamicBadges &&
+						Object.prototype.hasOwnProperty.call(dynamicBadges, n.id);
+					const dyn = hasDyn ? dynamicBadges[n.id] : null;
+					// 합성 신호는 `badges` 배열, 단일 신호는 `badge`/`badgeTone` — 둘 다 동일 슬롯 렌더.
+					const badges = getNavBadgesWorstFirst(
+						dyn?.badges ??
+							(hasDyn
+								? dyn?.badge
+									? [dyn]
+									: []
+								: n.badge
+									? [{ badge: n.badge, badgeTone: n.badgeTone }]
+									: []),
+					);
+					return (
+						<button
+							key={n.id}
+							className={`nav-item ${active === n.id ? "active" : ""}`}
+							aria-current={active === n.id ? "page" : undefined}
+							onClick={() => onNav(n.id)}
+							title={n.label}
+						>
+							<Icon name={n.icon} size={14} />
+							{/* min-w-0 + truncate — 영문 라벨 + 복수 배지 동시 표시 시 220px 초과분은 라벨 말줄임 (배지는 shrink-0 보존). */}
+							<span className="rail-hide flex-1 min-w-0 truncate">{n.label}</span>
+							{badges.map((b, i) => {
+								// FilledBadge caps only a number child → the numeral is capped here, inside the glyph + description children
+								const numeral = /^\d+$/.test(b.badge) ? getBadgeCount(Number(b.badge)) : b.badge;
+								// one shell for every count → severity rides on the glyph alone, in its tone colour
+								const glyph = b.glyph && <span aria-hidden="true" className={`text-${b.badgeTone}`}>{`${b.glyph} `}</span>;
+								// description = what AT hears instead of the bare numeral
+								const text = <span aria-hidden={b.description ? "true" : undefined}>{numeral}</span>;
+								const description = b.description && <span className="sr-only">{`, ${b.description}`}</span>;
+								return (
+									<Badge key={i} role="count" fill="tag" title={b.title} className="nav-count">
+										{glyph}{text}{description}
+									</Badge>
+								);
+							})}
+						</button>
+					);
+				})}
+			</div>
+		</nav>
 	);
 }
 
@@ -268,6 +275,16 @@ function agentsToNavBadges(agentsState) {
 window.UI?.installRemoteFetch(window);
 const IS_REMOTE_PAGE = window.UI?.isRemotePage(window.location) === true;
 const NAV_ITEMS = IS_REMOTE_PAGE ? NAV.filter((item) => !item.isLoopbackOnly) : NAV;
+// index.html's declaration (1280) → every route but the Queue page on a phone, which lays out at the device width
+const VIEWPORT_TAG = document.querySelector('meta[name="viewport"]');
+const DESKTOP_VIEWPORT = VIEWPORT_TAG?.getAttribute("content");
+
+// rewritten in place on boot, route change and rotation (screens/queue.jsx → getPhoneViewport)
+function setViewport(screenId) {
+	if (!VIEWPORT_TAG) return;
+	const content = (screenId === "queue" && window.QueueNav?.getPhoneViewport(window.screen)) || DESKTOP_VIEWPORT;
+	if (VIEWPORT_TAG.getAttribute("content") !== content) VIEWPORT_TAG.setAttribute("content", content);
+}
 // red-outline destructive (design.md §7.4) → turning off cuts every device, this one included
 const TURN_OFF_STYLE = { color: "rgb(var(--crit))", borderColor: "rgb(var(--crit))" };
 const REMOTE_ACT_COPY = {
@@ -309,7 +326,7 @@ function RemoteBanner() {
 			.then((state) => setAct({ pending: null, failed: null, state }))
 			.catch(() => setAct({ pending: null, failed: name, state: "open" }));
 	};
-	const barClass = "flex items-center gap-control px-6 py-2 border-b border-line bg-sunken";
+	const barClass = "remote-banner flex items-center gap-control px-6 py-2 border-b border-line bg-sunken";
 	if (act.state === "closed") {
 		return (
 			<aside aria-label="Remote access" role="status" className={barClass} style={META_TEXT_STYLE}>
@@ -342,6 +359,7 @@ function App() {
 	const [tweaks, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
 
 	const [active, setActive] = useS(parseHashScreen);
+	const [isMenuOpen, setMenuOpen] = useS(false);
 
 	// harness 원본 스토어 — 셸이 한 cadence 로 읽고 fold 가 단일 상태로 접는다.
 	// 화면은 이 fold 만 받는다: 스크린이 같은 payload 를 다시 해석하면 nav 숫자와 어긋난다.
@@ -437,6 +455,14 @@ function App() {
 
 	useE(trackInputKind, []);
 
+	// layout phase → a route paints at its own width; a rotation across the breakpoint re-decides it
+	useLE(() => {
+		setViewport(active);
+		const onResize = () => setViewport(active);
+		window.addEventListener("resize", onResize);
+		return () => window.removeEventListener("resize", onResize);
+	}, [active]);
+
 	// route change → page heading focus (drill + sidebar + back/forward); first mount excluded
 	const focusedRoute = useR(active);
 	useE(() => {
@@ -455,6 +481,11 @@ function App() {
 			window.history.replaceState(null, "", `#${id}`);
 		}
 	};
+	// closed in the same render → the drawer's focus return runs before the new route's heading focus
+	const onMenuPick = (id) => {
+		setMenuOpen(false);
+		onNavClick(id);
+	};
 
 	// nav 숫자 · Dashboard 레인이 읽는 단일 harness 사실.
 	const harness = getHarness({
@@ -467,6 +498,8 @@ function App() {
 
 	const Screen = Screens[active];
 	const activeNav = NAV_ITEMS.find((n) => n.id === active);
+	const queueBadges = window.QueueNav?.getQueueNavBadge(queueCountState) ?? {};
+	const { DetailSurface } = window.UI;
 
 	// min-h-[100dvh] — architecture (h-full) 가 부모 높이를 배로 끌어올리는 것 차단
 	// dvh — iOS Safari 주소창 가변 영역 안전 (vh 흔들림 회피)
@@ -475,23 +508,27 @@ function App() {
 			lang="en"
 			className="flex min-h-[100dvh]"
 			data-screen-label={activeNav ? `${activeNav.label}` : ""}
+			data-route={active}
 		>
 			<a href={`#${MAIN_CONTENT_ID}`} className="skip-link" onClick={onSkipToContent}>
 				Skip to content
 			</a>
-			<Sidebar active={active} onNav={onNavClick} harness={harness} agentsState={agentsState}
-				queueBadges={window.QueueNav?.getQueueNavBadge(queueCountState) ?? {}} />
+			<Sidebar active={active} onNav={onNavClick} harness={harness} agentsState={agentsState} queueBadges={queueBadges} />
 			<div className="flex-1 min-w-0 flex flex-col">
 				{IS_REMOTE_PAGE && <RemoteBanner />}
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
 					{Screen ? (
-						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} onReadQueueCount={readQueueCount} />
+						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} onReadQueueCount={readQueueCount}
+							onOpenMenu={() => setMenuOpen(true)} />
 					) : (
 						<div className="placeholder">Coming soon — '{active}'</div>
 					)}
 				</main>
 			</div>
 			<TweaksUI tweaks={tweaks} setTweak={setTweak} />
+			<DetailSurface open={isMenuOpen} variant="drawer" title={APP_TITLE} onClose={() => setMenuOpen(false)}>
+				<NavList active={active} onNav={onMenuPick} harness={harness} agentsState={agentsState} queueBadges={queueBadges} />
+			</DetailSurface>
 		</div>
 	);
 }
@@ -555,4 +592,5 @@ function hexToRgbTriplet(hex) {
 }
 
 // 첫 페인트는 API 를 기다리지 않는다 — 표시 tz 는 App 이 셸 health 폴에서 시드 (useDisplayTimezone)
+setViewport(parseHashScreen());
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);

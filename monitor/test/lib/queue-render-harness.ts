@@ -37,7 +37,7 @@ export const VIEWPORTS = [
   { width: 1728, height: 1117 },
   { width: 1920, height: 1080 },
 ] as const;
-/** @property isMobile - a phone: the page lays out at its declared width (index.html → meta viewport) and is scaled to the screen */
+/** @property isMobile - a phone with touch: the Queue route lays out at the device width under 640, every other width and route at 1280, scaled */
 export interface Viewport {
   width: number;
   height: number;
@@ -735,14 +735,23 @@ function isOrderBefore(order: { at: bigint; id: bigint }, bound: { at: bigint; i
  * @param scale - the device scale factor, 2 for a close-up
  */
 export async function openQueuePage(harness: Harness, viewport: Viewport, readyText: string, isClockDriven = false, scale = 1): Promise<Page> {
+  const page = await openShellPage(harness, viewport, "queue", isClockDriven, scale);
+  await page.getByText(readyText).first().waitFor({ timeout: READY_TIMEOUT_MS });
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  return page;
+}
+
+/**
+ * A fresh page on the pinned clock, loaded at `#<hash>` (any route of the shell); a phone viewport gets touch too.
+ * @param hash - the route and its query, without the leading `#`
+ */
+export async function openShellPage(harness: Harness, viewport: Viewport, hash: string, isClockDriven = false, scale = 1): Promise<Page> {
   const { isMobile = false, ...size } = viewport;
   const page = await createPage(harness, { viewport: size, deviceScaleFactor: scale, isMobile, hasTouch: isMobile });
   // tsx keeps function names through an injected __name helper → the evaluated fact readers need it on the page
   await page.addInitScript("globalThis.__name = (fn) => fn");
   await (isClockDriven ? page.clock.install({ time: FIXTURE_NOW }) : page.clock.setFixedTime(FIXTURE_NOW));
-  await page.goto(`${harness.url}/#queue`, { waitUntil: "load" });
-  await page.getByText(readyText).first().waitFor({ timeout: READY_TIMEOUT_MS });
-  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  await page.goto(`${harness.url}/#${hash}`, { waitUntil: "load" });
   return page;
 }
 

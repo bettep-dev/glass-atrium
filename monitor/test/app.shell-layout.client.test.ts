@@ -89,6 +89,7 @@ async function mountShell({ fetch = () => new Promise(() => undefined), createRo
     removeEventListener: () => undefined,
     document: {
       getElementById: (id: string) => (id === "main-content" ? main : null),
+      querySelector: () => null,
       documentElement: { setAttribute: () => undefined, style: { setProperty: () => undefined } },
     },
     useTweaks: () => [{ density: "comfortable", accent: "#3b82f6" }, () => undefined],
