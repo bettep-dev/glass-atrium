@@ -340,10 +340,18 @@ make_hook_layout() {
   done
 }
 
-@test "line hash: every shared vector hashes to the monitor's pinned SHA-256, as one line" {
-  local count i name expected actual
+# Bytes on stdin → one hash per LF-separated line, in order, through the hook's own SCAN_APPROVAL_HASH_PY.
+# Bytes, not a shell variable: a variable cannot hold a NUL, so the line hashed would differ from the line written.
+get_line_hashes() {
   # shellcheck source-path=SCRIPTDIR source=../lib/scan-approval.sh
   source "${APPROVAL_LIB}"
+  python3 -I -c "${SCAN_APPROVAL_HASH_PY}"$'\n''import sys
+for line in get_lines(sys.stdin.buffer.read()):
+    print(get_line_hash(line))'
+}
+
+@test "line hash: every shared vector hashes to the monitor's pinned SHA-256, as one line" {
+  local count i name expected actual
   count="$(jq '.lines | length' "${VECTORS}")"
   [[ "${count}" -gt 0 ]] || {
     echo "no vectors in ${VECTORS}"
@@ -363,8 +371,6 @@ make_hook_layout() {
 
 @test "line hash: a text of many lines yields one hash per LF-separated line, in order" {
   local expected actual
-  # shellcheck source-path=SCRIPTDIR source=../lib/scan-approval.sh
-  source "${APPROVAL_LIB}"
   expected="$(jq -r '.lines[].sha256' "${VECTORS}")"
   # shellcheck disable=SC2312  # a failed jq feeds no text → the comparison below fails
   actual="$(jq -j '[.lines[].text] | join("\n")' "${VECTORS}" | get_line_hashes)"
@@ -404,10 +410,8 @@ get_request_body() {
     "${BATS_TEST_TMPDIR}/requests.log" | jq -r 'select(. != null)' | jq -cS .
 }
 
-# The canonical line hash of $1 (the vectors pin get_line_hashes).
+# The canonical line hash of $1 (the vectors pin it).
 get_hash() {
-  # shellcheck source-path=SCRIPTDIR source=../lib/scan-approval.sh
-  source "${APPROVAL_LIB}"
   printf '%s' "${1}" | get_line_hashes
 }
 
