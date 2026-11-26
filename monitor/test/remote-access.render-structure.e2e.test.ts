@@ -14,9 +14,9 @@ import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import type { Browser, Page } from "playwright";
-import { chromium } from "playwright";
 
 import { REMOTE_ADMIN_PATH } from "../src/server/remote/admin-routes.js";
+import { createBrowser } from "./lib/house-face.js";
 
 const PUBLIC_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const ROUTER = "192.168.0.1";
@@ -67,7 +67,7 @@ async function openRenderContext(setup: Record<string, unknown>, devices: unknow
 
   await app.ready();
   const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
-  const browser = await chromium.launch({ headless: true });
+  const browser = await createBrowser();
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
   await page.goto(`${serverUrl}/#remote-access`, { waitUntil: "load" });
   await page.getByRole("heading", { name: "Remote access", level: 1 }).waitFor({ timeout: WAIT_TIMEOUT_MS });
