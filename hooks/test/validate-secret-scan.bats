@@ -27,6 +27,9 @@ SCANNER="${BATS_TEST_DIRNAME}/../../scripts/lib/secret-scan.sh"
 SCAN_CLEAN=0
 SCAN_MATCH=3
 SCAN_LIST_FLAG="--list-all"
+# the line-hash vectors the monitor's getLineHash is pinned by → the hook must hash every one the same way
+VECTORS="${BATS_TEST_DIRNAME}/../../monitor/test/fixtures/scan-approval-vectors.json"
+APPROVAL_LIB="${BATS_TEST_DIRNAME}/../lib/scan-approval.sh"
 
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
@@ -271,4 +274,38 @@ make_hook_layout() {
         || { echo "${names[${i}]}: status ${status}: ${output}"; return 1; }
     fi
   done
+}
+
+@test "line hash: every shared vector hashes to the monitor's pinned SHA-256, as one line" {
+  local count i name expected actual
+  # shellcheck source-path=SCRIPTDIR source=../lib/scan-approval.sh
+  source "${APPROVAL_LIB}"
+  count="$(jq '.lines | length' "${VECTORS}")"
+  [[ "${count}" -gt 0 ]] || {
+    echo "no vectors in ${VECTORS}"
+    return 1
+  }
+  for ((i = 0; i < count; i++)); do
+    name="$(jq -r --argjson i "${i}" '.lines[$i].name' "${VECTORS}")"
+    expected="$(jq -r --argjson i "${i}" '.lines[$i].sha256' "${VECTORS}")"
+    # shellcheck disable=SC2312  # a failed jq feeds no text → the comparison below fails
+    actual="$(jq -j --argjson i "${i}" '.lines[$i].text' "${VECTORS}" | get_line_hashes)"
+    [[ "${actual}" == "${expected}" ]] || {
+      echo "${name}: got ${actual}"
+      return 1
+    }
+  done
+}
+
+@test "line hash: a text of many lines yields one hash per LF-separated line, in order" {
+  local expected actual
+  # shellcheck source-path=SCRIPTDIR source=../lib/scan-approval.sh
+  source "${APPROVAL_LIB}"
+  expected="$(jq -r '.lines[].sha256' "${VECTORS}")"
+  # shellcheck disable=SC2312  # a failed jq feeds no text → the comparison below fails
+  actual="$(jq -j '[.lines[].text] | join("\n")' "${VECTORS}" | get_line_hashes)"
+  [[ "${actual}" == "${expected}" ]] || {
+    printf 'expected:\n%s\nactual:\n%s\n' "${expected}" "${actual}"
+    return 1
+  }
 }
