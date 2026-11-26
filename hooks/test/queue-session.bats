@@ -598,3 +598,27 @@ run_lib() {
     return 1
   }
 }
+
+@test "a body given as - reaches the monitor from stdin byte for byte and never rides curl's argument list" {
+  start_stub
+  local sentinel body_file="${BATS_TEST_TMPDIR}/body.json" route=/api/queue/scan-approvals
+  sentinel="stdin-body-sentinel-$$-${RANDOM}"
+  printf '{"note": "%s",\n "text": "caf\303\251 \\"quoted\\""}' "${sentinel}" >"${body_file}"
+  # shellcheck disable=SC2016  # the inner script expands its own arguments
+  run --separate-stderr bash -c 'set -Eeuo pipefail; source "$1"; queue_send POST "$2" - <"$3"' \
+    _ "${GA}/scripts/lib/queue-session.sh" "${route}" "${body_file}"
+  [[ "${status}" -eq 0 && "${output##*$'\n'}" == 200 ]] || {
+    echo "status=${status} output=${output} stderr=${stderr}"
+    return 1
+  }
+  local content_type
+  content_type="$(jq -r --arg p "${route}" 'select(.path == $p) | .headers["content-type"]' "${BATS_TEST_TMPDIR}/requests.log")"
+  [[ "$(request_body "${route}")" == "$(<"${body_file}")" && "${content_type}" == application/json ]] || {
+    cat "${BATS_TEST_TMPDIR}/requests.log"
+    return 1
+  }
+  if grep -qF -- "${sentinel}" "${BATS_TEST_TMPDIR}/curl-argv.log"; then
+    cat "${BATS_TEST_TMPDIR}/curl-argv.log"
+    return 1
+  fi
+}
