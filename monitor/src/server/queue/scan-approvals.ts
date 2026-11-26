@@ -243,7 +243,6 @@ export function getLineDisplay(line: string): LineDisplay {
 }
 
 // controls, lone surrogates, line/paragraph separators, every space but U+0020 + the format and default-ignorable set
-// (Hangul fillers, Khmer inherent vowels, grapheme joiner, Mongolian and Unicode variation selectors among it)
 const MARKED = new RegExp(
   String.raw`[\p{Cc}\p{Cs}\p{Zl}\p{Zp}\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]|${INVISIBLE_CHARACTER.source}`,
   "u",

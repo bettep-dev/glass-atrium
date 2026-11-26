@@ -134,7 +134,7 @@ async function assertSecretRequestLinkable(tx: Prisma.TransactionClient, body: S
   if (request === null || request.sessionId.toLowerCase() !== body.sessionId.toLowerCase()) {
     throw new QueueRequestError(404, "unknown_secret_request", "scan approval request not found for this session");
   }
-  if (request.state !== "pending") throw new QueueRequestError(409, "secret_request_not_pending", "scan approval request is already approved");
+  secretRequests.assertPending(body.requestId);
   const linked = await tx.queueItem.findUnique({ where: { secretRequestId: body.requestId }, select: { id: true } });
   if (linked !== null) throw new QueueRequestError(409, "secret_request_linked", "scan approval request already has its item");
 }

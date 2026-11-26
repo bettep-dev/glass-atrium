@@ -830,7 +830,7 @@ export function getRelayRecordFixture(): QueueFixture {
 
 export const SCAN_IDS = { one: 801, long: 802, expired: 803, gone: 804, approved: 805, unread: 806, declined: 807, withdrawn: 808, ended: 809 } as const;
 
-/** The code points the owner's screen must show as tiles (security ruling item 5's list beside the C0/C1, zero-width and bidi ranges). */
+/** The code points the owner's screen must show as tiles: listed invisible and look-alike points beside C0/C1, zero-width and bidi samples. */
 export const SCAN_MARK_POINTS = [0x09, 0x85, 0xad, 0x34f, 0x61c, 0x115f, 0x17b4, 0x180e, 0x200b, 0x202e, 0x2066, 0x2028, 0x2029, 0xa0, 0xfeff, 0xfff9] as const;
 
 const SCAN_PATH = "/Users/owner/Desktop/git/glass-atrium/monitor/src/server/queue/example-config.ts";

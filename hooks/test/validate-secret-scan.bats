@@ -337,7 +337,7 @@ get_session_envelope() {
     '{session_id:$s,tool_name:"Write",tool_input:{file_path:$p,content:$c}}'
 }
 
-# Today's refusal for SEC-013, the hook's first stderr line.
+# The rule's own refusal for SEC-013, the hook's first stderr line.
 get_cred_refusal() {
   jq -cnS '{hook:"validate-secret-scan",error_code:"SEC-013",severity:"block",
     message:"Secret pattern detected: Generic credential assignment",
@@ -374,7 +374,7 @@ get_hash() {
     || { echo "log: ${log}"; return 1; }
 }
 
-@test "an unapproved SEC-013 write is refused as today, naming the registered request id and the one route, never the line" {
+@test "an unapproved SEC-013 write gets the rule's own refusal, naming the registered request id and the one route, never the line" {
   local hash expected
   use_monitor_stub
   set_nth_reply 1 409 '{"error":"scan_approval_refused","decision":"refuse"}'
@@ -390,7 +390,7 @@ get_hash() {
   [[ "$(get_request_body "${REGISTER_ROUTE}")" == "${expected}" ]] || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
 }
 
-@test "a SEC-013 write that another rule also matches is refused as today with nothing sent to the monitor" {
+@test "a SEC-013 write that another rule also matches gets the rule's own refusal with nothing sent to the monitor" {
   local names=() texts=() pem="-----BEGIN RSA PRIVATE"" KEY-----" marker='{"type": "service''_account"}' i
   use_monitor_stub
   names=("a PEM header on the same line" "a service-account marker on another line")
@@ -431,7 +431,7 @@ get_hash() {
   [[ -n "$(get_request_body "${CONSUME_ROUTE}" 2)" ]] || { cat "${BATS_TEST_TMPDIR}/requests.log"; return 1; }
 }
 
-@test "with no monitor running a SEC-013 write is refused exactly as today plus one cause line" {
+@test "with no monitor running a SEC-013 write gets exactly the rule's own refusal plus one cause line" {
   use_monitor_stub
   stop_stub
   run_hook "$(get_session_envelope "${CRED_FIXTURE}")"
@@ -440,7 +440,7 @@ get_hash() {
     || { echo "${output}"; return 1; }
 }
 
-# Today's SEC-013 refusal plus exactly one added line holding $2, never the line → else prints row $1 and fails.
+# The rule's own SEC-013 refusal plus exactly one added line holding $2, never the line → else prints row $1 and fails.
 check_cause_refusal() {
   [[ "${status}" -eq 2 && "${#lines[@]}" -eq 2 && "$(jq -cS . <<<"${lines[0]}")" == "$(get_cred_refusal)" ]] \
     && [[ "${lines[1]}" == "SEC-013 approval: "*"${2}"* && "${output}" != *"${CRED_FIXTURE}"* ]] \
@@ -554,7 +554,7 @@ make_path_without() {
   [[ "${status}" -eq 1 ]] || { echo "the stalled call outlived the hook: ${output}"; return 1; }
 }
 
-@test "with curl absent a SEC-013 write is refused as today plus one cause line" {
+@test "with curl absent a SEC-013 write gets the rule's own refusal plus one cause line" {
   local bin
   use_monitor_stub
   bin="$(make_path_without curl)"

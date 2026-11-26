@@ -7,7 +7,7 @@
 # One coherent secret-scan surface — branches on tool_name. Both invocations
 # block with exit 2 on match. Bind this hook to BOTH Write|Edit and Bash.
 # A Write|Edit whose every match is SEC-013 passes once on the owner's queue approval of exactly those lines
-# (the monitor's consume); otherwise it is refused as before, plus one line: the request id, or why none was checked.
+# (the monitor's consume); otherwise it is refused, plus one line: the request id, or why none was checked.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -48,7 +48,7 @@ readonly SCAN_MATCH=3
 readonly SCAN_LIST_FLAG=--list-all
 readonly HOOK_LIB_DIR="${self%/*}/lib"
 readonly SCRIPTS_LIB_DIR="${self%/*}/../scripts/lib"
-# the one rule an owner may approve (security ruling item 9) and the monitor routes that bind the approval
+# the one rule an owner may approve and the monitor routes that bind the approval
 readonly APPROVABLE_RULE=SEC-013
 readonly CONSUME_ROUTE=/api/queue/scan-approvals/consume
 readonly REGISTER_ROUTE=/api/queue/scan-approvals
