@@ -97,7 +97,7 @@
 #                                  against the same invariants the regeneration
 #                                  asserts on its temp before the swap
 #
-# Named exit codes: 1=--check divergence · 2=usage, or a --reference FILE that is
+# Named exit codes: 1=--check divergence or an unreadable HEAD manifest · 2=usage, or a --reference FILE that is
 # not a readable manifest with an object retired map · 3=git absent/not a work tree ·
 # 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
 # manifest that fails structural validation · 7=apply-spine.sh or
@@ -386,10 +386,13 @@ build_retired_json() {
 
 # Emit the manifest committed at HEAD — the reference every --check holds the current
 # retired map to; nothing on an unborn HEAD or one that does not track a manifest.
+# A tracked one git cannot read returns 1 with a named reason.
 read_head_manifest() {
-  if git -C "${GA_ROOT}" cat-file -e HEAD:./manifest.json 2>/dev/null; then
-    git -C "${GA_ROOT}" show HEAD:./manifest.json
-  fi
+  git -C "${GA_ROOT}" cat-file -e HEAD:./manifest.json 2>/dev/null || return 0
+  git -C "${GA_ROOT}" show HEAD:./manifest.json || {
+    echo "generate-manifest --check: HEAD manifest unreadable (git show HEAD:./manifest.json failed)" >&2
+    return 1
+  }
 }
 
 # Emit each retired key of the reference manifests on stdin (a JSON stream) that the
@@ -624,9 +627,9 @@ run_check() {
     echo "generate-manifest --check: RETIRED delta (committed=$(jq -r 'length' <<<"${committed_retired}") keys, generated=$(jq -r 'length' <<<"${generated_retired}") keys)" >&2
     rc=1
   fi
-  # an unreadable HEAD manifest fails the check, never a quietly skipped reference
+  # an unreadable HEAD manifest ends the check at exit 1 (pipefail + errexit), never a quietly skipped reference
   reference_dropped="$({
-    # shellcheck disable=SC2310  # the || exit is the failure path: it ends the group with the git status
+    # shellcheck disable=SC2310  # the || exit is the failure path: it ends the group with the status 1 of the function
     read_head_manifest || exit
     [[ -z "${reference}" ]] || cat -- "${reference}"
   } | reference_dropped_keys "${files}" "${committed_retired}")"
