@@ -3252,8 +3252,12 @@ describe("queue page on the mockup fixtures", () => {
       await page.locator(".queue-sheet").getByText(ready).first().waitFor();
     };
 
-    for (const viewport of [MIN_WINDOW, PHONE]) {
-      test(`at ${viewport.width} wide the long line wraps whole, each mark a whole tile, and the sheet scrolls nothing sideways`, async () => {
+    const SHEET_SIZES = [
+      { name: "at 1280 wide", viewport: MIN_WINDOW },
+      { name: "under phone emulation at the page's 1280 layout width", viewport: PHONE },
+    ];
+    for (const { name, viewport } of SHEET_SIZES) {
+      test(`${name} the long line wraps whole, each mark a whole tile, and the sheet scrolls nothing sideways`, async () => {
         const page = await openScanPage(viewport);
         await openScanSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
         const shown = await page.evaluate((points) => {
@@ -3293,7 +3297,7 @@ describe("queue page on the mockup fixtures", () => {
       });
     }
 
-    test("on a 360 phone the page scrolls nothing sideways", async () => {
+    test("under phone emulation at the page's 1280 layout width the page scrolls nothing sideways", async () => {
       const page = await openScanPage(PHONE);
       await openScanSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
       const widths = await page.evaluate(() => ({ scroll: document.scrollingElement!.scrollWidth, layout: document.documentElement.clientWidth }));
@@ -3361,16 +3365,30 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(gaps, { facts: 24, options: 12 });
     });
 
-    test("at 1280, with the fact cell left out, an ended request's tag says Expired or Gone and a waiting one Approval", async () => {
-      const page = await openScanPage(MIN_WINDOW);
-      const shown = await page.evaluate((ids) => Object.fromEntries(ids.map((id) => {
-        const row = document.getElementById(`queue-row-${id}`)!;
-        return [id, [row.querySelector<HTMLElement>(".queue-row-tag")!.innerText.trim(), getComputedStyle(row.querySelector(".queue-row-fact")!).display]];
-      })), [SCAN_IDS.one, SCAN_IDS.expired, SCAN_IDS.gone]);
-      await page.close();
+    // [tag, fact] per row; a fact cell left out reads null
+    const ENDED_TAG_ROWS = [
+      {
+        name: "at 1280, with the fact cell left out, an ended request's tag says Expired or Gone and a waiting one Approval", viewport: MIN_WINDOW,
+        expected: { [SCAN_IDS.one]: ["Approval", null], [SCAN_IDS.expired]: ["Expired", null], [SCAN_IDS.gone]: ["Gone", null] },
+      },
+      {
+        name: "at 1440, beside the fact cell, every request's tag says Approval and an ended one's fact Expired or Gone", viewport: VIEWPORTS[0],
+        expected: { [SCAN_IDS.one]: ["Approval", "1 line"], [SCAN_IDS.expired]: ["Approval", "Expired"], [SCAN_IDS.gone]: ["Approval", "Gone"] },
+      },
+    ];
+    for (const row of ENDED_TAG_ROWS) {
+      test(row.name, async () => {
+        const page = await openScanPage(row.viewport);
+        const shown = await page.evaluate((ids) => Object.fromEntries(ids.map((id) => {
+          const item = document.getElementById(`queue-row-${id}`)!;
+          const fact = item.querySelector<HTMLElement>(".queue-row-fact")!;
+          return [id, [item.querySelector<HTMLElement>(".queue-row-tag")!.innerText.trim(), getComputedStyle(fact).display === "none" ? null : fact.innerText.trim()]];
+        })), [SCAN_IDS.one, SCAN_IDS.expired, SCAN_IDS.gone]);
+        await page.close();
 
-      assert.deepEqual(shown, { [SCAN_IDS.one]: ["Approval", "none"], [SCAN_IDS.expired]: ["Expired", "none"], [SCAN_IDS.gone]: ["Gone", "none"] });
-    });
+        assert.deepEqual(shown, row.expected);
+      });
+    }
 
     test("the captured lines are read only when a waiting item's sheet opens, and its row says only how many lines", async () => {
       const page = await openScanPage(MIN_WINDOW);
