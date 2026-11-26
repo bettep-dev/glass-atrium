@@ -812,6 +812,7 @@ function AgentTableMC({ state, items, knownModels, apply }) {
 	return (
 		<Table
 			caption="Agent models. Up and Down move between rows, Right reaches a row's checkbox, Enter ticks the focused row."
+			isHeadSticky
 			columns={getAgentColumnsMC(master)}
 			widths={AGENT_COL_WIDTHS_MC}
 			stackBelowPx={AGENT_STACK_BELOW_PX_MC}
