@@ -525,6 +525,14 @@ export function getNameColumnFixture(): QueueFixture {
   return { ...edge, items: edge.items.map((item) => ({ ...item, session: sessions.get(item.id) ?? item.session })) };
 }
 
+/** A session that registered "Gersona " beside the rest state's gersona → two names one normalization apart on the rail. */
+export const CONFUSABLE_SESSION_ID = "5e55a000-1b2c-4d3e-8f4a-5b6c7d8e9f01";
+
+export function getConfusableNameFixture(): QueueFixture {
+  const rest = getRestFixture();
+  return { ...rest, sessions: [...rest.sessions, buildEdgeSession(CONFUSABLE_SESSION_ID, "Gersona ", 0).row] };
+}
+
 // spec 44063 §14.4, Not listening stream only: live and not-reachable sessions with no wait or listener polling (isWaiting false)
 export const NOT_LISTENING_SESSION_IDS = {
   sixmon: "e1f2a3b4-3c4d-4e5f-9a6b-4d5e6f7a8b91",

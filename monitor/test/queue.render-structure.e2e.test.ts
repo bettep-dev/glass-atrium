@@ -24,7 +24,7 @@ import type { OwnerItemView } from "../src/server/queue/owner-views.js";
 import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
   buildSentCopies, DONE_IDS, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
-  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getDoneOnlyFixture, getDoneRelaysFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
+  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getConfusableNameFixture, CONFUSABLE_SESSION_ID, getDoneFixture, getDoneOnlyFixture, getDoneRelaysFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
   getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneListFixture, getOneReceivedFixture, getOrderFirstFixture, getProseFixture, getHiddenSessionsFixture, getRailFixture, getRelayListFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, RELAY_ROW_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
   getScanApprovalFixture, SCAN_GONE_FACTS, SCAN_IDS, SCAN_MARK_POINTS,
@@ -1852,7 +1852,7 @@ describe("queue page on the mockup fixtures", () => {
   // one sender reads as one name on every row; a name the session wrote takes the mark whole beside it, outside the cut, its words in the tooltips;
   // the fixture's longest name, nine letters, self-named on relay 421 → name and mark still whole in the name column, every title on one x
   test("a sender's name paints the same on its decision, refused and relay rows at 1280, 1440 and 1568, and every self-named row of any kind adds the whole self mark, a nine-letter name whole beside it and every title on one x", async () => {
-    harness.fixture = getStartDirectoryFixture(getSelfNamedFixture(getRelayListFixture(true), RELAY_ROW_IDS.one, "portfolio"), "aidl");
+    harness.fixture = getStartDirectoryFixture(getSelfNamedFixture(getRelayListFixture(true), RELAY_ROW_IDS.one, "dashboard"), "aidl");
     const shown = [];
     for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
       const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
@@ -1875,7 +1875,7 @@ describe("queue page on the mockup fixtures", () => {
     }
 
     const byName = shown.flatMap(({ width, rows }) => [...new Set(rows.map((row) => row.name))].map((name) => ({ width, name, painted: [...new Set(rows.filter((row) => row.name === name).map((row) => row.painted))] })));
-    assert.ok(shown.every(({ rows }) => rows.some((row) => row.name === "portfolio" && row.isSelfNamed) && rows.some((row) => row.name === "aidl" && !row.isSelfNamed)), "each width paints the self-named nine-letter name and a start-directory name");
+    assert.ok(shown.every(({ rows }) => rows.some((row) => row.name === "dashboard" && row.isSelfNamed) && rows.some((row) => row.name === "aidl" && !row.isSelfNamed)), "each width paints the self-named nine-letter name and a start-directory name");
     assert.deepEqual(shown.map(({ width, rows }) => ({ width, titleAts: new Set(rows.map((row) => row.titleAt)).size })), shown.map(({ width }) => ({ width, titleAts: 1 })), "every title on one x");
     assert.deepEqual(byName.filter(({ painted }) => painted.length > 1 || painted[0] === "cut"), [], "a sender's name paints whole and alike on every row");
     assert.deepEqual(
@@ -3687,13 +3687,39 @@ describe("queue page on the mockup fixtures", () => {
 
     test("two sessions with one name each show their 8-character id on the rail, and a session with its own name shows none", async () => {
       const page = await openEdgePage(harness);
-      const names = await page.evaluate(() => [...document.querySelectorAll(".queue-rail-name-text")].map((name) => name.textContent));
+      const names = await page.evaluate(() => [...document.querySelectorAll(".queue-rail-name")].map((name) => [...name.children].map((part) => part.textContent).join(" · ")));
       await page.close();
 
       assert.deepEqual(
         { atrium: names.filter((name) => name?.startsWith("atrium")), gersona: names.filter((name) => name?.startsWith("gersona")) },
         { atrium: [`atrium · ${FIXTURE_SESSION_IDS.atrium.slice(0, 8)}`, `atrium · ${EDGE_SESSION_IDS.twin.slice(0, 8)}`], gersona: ["gersona"] },
       );
+    });
+
+    // the page cannot check a name → it says so where the names are listed, read in place by eye and by a reader
+    test("at 1280 the rail's head shows the statement on names in full, in view, and in the accessibility tree", async () => {
+      const statement = "Session names are written by the sessions themselves and are not checked. Only the id identifies a session.";
+      const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText());
+      const shown = await page.locator(".queue-sessions > .card-bar").evaluate((bar) => {
+        const box = bar.getBoundingClientRect();
+        return { text: bar.textContent, isWhole: bar.scrollHeight <= bar.clientHeight && box.height > 0 && box.top >= 0 && box.bottom <= window.innerHeight, isConcealed: bar.closest("[aria-hidden='true'], [hidden]") !== null };
+      });
+      const tree = await page.locator(".queue-sessions").ariaSnapshot();
+      await page.close();
+
+      assert.deepEqual([shown, tree.includes(statement)], [{ text: statement, isWhole: true, isConcealed: false }, true]);
+    });
+
+    test("at 1280 two rail entries whose names differ only in case and a trailing space each show their 8-character id whole", async () => {
+      harness.fixture = getConfusableNameFixture();
+      const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+      const ids = await page.evaluate((sessionIds) => sessionIds.map((id) => {
+        const shown = document.querySelector<HTMLElement>(`.queue-rail-row[data-session="${id}"] .queue-rail-id`);
+        return shown === null ? null : [shown.textContent, shown.scrollWidth <= shown.clientWidth && shown.getBoundingClientRect().right <= shown.closest(".queue-rail-row")!.getBoundingClientRect().right];
+      }), [FIXTURE_SESSION_IDS.gersona, CONFUSABLE_SESSION_ID]);
+      await page.close();
+
+      assert.deepEqual(ids, [[FIXTURE_SESSION_IDS.gersona.slice(0, 8), true], [CONFUSABLE_SESSION_ID.slice(0, 8), true]]);
     });
 
     test("an item from one of two sessions with one name shows that session's 8-character id after the name in its letterhead", async () => {

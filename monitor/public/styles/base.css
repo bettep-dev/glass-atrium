@@ -646,6 +646,13 @@ label.ctl-checkbox-hit {
 .queue-rail-name-text > span {
 	font-size: var(--fs-meta);
 }
+/* the id beside a name the page could mistake for another's: whole, the name cut first */
+.queue-rail-id {
+	flex: none;
+	font-size: var(--fs-meta);
+	font-weight: 400;
+	color: rgb(var(--dim));
+}
 .queue-rail-row.is-ended .queue-rail-name {
 	color: rgb(var(--dim));
 }
