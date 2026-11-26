@@ -516,7 +516,7 @@ function App() {
 			<Sidebar active={active} onNav={onNavClick} harness={harness} agentsState={agentsState} queueBadges={queueBadges} />
 			<div className="flex-1 min-w-0 flex flex-col">
 				{IS_REMOTE_PAGE && <RemoteBanner />}
-				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-6 flex flex-col min-h-0">
+				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-page flex flex-col min-h-0">
 					{Screen ? (
 						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} onReadQueueCount={readQueueCount}
 							onOpenMenu={() => setMenuOpen(true)} />

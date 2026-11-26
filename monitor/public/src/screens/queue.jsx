@@ -149,6 +149,8 @@ const DESK_KEY_LIST_Q = [
 const ORDERS_Q = { PAGE: 30, MAX: 100, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text" };
 // the middle pane's parts: the list body whose scroll the sheet keeps (a hidden box does not keep its own), the sheet body, the list's tab stop
 const PANE_Q = { LIST_BODY: ".queue-list > .card-body", SHEET_BODY: ".queue-sheet > .card-body", TAB_STOP: '.queue-listbox [tabindex="0"]' };
+// the phone's views (layout §2): the control each one is left by, and the one that opens it from the list
+const VIEW_Q = { BACK: ".queue-view-back", OPENER: { sessions: ".queue-scope-trigger", orders: ".queue-orders-open" } };
 const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor: null, error: null, refusals: [], refusalCutAt: null });
 const SESSION_STATE_LABEL_Q = { live: "Live" };
 const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", replaced: "Replaced" };
@@ -601,7 +603,7 @@ function ScreenQueue({ onRetryHarness, onReadQueueCount, onOpenMenu }) {
 	);
 }
 
-/** DOM order Sessions → the middle pane → Orders: three fixed-role columns that never stack, none put away for another (spec §3.1); a phone shows the middle pane alone (base.css). */
+/** DOM order Sessions → the middle pane → Orders: three fixed-role columns that never stack, none put away for another (spec §3.1); a phone draws the one view `queue.view` names (base.css). */
 function QueueDeskQ({ queue }) {
 	usePageDropGuardQ();
 	const onKeyDown = (event) => {
@@ -611,7 +613,7 @@ function QueueDeskQ({ queue }) {
 		putDeskKeyQ(action, { queue, target: event.target, root: window.document });
 	};
 	return (
-		<div className="queue-desk" onKeyDown={onKeyDown}>
+		<div className="queue-desk" data-view={queue.view} onKeyDown={onKeyDown}>
 			<SessionsRegionQ queue={queue} />
 			<MiddlePaneQ queue={queue} />
 			<OrdersViewQ queue={queue} />
@@ -850,10 +852,11 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	// opening a row, focusing it or its row showing in the list is the owner seeing it → the arrival ends (spec §4.4)
 	const setSeen = useCallbackQ((id) => setList((prev) => (prev.newIds.includes(id) ? { ...prev, newIds: prev.newIds.filter((other) => other !== id) } : prev)), []);
 	const selectRow = useCallbackQ((id) => { openItem(id); setSeen(id); }, [openItem, setSeen]);
-	const openOrderRow = useOrderRowQ({ list, setCurrentId, sessions, orders });
+	const [view, setView] = useDeskViewQ();
+	const openOrderRow = useOrderRowQ({ list, setCurrentId, sessions, orders, setView });
 	return {
 		list, done, relays, resumes, readResumes, sessions, orders, drafts, setDraft, setImages, filter, setFilter, reload, rereadLists, loadMore, groups, sheet, steps,
-		selectedId: currentId, selectRow, setSeen, back: closeSheet, openOrderRow, status, keys, ...actions, ...ticks,
+		selectedId: currentId, selectRow, setSeen, back: closeSheet, openOrderRow, view, setView, status, keys, ...actions, ...ticks,
 	};
 }
 
@@ -1067,14 +1070,41 @@ function getArrivalNoteQ(arrived) {
 }
 
 // an order's row or Show → the current row for the return, never a sheet (an order has none); its entry aimed at in the thread
-function useOrderRowQ({ list, setCurrentId, sessions, orders }) {
+function useOrderRowQ({ list, setCurrentId, sessions, orders, setView }) {
 	const { setSelectedIds } = sessions;
 	const { aimAt } = orders;
 	return useCallbackQ((row) => {
 		setCurrentId(row.id);
 		setSelectedIds((ids) => getShowTicksQ(ids, list.data?.items ?? [], row.id));
+		setView("orders");
 		aimAt(row.id);
-	}, [list, setCurrentId, setSelectedIds, aimAt]);
+	}, [list, setCurrentId, setSelectedIds, setView, aimAt]);
+}
+
+/**
+ * The phone's one view (layout §2): `list` (the list, or its sheet in its place), `sessions` or `orders`. Every pane stays mounted, so ticks, drafts and scroll survive;
+ * not in the URL → a load lands on the list. Another view → the focus on its back arrow · the list again → the scroll it had, the focus on the control that opens the view left.
+ * @returns [view, setView(name)]
+ */
+function useDeskViewQ() {
+	const [move, setMove] = useStateQ({ to: "list", from: null });
+	const listTop = useRefQ(0);
+	const latest = useRefQ(move.to);
+	latest.current = move.to;
+	useLayoutEffectQ(() => {
+		if (move.from === null) return;
+		if (move.to !== "list") return void document.querySelector(`.queue-${move.to} ${VIEW_Q.BACK}`)?.focus({ preventScroll: true });
+		const body = document.querySelector(PANE_Q.LIST_BODY);
+		if (body) body.scrollTop = listTop.current;
+		document.querySelector(VIEW_Q.OPENER[move.from])?.focus({ preventScroll: true });
+	}, [move]);
+	const setView = useCallbackQ((to) => {
+		if (to === latest.current) return;
+		// an undrawn box may drop its scroll (useSheetMovesQ) → read while the list is still on screen; under a sheet the sheet keeps it
+		if (latest.current === "list" && document.querySelector(".queue-sheet") === null) listTop.current = document.querySelector(PANE_Q.LIST_BODY)?.scrollTop ?? 0;
+		setMove({ to, from: latest.current });
+	}, []);
+	return [move.to, setView];
 }
 
 /**
@@ -1594,8 +1624,10 @@ function QueueListQ({ queue }) {
 	const scope = getScopeTitleQ(queue.sessions.region.data?.sessions ?? [], ids);
 	const loaded = [...items, ...queue.done.thread.items, ...queue.relays.thread.items];
 	return (
-		<Card className="queue-pane queue-list" title={<span title={scope}>{scope}</span>} sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
+		<Card className="queue-pane queue-list" title={<ScopeTitleQ scope={scope} onOpen={() => queue.setView("sessions")} />}
+			sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
 			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts" infoTitle="Keyboard shortcuts"
+			right={<button type="button" className="btn ghost queue-orders-open" onClick={() => queue.setView("orders")}>Orders</button>}
 			bar={isAccountAxisShownQ(loaded, queue.filter) ? <QueueFilterBarQ items={loaded} filter={queue.filter} onFilter={queue.setFilter} /> : null}
 			foot={<ListFootQ queue={queue} offView={offView} onShowNew={putNewRowInViewQ} />} isFlush>
 			<ListBodyQ queue={queue} items={items} />
@@ -1668,6 +1700,33 @@ function putNewRowInViewQ(id) {
 	const row = document.getElementById(`${ROW_ID_PREFIX_Q}${id}`);
 	row?.scrollIntoView({ block: "nearest" });
 	row?.focus({ preventScroll: true });
+}
+
+/**
+ * The list's scope words: the plain title, and on a phone the trigger that opens the Sessions view in their place (base.css draws one of the two).
+ * The trigger draws its words from `data-words` → the heading's text holds them once at every width.
+ */
+function ScopeTitleQ({ scope, onOpen }) {
+	const { Icon } = window.UI;
+	return (
+		<>
+			<span className="queue-scope-title" title={scope}>{scope}</span>
+			<button type="button" className="btn ghost queue-scope-trigger" aria-label={`Sessions: ${scope}`} title={scope} onClick={onOpen}>
+				<span className="queue-scope-words" data-words={scope} />
+				<Icon name="chevron-right" size={16} />
+			</button>
+		</>
+	);
+}
+
+// the phone's one way back from Sessions or Orders (base.css → .queue-view-back)
+function ViewBackQ({ queue }) {
+	const { Icon } = window.UI;
+	return (
+		<button type="button" className="btn ghost icon queue-view-back" aria-label="Back to the list" title="Back to the list" onClick={() => queue.setView("list")}>
+			<Icon name="arrow-left" size={16} />
+		</button>
+	);
 }
 
 /** The key list behind the list head's ⓘ (spec §11) and the switch that turns the single keys off (WCAG 2.1.4). */
@@ -3278,7 +3337,7 @@ function SessionsRegionQ({ queue }) {
 	// a rail not read yet states no count (as getOrderNoteQ with no rows)
 	const sub = view === "ready" ? `${rows.length - endedCount} live · ${endedCount} ended` : undefined;
 	return (
-		<Card className="queue-pane queue-sessions" title="Sessions" sub={sub} bar={<p className="fs-meta text-dim">{SESSIONS_Q.STATEMENT}</p>}
+		<Card className="queue-pane queue-sessions" title={<><ViewBackQ queue={queue} />Sessions</>} sub={sub} bar={<p className="fs-meta text-dim">{SESSIONS_Q.STATEMENT}</p>}
 			foot={<RailFootQ queue={queue} />} isFlush>
 			{view === "loading" && <div className="queue-loading"><LoadingPlaceholder label="sessions" /></div>}
 			{view === "error" && <RegionUnavailable source={SESSIONS_Q.SOURCE} error={sessions.region.error} isBusy={sessions.region.busy} onRetry={sessions.read} />}
@@ -3459,7 +3518,7 @@ function OrdersViewQ({ queue }) {
 	const scope = names.length > 0 ? `to ${names.join(", ")}` : "to every session";
 	return (
 		<section className="queue-orders" aria-label="Orders" {...zone.handlers}>
-			<Card className="queue-orders-card" title="Orders" sub={<span className="queue-orders-scope" title={scope}>{scope}</span>}
+			<Card className="queue-orders-card" title={<><ViewBackQ queue={queue} />Orders</>} sub={<span className="queue-orders-scope" title={scope}>{scope}</span>}
 				foot={<OrderComposerQ queue={queue} targets={targets} rows={rows} box={box} tray={tray} isReady={sessions.region.data !== null} />} isFlush>
 				<ThreadQ orders={orders} names={names} pageNames={getPageNamesQ(queue)} busy={queue.busy} />
 			</Card>

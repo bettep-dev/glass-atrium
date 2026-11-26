@@ -528,7 +528,10 @@ label.ctl-checkbox-hit {
 }
 /* the Queue page on a phone (screens/queue.jsx → PHONE_Q): the header's menu replaces the shell's sidebar, the desk drops its
    desktop floors, the pane bleeds to the screen's edges with its content on the header's 16 inset. Other routes keep 1280 → never match */
-.queue-menu {
+.queue-menu,
+.queue-scope-trigger,
+.queue-orders-open,
+.queue-view-back {
 	display: none;
 }
 @media (max-width: 640px) {
@@ -544,7 +547,7 @@ label.ctl-checkbox-hit {
 	.queue-screen {
 		min-height: 0;
 	}
-	/* one column: the middle pane (the list, or the sheet in its place) is the one pane shown */
+	/* one column, one view (screens/queue.jsx → useDeskViewQ): the list (or the sheet in its place), Sessions or Orders; the others stay mounted, undrawn */
 	.queue-desk {
 		grid-template-columns: minmax(0, 1fr);
 		min-width: 0;
@@ -552,8 +555,51 @@ label.ctl-checkbox-hit {
 		margin-inline: calc(-1 * var(--gap-page));
 		margin-block-end: calc(-1 * var(--gap-page));
 	}
-	.queue-desk > :is(.queue-sessions, .queue-orders) {
+	.queue-desk[data-view="list"] > :is(.queue-sessions, .queue-orders),
+	.queue-desk[data-view="sessions"] > :is(.queue-list-slot, .queue-sheet, .queue-orders),
+	.queue-desk[data-view="orders"] > :is(.queue-sessions, .queue-list-slot, .queue-sheet) {
 		display: none;
+	}
+	/* the list head: the scope trigger in the plain title's place, Orders at its end; no keys button, a phone has no keyboard (layout §2) */
+	.queue-scope-title,
+	.queue-list > .card-head [aria-haspopup="dialog"] {
+		display: none;
+	}
+	/* a 44 target in a head's 20 title line: the title holds its line, the target reaches into the head's padding */
+	.queue-desk .card-title:has(> :is(.queue-scope-trigger, .queue-view-back)) {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		overflow: visible;
+		margin-block: calc((var(--lh-row) - var(--ctl-min-h) - 2 * var(--space-1_5)) / 2);
+	}
+	.queue-scope-trigger.btn,
+	.queue-orders-open.btn,
+	.queue-view-back.btn.icon {
+		display: inline-flex;
+		height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+	}
+	.queue-view-back.btn.icon {
+		width: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+		margin-inline-start: calc(-1 * var(--space-3));
+	}
+	/* the words keep the title's type and column and ellipsize; the chevron stays */
+	.queue-scope-trigger.btn {
+		min-width: 0;
+		max-width: 100%;
+		gap: var(--space-1);
+		padding-inline: var(--space-2);
+		margin-inline-start: calc(-1 * var(--space-2));
+		font: inherit;
+	}
+	.queue-scope-words {
+		min-width: 0;
+		overflow: hidden;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+	}
+	.queue-scope-words::before {
+		content: attr(data-words);
 	}
 	.queue-desk :is(.queue-pane, .queue-orders-card) {
 		border-radius: 0;

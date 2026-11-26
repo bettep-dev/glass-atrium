@@ -1,17 +1,17 @@
 // E2E chromium check of the Queue page's phone frame (screens/queue.jsx, app.jsx): the Queue route alone lays out at the device width
-// under 640, every other route and every wider device keeps index.html's 1280, and the shell's nav moves into a menu there.
+// under 640, every other route and every wider device keeps index.html's 1280; there the shell's nav moves into a menu and the desk shows one view at a time.
 //
 // Runner: npx tsx --test test/queue.phone.e2e.test.ts
 // Prereqs (unmet → RED, no skip guard): `npm run build:jsx`, installed chromium, CDN network (React and the fonts).
 // Harness: test/lib/queue-render-harness.ts.
 
-import test, { after, before, describe } from "node:test";
+import test, { after, before, beforeEach, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 
-import { closeHarness, getRestReadyText, type Harness, MIN_WINDOW, openHarness, openQueuePage, openShellPage, READY_TIMEOUT_MS, type Viewport } from "./lib/queue-render-harness.js";
-import { getRestFixture } from "./lib/queue-render-fixtures.js";
+import { closeHarness, getRestReadyText, type Harness, MIN_WINDOW, openHarness, openQueuePage, openShellPage, READY_TIMEOUT_MS, tickSessions, type Viewport } from "./lib/queue-render-harness.js";
+import { getOffViewFixture, getRestFixture } from "./lib/queue-render-fixtures.js";
 
 const PHONES: Viewport[] = [{ width: 360, height: 740, isMobile: true }, { width: 412, height: 915, isMobile: true }];
 const PHONE = PHONES[0]!;
@@ -19,6 +19,29 @@ const DESKTOP_LAYOUT_WIDTH = 1280;
 const SIDEBAR = 'aside[aria-label="Sidebar"]';
 const MENU_BUTTON = { name: "Open the menu" };
 const MENU = { name: "Atrium Monitor" };
+const WIDE_WINDOW: Viewport = { width: 1440, height: 900 };
+const SCOPE_TRIGGER = /^Sessions: /;
+const ORDERS_BUTTON = { name: "Orders", exact: true };
+const BACK = { name: "Back to the list" };
+const PANES = [".queue-sessions", ".queue-list", ".queue-orders"];
+
+interface PhoneView {
+  name: string;
+  pane: string;
+  open: (page: Page) => Promise<void>;
+}
+
+const VIEWS: PhoneView[] = [
+  { name: "list", pane: ".queue-list", open: async () => undefined },
+  { name: "Sessions", pane: ".queue-sessions", open: (page) => page.getByRole("button", { name: SCOPE_TRIGGER }).tap() },
+  { name: "Orders", pane: ".queue-orders", open: (page) => page.getByRole("button", ORDERS_BUTTON).tap() },
+];
+// each way out of the list, by the control that opens it
+const TRIPS: PhoneView[] = [
+  { ...VIEWS[1]!, name: "the scope trigger opens Sessions" },
+  { ...VIEWS[2]!, name: "Orders opens Orders" },
+  { name: "a row tap opens its sheet", pane: ".queue-sheet", open: (page) => page.locator(".queue-list .queue-row").last().tap() },
+];
 
 interface Widths {
   layout: number;
@@ -50,6 +73,11 @@ async function openPhoneQueue(harness: Harness): Promise<Page> {
   return openQueuePage(harness, PHONE, getRestReadyText());
 }
 
+// a locator's matches that draw a box: a phone-only control is in the DOM at every width, drawn only on the phone
+function getShownCount(locator: Locator): Promise<number> {
+  return locator.evaluateAll((nodes) => nodes.filter((node) => node.getClientRects().length > 0).length);
+}
+
 async function pickFromMenu(page: Page, label: string): Promise<void> {
   await page.getByRole("button", MENU_BUTTON).tap();
   await page.getByRole("dialog", MENU).locator(`.nav-item[title="${label}"]`).tap();
@@ -61,6 +89,10 @@ describe("the Queue page on a phone", () => {
 
   before(async () => {
     harness = await openHarness();
+  });
+
+  beforeEach(() => {
+    harness.fixture = getRestFixture();
   });
 
   after(() => closeHarness(harness));
@@ -184,13 +216,21 @@ describe("the Queue page on a phone", () => {
       assert.deepEqual({ width: box?.width, height: box?.height, isBeforeTitle }, { width: 44, height: 44, isBeforeTitle: true });
     });
 
-    test("at 1280 the sidebar stays and the Queue header draws no menu button", async () => {
-      const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText());
-      const shown = { sidebar: await page.locator(SIDEBAR).isVisible(), menuButton: await page.getByRole("button", MENU_BUTTON).isVisible() };
-      await page.close();
+    for (const viewport of [MIN_WINDOW, WIDE_WINDOW]) {
+      test(`at ${viewport.width} the sidebar stays and the page draws none of the phone's controls`, async () => {
+        const page = await openQueuePage(harness, viewport, getRestReadyText());
+        const shown = {
+          sidebar: await page.locator(SIDEBAR).isVisible(),
+          menuButton: await page.getByRole("button", MENU_BUTTON).isVisible(),
+          scopeTrigger: await page.getByRole("button", { name: SCOPE_TRIGGER }).isVisible(),
+          ordersButton: await page.getByRole("button", ORDERS_BUTTON).isVisible(),
+          viewBacks: await getShownCount(page.locator(".queue-sessions, .queue-orders").getByRole("button", BACK)),
+        };
+        await page.close();
 
-      assert.deepEqual(shown, { sidebar: true, menuButton: false });
-    });
+        assert.deepEqual(shown, { sidebar: true, menuButton: false, scopeTrigger: false, ordersButton: false, viewBacks: 0 });
+      });
+    }
 
     test("Esc closes the menu and returns focus to the menu button", async () => {
       const page = await openPhoneQueue(harness);
@@ -202,6 +242,70 @@ describe("the Queue page on a phone", () => {
       await page.close();
 
       assert.equal(focused, MENU_BUTTON.name);
+    });
+  });
+
+  describe("shows one view at a time, each a tap from the list and back by its arrow", () => {
+    for (const view of VIEWS) {
+      test(`in the ${view.name} view the one pane drawn is that view's, edge to edge`, async () => {
+        const page = await openPhoneQueue(harness);
+        await view.open(page);
+        await page.locator(view.pane).waitFor();
+        const shown = await page.evaluate((panes) => panes.filter((pane) => document.querySelector(pane)!.getClientRects().length > 0), PANES);
+        const box = await page.locator(view.pane).boundingBox();
+        await page.close();
+
+        assert.deepEqual({ shown, left: box?.x, right: box && box.x + box.width }, { shown: [view.pane], left: 0, right: PHONE.width });
+      });
+    }
+
+    test("the list's head holds the scope trigger and Orders, each 44 tall, and no keys button", async () => {
+      const page = await openPhoneQueue(harness);
+      const head = page.locator(".queue-list > .card-head");
+      const trigger = head.getByRole("button", { name: "Sessions: All sessions" });
+      const orders = head.getByRole("button", ORDERS_BUTTON);
+      const facts = {
+        triggerHeight: (await trigger.boundingBox())?.height,
+        ordersHeight: (await orders.boundingBox())?.height,
+        isKeysShown: await head.getByRole("button", { name: "Keyboard shortcuts" }).isVisible(),
+      };
+      await page.close();
+
+      assert.deepEqual(facts, { triggerHeight: 44, ordersHeight: 44, isKeysShown: false });
+    });
+
+    for (const trip of TRIPS) {
+      test(`${trip.name}, and its back arrow returns to the list at the scroll it had`, async () => {
+        // a list longer than the phone's screen → a scroll to keep
+        harness.fixture = getOffViewFixture();
+        const page = await openQueuePage(harness, PHONE, getRestReadyText(harness.fixture));
+        const body = page.locator(".queue-list > .card-body");
+        const top = await body.evaluate((node) => {
+          node.scrollTop = node.scrollHeight;
+          return node.scrollTop;
+        });
+        await trip.open(page);
+        await page.locator(trip.pane).getByRole("button", BACK).tap();
+        await page.locator(".queue-list").waitFor();
+        const kept = await body.evaluate((node) => node.scrollTop);
+        await page.close();
+
+        assert.deepEqual({ isScrolled: top > 0, kept }, { isScrolled: true, kept: top });
+      });
+    }
+
+    test("a tick in Sessions keeps the reader there, and back on the list the trigger names that session and the rows are its own", async () => {
+      const page = await openPhoneQueue(harness);
+      await VIEWS[1]!.open(page);
+      await tickSessions(page, ["gersona"]);
+      const isStillInSessions = await page.locator(".queue-sessions").isVisible();
+      await page.locator(".queue-sessions").getByRole("button", BACK).tap();
+      const trigger = await page.getByRole("button", { name: SCOPE_TRIGGER }).getAttribute("aria-label");
+      const rowIds = await page.locator(".queue-list .queue-row").evaluateAll((rows) => rows.map((row) => Number(row.id.replace("queue-row-", ""))));
+      await page.close();
+
+      const gersonaIds = getRestFixture().items.filter((item) => item.status === "open" && item.session.name === "gersona").map((item) => item.id);
+      assert.deepEqual({ isStillInSessions, trigger, rowIds: rowIds.sort((a, b) => a - b) }, { isStillInSessions: true, trigger: "Sessions: gersona", rowIds: gersonaIds.sort((a, b) => a - b) });
     });
   });
 });
