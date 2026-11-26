@@ -1567,7 +1567,7 @@ describe("queue page on the mockup fixtures", () => {
       await waitForDoneBands(page);
       return { page, reads };
     };
-    // every band and row in list order: a band's text and count badges, a row's part (open or done), its tag and fact, its title's weight and colour
+    // every band and row in list order: a band's text and count badges, a row's part (open or done), its tag and fact, its title's weight and colour; whether the list draws its bar
     const getListRows = (page: Page) => page.evaluate(() => ({
       hash: location.hash,
       bands: [...document.querySelectorAll(".queue-listbox .queue-band")].map((band) => [band.textContent, band.querySelectorAll(".pill").length]),
@@ -1578,7 +1578,8 @@ describe("queue page on the mockup fixtures", () => {
         const band = getComputedStyle(row.closest('[role="group"]')?.querySelector(".queue-band") as Element);
         return `${row.classList.contains("queue-row--done")}:${title.fontWeight}:${title.color === band.color ? "dim" : "ink"}`;
       }))],
-      bar: document.querySelector(".queue-list > .card-bar") !== null,
+      // drawn, not present: the bar always holds the phone's names note, hidden above 640 when it stands alone
+      bar: (document.querySelector(".queue-list > .card-bar")?.getClientRects().length ?? 0) > 0,
     }));
 
     test("the one list draws the open bands, then the done items newest end first under Done day bands with no count, each row dim 400 with how it ended in the tag column and its kind in the fact column; no bar with one account", async () => {
