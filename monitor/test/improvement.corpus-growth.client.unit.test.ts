@@ -439,14 +439,15 @@ describe("the corpus and agreement figures read their counts in words", () => {
   };
   const getAuditLine = (totalAudits: number) => {
     const tree = viewTree((helpers.CorpusGrowthCardI as Component)({ state: { status: "ready", data: { total_audits: totalAudits, audits: [CORPUS_READING] } } }));
-    return tree.filter((el) => el.type === "div").map((el) => [el.props.children].flat().join("")).find((text) => /audits/.test(text));
+    return tree.filter((el) => el.type === "div").map((el) => [el.props.children].flat().join("")).find((text) => / · latest /.test(text));
   };
   const rows = [
     { name: "one gate trip reads singular against the check total", read: () => getFact({ ...CORPUS_READING, gate_trip_count: 1, gate_total_count: 10 }, "Gate checks"), text: "1 trip in 10" },
     { name: "several gate trips read plural against the check total", read: () => getFact({ ...CORPUS_READING, gate_trip_count: 3, gate_total_count: 1200 }, "Gate checks"), text: "3 trips in 1,200" },
     { name: "the Alert value names the raised kinds only", read: () => getFact({ ...CORPUS_READING, trend_alert: true, absolute_alert: true }, "Alert"), text: "trend + absolute" },
     { name: "the agreement context counts the signals and dates the latest", read: () => getAgreementContext(128, "2026-11-22T03:00:00Z"), text: "128 signals · latest 11-22" },
-    { name: "the corpus body line counts the audits and dates the latest cycle", read: () => getAuditLine(12), text: "12 audits · latest 11-20" },
+    { name: "one audit reads singular on the corpus body line beside the latest cycle", read: () => getAuditLine(1), text: "1 audit · latest 11-20" },
+    { name: "several audits read plural on the corpus body line beside the latest cycle", read: () => getAuditLine(2), text: "2 audits · latest 11-20" },
   ];
   for (const row of rows) {
     test(row.name, () => {

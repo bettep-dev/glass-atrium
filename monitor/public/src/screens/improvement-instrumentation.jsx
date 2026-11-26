@@ -914,6 +914,7 @@ function CorpusGrowthCardI({ state }) {
 		? `${delta > 0 ? "+" : ""}${formatIntI(delta)} words vs previous`
 		: "no baseline yet";
 	const threshold = latest.seeded_threshold;
+	const auditCount = Number(state.data.total_audits ?? 0);
 	const stats = [
 		{
 			key: "words",
@@ -944,7 +945,7 @@ function CorpusGrowthCardI({ state }) {
 				<CorpusFactsI latest={latest} />
 				{/* cycle_date is already a display-zone day key in the YYYY-MM-DD form formatKstDate prints → no zone shift */}
 				<div className="fs-meta text-faint tnum">
-					{formatIntI(Number(state.data.total_audits ?? 0))} audits · latest {formatKstDay(latest.cycle_date)}
+					{formatIntI(auditCount)} {auditCount === 1 ? "audit" : "audits"} · latest {formatKstDay(latest.cycle_date)}
 				</div>
 			</Stack>
 		</Card>
