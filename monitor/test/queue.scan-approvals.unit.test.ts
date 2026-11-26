@@ -67,7 +67,7 @@ function getRefusalCode(act: () => unknown): string {
   assert.fail("expected the call to be refused");
 }
 
-const reconstruct = (segments: DisplaySegment[]): string =>
+const reconstruct = (segments: readonly DisplaySegment[]): string =>
   segments.map((segment) => ("text" in segment ? segment.text : String.fromCodePoint(Number.parseInt(segment.mark.slice(2), 16)))).join("");
 
 describe("canonical line hash", () => {
