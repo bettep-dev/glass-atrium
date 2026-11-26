@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { getImageFacts } from "../../src/server/queue/image-format.js";
 import { ITEM_TITLE_MAX, SESSION_NAME_MAX } from "../../src/server/queue/schemas.js";
 import type { ImageView } from "../../src/server/queue/images.js";
-import type { OwnerItemView, OwnerSessionView, RecentResume, RelayFacts, RelayRefusalView, RelaySender, RelaySignal } from "../../src/server/queue/owner-views.js";
+import type { OwnerItemView, OwnerSessionView, RecentResume, RelayFacts, RelayRefusalView, RelaySender } from "../../src/server/queue/owner-views.js";
 import type { OwnerSessionRow } from "../../src/server/queue/owner-sessions.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -33,7 +33,7 @@ export interface QueueFixture {
   sessions: OwnerSessionRow[];
   orders: OwnerItemView[];
   resumes: RecentResume[];
-  relays: RelayHistoryFixture;
+  relays: RelayThreadFixture;
   /** The history read's kind `item` (spec §4.6): decisions and reports no longer open; unset → none. */
   done?: OwnerItemView[];
 }
@@ -276,7 +276,7 @@ export function getRestFixture(): QueueFixture {
     sessions: SESSION_ROWS,
     orders: [...RECEIVED_ORDERS, ...IN_DELIVERY_ORDER],
     resumes: RESUMES,
-    relays: { items: [], refusals: [], signal: { count: { refused: 0, forwarded: 0, redacted: 0 }, hasRecord: false } },
+    relays: { items: [], refusals: [] },
   };
 }
 
@@ -661,11 +661,12 @@ export function getNotListeningFixture(): QueueFixture {
   };
 }
 
-/** What the relay reads answer: the history page (newest send first, each send's copies together), its refusal records and the signal. */
-export interface RelayHistoryFixture {
+/** What the relay thread read answers: its page (newest send first, each send's copies together) and its refusal records. */
+export interface RelayThreadFixture {
   items: OwnerItemView[];
   refusals: RelayRefusalView[];
-  signal: RelaySignal;
+  /** the server's page cut its refusals at their bound (owner-views.ts → getRefusalPage) */
+  isRefusalListCut?: boolean;
 }
 
 interface RelaySend {
@@ -729,12 +730,11 @@ export const PAIR_CAP_REFUSAL: RelayRefusalView = {
   at: getAt(180), reason: "pair_cap", senderIdPrefix: SESSION_IDS.gersona.slice(0, 8), recipientIdPrefixes: [SESSION_IDS.yoaida.slice(0, 8)], unresolvedCount: null,
 };
 
-/** Relay history with the signal on: a received relay, the hop-1 relay under it with a lapsed copy, a refused one, a redacted one. */
-export function getRelayHistoryFixture(): RelayHistoryFixture {
+/** The relay thread: a received relay, the hop-1 relay under it with a lapsed copy, a refused one, a redacted one. */
+export function getRelayThreadFixture(): RelayThreadFixture {
   return {
     items: [...REDACTED_RELAY, ...FORWARDED_RELAY, ...RECEIVED_RELAY],
     refusals: [PAIR_CAP_REFUSAL],
-    signal: { count: { refused: 1, forwarded: 1, redacted: 1 }, hasRecord: true },
   };
 }
 
@@ -803,8 +803,24 @@ export function getHiddenSessionsFixture(rest: QueueFixture = getRestFixture()):
   return { ...rest, sessions: [...rest.sessions, ...hidden] };
 }
 
-/** The rest state with relays on record: the history fixture's, the signal on (`signal: true`) or off (all older than 24 hours). */
-export function getRelayRecordFixture({ signal }: { signal: boolean }): QueueFixture {
-  const relays = getRelayHistoryFixture();
-  return { ...getRestFixture(), relays: signal ? relays : { ...relays, signal: { count: { refused: 0, forwarded: 0, redacted: 0 }, hasRecord: true } } };
+/**
+ * The done fixture with the relay thread fixture's sends in the relay read: under Done Today a decision, a report, a refusal and a relay
+ * with one copy lapsed; under Done Yesterday a received relay beside a decision and a report; the redacted relay on its way under In delivery.
+ */
+export function getDoneRelaysFixture(): QueueFixture {
+  return { ...getDoneFixture(), relays: getRelayThreadFixture() };
+}
+
+/**
+ * Every relay state in one list: the two relays on their way under In delivery beside the redacted one from the relay read,
+ * the relay thread's Done sends and refusal among the many done items, so Show more stands at the list's end.
+ * @param isRefusalListCut - the relay read answers that its refusals were cut → the cut line at the list's end
+ */
+export function getRelayListFixture(isRefusalListCut = false): QueueFixture {
+  return { ...getRelayRowFixture(), done: getManyDoneFixture().done, relays: { ...getRelayThreadFixture(), isRefusalListCut } };
+}
+
+/** The rest state with the relay thread fixture's sends and refusal in the relay read. */
+export function getRelayRecordFixture(): QueueFixture {
+  return { ...getRestFixture(), relays: getRelayThreadFixture() };
 }

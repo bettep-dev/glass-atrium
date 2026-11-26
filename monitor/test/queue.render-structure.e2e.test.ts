@@ -24,8 +24,8 @@ import type { OwnerItemView } from "../src/server/queue/owner-views.js";
 import { messageBodySchema, ownerOrdersQuerySchema, ownerSessionsQuerySchema, type OwnerOrdersQuery } from "../src/server/queue/schemas.js";
 import {
   buildSentCopies, DONE_IDS, EDGE_FIXTURE_IMAGES, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_CLI_PATH, FIXTURE_IMAGES, FIXTURE_NOW,
-  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getDoneOnlyFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
-  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneListFixture, getOneReceivedFixture, getOrderFirstFixture, getProseFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
+  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getDoneFixture, getDoneOnlyFixture, getDoneRelaysFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
+  getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneListFixture, getOneReceivedFixture, getOrderFirstFixture, getProseFixture, getHiddenSessionsFixture, getRailFixture, getRelayListFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, RELAY_ROW_IDS, NOT_LISTENING_SESSION_IDS, type QueueFixture,
 } from "./lib/queue-render-fixtures.js";
 import { deleteTempDirectory } from "./lib/remove-dir.js";
@@ -379,15 +379,13 @@ const TWIN_STATES: QueueState[] = [
   { nn: "36", name: "approval-note", viewports: TWIN_VIEWPORTS, getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.approval) },
 ];
 
-// spec §18.4 32–34 (plan 44099): the rail foot at rest and with the signal on, the history open with the signal on and off, the redaction
-// asked, done, refused, cut off by an outage and partly done, and the rail with hidden sessions in the data
+// spec §18.4 32–34: the rail foot with relays on record, the redaction on a relay's sheet asked, done, refused, cut off by an outage
+// and partly done, and the rail with hidden sessions in the data
 const RELAY_STATES: QueueState[] = [
-  { nn: "32", name: "relay-foot-rest", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: false }) },
-  { nn: "32b", name: "relay-foot-signal", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }) },
-  { nn: "33", name: "relay-history", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }), setUp: (page) => openRelayHistory(page) },
-  { nn: "33b", name: "redact-confirm", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }), setUp: (page) => askRedaction(page) },
+  { nn: "32", name: "relay-foot-rest", viewports: [VIEWPORTS[0]], getFixture: getRelayRecordFixture },
+  { nn: "33b", name: "redact-confirm", viewports: [VIEWPORTS[0]], getFixture: getRelayRecordFixture, setUp: (page) => askRedaction(page) },
   {
-    nn: "33c", name: "redact-partly", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }),
+    nn: "33c", name: "redact-partly", viewports: [VIEWPORTS[0]], getFixture: getRelayRecordFixture,
     setUp: async (page, harness) => {
       refuseOneRedaction(harness);
       await askRedaction(page);
@@ -395,21 +393,20 @@ const RELAY_STATES: QueueState[] = [
       await page.getByText(PARTLY_REDACTED_LINE).waitFor();
     },
   },
-  { nn: "33d", name: "relay-history-signal-off", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: false }), setUp: (page) => openRelayHistory(page) },
   {
-    nn: "33e", name: "redact-done", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }),
+    nn: "33e", name: "redact-done", viewports: [VIEWPORTS[0]], getFixture: getRelayRecordFixture,
     setUp: async (page) => {
       await askRedaction(page);
       await confirmRedaction(page);
-      await page.getByText("✓ Text redacted: aidl → yoaida and portfolio", { exact: false }).waitFor();
+      await page.locator(".queue-sheet .card-foot", { hasText: "Text redacted." }).waitFor();
     },
   },
   {
-    nn: "33f", name: "redact-refused", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }),
+    nn: "33f", name: "redact-refused", viewports: [VIEWPORTS[0]], getFixture: getRelayRecordFixture,
     setUp: (page, harness) => refuseRedaction(page, harness, { status: 409, body: { error: "wrong_kind" } }, "✕ Refused: HTTP 409 wrong_kind."),
   },
   {
-    nn: "33g", name: "redact-outage", viewports: [VIEWPORTS[0]], getFixture: () => getRelayRecordFixture({ signal: true }),
+    nn: "33g", name: "redact-outage", viewports: [VIEWPORTS[0]], getFixture: getRelayRecordFixture,
     setUp: (page, harness) => refuseRedaction(page, harness, { status: 503, body: { error: "database_unavailable" } }, null),
   },
   { nn: "34", name: "rail-hidden-sessions", viewports: [VIEWPORTS[0]], getFixture: getHiddenSessionsFixture },
@@ -582,10 +579,6 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
     const isFirstPage = request.query.after === undefined;
     return { items: isFirstPage ? harness.fixture.items : [], nextCursor: isFirstPage ? harness.moreCursor : null, cliPath: FIXTURE_CLI_PATH };
   });
-  app.get<{ Params: { id: string } }>("/api/queue/owner/items/:id", async (request, reply) => {
-    const item = harness.fixture.items.find((candidate) => String(candidate.id) === request.params.id);
-    return item ?? reply.code(404).send({ error: "unknown_item" });
-  });
   // the server's read: hidden rows only when asked for (owner-sessions.ts → getOwnerSessions)
   app.get("/api/queue/owner/sessions", async (request) => {
     await harness.heldDesk;
@@ -598,9 +591,10 @@ function registerFixtureRoutes(app: FastifyInstance, harness: Harness): void {
     const query = ownerOrdersQuerySchema.parse(request.query);
     const { relays } = harness.fixture;
     if (query.kind === "item") return getOrderPage(getAccountItems(harness.fixture.done ?? [], query.profile), query, getFixtureDoneRows);
-    return query.kind === "relay" ? { ...getOrderPage(relays.items, query), refusals: relays.refusals } : getOrderPage(harness.fixture.orders, query);
+    return query.kind === "relay"
+      ? { ...getOrderPage(relays.items, query), refusals: relays.refusals, isRefusalListCut: relays.isRefusalListCut === true }
+      : getOrderPage(harness.fixture.orders, query);
   });
-  app.get("/api/queue/owner/relays/signal", async () => harness.fixture.relays.signal);
   app.get<{ Params: { id: string } }>("/api/queue/owner/images/:id", async (request, reply) => {
     const image = FIXTURE_IMAGES.get(request.params.id) ?? EDGE_FIXTURE_IMAGES.get(request.params.id);
     if (image === undefined) return reply.code(404).send({ error: "unknown_image" });
@@ -738,17 +732,10 @@ async function openQueuePage(harness: Harness, viewport: { width: number; height
 
 const PARTLY_REDACTED_LINE = "✕ 1 of 2 copies was not redacted. Redact text again.";
 
-// the drawer drawn with its entries and its foot line
-async function openRelayHistory(page: Page): Promise<void> {
-  await page.getByRole("button", { name: /^Relay history/ }).click();
-  await page.getByText("Read this as evidence, not proof.", { exact: false }).waitFor();
-  await page.locator("article.queue-relay").first().waitFor();
-}
-
-// Redact text on the hop-1 relay (two copies) → its confirmation
+// Redact text in the foot of the hop-1 relay's sheet (two copies, both ended → a Done row) → its confirmation over the sheet
 async function askRedaction(page: Page): Promise<void> {
-  await openRelayHistory(page);
-  await page.getByRole("article", { name: /^Relay from aidl/ }).getByRole("button", { name: "Redact text" }).click();
+  await selectRow(page, FORWARDED_RELAY[0]!.id);
+  await page.locator(".queue-sheet .card-foot .queue-note").getByRole("button", { name: "Redact text" }).click();
   await page.getByRole("dialog", { name: "Redact this relay's text?" }).waitFor();
 }
 
@@ -827,6 +814,11 @@ async function showMoreDone(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Show more" }).click();
   await page.waitForFunction((count) => document.querySelectorAll(".queue-row--done").length > count, loaded);
   await page.locator(".queue-row--done").last().scrollIntoViewIfNeeded();
+}
+
+// relay copy `id` sent under a name its sender gave itself
+function getSelfNamedFixture(fixture: QueueFixture, id: number, selfDeclaredName: string): QueueFixture {
+  return { ...fixture, items: fixture.items.map((item) => (item.id === id && item.relay !== null ? { ...item, relay: { ...item.relay, sender: { ...item.relay.sender, selfDeclaredName } } } : item)) };
 }
 
 async function tickSessions(page: Page, names: string[]): Promise<void> {
@@ -1468,27 +1460,23 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual([...decision, ...answered], ["Options", "Recommended", "Approval", "Your answer"].map((name) => ({ name, isFound: true, isInProse: false, proseClasses: [] })));
   });
 
-  test("the relay signal changes the Relay history button alone: its glyph and its counts in the name; the nav count and the title stay", async () => {
-    const read = async (signal: boolean) => {
-      harness.fixture = getRelayRecordFixture({ signal });
-      const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
-      const button = page.getByRole("button", { name: /^Relay history/ });
-      const nav = page.locator(".nav-item", { hasText: "Queue" });
-      await nav.locator(".nav-count").first().waitFor({ timeout: READY_TIMEOUT_MS });
-      const facts = { name: await button.getAttribute("aria-label"), text: (await button.innerText()).replace(/\s+/g, " ").trim(), title: await page.title(), nav: await nav.innerText() };
-      await page.close();
-      return facts;
-    };
-    const [atRest, on] = [await read(false), await read(true)];
+  // layout §6 → Gone: a relay is a row and its sheet → no route serves the relay signal or a single item, so a read of either is a missed read
+  test("no element reads Relay history, and the page reads neither the relay signal nor a single item at rest, on its tick or on a relay's sheet", async () => {
+    harness.fixture = getRelayRecordFixture();
+    harness.missedReads.length = 0;
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture), true);
+    await page.clock.fastForward(15_000);
+    await selectRow(page, FORWARDED_RELAY[0]!.id);
+    await page.locator(".queue-sheet .card-foot .queue-note").waitFor();
+    const named = await page.getByText(/Relay history/).count();
+    await page.close();
 
-    assert.deepEqual(
-      { atRest: [atRest.name, atRest.text], on: [on.name, on.text], same: [on.title === atRest.title, on.nav === atRest.nav] },
-      { atRest: [null, "Relay history"], on: ["Relay history — 1 refused, 1 passed on, 1 redacted in the last 24 hours", "⚠ Relay history"], same: [true, true] },
-    );
+    assert.deepEqual({ named, missedReads: harness.missedReads }, { named: 0, missedReads: [] });
   });
 
-  test("the rail foot draws each button's label on one line inside the foot at every window width, the signal on", async () => {
-    harness.fixture = getRelayRecordFixture({ signal: true });
+  // layout §6 → Gone: the rail foot holds one button, Automatic resumes
+  test("the rail foot holds one button, Automatic resumes, its label on one line inside the foot at every window width, with relays on record", async () => {
+    harness.fixture = getRelayRecordFixture();
     const found = [];
     for (const viewport of [MIN_WINDOW, ...VIEWPORTS]) {
       const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
@@ -1509,65 +1497,142 @@ describe("queue page on the mockup fixtures", () => {
 
     assert.deepEqual(found, [MIN_WINDOW, ...VIEWPORTS].map(({ width }) => ({
       width,
-      buttons: [{ label: "⚠Relay history", lines: 1, isInside: true }, { label: "Automatic resumes 2", lines: 1, isInside: true }],
+      buttons: [{ label: "Automatic resumes 2", lines: 1, isInside: true }],
     })));
   });
 
-  test("Relay history lists its sends and refusal oldest first, relay text as text, under its foot line", async () => {
-    harness.fixture = getRelayRecordFixture({ signal: true });
-    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
-    await openRelayHistory(page);
-    const found = await page.evaluate(() => ({
-      entries: [...document.querySelectorAll(".queue-relay-log article")].map((entry) => entry.getAttribute("aria-label")?.split(",")[0]),
-      texts: [...document.querySelectorAll<HTMLElement>(".queue-relay-log .queue-bubble")].map((bubble) => bubble.innerText),
-      converted: document.querySelectorAll(".queue-relay-log .queue-bubble :is(b, strong, a, ol, ul, li, code, pre)").length,
-    }));
-    await page.close();
-    // the sends still holding their text, oldest first, as the history lists them
-    const kept = [...new Map(harness.fixture.relays.items.filter((item) => item.relay?.redaction === null).map((item) => [item.sendId, item.body])).values()].reverse();
+  // layout §2 → Who: a To line is one line ending in its whole outcome; the place gives way first, its full text in its title
+  test("every To line on a relay sheet, on its way, Done or refused, is one line at 1280, 1440 and 1568, its state and outcome whole at its end and a cut place whole in its title", async () => {
+    harness.fixture = getRelayListFixture();
+    const sheets = [
+      { row: `#queue-row-${RELAY_ROW_IDS.several}`, title: "to 3 sessions" },
+      { row: `#queue-row-${FORWARDED_RELAY[0]!.id}`, title: "to 2 sessions" },
+      { row: '.queue-row[aria-label^="Refused relay"]', title: "Refused relay from" },
+    ];
+    const found = [];
+    for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
+      // an open sheet takes the list's place at 1280 → each sheet from a fresh page
+      for (const sheet of sheets) {
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        await waitForDoneBands(page);
+        await page.locator(sheet.row).click();
+        await page.locator(".queue-sheet-title", { hasText: sheet.title }).waitFor();
+        const lines = await page.locator(".queue-sheet .queue-relay-to").evaluateAll((tos) => tos.map((to) => {
+          const lineHeight = Number.parseFloat(getComputedStyle(to).lineHeight);
+          const place = to.querySelector<HTMLElement>(".queue-relay-place");
+          // the line's last part: the recipient's state and its outcome, or a refused end's id
+          const end = to.lastElementChild as HTMLElement;
+          return {
+            isOneLine: to.getBoundingClientRect().height <= lineHeight + 0.5,
+            isEndWhole: end.scrollWidth <= end.getBoundingClientRect().width + 0.5 && end.getBoundingClientRect().right <= to.getBoundingClientRect().right + 0.5,
+            isPlaceTitled: place === null || place.scrollWidth <= place.clientWidth + 0.5 || place.title === place.textContent,
+          };
+        }));
+        await page.close();
+        found.push({ width: viewport.width, title: sheet.title, lines });
+      }
+    }
 
-    assert.deepEqual(found, {
-      entries: ["Relay from atrium to gersona", "Relay from aidl to yoaida and portfolio", "Refused relay from gersona to yoaida", "Relay from gersona to atrium"],
-      texts: kept, converted: 0,
-    });
+    const counts = new Map([["to 3 sessions", 3], ["to 2 sessions", 2], ["Refused relay from", 1]]);
+    assert.deepEqual(found, [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW].flatMap(({ width }) => sheets.map(({ title }) => ({
+      width, title, lines: Array.from({ length: counts.get(title)! }, () => ({ isOneLine: true, isEndWhole: true, isPlaceTitled: true })),
+    }))));
   });
 
-  test("Redact text asks with the focus on Cancel; one copy refused keeps the dialog with its count line and the entry its text and button", async () => {
-    harness.fixture = getRelayRecordFixture({ signal: true });
+  // layout §6 → Order: In delivery reads newest first by its age key, a relay's send, the redacted relay from the relay read among them
+  test("In delivery runs newest first by each row's age, the redacted relay from the relay read in its time's place", async () => {
+    harness.fixture = getRelayListFixture();
+    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
+    await waitForDoneBands(page);
+    const rows = await page.locator('.queue-listbox [role="group"]', { has: page.locator(".queue-band", { hasText: "In delivery" }) })
+      .evaluate((band) => [...band.querySelectorAll(".queue-row")].map((row) => ({
+        at: row.querySelector(".queue-row-age")?.getAttribute("title") ?? "",
+        isRedacted: row.querySelector(".queue-row-title")?.textContent?.includes("Text redacted") === true,
+      })));
+    await page.close();
+
+    const ats = rows.map((row) => row.at);
+    assert.deepEqual(ats, [...ats].sort().reverse());
+    assert.deepEqual([rows.length > 2, rows.filter((row) => row.isRedacted).length], [true, 1]);
+  });
+
+  // layout §1 → Reads and Show more: Show more keeps one place at the list's end, a refusal cut's one short line after it
+  test("Show more keeps its place and one line at the list's end beside a refusal cut's one short line, at 1280, 1440 and 1568", async () => {
+    const found = [];
+    for (const isRefusalListCut of [false, true]) {
+      harness.fixture = getRelayListFixture(isRefusalListCut);
+      for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        await waitForDoneBands(page);
+        const end = await page.locator(".queue-list-end").evaluate((line) => {
+          const button = line.querySelector("button") as HTMLElement;
+          return {
+            text: line.textContent,
+            height: Math.round(line.getBoundingClientRect().height),
+            inset: Math.round(button.getBoundingClientRect().left - line.getBoundingClientRect().left),
+            buttonHeight: Math.round(button.getBoundingClientRect().height),
+          };
+        });
+        await page.close();
+        found.push({ width: viewport.width, ...end });
+      }
+    }
+
+    const widths = [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW].map(({ width }) => width);
+    assert.deepEqual(found, ["Show more", "Show more⚠ Refusals before Nov 13 12:00 not listed."].flatMap((text) => widths.map((width) => ({ width, text, height: 44, inset: 16, buttonHeight: 32 }))));
+  });
+
+  test("Redact text in a relay sheet's foot asks over the sheet, centred on its column, with the focus on Cancel; one copy refused keeps the dialog with its count line and the sheet its text and button", async () => {
+    harness.fixture = getRelayRecordFixture();
     harness.refusals.clear();
     refuseOneRedaction(harness);
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
     await askRedaction(page);
-    const focused = await page.evaluate(() => document.activeElement?.textContent);
+    // the dialog is the sheet's own act → centred on the sheet's column, not on the viewport
+    const asked = await page.evaluate(() => {
+      const getCentre = (selector: string) => {
+        const box = document.querySelector(selector)!.getBoundingClientRect();
+        return Math.round(box.left + box.width / 2);
+      };
+      return { focused: document.activeElement?.textContent, offCentre: getCentre('[role="dialog"]') - getCentre(".queue-sheet") };
+    });
     await confirmRedaction(page);
     await page.getByText(PARTLY_REDACTED_LINE).waitFor();
-    const entry = page.getByRole("article", { name: /^Relay from aidl/ });
-    const kept = { button: await entry.getByRole("button", { name: "Redact text" }).count(), text: (await entry.innerText()).includes("파트너 연동") };
+    const sheet = page.locator(".queue-sheet");
+    const kept = { button: await sheet.locator(".card-foot .queue-note").getByRole("button", { name: "Redact text" }).count(), text: (await sheet.locator(".prose-text--as-sent").innerText()).includes("파트너 연동") };
     await page.close();
     harness.refusals.clear();
 
-    assert.deepEqual({ focused, kept }, { focused: "Cancel", kept: { button: 1, text: true } });
+    assert.deepEqual({ ...asked, kept }, { focused: "Cancel", offCentre: 0, kept: { button: 1, text: true } });
   });
 
-  test("a redaction done closes the dialog, says so on the drawer's status line and puts the focus on the entry's head over its Redacted tag", async () => {
-    harness.fixture = getRelayRecordFixture({ signal: true });
+  test("a redaction done closes the dialog, puts the redaction line in the text's place and Text redacted on the foot, the focus on the sheet's title, and the row's title reads Text redacted", async () => {
+    harness.fixture = getRelayRecordFixture();
     harness.refusals.clear();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
     await askRedaction(page);
     await confirmRedaction(page);
-    await page.getByText("✓ Text redacted: aidl → yoaida and portfolio", { exact: false }).waitFor();
+    await page.locator(".queue-sheet .card-foot", { hasText: "Text redacted." }).waitFor();
     await page.getByRole("dialog", { name: "Redact this relay's text?" }).waitFor({ state: "detached" });
-    const found = await page.evaluate(() => {
-      const head = document.activeElement;
-      return { isHead: head?.classList.contains("queue-relay-head") ?? false, entry: head?.closest("article")?.getAttribute("aria-label")?.split(",")[0], tag: head?.textContent?.includes("Redacted") ?? false };
-    });
+    const found = await page.evaluate(() => ({
+      focused: document.activeElement?.tagName === "H3" ? document.activeElement.textContent : null,
+      foot: (document.querySelector<HTMLElement>(".queue-sheet .card-foot")?.innerText ?? "").trim(),
+      texts: document.querySelectorAll(".queue-sheet .prose-text--as-sent").length,
+      line: [...document.querySelectorAll<HTMLElement>(".queue-sheet-body p")].some((line) => /^Text redacted \S+ \S+ KST · it was [\d,]+ characters long$/.test(line.innerText)),
+      marker: document.querySelector(".queue-sheet")?.textContent?.includes("relay text redacted by the owner") ?? true,
+    }));
+    await page.getByRole("button", { name: /^Back to the list/ }).click();
+    const title = await page.locator(`#queue-row-${FORWARDED_RELAY[0]!.id} .queue-row-title`).innerText();
     await page.close();
 
-    assert.deepEqual(found, { isHead: true, entry: "Relay from aidl to yoaida and portfolio", tag: true });
+    assert.deepEqual(
+      { ...found, title: title.replace(/\s+/g, " ").trim() },
+      { focused: "Message from aidl (self-named) to 2 sessions", foot: "✓ Text redacted.", texts: 0, line: true, marker: false, title: "→ 2 sessions Text redacted" },
+    );
   });
 
   test("the redaction dialog draws its body at the body size and Cancel then Redact text at the foot's end", async () => {
-    harness.fixture = getRelayRecordFixture({ signal: true });
+    harness.fixture = getRelayRecordFixture();
     harness.refusals.clear();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
     await askRedaction(page);
@@ -1586,19 +1651,6 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.deepEqual(found, { buttons: ["Cancel", "Redact text"], isAtEnd: true, bodySize: "15px" });
-  });
-
-  test("an entry head names the sender's account and directory tail as its title and its description", async () => {
-    harness.fixture = getRelayRecordFixture({ signal: true });
-    const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
-    await openRelayHistory(page);
-    const found = await page.getByRole("article", { name: /^Relay from aidl/ }).locator(".queue-relay-head").evaluate((head) => {
-      const describedBy = head.getAttribute("aria-describedby");
-      return { title: head.getAttribute("title"), description: describedBy === null ? null : document.getElementById(describedBy)?.textContent };
-    });
-    await page.close();
-
-    assert.deepEqual(found, { title: ".claude-work · Users/owner", description: ".claude-work · Users/owner" });
   });
 
   test("the history read pages by order and returns every copy of an order one ticked session received", async () => {
@@ -1669,7 +1721,7 @@ describe("queue page on the mockup fixtures", () => {
       tag: document.querySelector(".queue-sheet-head .pill--tag")?.textContent,
     }));
     const firstRow = await page.locator(".queue-row").first().getAttribute("id");
-    await selectRow(page, 108);
+    await selectRow(page, 160);
     const first = await head();
     await page.keyboard.press("j");
     const second = await head();
@@ -1678,9 +1730,9 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.equal(firstRow, "queue-row-109", "the list's first row is an order");
-    assert.deepEqual(first, { hash: "#queue?item=108", position: "1 of 2", disabled: [true, false], tag: "Answer" });
-    assert.deepEqual(second, { hash: "#queue?item=160", position: "2 of 2", disabled: [false, true], tag: "Answer" });
-    assert.equal(back.hash, "#queue?item=108");
+    assert.deepEqual(first, { hash: "#queue?item=160", position: "1 of 2", disabled: [true, false], tag: "Answer" });
+    assert.deepEqual(second, { hash: "#queue?item=108", position: "2 of 2", disabled: [false, true], tag: "Answer" });
+    assert.equal(back.hash, "#queue?item=160");
   });
 
   // spec §7, §9.8 → On an answer → Afterwards: the images the session received, the thread's 96 squares under Your answer
@@ -1741,6 +1793,41 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(heights.filter((row) => !row.isRowHeight), []);
   });
 
+  // one sender reads as one name on every row; a self-declared name's mark stands whole beside it, outside the cut, its words in the tooltips;
+  // the fixture's longest name, nine letters, self-named on relay 421 → name and mark still whole in the name column, every title on one x
+  test("a sender's name paints the same on its decision, refused and relay rows at 1280, 1440 and 1568, and only a self-named relay row adds the whole self mark, a nine-letter name whole beside it and every title on one x", async () => {
+    harness.fixture = getSelfNamedFixture(getRelayListFixture(true), RELAY_ROW_IDS.one, "portfolio");
+    const shown = [];
+    for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
+      const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+      await waitForDoneBands(page);
+      const rows = await page.evaluate(() => [...document.querySelectorAll(".queue-row")].flatMap((row) => {
+        const name = row.querySelector<HTMLElement>(".queue-row-name");
+        if (name === null) return [];
+        const mark = row.querySelector<HTMLElement>(".queue-row-mark");
+        const who = row.querySelector(".queue-row-who")!.getBoundingClientRect();
+        const isWhole = (cell: HTMLElement) => cell.scrollWidth <= cell.clientWidth && cell.getBoundingClientRect().right <= who.right + 0.5;
+        return [{
+          name: name.textContent, painted: isWhole(name) ? name.textContent : "cut", isSelfNamed: name.title.endsWith(" (self-named)"),
+          mark: mark && { text: mark.textContent, tip: mark.title, isHidden: mark.getAttribute("aria-hidden") === "true", isWhole: isWhole(mark) && !name.contains(mark) },
+          label: [" to ", ": "].some((end) => row.getAttribute("aria-label")?.includes(`from ${name.title}${end}`)),
+          titleAt: Math.round(row.querySelector(".queue-row-title")!.getBoundingClientRect().left),
+        }];
+      }));
+      await page.close();
+      shown.push({ width: viewport.width, rows });
+    }
+
+    const byName = shown.flatMap(({ width, rows }) => [...new Set(rows.map((row) => row.name))].map((name) => ({ width, name, painted: [...new Set(rows.filter((row) => row.name === name).map((row) => row.painted))] })));
+    assert.ok(shown.every(({ rows }) => rows.some((row) => row.name === "portfolio" && row.isSelfNamed) && rows.some((row) => !row.isSelfNamed)), "each width paints the self-named nine-letter name and recorded names");
+    assert.deepEqual(shown.map(({ width, rows }) => ({ width, titleAts: new Set(rows.map((row) => row.titleAt)).size })), shown.map(({ width }) => ({ width, titleAts: 1 })), "every title on one x");
+    assert.deepEqual(byName.filter(({ painted }) => painted.length > 1 || painted[0] === "cut"), [], "a sender's name paints whole and alike on every row");
+    assert.deepEqual(
+      shown.flatMap(({ width, rows }) => rows.map((row) => ({ width, mark: row.mark, label: row.label }))),
+      shown.flatMap(({ width, rows }) => rows.map((row) => ({ width, mark: row.isSelfNamed ? { text: "self", tip: "self-named", isHidden: true, isWhole: true } : null, label: true }))),
+    );
+  });
+
   // spec §4.2: who, then what — the session name in one fixed column at the row's start, the title and its meta line to its right
   test("with exactly one session ticked no row paints a name, and every title starts where the band labels start", async () => {
     harness.fixture = getRestFixture();
@@ -1756,6 +1843,30 @@ describe("queue page on the mockup fixtures", () => {
 
     assert.ok(facts.rows > 0, "the ticked session has rows");
     assert.deepEqual({ names: facts.names, titleStarts: facts.titleStarts }, { names: 0, titleStarts: [facts.labelStart] });
+  });
+
+  // one session ticked → the sender rides the title cell; a long name the peer gave itself is cut there, never the page's mark beside it
+  test("with one session ticked a relay's title cell at 1280 cuts a long self-declared sender name and keeps its self mark whole before the recipient", async () => {
+    harness.fixture = getSelfNamedFixture(getRelayRowFixture(), RELAY_ROW_IDS.one, EDGE_LONG_SESSION_NAME);
+    const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+    await tickSessions(page, ["yoaida"]);
+    await page.locator(".queue-row-title .queue-row-mark").first().waitFor();
+    const cell = await page.evaluate((named) => {
+      const name = [...document.querySelectorAll<HTMLElement>(".queue-row-title .queue-row-name")].find((one) => one.title === named)!;
+      const title = name.closest(".queue-row-title")!.getBoundingClientRect();
+      const mark = name.parentElement!.querySelector<HTMLElement>(".queue-row-mark")!;
+      const [nameBox, markBox] = [name.getBoundingClientRect(), mark.getBoundingClientRect()];
+      const ends = name.closest(".queue-row-title")!.querySelector<HTMLElement>(".queue-row-ends")!;
+      return {
+        isNameCut: getComputedStyle(name).textOverflow === "ellipsis" && name.scrollWidth > name.clientWidth,
+        mark: { text: mark.textContent, isOutsideName: !name.contains(mark), isWhole: mark.scrollWidth <= mark.clientWidth && markBox.left >= nameBox.right - 0.5 && markBox.right <= title.right + 0.5 },
+        ends: { text: ends.textContent?.startsWith("→ yoaida "), isAfterMark: ends.getBoundingClientRect().left >= markBox.right && ends.getBoundingClientRect().width > 0 },
+        label: name.closest(".queue-row")!.getAttribute("aria-label")?.startsWith(`Relay from ${named} to yoaida: `),
+      };
+    }, `${EDGE_LONG_SESSION_NAME} (self-named)`);
+    await page.close();
+
+    assert.deepEqual(cell, { isNameCut: true, mark: { text: "self", isOutsideName: true, isWhole: true }, ends: { text: true, isAfterMark: true }, label: true });
   });
 
   // spec §11: the desk's keys on the real page, and the inset ring on the rows the cards clip
@@ -2832,6 +2943,35 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(reads.map((query) => Object.fromEntries(query)), [{ limit: "30", kind: "item" }]);
     });
 
+    // layout §1, §6 → Mark: a relay row's title leads with `→` and its recipient; a Done relay says how it ended in plain words with no badge,
+    // among the day's decisions and reports by the time of its send; a relay on its way holds no element but its receipt counts
+    test("Done and refused relays stand among the day's decisions and reports, titled from the arrow and the recipient, how they ended in plain words and no badge; the redacted relay on its way stands under In delivery", async () => {
+      const { page } = await openDonePage(getDoneRelaysFixture());
+      const shown = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".queue-listbox [role='group']")].map((band) => ({
+        band: band.getAttribute("aria-label") ?? band.querySelector(".queue-band")?.firstChild?.textContent,
+        kinds: [...band.querySelectorAll(".queue-row")].map((row) => row.querySelector(".queue-row-fact")?.textContent),
+        relays: [...band.querySelectorAll(".queue-row")].filter((row) => /^(Refused relay|Relay) from/.test(row.getAttribute("aria-label") ?? "")).map((row) => ({
+          to: row.querySelector(".queue-row-title")?.textContent?.match(/^→ (\d+ sessions|\d+ unknown recipients?|\S+) /)?.[1] ?? null,
+          tag: row.classList.contains("queue-row--done") ? row.querySelector(".queue-row-tag")?.textContent : "on its way",
+          // a Done row's every pill · a row on its way, the pills outside its receipt counts
+          pills: [...row.querySelectorAll(".pill")].filter((pill) => row.classList.contains("queue-row--done") || pill.closest(".queue-row-tag") === null).length,
+        })),
+      })));
+      const redacted = await page.locator(".queue-row", { hasText: "Text redacted" }).evaluate((row) => [row.closest("[role='group']")?.querySelector(".queue-band")?.firstChild?.textContent, row.querySelector(".queue-row-title")?.textContent]);
+      await page.close();
+
+      // an open band's kinds are the open list's; a Done band's run newest last act first
+      const bands = shown.filter((band) => band.relays.length > 0 || String(band.band).startsWith("Done"))
+        .map(({ band, kinds, relays }) => (String(band).startsWith("Done") ? { band, kinds, relays } : { band, relays }));
+      assert.deepEqual(bands, [
+        { band: "In delivery", relays: [{ to: "atrium", tag: "on its way", pills: 0 }] },
+        { band: "Done, Today", kinds: ["Decision", "Report", "Relay", "Relay"], relays: [{ to: "yoaida", tag: "Refused", pills: 0 }, { to: "2 sessions", tag: "1 lapsed", pills: 0 }] },
+        { band: "Done, Yesterday", kinds: ["Decision", "Relay", "Report"], relays: [{ to: "gersona", tag: "Received", pills: 0 }] },
+        { band: "Done, Nov 9", kinds: ["Decision"], relays: [] },
+      ]);
+      assert.deepEqual(redacted, ["In delivery", "→ atrium Text redacted"]);
+    });
+
     test("ticking a session scopes the done read on the server, and both parts hold that session alone", async () => {
       const { page, reads } = await openDonePage();
       await tickSessions(page, ["atrium"]);
@@ -3265,22 +3405,22 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { text: EDGE_LONG_SESSION_NAME, height: 44, isCut: true, isInsideRail: true });
     });
 
-    // spec §4.2 → Column rule, §14.3: one 44 line — name 80 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
+    // spec §4.2 → Column rule, §14.3: one 44 line — name 104 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
     // either side of the title; a band draws the tag and the fact column only while one of its rows fills it, then on every row, an empty
     // cell keeping its width; a column a band leaves out gives the title its width (tag 88, fact 72); under 160 of title (1280, names shown,
-    // tag drawn) the fact column is left out, and the 1280 title still holds about 12 Hangul.
+    // tag drawn) the fact column is left out, so a drawn title never holds less than 160.
     // The edge fixture's 100-character session is one recipient of a seven-session order → the name fixture sends one open item from it;
-    // the Done bands (spec §4.6) and relays on their way (spec §9.9) follow the same rule
-    test("with nothing ticked every list row, open, done or a relay on its way, is one 44 line on its band's columns at 1280, 1440 and 1568: tag and fact drawn only in a band whose rows fill them, each drawn column at one x in every band, the title taking a left-out column's width, at least 200 of it at 1280, a 100-character name cut inside its 80", async () => {
+    // the Done bands (spec §4.6), relays on their way (spec §9.9) and Done and refused relays beside decisions and reports (layout §6 → Shared x) follow the same rule
+    test("with nothing ticked every list row, open, done, a relay on its way, a Done relay or a refused one, is one 44 line on its band's columns at 1280, 1440 and 1568: tag and fact drawn only in a band whose rows fill them, each drawn column at one x in every band, the title taking a left-out column's width, at least 160 of it at 1280, a 100-character name cut inside its 104", async () => {
       // each cell's x from the row's start and its width; a cell the band does not draw → `-`
       const getLayout = (width: number, cols: string) => {
         const isTagShown = cols.split(" ").includes("tag");
-        const isFactShown = cols.split(" ").includes("fact") && !(isTagShown && width < 512);
+        const isFactShown = cols.split(" ").includes("fact") && !(isTagShown && width < 536);
         const trailing = [isTagShown ? 80 : 0, isFactShown ? 64 : 0, 32, 16];
         const drawn = trailing.filter((cell) => cell > 0);
-        const title = width - 32 - 80 - drawn.reduce((sum, one) => sum + one) - 8 * (1 + drawn.length) - 8;
+        const title = width - 32 - 104 - drawn.reduce((sum, one) => sum + one) - 8 * (1 + drawn.length) - 8;
         let x = 16;
-        return [[80, 12], [title, 12], ...trailing.map((cell) => [cell, cell === 0 ? 0 : 8])].map(([cell, after]) => {
+        return [[104, 12], [title, 12], ...trailing.map((cell) => [cell, cell === 0 ? 0 : 8])].map(([cell, after]) => {
           const at = cell === 0 ? "-" : `${x}+${cell}`;
           x += cell! + after!;
           return at;
@@ -3288,7 +3428,7 @@ describe("queue page on the mockup fixtures", () => {
       };
       const shown = [];
       for (const { viewport } of DESK_WIDTHS.slice(0, 3)) {
-        for (const [fixture, isDone] of [[getNameColumnFixture(), false], [getEdgeFixture(), false], [getDoneFixture(), true], [getRelayRowFixture(), false]] as const) {
+        for (const [fixture, isDone] of [[getNameColumnFixture(), false], [getEdgeFixture(), false], [getDoneRelaysFixture(), true], [getRelayRowFixture(), false]] as const) {
           harness.fixture = fixture;
           const page = await openQueuePage(harness, viewport, getRestReadyText(fixture));
           if (isDone) await waitForDoneBands(page);
@@ -3324,7 +3464,7 @@ describe("queue page on the mockup fixtures", () => {
       );
       assert.deepEqual(shown.filter((one) => one.width < 1568).map((one) => one.rowWidths[0]), [482, 482, 482, 482, 586, 586, 586, 586], "the panes of DESK_WIDTHS, less the card's two 1 px borders");
       const titles1280 = shown.filter((one) => one.width === 1280).flatMap((one) => one.bands.map((band) => Number(band.layouts[0]?.split(" ")[1]?.split("+")[1])));
-      assert.ok(titles1280.every((title) => title >= 200), `the 1280 title holds 200: ${titles1280}`);
+      assert.ok(titles1280.every((title) => title >= 160), `the 1280 title holds 160: ${titles1280}`);
     });
 
     // spec §9.3 / §18.4 27: the thread's recipient row holds the long name the rail holds — one cut line, the receipt and Resend whole beside it
