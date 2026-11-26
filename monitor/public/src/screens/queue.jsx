@@ -110,7 +110,19 @@ const REFERENCE_LINE_Q = "Reference only — not part of the approval.";
 
 // targets per send: the send route refuses more (schemas.ts → messageBodySchema; the page test binds the two)
 const MESSAGE_Q = { MAX_TARGETS: 20 };
-const SESSIONS_Q = { STACK_BELOW_PX: 640, SOURCE: "the session list" };
+const SESSIONS_Q = {
+	SOURCE: "the session list",
+	// the page checks no name → said once where the names are listed; the short form on a phone view drawing names no mark covers (NamesNoteQ)
+	STATEMENT: {
+		FULL: "Session names are written by the sessions themselves and are not checked. Only the id identifies a session.",
+		SHORT: "Names are self-written and unchecked. Only the id identifies a session.",
+	},
+};
+// a screen narrower than this (a phone in portrait) → the page lays out at the device width; pinch zoom stays (WCAG 1.4.4), the keyboard shrinks the page
+const PHONE_Q = {
+	BELOW_PX: 640,
+	VIEWPORT: "width=device-width, initial-scale=1, interactive-widget=resizes-content",
+};
 // one description every box of the rail shares (spec §9.1 → What says so before the first press)
 const RAIL_HINT_Q = {
 	ID: "queue-rail-hint",
@@ -140,6 +152,8 @@ const DESK_KEY_LIST_Q = [
 const ORDERS_Q = { PAGE: 30, MAX: 100, CLAMP_LINES: 12, ROLL_UP_FROM: 5, DAY_MS: 24 * 60 * 60 * 1000, BOX_ID: "queue-order-text" };
 // the middle pane's parts: the list body whose scroll the sheet keeps (a hidden box does not keep its own), the sheet body, the list's tab stop
 const PANE_Q = { LIST_BODY: ".queue-list > .card-body", SHEET_BODY: ".queue-sheet > .card-body", TAB_STOP: '.queue-listbox [tabindex="0"]' };
+// the phone's views (layout §2): the control each one is left by, and the one that opens it from the list
+const VIEW_Q = { BACK: ".queue-view-back", OPENER: { sessions: ".queue-scope-trigger", orders: ".queue-orders-open" } };
 const EMPTY_THREAD_Q = Object.freeze({ status: "loading", items: [], nextCursor: null, error: null, refusals: [], refusalCutAt: null });
 const SESSION_STATE_LABEL_Q = { live: "Live" };
 const EXIT_REASON_LABEL_Q = { ended: "Ended", dead: "Ended · process gone", replaced: "Replaced" };
@@ -186,6 +200,14 @@ const UPLOADS_Q = new Map();
 function getQueueNavBadge(countState) {
 	const badges = getCountBadgesQ(countState);
 	return badges?.length ? { queue: { badges } } : {};
+}
+
+/**
+ * The Queue route's viewport declaration on this screen; null keeps the shell's own (index.html).
+ * @param screen - `window.screen`: the device width in the current orientation, never the layout width (always 1280 under the shell's tag)
+ */
+function getPhoneViewport(screen) {
+	return screen?.width < PHONE_Q.BELOW_PX ? PHONE_Q.VIEWPORT : null;
 }
 
 /**
@@ -570,20 +592,21 @@ function isTickedQ(item, ids) {
 
 /**
  * @param onReadQueueCount - the shell's count read (app.jsx) → the nav badge follows the page's own tick
+ * @param onOpenMenu - opens the shell's nav in a drawer: the phone layout draws no sidebar
  */
-function ScreenQueue({ onRetryHarness, onReadQueueCount }) {
+function ScreenQueue({ onRetryHarness, onReadQueueCount, onOpenMenu }) {
 	const { TypeScaleStyle } = window.UI;
 	const queue = useQueueStateQ({ onRetryHarness, onReadQueueCount });
 	return (
 		<div className="queue-screen">
 			<TypeScaleStyle />
-			<QueueHeaderQ queue={queue} />
+			<QueueHeaderQ queue={queue} onOpenMenu={onOpenMenu} />
 			<QueueDeskQ queue={queue} />
 		</div>
 	);
 }
 
-/** DOM order Sessions → the middle pane → Orders: three fixed-role columns that never stack, and none is put away for another (spec §3.1). */
+/** DOM order Sessions → the middle pane → Orders: above 640 three fixed-role columns, none put away for another (spec §3.1); at ≤ 640 the one view `queue.view` names (base.css). */
 function QueueDeskQ({ queue }) {
 	usePageDropGuardQ();
 	const onKeyDown = (event) => {
@@ -593,7 +616,7 @@ function QueueDeskQ({ queue }) {
 		putDeskKeyQ(action, { queue, target: event.target, root: window.document });
 	};
 	return (
-		<div className="queue-desk" onKeyDown={onKeyDown}>
+		<div className="queue-desk" data-view={queue.view} onKeyDown={onKeyDown}>
 			<SessionsRegionQ queue={queue} />
 			<MiddlePaneQ queue={queue} />
 			<OrdersViewQ queue={queue} />
@@ -769,9 +792,15 @@ function getPaneFocusQ(root, currentId) {
 }
 
 // one status line and no button: the page checks on its own cadence (POLL_Q) and after each owner act (spec §3.1) · a failed resume or session read shows in its own region
-function QueueHeaderQ({ queue }) {
-	const { PageHeader } = window.UI;
-	return <PageHeader title={QUEUE_TITLE_Q} freshness={<QueueFreshnessQ list={queue.list} failedChecks={queue.failedChecks} />} />;
+// the menu button shows on the phone layout alone (base.css → .queue-menu)
+function QueueHeaderQ({ queue, onOpenMenu }) {
+	const { PageHeader, Icon } = window.UI;
+	const menu = (
+		<button type="button" className="btn ghost icon queue-menu" aria-label="Open the menu" title="Open the menu" onClick={onOpenMenu}>
+			<Icon name="menu" size={16} />
+		</button>
+	);
+	return <PageHeader title={QUEUE_TITLE_Q} back={menu} freshness={<QueueFreshnessQ list={queue.list} failedChecks={queue.failedChecks} />} />;
 }
 
 /**
@@ -826,10 +855,11 @@ function useQueueStateQ({ onRetryHarness, onReadQueueCount }) {
 	// opening a row, focusing it or its row showing in the list is the owner seeing it → the arrival ends (spec §4.4)
 	const setSeen = useCallbackQ((id) => setList((prev) => (prev.newIds.includes(id) ? { ...prev, newIds: prev.newIds.filter((other) => other !== id) } : prev)), []);
 	const selectRow = useCallbackQ((id) => { openItem(id); setSeen(id); }, [openItem, setSeen]);
-	const openOrderRow = useOrderRowQ({ list, setCurrentId, sessions, orders });
+	const [view, setView] = useDeskViewQ();
+	const openOrderRow = useOrderRowQ({ list, setCurrentId, sessions, orders, setView });
 	return {
 		list, done, relays, resumes, readResumes, sessions, orders, drafts, setDraft, setImages, filter, setFilter, reload, rereadLists, loadMore, groups, sheet, steps,
-		selectedId: currentId, selectRow, setSeen, back: closeSheet, openOrderRow, status, keys, ...actions, ...ticks,
+		selectedId: currentId, selectRow, setSeen, back: closeSheet, openOrderRow, view, setView, status, keys, ...actions, ...ticks,
 	};
 }
 
@@ -1043,14 +1073,41 @@ function getArrivalNoteQ(arrived) {
 }
 
 // an order's row or Show → the current row for the return, never a sheet (an order has none); its entry aimed at in the thread
-function useOrderRowQ({ list, setCurrentId, sessions, orders }) {
+function useOrderRowQ({ list, setCurrentId, sessions, orders, setView }) {
 	const { setSelectedIds } = sessions;
 	const { aimAt } = orders;
 	return useCallbackQ((row) => {
 		setCurrentId(row.id);
 		setSelectedIds((ids) => getShowTicksQ(ids, list.data?.items ?? [], row.id));
+		setView("orders");
 		aimAt(row.id);
-	}, [list, setCurrentId, setSelectedIds, aimAt]);
+	}, [list, setCurrentId, setSelectedIds, setView, aimAt]);
+}
+
+/**
+ * The phone's one view (layout §2): `list` (the list, or its sheet in its place), `sessions` or `orders`. Every pane stays mounted, so ticks, drafts and scroll survive;
+ * not in the URL → a load lands on the list. Another view → the focus on its back arrow · the list again → the scroll it had, the focus on the control that opens the view left.
+ * @returns [view, setView(name)]
+ */
+function useDeskViewQ() {
+	const [move, setMove] = useStateQ({ to: "list", from: null });
+	const listTop = useRefQ(0);
+	const latest = useRefQ(move.to);
+	latest.current = move.to;
+	useLayoutEffectQ(() => {
+		if (move.from === null) return;
+		if (move.to !== "list") return void document.querySelector(`.queue-${move.to} ${VIEW_Q.BACK}`)?.focus({ preventScroll: true });
+		const body = document.querySelector(PANE_Q.LIST_BODY);
+		if (body) body.scrollTop = listTop.current;
+		document.querySelector(VIEW_Q.OPENER[move.from])?.focus({ preventScroll: true });
+	}, [move]);
+	const setView = useCallbackQ((to) => {
+		if (to === latest.current) return;
+		// an undrawn box may drop its scroll (useSheetMovesQ) → read while the list is still on screen; under a sheet the sheet keeps it
+		if (latest.current === "list" && document.querySelector(".queue-sheet") === null) listTop.current = document.querySelector(PANE_Q.LIST_BODY)?.scrollTop ?? 0;
+		setMove({ to, from: latest.current });
+	}, []);
+	return [move.to, setView];
 }
 
 /**
@@ -1173,10 +1230,6 @@ function getRecipientsNoteQ(names) {
 
 function putToggledIdQ(ids, id) {
 	return ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id];
-}
-
-function getShownSessionsQ(sessions, isEndedShown) {
-	return isEndedShown ? sessions : sessions.filter((row) => row.state !== "exited");
 }
 
 /**
@@ -1574,9 +1627,11 @@ function QueueListQ({ queue }) {
 	const scope = getScopeTitleQ(queue.sessions.region.data?.sessions ?? [], ids);
 	const loaded = [...items, ...queue.done.thread.items, ...queue.relays.thread.items];
 	return (
-		<Card className="queue-pane queue-list" title={<span title={scope}>{scope}</span>} sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
+		<Card className="queue-pane queue-list" title={<ScopeTitleQ scope={scope} onOpen={() => queue.setView("sessions")} />}
+			sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
 			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts" infoTitle="Keyboard shortcuts"
-			bar={isAccountAxisShownQ(loaded, queue.filter) ? <QueueFilterBarQ items={loaded} filter={queue.filter} onFilter={queue.setFilter} /> : null}
+			right={<button type="button" className="btn ghost queue-orders-open" onClick={() => queue.setView("orders")}>Orders</button>}
+			bar={<><NamesNoteQ />{isAccountAxisShownQ(loaded, queue.filter) && <QueueFilterBarQ items={loaded} filter={queue.filter} onFilter={queue.setFilter} />}</>}
 			foot={<ListFootQ queue={queue} offView={offView} onShowNew={putNewRowInViewQ} />} isFlush>
 			<ListBodyQ queue={queue} items={items} />
 		</Card>
@@ -1648,6 +1703,38 @@ function putNewRowInViewQ(id) {
 	const row = document.getElementById(`${ROW_ID_PREFIX_Q}${id}`);
 	row?.scrollIntoView({ block: "nearest" });
 	row?.focus({ preventScroll: true });
+}
+
+/**
+ * The list's scope words: the plain title, and on a phone the trigger that opens the Sessions view in their place (base.css draws one of the two).
+ * The trigger draws its words from `data-words` → the heading's text holds them once at every width.
+ */
+function ScopeTitleQ({ scope, onOpen }) {
+	const { Icon } = window.UI;
+	return (
+		<>
+			<span className="queue-scope-title" title={scope}>{scope}</span>
+			<button type="button" className="btn ghost queue-scope-trigger" aria-label={`Sessions: ${scope}`} title={scope} onClick={onOpen}>
+				<span className="queue-scope-words" data-words={scope} />
+				<Icon name="chevron-right" size={16} />
+			</button>
+		</>
+	);
+}
+
+// the statement on names under a phone view's head where that view draws a name with no mark of its own (SR-3b); drawn under 640 alone (base.css → .queue-names-note)
+function NamesNoteQ() {
+	return <p className="fs-meta text-dim queue-names-note">{SESSIONS_Q.STATEMENT.SHORT}</p>;
+}
+
+// the phone's one way back from Sessions or Orders (base.css → .queue-view-back)
+function ViewBackQ({ queue }) {
+	const { Icon } = window.UI;
+	return (
+		<button type="button" className="btn ghost icon queue-view-back" aria-label="Back to the list" title="Back to the list" onClick={() => queue.setView("list")}>
+			<Icon name="arrow-left" size={16} />
+		</button>
+	);
 }
 
 /** The key list behind the list head's ⓘ (spec §11) and the switch that turns the single keys off (WCAG 2.1.4). */
@@ -1790,7 +1877,7 @@ function QueueGroupQ({ group, queue, view }) {
 	const bandId = `queue-band-${group.key}`;
 	const name = group.isDone ? { "aria-label": `${DONE_Q.LABEL}, ${group.label}` } : { "aria-labelledby": bandId };
 	const cols = getBandColsQ(group.rows);
-	const names = group.rows.some((row) => row.refusal) ? getRefusalNamesQ(queue) : null;
+	const names = getPageNamesQ(queue);
 	return (
 		<div role="group" data-cols={cols.join(" ")} {...name}>
 			<div id={bandId} className="queue-band">
@@ -1804,10 +1891,64 @@ function QueueGroupQ({ group, queue, view }) {
 	);
 }
 
-// a refusal holds id prefixes alone → names from the loaded relays and the rail's rows (layout §1); a name the queue records outranks one the peer wrote
-function getRefusalNamesQ(queue) {
-	const rail = (queue.sessions.region.data?.sessions ?? []).map((session) => [session.sessionIdPrefix, { name: session.name, isSelfNamed: false }]);
-	return new Map([...getRelayNamesQ(queue.relays.thread.items), ...rail]);
+/**
+ * Every session the page has loaded (list, Done, relays, Orders, rail) by id prefix → its who, with its id where its name could be mistaken
+ * for another's (getConfusableIdsQ); every source reads one name column, the rail's read last. A refusal's id prefixes resolve here (layout §1).
+ */
+function getPageNamesQ(queue) {
+	const sessions = getLoadedSessionsQ(queue);
+	const ids = getConfusableIdsQ(sessions);
+	return new Map(sessions.map(({ prefix, who }) => [prefix, ids.has(prefix) ? { ...who, idPrefix: prefix } : who]));
+}
+
+function getLoadedSessionsQ(queue) {
+	const items = [...(queue.list.data?.items ?? []), ...(queue.done?.thread.items ?? []), ...(queue.relays?.thread.items ?? []), ...(queue.orders?.thread.items ?? [])];
+	const senders = items.filter((item) => item.relay).map(({ relay: { sender } }) => ({ prefix: sender.sessionIdPrefix, who: getSenderWhoQ(sender), place: sender.cwdTail }));
+	const views = items.map(({ session }) => ({ prefix: getSessionPrefixQ(session), who: getSessionWhoQ(session), place: session.cwdTail }));
+	const rail = (queue.sessions?.region?.data?.sessions ?? []).map((row) => ({ prefix: row.sessionIdPrefix, who: getSessionWhoQ(row), place: row.cwdTail }));
+	return [...senders, ...views, ...rail];
+}
+
+/** A registered name matching another session's drawn name, start-directory name or id prefix → both ids; two drawn names alike → both ids. */
+function getConfusableIdsQ(sessions) {
+	const drawn = getKeyOwnersQ(sessions.map(({ prefix, who }) => [who.name, prefix]));
+	const owned = getKeyOwnersQ(sessions.flatMap(({ prefix, place }) => [[place.split("/").at(-1), prefix], [prefix, prefix]]));
+	const ids = new Set();
+	for (const { prefix, who } of sessions) {
+		const key = getNameKeyQ(who.name);
+		const others = [...(drawn.get(key) ?? []), ...(who.isSelfNamed ? (owned.get(key) ?? []) : [])].filter((other) => other !== prefix);
+		if (others.length > 0) for (const id of [prefix, ...others]) ids.add(id);
+	}
+	return ids;
+}
+
+function getKeyOwnersQ(pairs) {
+	const owners = new Map();
+	for (const [text, prefix] of pairs) {
+		const key = getNameKeyQ(text);
+		owners.set(key, [...(owners.get(key) ?? []), prefix]);
+	}
+	return owners;
+}
+
+// NFKC folds compatibility forms (full-width, ligatures) · upper then lower folds case past toLowerCase (ß ↔ ss) · whitespace collapsed and trimmed
+function getNameKeyQ(text) {
+	return text.normalize("NFKC").toUpperCase().toLowerCase().replace(/\s+/gu, " ").trim();
+}
+
+// a who as the page draws it, its id beside it where the page's names hold one
+function getPageWhoQ(who, prefix, names) {
+	const idPrefix = names?.get(prefix)?.idPrefix;
+	return idPrefix === undefined ? who : { ...who, idPrefix };
+}
+
+function getSessionPrefixQ(session) {
+	return session.id.slice(0, SESSION_PREFIX_LENGTH_Q);
+}
+
+// the 8-character id where a name drawn beside it could be mistaken for another session's
+function IdNoteQ({ idPrefix }) {
+	return idPrefix === undefined ? null : <span className="font-normal text-dim">{" "}<window.UI.MachineString>{idPrefix}</window.UI.MachineString>{" "}</span>;
 }
 
 // the column rule (spec §4.2): a band draws the tag and the fact column while one of its loaded rows fills it → then on every row of the band
@@ -1838,7 +1979,8 @@ function QueueRowQ({ row, names = null, isSelected, isNew = false, cols, view, o
 			{cols.includes("tag") && <span className="queue-row-tag"><RowTagsQ tags={cells.tags} /></span>}
 			{cols.includes("fact") && <span className="queue-row-fact">{cells.fact}</span>}
 			<span className="queue-row-age" title={formatKstDateTime(at)}>{getRowAgeQ(at)}</span>
-			<Icon name="chevR" size={16} className="queue-row-chevron" />
+			{/* a display class → Icon sets no inline display, so the phone's rule can leave the chevron out */}
+			<Icon name="chevR" size={16} className="queue-row-chevron block" />
 		</div>
 	);
 }
@@ -1847,22 +1989,23 @@ function QueueRowQ({ row, names = null, isSelected, isNew = false, cols, view, o
 function getRefusalEndsQ(refusal, names) {
 	const who = getPrefixWhoQ(refusal.senderIdPrefix, names);
 	const sender = getWhoLabelQ(who);
-	const to = getRefusalToQ(refusal, names);
-	return { who, sender, to, reason: getRelayRefusalLineQ(refusal.reason, { sender, recipient: to }).name };
+	const toWho = getRefusalToQ(refusal, names);
+	const to = getWhoLabelQ(toWho);
+	return { who, sender, toWho, to, reason: getRelayRefusalLineQ(refusal.reason, { sender, recipient: to }).name };
 }
 
 function getPrefixWhoQ(prefix, names) {
 	return names.get(prefix) ?? { name: prefix, isSelfNamed: false };
 }
 
-// `yoaida`, `3 sessions`, or with none resolved `1 unknown recipient`
+// `yoaida`, `3 sessions`, or with none resolved `1 unknown recipient` — only one session's own name can be self-named
 function getRefusalToQ(refusal, names) {
 	const [first, ...rest] = refusal.recipientIdPrefixes;
-	if (first === undefined) return `${refusal.unresolvedCount ?? 0} unknown ${refusal.unresolvedCount === 1 ? "recipient" : "recipients"}`;
-	return rest.length > 0 ? `${rest.length + 1} sessions` : getWhoLabelQ(getPrefixWhoQ(first, names));
+	if (first === undefined) return { name: `${refusal.unresolvedCount ?? 0} unknown ${refusal.unresolvedCount === 1 ? "recipient" : "recipients"}`, isSelfNamed: false };
+	return rest.length > 0 ? { name: `${rest.length + 1} sessions`, isSelfNamed: false } : getPrefixWhoQ(first, names);
 }
 
-// one cut line, the whole name in its tooltip · a self-declared name → the page's own mark beside it, outside the cut and the peer's text
+// one cut line, the whole name in its tooltip · a name the session wrote → the page's own mark beside it, outside the cut and the session's text
 function RowWhoQ({ row, names }) {
 	const who = getRowWhoQ(row, names);
 	return (
@@ -1878,10 +2021,18 @@ function getRowNameQ(row, names) {
 	return getWhoLabelQ(getRowWhoQ(row, names));
 }
 
-// the name column: a refusal's or a relay's sender (spec §9.9), else who the item is from or to
+// the name column: a refusal's or a relay's sender (spec §9.9), else who the item is from or to — a send to several names no one session
 function getRowWhoQ(row, names) {
 	if (row.refusal) return getRefusalEndsQ(row.refusal, names).who;
-	return row.item.kind === "relay" ? getSenderWhoQ(row.item.relay.sender) : { name: getCopiesNameQ(row.copies), isSelfNamed: false };
+	if (row.item.kind === "relay") return getPageWhoQ(getSenderWhoQ(row.item.relay.sender), row.item.relay.sender.sessionIdPrefix, names);
+	if (row.copies.length > 1) return { name: getCopiesNameQ(row.copies), isSelfNamed: false };
+	return getPageWhoQ(getSessionWhoQ(row.copies[0].session), getSessionPrefixQ(row.copies[0].session), names);
+}
+
+// a relay's recipient end: `3 sessions`, or the one session's name with its id where the page's names hold one
+function getCopiesToQ(copies, names) {
+	const to = { name: getCopiesNameQ(copies), isSelfNamed: false };
+	return copies.length > 1 ? to : getPageWhoQ(to, getSessionPrefixQ(copies[0].session), names);
 }
 
 // one session's name, or `3 sessions` for a send to several
@@ -1897,21 +2048,24 @@ function getCopiesNameQ(copies) {
 function getRowTitleQ(row, isNameShown, names) {
 	const { item } = row;
 	const from = isNameShown ? null : <RowWhoQ row={row} names={names} />;
+	const { idPrefix } = getRowWhoQ(row, names);
 	if (row.refusal) {
-		const { to, reason } = getRefusalEndsQ(row.refusal, names);
-		return getArrowTitleQ({ from, to, text: reason, isQuiet: true });
+		const { toWho, reason } = getRefusalEndsQ(row.refusal, names);
+		return getArrowTitleQ({ from, idPrefix, to: toWho, text: reason, isQuiet: true });
 	}
-	if (item.kind !== "relay") return <span className="queue-row-title" title={item.title}>{item.title}</span>;
+	if (item.kind !== "relay") return <span className="queue-row-title" title={item.title}>{isNameShown && <IdNoteQ idPrefix={idPrefix} />}{item.title}</span>;
 	const isRedacted = item.relay.redaction !== null;
-	return getArrowTitleQ({ from, to: getCopiesNameQ(row.copies), text: getRelayTitleQ(item), isQuiet: isRedacted, tip: isRedacted ? undefined : item.title });
+	return getArrowTitleQ({ from, idPrefix, to: getCopiesToQ(row.copies, names), text: getRelayTitleQ(item), isQuiet: isRedacted, tip: isRedacted ? undefined : item.title });
 }
 
-// `→ to text`; with the name column left out the sender leads as that column draws it, name and mark outside the cut of the rest
-function getArrowTitleQ({ from, to, text, isQuiet, tip }) {
+// `→ to text`; with the name column left out the sender leads as that column draws it, name and mark outside the cut of the rest; a sender's id leads the arrow
+function getArrowTitleQ({ from, idPrefix, to, text, isQuiet, tip }) {
 	const ends = (
 		<>
+			<IdNoteQ idPrefix={idPrefix} />
 			<span className="font-normal text-dim">{"→ "}</span>
-			{to}
+			{to.name}
+			<IdNoteQ idPrefix={to.idPrefix} />
 			{" "}
 			<span className={isQuiet ? "font-normal text-dim" : undefined}>{text}</span>
 		</>
@@ -2096,13 +2250,13 @@ function getRowLabelQ(row, cells, isNameShown, names) {
 	const age = `${getAgeVerbQ(row)} ${window.UI.formatRelativeTime(getRowAtQ(row))}`;
 	const title = item.kind === "relay" ? getRelayTitleQ(item) : item.title;
 	const cellWords = [...tags, cells.fact].filter((word) => word !== kind);
-	const parts = [`${kind}${getLabelEndsQ(row, isNameShown)}: ${title}`, ...cellWords, ...cells.extras, age].filter(Boolean);
+	const parts = [`${kind}${getLabelEndsQ(row, isNameShown, names)}: ${title}`, ...cellWords, ...cells.extras, age].filter(Boolean);
 	return parts.join(", ");
 }
 
-function getLabelEndsQ(row, isNameShown) {
-	if (row.item.kind === "relay") return ` from ${getRowNameQ(row)} to ${getCopiesNameQ(row.copies)}`;
-	return isNameShown ? ` from ${getRowNameQ(row)}` : "";
+function getLabelEndsQ(row, isNameShown, names) {
+	if (row.item.kind === "relay") return ` from ${getRowNameQ(row, names)} to ${getWhoLabelQ(getCopiesToQ(row.copies, names))}`;
+	return isNameShown ? ` from ${getRowNameQ(row, names)}` : "";
 }
 
 function getAgeVerbQ(row) {
@@ -2193,20 +2347,27 @@ function QueueSheetQ({ queue }) {
  * @param isDone - a row under a Done band → read-only: no delivery lines, the foot how and when it ended (spec §4.6)
  */
 function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, isDone = false }) {
-	const scanRead = useScanReadQ(item);
+	const scanRead = useScanReadQ(item, queue.reload);
 	const draft = getShownDraftQ(queue.drafts[item.id] ?? {}, item, scanRead);
 	const isBusy = queue.busy.id === item.id;
 	const error = queue.busy.error?.id === item.id ? queue.busy.error.message : null;
 	const kind = isDone ? DONE_KIND_Q[item.kind] : getKindWordQ(item);
+	const names = getPageNamesQ(queue);
 	return (
 		<div className="card queue-pane queue-sheet">
-			<SheetHeadQ queue={queue}><LetterheadQ item={item} copies={copies} kind={kind} nameNote={getNameNoteQ(item.session, queue)} /></SheetHeadQ>
+			<SheetHeadQ queue={queue}><LetterheadQ item={item} copies={copies} kind={kind} nameNote={getNameNoteQ(item.session, queue, names)} names={names} /></SheetHeadQ>
+			{isNamedInBodyQ(item, isDone) && <div className="card-bar"><NamesNoteQ /></div>}
 			<div className="card-body" tabIndex={-1}>
 				<SheetBodyQ item={item} copies={copies} rails={queue.sessions?.region.data?.sessions ?? []} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} scanRead={scanRead} />
 			</div>
 			<div className="card-foot">{getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone })}</div>
 		</div>
 	);
+}
+
+// a relay's recipients, or a line naming the item's session (CardStateQ) → a name past the head
+function isNamedInBodyQ(item, isDone) {
+	return item.kind === "relay" || (!isDone && getSessionLineQ(item) !== null);
 }
 
 function getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone }) {
@@ -2289,27 +2450,32 @@ function SheetHeadQ({ queue, children }) {
 	);
 }
 
-// visible only where it tells two apart: the 8-character id while two loaded sessions share the name, the account while items span accounts (spec §4.3, §9.1)
-function getNameNoteQ(session, queue) {
+// visible only where it tells two apart: the 8-character id where the page's names hold one (getPageNamesQ), the account while items span accounts (spec §4.3, §9.1)
+function getNameNoteQ(session, queue, names) {
 	const items = queue.list.data?.items ?? [];
-	const loaded = [...items.map((item) => item.session), ...(queue.sessions?.region?.data?.sessions ?? [])];
-	const isTwin = loaded.some((other) => other.name === session.name && other.id !== session.id);
 	const isManyAccounts = new Set(items.map((item) => item.session.profileLabel)).size > 1;
-	return [isTwin && session.id.slice(0, SESSION_PREFIX_LENGTH_Q), isManyAccounts && session.profileLabel].filter(Boolean).map((part) => ` · ${part}`).join("");
+	return [names.get(getSessionPrefixQ(session))?.idPrefix, isManyAccounts && session.profileLabel].filter(Boolean).map((part) => ` · ${part}`).join("");
 }
 
 // the head's h2 content: read as `Decision from gersona`; the session's account, directory and id ride its title ·
 // a relay's two ends, read as `Relay from aidl to yoaida`: the sheet's Who lines carry their facts (spec §9.9)
-function LetterheadQ({ item, copies = [item], kind, nameNote = "" }) {
+function LetterheadQ({ item, copies = [item], kind, nameNote = "", names = null }) {
 	const { Badge } = window.UI;
 	const { session } = item;
-	if (item.kind === "relay") return <RelayLetterheadQ kind={kind} from={getSenderLabelQ(item.relay.sender)} to={getCopiesNameQ(copies)} />;
+	if (item.kind === "relay") {
+		const from = getPageWhoQ(getSenderWhoQ(item.relay.sender), item.relay.sender.sessionIdPrefix, names);
+		return <RelayLetterheadQ kind={kind} from={getWhoLabelQ(from)} to={getWhoLabelQ(getCopiesToQ(copies, names))} />;
+	}
 	const where = [session.profileLabel, session.cwd, session.id].filter(Boolean).join(" · ");
 	return (
 		<span className="queue-letter">
 			<Badge fill="tag">{kind}</Badge>
 			<span className="sr-only">{" from "}</span>
-			<span className="queue-letter-name" title={where}><ItemSessionNameQ session={session} />{nameNote}</span>
+			<span className="queue-letter-name" title={where}>
+				<span className="queue-letter-text"><ItemSessionNameQ session={session} /></span>
+				{getSessionWhoQ(session).isSelfNamed && <span className="queue-letter-self font-normal text-dim">{" (self-named)"}</span>}
+				{nameNote && <span className="queue-letter-note">{nameNote}</span>}
+			</span>
 		</span>
 	);
 }
@@ -2445,17 +2611,24 @@ function isClosedOptionQ(item, code, isOnlySafe) {
 /**
  * The owner read of a waiting request's captured lines, made when its sheet opens. Held in this sheet's state alone →
  * dropped once the request stops waiting or the sheet closes; never the list, the URL, storage or a log.
+ * @param onGone - re-reads the list: a 409 means the store no longer holds the request, so its state shows without waiting for the next check
  * @returns `{ status: "loading" | "ready" | "failed", data, retry }`
  */
-function useScanReadQ(item) {
+function useScanReadQ(item, onGone) {
 	const isPending = getScanStateQ(item) === "pending";
 	const [read, setRead] = useStateQ(EMPTY_SCAN_READ_Q);
 	const [attempt, setAttempt] = useStateQ(0);
+	const latestOnGone = useRefQ(onGone);
+	latestOnGone.current = onGone;
 	useEffectQ(() => {
 		setRead(EMPTY_SCAN_READ_Q);
 		if (!isPending) return undefined;
 		let isLive = true;
-		readScanLinesQ(item.id).then((next) => isLive && setRead(next));
+		readScanLinesQ(item.id).then(({ isGone, ...next }) => {
+			if (!isLive) return;
+			setRead(next);
+			if (isGone) latestOnGone.current();
+		});
 		return () => { isLive = false; };
 	}, [item.id, isPending, attempt]);
 	return { ...read, retry: () => setAttempt((count) => count + 1) };
@@ -2464,7 +2637,8 @@ function useScanReadQ(item) {
 // the route answers private, no-store, and the page keeps no service worker → no cache holds the reply
 async function readScanLinesQ(id) {
 	const answer = await sendOwnerRequestQ(`/items/${id}/scan-approval`);
-	return isOkAnswerQ(answer) && Array.isArray(answer.data?.lines) ? { status: "ready", data: answer.data } : { status: "failed", data: null };
+	if (isOkAnswerQ(answer) && Array.isArray(answer.data?.lines)) return { status: "ready", data: answer.data };
+	return { status: "failed", data: null, isGone: answer.status === 409 };
 }
 
 /** The card in the item text's place: the cue, each captured line's head and plate, the facts and the warning; once the request stops waiting, its state line. */
@@ -2540,17 +2714,20 @@ function ScanMarkQ({ label }) {
 }
 
 /**
- * What an approval binds, each value whole: the read's path, rule and agent, the item's session, and the server's times.
- * @param read - the owner read's reply; null → its rows are left out
+ * What an approval binds, each value whole: the request's path, rule, agent and id, the item's session, and the server's times.
+ * @param read - the owner read's reply; null → the list facts, which carry no path once the request is gone, so those rows drop
  */
 function ScanFactsQ({ item, read, isPending = false }) {
 	const { MachineString } = window.UI;
 	const facts = item.scanApproval;
+	const request = read ?? facts;
+	const isHeld = Boolean(request.path);
 	const rows = [
-		read && ["File", <MachineString>{read.path}</MachineString>],
-		read && ["Rule", <><MachineString>{read.rule}</MachineString>{SCAN_Q.RULE[read.rule] && <span className="text-dim">{` ${SCAN_Q.RULE[read.rule]}`}</span>}</>],
+		isHeld && ["File", <MachineString>{request.path}</MachineString>],
+		isHeld && ["Rule", <><MachineString>{request.rule}</MachineString>{SCAN_Q.RULE[request.rule] && <span className="text-dim">{` ${SCAN_Q.RULE[request.rule]}`}</span>}</>],
 		["Session", <><span className="font-semibold">{item.session.name}</span>{" "}<MachineString>{item.session.id}</MachineString></>],
-		read && ["Agent", read.agentType ? <MachineString>{read.agentType}</MachineString> : "Main session"],
+		isHeld && ["Agent", request.agentType ? <MachineString>{request.agentType}</MachineString> : "Main session"],
+		facts.requestId && ["Request", <MachineString>{facts.requestId}</MachineString>],
 		["Approval", isPending ? getApprovalWindowQ(item.body) : `Once, until ${window.UI.formatKstTime(facts.expiresAt)}`],
 		isPending && ["Waits", `Until ${getEndTimeQ(facts.expiresAt)}`],
 	].filter((row) => row && row[1]);
@@ -2792,12 +2969,19 @@ function CardStateQ({ item, cliPath }) {
 	return (
 		<Stack gap="label">
 			<AnswerLineQ item={item} />
-			{["nextTurn", "notReachable"].includes(getReceiptQ(item)) && <p className="fs-meta text-dim">{getNextTurnSentenceQ([item.session.name], "this answer")}</p>}
+			{getSessionLineQ(item) === "nextTurn" && <p className="fs-meta text-dim">{getNextTurnSentenceQ([item.session.name], "this answer")}</p>}
 			<PullLineQ item={item} cliPath={cliPath} />
 			{notes.length === 0 && <NotReceivedLineQ item={item} cliPath={cliPath} />}
 			{notes.map((note) => <p key={getNoteKeyQ(note)} className="fs-meta text-dim"><NotePartsQ parts={note} /></p>)}
 		</Stack>
 	);
+}
+
+// the state line that names the item's session: its next turn (nextTurn, notReachable), its missing acknowledgement (NotReceivedLineQ); null when none
+function getSessionLineQ(item) {
+	const receipt = getReceiptQ(item);
+	if (receipt === "nextTurn" || receipt === "notReachable") return "nextTurn";
+	return item.status !== "open" && receipt === "notReceived" ? "notReceived" : null;
 }
 
 // an answered item waits for its live session's pull: a listening session (a wait or a listener) picks it up itself, any other one needs the owner to run the pull
@@ -2812,7 +2996,7 @@ function PullLineQ({ item, cliPath }) {
 // the ack window differs by route (pull or resume) and stays the server's → the line names no minutes
 function NotReceivedLineQ({ item, cliPath }) {
 	const { MachineString } = window.UI;
-	if (item.status === "open" || getReceiptQ(item) !== "notReceived") return null;
+	if (getSessionLineQ(item) !== "notReceived") return null;
 	const name = item.session.name;
 	return (
 		<p className="fs-meta text-dim">
@@ -3175,7 +3359,7 @@ function SessionsRegionQ({ queue }) {
 	// a rail not read yet states no count (as getOrderNoteQ with no rows)
 	const sub = view === "ready" ? `${rows.length - endedCount} live · ${endedCount} ended` : undefined;
 	return (
-		<Card className="queue-pane queue-sessions" title="Sessions" sub={sub}
+		<Card className="queue-pane queue-sessions" title={<><ViewBackQ queue={queue} />Sessions</>} sub={sub} bar={<p className="fs-meta text-dim">{SESSIONS_Q.STATEMENT.FULL}</p>}
 			foot={<RailFootQ queue={queue} />} isFlush>
 			{view === "loading" && <div className="queue-loading"><LoadingPlaceholder label="sessions" /></div>}
 			{view === "error" && <RegionUnavailable source={SESSIONS_Q.SOURCE} error={sessions.region.error} isBusy={sessions.region.busy} onRetry={sessions.read} />}
@@ -3189,8 +3373,7 @@ function SessionsBodyQ({ queue, rows }) {
 	const { sessions } = queue;
 	const live = rows.filter((row) => row.state !== "exited");
 	const ended = rows.filter((row) => row.state === "exited");
-	const shown = getShownSessionsQ(rows, sessions.isEndedShown);
-	const view = { collidingNames: getCollidingNamesQ(shown), notReceived: getNotReceivedBySessionQ(queue.list.data?.items ?? []) };
+	const view = { names: getPageNamesQ(queue), notReceived: getNotReceivedBySessionQ(queue.list.data?.items ?? []) };
 	return (
 		<>
 			<p id={RAIL_HINT_Q.ID} hidden>{RAIL_HINT_Q.TEXT}</p>
@@ -3258,12 +3441,6 @@ function getLiveTargetIdsQ(rows) {
 	return rows.filter((row) => row.state !== "exited" && row.isSelectable).map((row) => row.id);
 }
 
-function getCollidingNamesQ(rows) {
-	const seen = new Map();
-	for (const row of rows) seen.set(row.name, (seen.get(row.name) ?? 0) + 1);
-	return new Set([...seen].filter(([, count]) => count > 1).map(([name]) => name));
-}
-
 // recipients that did not get what was sent, per session: the copies in the list the queue recorded as not received
 function getNotReceivedBySessionQ(items) {
 	const counts = new Map();
@@ -3282,15 +3459,21 @@ function SessionRailRowQ({ row, view, sessions }) {
 	const state = getRailStateQ(row, view.notReceived.get(row.id) ?? 0);
 	const lineId = `queue-rail-line-${row.id}`;
 	const Row = row.isSelectable ? "label" : "div";
+	const { idPrefix } = view.names.get(row.sessionIdPrefix) ?? {};
+	// the id can cut the name to nothing → the title leads with it whole
+	const named = idPrefix === undefined ? "" : `${row.name} · ${idPrefix}\n`;
 	return (
-		<Row className={`queue-rail-row${row.state === "exited" ? " is-ended" : ""}`} data-session={row.id} title={`${state.hover}\n${where}`}>
+		<Row className={`queue-rail-row${row.state === "exited" ? " is-ended" : ""}`} data-session={row.id} title={`${named}${state.hover}\n${where}`}>
 			{row.isSelectable && (
 				<span className="queue-rail-box">
 					<window.UI.Checkbox isInLabel isChecked={sessions.selectedIds.includes(row.id)} onChange={() => sessions.toggle(row.id)} ariaLabel={`Select ${row.name}`} describedBy={`${lineId} ${RAIL_HINT_Q.ID}`} />
 				</span>
 			)}
 			<span aria-hidden="true" className={`queue-rail-mark${row.state === "live" ? " is-live" : ""}`} />
-			<span className="queue-rail-name"><SessionNameQ row={row} isIdShown={view.collidingNames.has(row.name)} /></span>
+			<span className="queue-rail-name">
+				<SessionNameQ row={row} />
+				{idPrefix !== undefined && <span className="queue-rail-id"><window.UI.MachineString>{idPrefix}</window.UI.MachineString></span>}
+			</span>
 			{state.tag && <span className="queue-rail-tag"><StateMarkQ tag={state.tag} word={state.word} /></span>}
 			<RailCountQ count={row.count.awaiting} />
 			<span id={lineId} className="sr-only">{`${state.hover} ${where}`}</span>
@@ -3298,14 +3481,12 @@ function SessionRailRowQ({ row, view, sessions }) {
 	);
 }
 
-// no registered name → the server's start-directory name, marked so it never reads as one the session chose; the id only to tell two names apart
-function SessionNameQ({ row, isIdShown }) {
-	const { MachineString } = window.UI;
+// no registered name → the server's start-directory name, marked so it never reads as one the session chose
+function SessionNameQ({ row }) {
 	return (
 		<span className="queue-rail-name-text">
 			{row.name}
 			{!row.isNameRegistered && <span className="font-normal text-dim">{" · start directory"}</span>}
-			{isIdShown && <span className="font-normal text-dim">{" · "}<MachineString>{row.sessionIdPrefix}</MachineString></span>}
 		</span>
 	);
 }
@@ -3359,16 +3540,16 @@ function OrdersViewQ({ queue }) {
 	const scope = names.length > 0 ? `to ${names.join(", ")}` : "to every session";
 	return (
 		<section className="queue-orders" aria-label="Orders" {...zone.handlers}>
-			<Card className="queue-orders-card" title="Orders" sub={<span className="queue-orders-scope" title={scope}>{scope}</span>}
+			<Card className="queue-orders-card" title={<><ViewBackQ queue={queue} />Orders</>} sub={<span className="queue-orders-scope" title={scope}>{scope}</span>} bar={<NamesNoteQ />}
 				foot={<OrderComposerQ queue={queue} targets={targets} rows={rows} box={box} tray={tray} isReady={sessions.region.data !== null} />} isFlush>
-				<ThreadQ orders={orders} names={names} busy={queue.busy} />
+				<ThreadQ orders={orders} names={names} pageNames={getPageNamesQ(queue)} busy={queue.busy} />
 			</Card>
 		</section>
 	);
 }
 
 /** The owner's orders oldest first under day labels, `Show earlier` at the top; it opens at its end (useThreadScrollQ). */
-function ThreadQ({ orders, names, busy }) {
+function ThreadQ({ orders, names, pageNames, busy }) {
 	const { LoadingPlaceholder } = window.UI;
 	const { thread } = orders;
 	const [viewer, setViewer] = useStateQ(null);
@@ -3384,7 +3565,7 @@ function ThreadQ({ orders, names, busy }) {
 			{getDayGroupsQ(entries).map((group) => (
 				<div key={group.day} className="queue-day-group">
 					<p className="queue-day">{group.label}</p>
-					{group.entries.map((entry) => <OrderEntryQ key={entry.id} entry={entry} busy={busy} onResend={orders.resend} onOpenImage={(images, index) => setViewer({ images, index })} />)}
+					{group.entries.map((entry) => <OrderEntryQ key={entry.id} entry={entry} pageNames={pageNames} busy={busy} onResend={orders.resend} onOpenImage={(images, index) => setViewer({ images, index })} />)}
 				</div>
 			))}
 			{viewer && <ImageViewerQ images={viewer.images} index={viewer.index} onStep={(index) => setViewer((prev) => ({ ...prev, index }))} onClose={() => setViewer(null)} />}
@@ -3472,7 +3653,7 @@ function getMonthDayQ(day) {
 }
 
 /** One order: the time line (`Re:` + the report's title for a reply), the bubble, a row per recipient with its receipt. */
-function OrderEntryQ({ entry, busy, onResend, onOpenImage }) {
+function OrderEntryQ({ entry, pageNames, busy, onResend, onOpenImage }) {
 	const { formatKstTime } = window.UI;
 	const { item, copies } = entry;
 	return (
@@ -3482,7 +3663,7 @@ function OrderEntryQ({ entry, busy, onResend, onOpenImage }) {
 				<time dateTime={item.answeredAt}>{formatKstTime(item.answeredAt)}</time>
 			</p>
 			<OrderBubbleQ item={item} text={getOrderTextQ(item)} images={item.attachments ?? []} onOpenImage={onOpenImage} />
-			<RecipientsQ copies={copies} busy={busy} onResend={onResend} />
+			<RecipientsQ copies={copies} pageNames={pageNames} busy={busy} onResend={onResend} />
 		</article>
 	);
 }
@@ -3584,11 +3765,11 @@ function getSteppedIndexQ(index, count, key) {
 }
 
 /** A row per recipient; from five on, one roll-up line opens the received and waiting ones while the not received, not reachable and next turn ones stay listed under it. */
-function RecipientsQ({ copies, busy, onResend }) {
+function RecipientsQ({ copies, pageNames, busy, onResend }) {
 	const resendable = copies.filter((copy) => copy.canResend).map((copy) => copy.id);
 	const isRolledUp = copies.length >= ORDERS_Q.ROLL_UP_FROM;
 	const isOutside = (copy) => !isRolledUp || SHOWN_RECEIPTS_Q.includes(getReceiptQ(copy));
-	const list = (shown) => <ul className="queue-recipients" aria-label="Recipients">{shown.map((copy) => <RecipientRowQ key={copy.id} copy={copy} busy={busy} onResend={onResend} />)}</ul>;
+	const list = (shown) => <ul className="queue-recipients" aria-label="Recipients">{shown.map((copy) => <RecipientRowQ key={copy.id} copy={copy} pageNames={pageNames} busy={busy} onResend={onResend} />)}</ul>;
 	const [counts, ...badges] = getRollUpFactsQ(copies);
 	return (
 		<>
@@ -3631,8 +3812,9 @@ function getOrderTextQ(item) {
 }
 
 // the session name and its receipt, and nothing else; Resend only where the queue names it (canResend); a refused resend says why under the row
-function RecipientRowQ({ copy, busy, onResend }) {
-	const { formatKstTime } = window.UI;
+function RecipientRowQ({ copy, pageNames = null, busy, onResend }) {
+	const { formatKstTime, MachineString } = window.UI;
+	const { idPrefix } = getPageWhoQ({}, getSessionPrefixQ(copy.session), pageNames);
 	const receipt = getReceiptQ(copy);
 	const time = receipt === "received" && copy.deliveredAt ? [{ text: formatKstTime(copy.deliveredAt) }] : [];
 	const refusal = busy?.error?.id === copy.id ? busy.error.message : null;
@@ -3640,6 +3822,7 @@ function RecipientRowQ({ copy, busy, onResend }) {
 		<>
 			<li className="queue-recipient">
 				<span className="queue-recipient-name" title={copy.session.name}><ItemSessionNameQ session={copy.session} /></span>
+				{idPrefix !== undefined && <MachineString>{idPrefix}</MachineString>}
 				<RowFactsQ facts={[getReceiptFactQ(receipt), ...time]} />
 				{copy.canResend && <BusyButtonQ className="btn sm" label="Resend" busyLabel="Resending…" isBusy={busy?.id === copy.id} onPress={() => onResend([copy.id])} />}
 			</li>
@@ -4078,12 +4261,6 @@ function useSheetColumnQ(ref) {
 	return place;
 }
 
-// a refusal record holds id prefixes only → the names the loaded relays carry for them, a sender's own name before the copies' session records
-function getRelayNamesQ(items) {
-	const senders = items.filter((item) => item.relay?.sender.selfDeclaredName).map(({ relay: { sender } }) => [sender.sessionIdPrefix, getSenderWhoQ(sender)]);
-	return [...senders, ...items.map(({ session }) => [session.sessionIdPrefix, { name: session.name, isSelfNamed: false }])];
-}
-
 // spec §9.9 → the reason table: the server's codes, the page's words; no sentence holds a limit (the server sets them)
 const RELAY_REFUSAL_Q = {
 	hop: ["Chain too long", () => "It would pass a relay on too many times."],
@@ -4112,12 +4289,13 @@ function getRelayRefusalLineQ(reason, names) {
  */
 function RefusedSheetQ({ refusal, queue }) {
 	const { TONE_GLYPH } = window.UI;
-	const names = getRefusalNamesQ(queue);
+	const names = getPageNamesQ(queue);
 	const { sender, to } = getRefusalEndsQ(refusal, names);
 	const line = getRelayRefusalLineQ(refusal.reason, { sender, recipient: to });
 	return (
 		<div className="card queue-pane queue-sheet">
 			<SheetHeadQ queue={queue}><RelayLetterheadQ kind={DONE_KIND_Q.relay} from={sender} to={to} /></SheetHeadQ>
+			<div className="card-bar"><NamesNoteQ /></div>
 			<div className="card-body" tabIndex={-1}>
 				<div className="queue-sheet-body">
 					<p className="queue-date-line">
@@ -4202,9 +4380,14 @@ function getSenderLabelQ(sender) {
 	return getWhoLabelQ(getSenderWhoQ(sender));
 }
 
-// a name the peer wrote is marked as its own wherever it is painted, never read as the queue's fact
-function getWhoLabelQ({ name, isSelfNamed }) {
-	return isSelfNamed ? `${name} (self-named)` : name;
+// a session's registered name is its own writing (its register sets it, unchecked) → self-named; the start-directory fallback is the page's
+function getSessionWhoQ(session) {
+	return { name: session.name, isSelfNamed: session.isNameRegistered === true };
+}
+
+// a name the session wrote is marked as its own wherever it is painted, never read as the queue's fact; its id follows where it could be mistaken
+function getWhoLabelQ({ name, isSelfNamed, idPrefix }) {
+	return `${name}${isSelfNamed ? " (self-named)" : ""}${idPrefix === undefined ? "" : ` · ${idPrefix}`}`;
 }
 
 // account + start-directory tail → tells two same-named sessions apart
@@ -4240,4 +4423,4 @@ function getRelayOutcomeQ(copy) {
 
 window.ScreenQueue = ScreenQueue;
 // shell reads the nav slot
-window.QueueNav = { getQueueNavBadge, getQueueTitle };
+window.QueueNav = { getQueueNavBadge, getQueueTitle, getPhoneViewport };

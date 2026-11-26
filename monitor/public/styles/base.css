@@ -494,7 +494,7 @@ label.ctl-checkbox-hit {
 	height: calc(100dvh - 2 * var(--gap-page));
 	min-height: 608px;
 }
-/* three fixed-role columns at every width (spec §3.2): the rail steps with the viewport; the middle pane is the 66ch page and its two
+/* three fixed-role columns above the phone's 640 (spec §3.2): the rail steps with the viewport; the middle pane is the 66ch page and its two
    32 gutters, yielding only where Orders would drop under its minimum; Orders takes the rest. The ch resolves on the desk's 15px text.
    Under 1440 Orders yields 48 → the rail keeps "All sessions" whole and a list title holds about 12 Hangul */
 .queue-desk {
@@ -525,6 +525,106 @@ label.ctl-checkbox-hit {
 }
 @media (min-width: 2560px) {
 	.queue-desk { --queue-rail-w: 280px; }
+}
+/* the Queue page on a phone (screens/queue.jsx → PHONE_Q): the header's menu replaces the shell's sidebar, the desk drops its
+   desktop floors, the pane bleeds to the screen's edges with its content on the header's 16 inset. Other routes keep 1280 → never match */
+.queue-menu,
+.queue-scope-trigger,
+.queue-orders-open,
+.queue-view-back,
+.queue-names-note,
+.card-bar:has(> .queue-names-note:only-child) {
+	display: none;
+}
+@media (max-width: 640px) {
+	/* the short statement on names (screens/queue.jsx → NamesNoteQ): the phone's alone; above 640 the rail's full one is always on screen */
+	.queue-names-note,
+	.card-bar:has(> .queue-names-note:only-child) {
+		display: block;
+	}
+	[data-route="queue"] > .shell-sidebar {
+		display: none;
+	}
+	/* after .btn.icon's 32 square → the phone's 44 target */
+	.queue-menu.btn.icon {
+		display: inline-flex;
+		width: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+		height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+	}
+	.queue-screen {
+		min-height: 0;
+	}
+	/* one column, one view (screens/queue.jsx → useDeskViewQ): the list (or the sheet in its place), Sessions or Orders; the others stay mounted, undrawn */
+	.queue-desk {
+		grid-template-columns: minmax(0, 1fr);
+		min-width: 0;
+		min-height: 0;
+		margin-inline: calc(-1 * var(--gap-page));
+		margin-block-end: calc(-1 * var(--gap-page));
+	}
+	.queue-desk[data-view="list"] > :is(.queue-sessions, .queue-orders),
+	.queue-desk[data-view="sessions"] > :is(.queue-list-slot, .queue-sheet, .queue-orders),
+	.queue-desk[data-view="orders"] > :is(.queue-sessions, .queue-list-slot, .queue-sheet) {
+		display: none;
+	}
+	/* the list head: the scope trigger in the plain title's place, Orders at its end; no keys button, a phone has no keyboard (layout §2) */
+	.queue-scope-title,
+	.queue-list > .card-head [aria-haspopup="dialog"] {
+		display: none;
+	}
+	/* a 44 target in a head's 20 title line: the title holds its line, the target reaches into the head's padding */
+	.queue-desk .card-title:has(> :is(.queue-scope-trigger, .queue-view-back)) {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		overflow: visible;
+		margin-block: calc((var(--lh-row) - var(--ctl-min-h) - 2 * var(--space-1_5)) / 2);
+	}
+	.queue-scope-trigger.btn,
+	.queue-orders-open.btn,
+	.queue-view-back.btn.icon {
+		display: inline-flex;
+		height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+	}
+	.queue-view-back.btn.icon {
+		width: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+		margin-inline-start: calc(-1 * var(--space-3));
+	}
+	/* the words keep the title's type and column and ellipsize; the chevron stays */
+	.queue-scope-trigger.btn {
+		min-width: 0;
+		max-width: 100%;
+		gap: var(--space-1);
+		padding-inline: var(--space-2);
+		margin-inline-start: calc(-1 * var(--space-2));
+		font: inherit;
+	}
+	.queue-scope-words {
+		min-width: 0;
+		overflow: hidden;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+	}
+	.queue-scope-words::before {
+		content: attr(data-words);
+	}
+	.queue-desk :is(.queue-pane, .queue-orders-card) {
+		border-radius: 0;
+		border-inline-width: 0;
+		border-block-end-width: 0;
+	}
+	/* the two acts drop under the device label, each a 44 target; the spacer's own row gap is taken back */
+	.remote-banner {
+		flex-wrap: wrap;
+		padding-inline: var(--gap-page);
+	}
+	.remote-banner > .flex-1 {
+		flex-basis: 100%;
+		margin-block-start: calc(-1 * var(--gap-control));
+	}
+	.remote-banner > .btn {
+		min-height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+	}
 }
 /* the Sessions rail (spec §9.1): the All sessions band, a row per session, each one 44 line on fixed columns — box · state mark ·
    name · tag · count. The bands share every column → the box or the Ended chevron in the box column, a band's label on the names' column;
@@ -588,6 +688,16 @@ label.ctl-checkbox-hit {
 	justify-content: center;
 	width: 24px;
 }
+/* a phone's targets (layout §6): every Queue and menu control 44 = --ctl-min-h + its two 6 pads; after .btn.sm / .lg / .icon and the rail band's 32 */
+@media (max-width: 640px) {
+	:is(.queue-screen, [data-route="queue"] > .detail-drawer) :is(.btn, .nav-item, .disclosure) {
+		min-height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+	}
+	:is(.queue-screen, [data-route="queue"] > .detail-drawer) .btn.icon {
+		width: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+		height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+	}
+}
 /* one control per row (spec §9.1): the row is its box's label, one 20 line between 12 paddings → 44 */
 .queue-rail-row {
 	display: grid;
@@ -645,6 +755,13 @@ label.ctl-checkbox-hit {
 }
 .queue-rail-name-text > span {
 	font-size: var(--fs-meta);
+}
+/* the id beside a name the page could mistake for another's: whole, the name cut first */
+.queue-rail-id {
+	flex: none;
+	font-size: var(--fs-meta);
+	font-weight: 400;
+	color: rgb(var(--dim));
 }
 .queue-rail-row.is-ended .queue-rail-name {
 	color: rgb(var(--dim));
@@ -1090,6 +1207,26 @@ label.ctl-checkbox-hit {
 .queue-row-tag-narrow {
 	display: none;
 }
+/* a phone row (layout §3): name 80 · title · tag 80 · age 32 on every band — the fact and the chevron left out, the fact kept in the
+   row's title and name, the whole row the target; .queue-listbox → level with the 536 rule above, later so it wins */
+@media (max-width: 640px) {
+	.queue-row {
+		--queue-row-name: 80px;
+	}
+	.queue-listbox :is([data-cols=""], [data-cols="fact"]) > .queue-row {
+		--queue-row-tail: 32px;
+	}
+	.queue-listbox :is([data-cols="tag"], [data-cols="tag fact"]) > .queue-row {
+		--queue-row-tail: 80px 32px;
+	}
+	.queue-row > :is(.queue-row-fact, .queue-row-chevron),
+	.queue-row .queue-row-tag-wide {
+		display: none;
+	}
+	.queue-row .queue-row-tag-narrow {
+		display: inline-flex;
+	}
+}
 /* the hairline is drawn inside the row → a row stays 44 */
 .queue-row + .queue-row {
 	box-shadow: inset 0 1px 0 rgb(var(--line));
@@ -1238,6 +1375,21 @@ label.ctl-checkbox-hit {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+/* a decision's or report's head: its name cut first, the page's (self-named) beside it whole; pre keeps each part's leading space */
+.queue-letter-name:has(> .queue-letter-text) {
+	display: flex;
+}
+.queue-letter-text,
+.queue-letter-note {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: pre;
+}
+.queue-letter-self {
+	flex: none;
+	white-space: pre;
+}
 .queue-steps {
 	flex: none;
 	display: flex;
@@ -1283,10 +1435,12 @@ label.ctl-checkbox-hit {
 .queue-sheet .card-title {
 	font-size: var(--fs-control);
 }
+/* never wider than the head's title → the name inside it is what gives way */
 .queue-letter {
 	display: inline-flex;
 	align-items: center;
 	gap: var(--space-2);
+	max-width: 100%;
 }
 .queue-sheet > .card-body {
 	padding: var(--space-4) var(--card-pad) var(--space-8);
@@ -1455,6 +1609,15 @@ label.ctl-checkbox-hit {
 	.queue-sheet {
 		--card-pad: var(--space-4);
 	}
+	/* the head in two rows (layout §4): back · count · previous / next, then the letterhead across the whole width */
+	.queue-sheet-head {
+		flex-wrap: wrap;
+		row-gap: var(--space-1);
+	}
+	.queue-sheet-head > .card-title {
+		order: 1;
+		flex-basis: 100%;
+	}
 	.scan-line-head {
 		grid-template-columns: 112px minmax(0, 1fr);
 	}
@@ -1539,6 +1702,12 @@ label.ctl-checkbox-hit {
 /* the button beside its box wherever the box keeps 220, under it below that (spec §4.5) */
 .queue-compose-row > .queue-compose-box {
 	flex: 1 1 var(--queue-box-min);
+}
+/* a phone (layout §4): 160 → Send answer stays beside the box at 360 */
+@media (max-width: 640px) {
+	.queue-compose-row {
+		--queue-box-min: 160px;
+	}
 }
 .queue-compose-buttons {
 	flex: none;

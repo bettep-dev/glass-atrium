@@ -1,4 +1,5 @@
-// App-shell viewport — a phone lays the page out at the desktop width (no mobile layout); a desktop browser keeps its window width.
+// App-shell viewport — index.html's own declaration, before any script runs: a phone lays the page out at the desktop width; a desktop browser keeps its window width.
+// The Queue route's device-width layout on a phone → test/queue.phone.e2e.test.ts
 // Runner: npx tsx --test test/app-shell.viewport.e2e.test.ts
 //
 // Layout width only → every off-origin request is aborted, so no CDN script is fetched.

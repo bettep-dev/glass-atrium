@@ -14,13 +14,13 @@ import type { Locator, Page } from "playwright";
 
 import {
   DONE_IDS, EDGE_IDS, EDGE_LONG_SESSION_NAME, EDGE_LONG_TITLE, EDGE_SESSION_IDS, FIXTURE_IMAGES,
-  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getArrivalFixture, getDoneFixture, getDoneOnlyFixture, getDoneRelaysFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
+  FIXTURE_ORDER_TEXT, FIXTURE_SESSION_IDS, getArrivalFixture, getConfusableNameFixture, CONFUSABLE_SESSION_ID, getDoneFixture, getDoneOnlyFixture, getDoneRelaysFixture, getEdgeFixture, getManyDoneFixture, getEmptyFixture, getNameColumnFixture, getOffViewFixture,
   getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOrderFirstFixture, getProseFixture, getRailFixture, getRelayListFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, RELAY_ROW_IDS, NOT_LISTENING_SESSION_IDS,
-  getScanApprovalFixture, SCAN_IDS, SCAN_MARK_POINTS,
+  getScanApprovalFixture, SCAN_GONE_FACTS, SCAN_IDS, SCAN_MARK_POINTS,
 } from "./lib/queue-render-fixtures.js";
 import {
-  addOrderFiles, ANSWER_STATES, arriveItem, arriveOffView, askRedaction, closeHarness, confirmRedaction, DESK_WIDTHS, focusByKeyboard, getButtonFacts, getComposerFacts, getDeskFacts, getFocusRing, getHeadEnd, getHeadHeights, getIconLooks, getImageFile, getListFacts, getPngSize, getRailColumnFacts, getRankLook, getRestReadyText, getRingToken, getSelfNamedFixture, getSettledLook, getSheetFacts, getShotsDir, getTintFills, getTokenPaint, type Harness, MARKUP_BODY, MARKUP_TITLE, MIN_WINDOW, openEdgePage, openEndedBand, openHarness, openQueuePage, ORDER_BOX_ID, ORDER_TO, ORDERS, OWNER_WINDOW, PARTLY_REDACTED_LINE, pickWithNote, type QueueState, readQueueState, READY_TIMEOUT_MS, refuseOneRedaction, selectProseRow, selectRow, setFiles, SHELL_INLINE, showAnswerImages, showMoreDone, showSheetEnd, showThreadText, tickOrdersTo, tickSessions, type Viewport, VIEWPORTS, waitForAllOrders, waitForDoneBands, waitForImages,
+  addOrderFiles, ANSWER_STATES, arriveItem, arriveOffView, askRedaction, closeHarness, confirmRedaction, DESK_WIDTHS, focusByKeyboard, getButtonFacts, getComposerFacts, getDeskFacts, getFocusRing, getHeadEnd, getHeadHeights, getIconLooks, getImageFile, getListFacts, getPngSize, getRailColumnFacts, getRankLook, getRestReadyText, getRingToken, getSelfNamedFixture, getSettledLook, getSheetFacts, getShotsDir, getStartDirectoryFixture, getTintFills, getTokenPaint, type Harness, MARKUP_BODY, MARKUP_TITLE, MIN_WINDOW, openEdgePage, openEndedBand, openHarness, openQueuePage, ORDER_BOX_ID, ORDER_TO, ORDERS, OWNER_WINDOW, PARTLY_REDACTED_LINE, pickWithNote, type QueueState, readQueueState, READY_TIMEOUT_MS, refuseOneRedaction, selectProseRow, selectRow, setFiles, SHELL_INLINE, showAnswerImages, showMoreDone, showSheetEnd, showThreadText, tickOrdersTo, tickSessions, type Viewport, VIEWPORTS, waitForAllOrders, waitForDoneBands, waitForImages,
 } from "./lib/queue-render-harness.js";
 
 describe("queue page on the mockup fixtures", () => {
@@ -454,10 +454,10 @@ describe("queue page on the mockup fixtures", () => {
     assert.deepEqual(heights.filter((row) => !row.isRowHeight), []);
   });
 
-  // one sender reads as one name on every row; a self-declared name's mark stands whole beside it, outside the cut, its words in the tooltips;
+  // one sender reads as one name on every row; a name the session wrote takes the mark whole beside it, outside the cut, its words in the tooltips;
   // the fixture's longest name, nine letters, self-named on relay 421 → name and mark still whole in the name column, every title on one x
-  test("a sender's name paints the same on its decision, refused and relay rows at 1280, 1440 and 1568, and only a self-named relay row adds the whole self mark, a nine-letter name whole beside it and every title on one x", async () => {
-    harness.fixture = getSelfNamedFixture(getRelayListFixture(true), RELAY_ROW_IDS.one, "portfolio");
+  test("a sender's name paints the same on its decision, refused and relay rows at 1280, 1440 and 1568, and every self-named row of any kind adds the whole self mark, a nine-letter name whole beside it and every title on one x", async () => {
+    harness.fixture = getStartDirectoryFixture(getSelfNamedFixture(getRelayListFixture(true), RELAY_ROW_IDS.one, "dashboard"), "aidl");
     const shown = [];
     for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
       const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
@@ -480,7 +480,7 @@ describe("queue page on the mockup fixtures", () => {
     }
 
     const byName = shown.flatMap(({ width, rows }) => [...new Set(rows.map((row) => row.name))].map((name) => ({ width, name, painted: [...new Set(rows.filter((row) => row.name === name).map((row) => row.painted))] })));
-    assert.ok(shown.every(({ rows }) => rows.some((row) => row.name === "portfolio" && row.isSelfNamed) && rows.some((row) => !row.isSelfNamed)), "each width paints the self-named nine-letter name and recorded names");
+    assert.ok(shown.every(({ rows }) => rows.some((row) => row.name === "dashboard" && row.isSelfNamed) && rows.some((row) => row.name === "aidl" && !row.isSelfNamed)), "each width paints the self-named nine-letter name and a start-directory name");
     assert.deepEqual(shown.map(({ width, rows }) => ({ width, titleAts: new Set(rows.map((row) => row.titleAt)).size })), shown.map(({ width }) => ({ width, titleAts: 1 })), "every title on one x");
     assert.deepEqual(byName.filter(({ painted }) => painted.length > 1 || painted[0] === "cut"), [], "a sender's name paints whole and alike on every row");
     assert.deepEqual(
@@ -1256,12 +1256,13 @@ describe("queue page on the mockup fixtures", () => {
     });
   });
 
-  test("the page header holds no button and one status line, Checks every 15s, and no Queue button is named New order, Clear or Refresh", async () => {
+  test("the page header draws no button and one status line, Checks every 15s, and no Queue button is named New order, Clear or Refresh", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     const head = await page.evaluate(() => ({
       line: [...document.querySelectorAll(".page-head [role=status]")].map((node) => node.textContent?.trim()),
-      headButtons: document.querySelectorAll(".page-head button").length,
+      // the phone's menu button stays in the DOM, undrawn above 640
+      headButtons: [...document.querySelectorAll(".page-head button")].filter((node) => node.getClientRects().length > 0).length,
       named: [...document.querySelectorAll(".queue-screen button")].map((node) => (node.getAttribute("aria-label") ?? node.textContent ?? "").trim())
         .filter((name) => /^(New order|Clear|Refresh)/.test(name)),
     }));
@@ -1904,63 +1905,49 @@ describe("queue page on the mockup fixtures", () => {
       await openScanSheet(page, SCAN_IDS.one, "The line assigns a literal value.");
       await page.locator(`#queue-option-${SCAN_IDS.one}-R1`).check();
       harness.refusals.set("action", { status: 409, body: { error: "secret_request_gone" } });
-      harness.fixture = { ...harness.fixture, items: harness.fixture.items.map((item) => (item.id === SCAN_IDS.one ? { ...item, scanApproval: { state: "gone", lineCount: null, expiresAt: null } } : item)) };
+      harness.fixture = { ...harness.fixture, items: harness.fixture.items.map((item) => (item.id === SCAN_IDS.one ? { ...item, scanApproval: SCAN_GONE_FACTS } : item)) };
       await page.locator(".queue-sheet").getByRole("button", { name: "Send answer" }).click();
       await page.locator(".queue-sheet").getByText("Gone: the monitor restarted.").waitFor({ timeout: 5_000 });
     };
 
-    const SHEET_SIZES = [
-      { name: "at 1280 wide", viewport: MIN_WINDOW },
-      { name: "under phone emulation at the page's 1280 layout width", viewport: PHONE },
-    ];
-    for (const { name, viewport } of SHEET_SIZES) {
-      test(`${name} the long line wraps whole, each mark a whole tile, and the sheet scrolls nothing sideways`, async () => {
-        const page = await openScanPage(viewport);
-        await openScanSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
-        const shown = await page.evaluate((points) => {
-          const plates = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-plate")];
-          const marks = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-mark")];
-          const texts = plates.flatMap((plate) => [...plate.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent ?? ""));
-          const body = document.querySelector<HTMLElement>(".queue-sheet > .card-body")!;
-          const getRgb = (value: string) => (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
-          const getLuminance = (rgb: number[]) => {
-            const [r, g, b] = rgb.map((channel) => { const c = channel / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
-            return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
-          };
-          const getRatio = (one: string, two: string) => {
-            const [high, low] = [getLuminance(getRgb(one)), getLuminance(getRgb(two))].sort((a, b) => b - a);
-            return (high! + 0.05) / (low! + 0.05);
-          };
-          const tile = getComputedStyle(marks[0]!);
-          return {
-            plates: plates.length,
-            isBodyScrolledSideways: body.scrollWidth > body.clientWidth,
-            isEveryPlateWhole: plates.every((plate) => plate.scrollWidth === plate.clientWidth && plate.scrollHeight === plate.clientHeight),
-            isEveryPlateUncut: plates.every((plate) => { const style = getComputedStyle(plate); return style.textOverflow !== "ellipsis" && style.maxHeight === "none" && style.overflowX !== "auto"; }),
-            isLongWrapped: plates[1]!.getBoundingClientRect().height > 20 * parseFloat(getComputedStyle(plates[1]!).lineHeight),
-            isEveryTileWhole: marks.every((mark) => mark.getClientRects().length === 1),
-            labels: marks.map((mark) => mark.textContent),
-            hasRawMark: texts.some((text) => points.some((point) => text.includes(String.fromCodePoint(point)))),
-            contrast: { tileText: getRatio(tile.color, tile.backgroundColor) >= 4.5, tilePlate: getRatio(tile.backgroundColor, getComputedStyle(plates[1]!).backgroundColor) >= 3 },
-          };
-        }, [...SCAN_MARK_POINTS]);
-        await page.close();
-
-        const labels = [...SCAN_MARK_POINTS.map((point) => `U+${point.toString(16).toUpperCase().padStart(4, "0")}`), "U+0020"];
-        assert.deepEqual(shown, {
-          plates: 3, isBodyScrolledSideways: false, isEveryPlateWhole: true, isEveryPlateUncut: true, isLongWrapped: true,
-          isEveryTileWhole: true, labels, hasRawMark: false, contrast: { tileText: true, tilePlate: true },
-        });
-      });
-    }
-
-    test("under phone emulation at the page's 1280 layout width the page scrolls nothing sideways", async () => {
-      const page = await openScanPage(PHONE);
+    // the phone's width: queue.phone.e2e.test.ts
+    test("at 1280 wide the long line wraps whole, each mark a whole tile, and the sheet scrolls nothing sideways", async () => {
+      const page = await openScanPage(MIN_WINDOW);
       await openScanSheet(page, SCAN_IDS.long, "2 of 3 lines assign a literal value.");
-      const widths = await page.evaluate(() => ({ scroll: document.scrollingElement!.scrollWidth, layout: document.documentElement.clientWidth }));
+      const shown = await page.evaluate((points) => {
+        const plates = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-plate")];
+        const marks = [...document.querySelectorAll<HTMLElement>(".queue-sheet .scan-mark")];
+        const texts = plates.flatMap((plate) => [...plate.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent ?? ""));
+        const body = document.querySelector<HTMLElement>(".queue-sheet > .card-body")!;
+        const getRgb = (value: string) => (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+        const getLuminance = (rgb: number[]) => {
+          const [r, g, b] = rgb.map((channel) => { const c = channel / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+          return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+        };
+        const getRatio = (one: string, two: string) => {
+          const [high, low] = [getLuminance(getRgb(one)), getLuminance(getRgb(two))].sort((a, b) => b - a);
+          return (high! + 0.05) / (low! + 0.05);
+        };
+        const tile = getComputedStyle(marks[0]!);
+        return {
+          plates: plates.length,
+          isBodyScrolledSideways: body.scrollWidth > body.clientWidth,
+          isEveryPlateWhole: plates.every((plate) => plate.scrollWidth === plate.clientWidth && plate.scrollHeight === plate.clientHeight),
+          isEveryPlateUncut: plates.every((plate) => { const style = getComputedStyle(plate); return style.textOverflow !== "ellipsis" && style.maxHeight === "none" && style.overflowX !== "auto"; }),
+          isLongWrapped: plates[1]!.getBoundingClientRect().height > 20 * parseFloat(getComputedStyle(plates[1]!).lineHeight),
+          isEveryTileWhole: marks.every((mark) => mark.getClientRects().length === 1),
+          labels: marks.map((mark) => mark.textContent),
+          hasRawMark: texts.some((text) => points.some((point) => text.includes(String.fromCodePoint(point)))),
+          contrast: { tileText: getRatio(tile.color, tile.backgroundColor) >= 4.5, tilePlate: getRatio(tile.backgroundColor, getComputedStyle(plates[1]!).backgroundColor) >= 3 },
+        };
+      }, [...SCAN_MARK_POINTS]);
       await page.close();
 
-      assert.equal(widths.scroll, widths.layout, JSON.stringify(widths));
+      const labels = [...SCAN_MARK_POINTS.map((point) => `U+${point.toString(16).toUpperCase().padStart(4, "0")}`), "U+0020"];
+      assert.deepEqual(shown, {
+        plates: 3, isBodyScrolledSideways: false, isEveryPlateWhole: true, isEveryPlateUncut: true, isLongWrapped: true,
+        isEveryTileWhole: true, labels, hasRawMark: false, contrast: { tileText: true, tilePlate: true },
+      });
     });
 
     test("each line head keeps its columns at 1280: the length whole in 128 after a 12 gap, the line count never split", async () => {
@@ -2066,6 +2053,29 @@ describe("queue page on the mockup fixtures", () => {
       await page.close();
 
       assert.deepEqual(shown, { plates: 0, facts: [], approve: [true, false], isSendInk: false, alerts: [`✕ ${GONE_ANSWER}`] });
+    });
+
+    test("the approved sheet keeps what the approval binds from the list, with no read of the lines after the yes", async () => {
+      const page = await openScanPage(MIN_WINDOW);
+      await openScanSheet(page, SCAN_IDS.approved, "The line was dropped; its hash remains.");
+      const labels = await page.locator(".queue-sheet .scan-facts dt").allTextContents();
+      const request = await page.locator(".queue-sheet .scan-facts dd").nth(labels.indexOf("Request")).textContent();
+      await page.close();
+
+      const { requestId } = getScanApprovalFixture().items.find((item) => item.id === SCAN_IDS.approved)!.scanApproval!;
+      assert.deepEqual({ labels, request, reads: harness.scanReadIds }, { labels: ["File", "Rule", "Session", "Agent", "Request", "Approval"], request: requestId, reads: [] });
+    });
+
+    // the list still reads pending when the sheet opens, the store has dropped it → the read's 409 re-reads the list under the 15 s check
+    test("a scan read the server answers 409 re-reads the list at once: the Gone line, no read fact", async () => {
+      const page = await openScanPage(MIN_WINDOW);
+      harness.fixture = { ...harness.fixture, items: harness.fixture.items.map((item) => (item.id === SCAN_IDS.unread ? { ...item, scanApproval: SCAN_GONE_FACTS } : item)) };
+      await selectRow(page, SCAN_IDS.unread);
+      await page.locator(".queue-sheet").getByText("Gone: the monitor restarted.").waitFor({ timeout: 5_000 });
+      const facts = await page.locator(".queue-sheet .scan-facts dt").count();
+      await page.close();
+
+      assert.deepEqual({ facts, reads: harness.scanReadIds }, { facts: 0, reads: [SCAN_IDS.unread] });
     });
 
     test("the captured lines are read only when a waiting item's sheet opens, and its row says only how many lines", async () => {
@@ -2269,7 +2279,7 @@ describe("queue page on the mockup fixtures", () => {
 
     test("two sessions with one name each show their 8-character id on the rail, and a session with its own name shows none", async () => {
       const page = await openEdgePage(harness);
-      const names = await page.evaluate(() => [...document.querySelectorAll(".queue-rail-name-text")].map((name) => name.textContent));
+      const names = await page.evaluate(() => [...document.querySelectorAll(".queue-rail-name")].map((name) => [...name.children].map((part) => part.textContent).join(" · ")));
       await page.close();
 
       assert.deepEqual(
@@ -2278,13 +2288,100 @@ describe("queue page on the mockup fixtures", () => {
       );
     });
 
+    // the page cannot check a name → it says so where the names are listed, read in place by eye and by a reader
+    // the phone's short form (SR-3b) is the phone's alone → at 1280 neither the list, Orders nor a relay's sheet draws it
+    test("at 1280 the rail's head shows the statement on names in full, in view, and in the accessibility tree, and the short form is nowhere", async () => {
+      const statement = "Session names are written by the sessions themselves and are not checked. Only the id identifies a session.";
+      const short = "Names are self-written and unchecked. Only the id identifies a session.";
+      harness.fixture = getRelayRowFixture();
+      const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+      const shown = await page.locator(".queue-sessions > .card-bar").evaluate((bar) => {
+        const box = bar.getBoundingClientRect();
+        return { text: bar.textContent, isWhole: bar.scrollHeight <= bar.clientHeight && box.height > 0 && box.top >= 0 && box.bottom <= window.innerHeight, isConcealed: bar.closest("[aria-hidden='true'], [hidden]") !== null };
+      });
+      const tree = await page.locator(".queue-sessions").ariaSnapshot();
+      const getShortShown = async () => [(await page.locator(".queue-screen").ariaSnapshot()).includes(short), await page.getByText(short, { exact: true }).evaluateAll((nodes) => nodes.filter((node) => node.getClientRects().length > 0).length)];
+      const atRest = await getShortShown();
+      await selectRow(page, RELAY_ROW_IDS.one);
+      await page.locator(".queue-sheet").getByText("응답 예시").first().waitFor({ timeout: READY_TIMEOUT_MS });
+      const inRelay = await getShortShown();
+      await page.close();
+
+      assert.deepEqual([shown, tree.includes(statement), atRest, inRelay], [{ text: statement, isWhole: true, isConcealed: false }, true, [false, 0], [false, 0]]);
+    });
+
+    test("at 1280 two rail entries whose names differ only in case and a trailing space each show their 8-character id whole", async () => {
+      harness.fixture = getConfusableNameFixture();
+      const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+      const ids = await page.evaluate((sessionIds) => sessionIds.map((id) => {
+        const shown = document.querySelector<HTMLElement>(`.queue-rail-row[data-session="${id}"] .queue-rail-id`);
+        return shown === null ? null : [shown.textContent, shown.scrollWidth <= shown.clientWidth && shown.getBoundingClientRect().right <= shown.closest(".queue-rail-row")!.getBoundingClientRect().right];
+      }), [FIXTURE_SESSION_IDS.gersona, CONFUSABLE_SESSION_ID]);
+      await page.close();
+
+      assert.deepEqual(ids, [[FIXTURE_SESSION_IDS.gersona.slice(0, 8), true], [CONFUSABLE_SESSION_ID.slice(0, 8), true]]);
+    });
+
     test("an item from one of two sessions with one name shows that session's 8-character id after the name in its letterhead", async () => {
       const page = await openEdgePage(harness);
       await selectRow(page, EDGE_IDS.declaredReport);
       const name = await page.evaluate(() => document.querySelector(".queue-letter [title]")?.textContent);
       await page.close();
 
-      assert.equal(name, `atrium · ${EDGE_SESSION_IDS.twin.slice(0, 8)}`);
+      assert.equal(name, `atrium (self-named) · ${EDGE_SESSION_IDS.twin.slice(0, 8)}`);
+    });
+
+    // the registered 100-character name cut in the 104 column, the page's mark whole beside it; a start directory's name never marked
+    test("at 1280 a decision or report row from a registered name cuts the name and paints its self mark whole, and a start-directory row paints none", async () => {
+      harness.fixture = getNameColumnFixture();
+      const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+      const shown = await page.evaluate((longName) => [longName, "atrium-hooks"].map((named) => {
+        const name = [...document.querySelectorAll<HTMLElement>(".queue-row-who .queue-row-name")].find((one) => one.title.startsWith(named))!;
+        const who = name.closest(".queue-row-who")!.getBoundingClientRect();
+        const mark = name.parentElement!.querySelector<HTMLElement>(".queue-row-mark");
+        const markBox = mark?.getBoundingClientRect();
+        const label = name.closest(".queue-row")!.getAttribute("aria-label")!;
+        return {
+          isNameCut: name.scrollWidth > name.clientWidth,
+          mark: mark === null ? null : { text: mark.textContent, isWhole: mark.scrollWidth <= mark.clientWidth && markBox!.left >= name.getBoundingClientRect().right - 0.5 && markBox!.right <= who.right + 0.5 },
+          label: [label.includes(`from ${named} (self-named): `), label.includes(", start directory")],
+        };
+      }), EDGE_LONG_SESSION_NAME);
+      await page.close();
+
+      assert.deepEqual(shown, [
+        { isNameCut: true, mark: { text: "self", isWhole: true }, label: [true, false] },
+        { isNameCut: false, mark: null, label: [false, true] },
+      ]);
+    });
+
+    // the head is where the owner answers → a registered name's (self-named) is the page's own element, whole while the name is cut
+    test("at 1280 the sheet head of a registered 100-character name cuts the name and keeps its (self-named) whole, and a start-directory head reads start directory with none", async () => {
+      harness.fixture = getNameColumnFixture();
+      const heads = [];
+      for (const named of [EDGE_LONG_SESSION_NAME, "atrium-hooks"]) {
+        const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+        await page.locator(".queue-row-who .queue-row-name", { hasText: named.slice(0, 12) }).first().click();
+        await page.locator(".queue-sheet .queue-letter-text", { hasText: named.slice(0, 12) }).waitFor();
+        heads.push(await page.evaluate(() => {
+          const head = document.querySelector<HTMLElement>(".queue-sheet .queue-letter-name")!.getBoundingClientRect();
+          const name = document.querySelector<HTMLElement>(".queue-sheet .queue-letter-text")!;
+          const self = document.querySelector<HTMLElement>(".queue-sheet .queue-letter-self");
+          const selfBox = self?.getBoundingClientRect();
+                    return {
+            isNameCut: name.scrollWidth > name.clientWidth,
+            isStartDirectory: name.textContent!.endsWith(" start directory"),
+            self: self === null ? null : { text: self.textContent, isOutsideName: !name.contains(self), isWhole: self.scrollWidth <= self.clientWidth && selfBox!.right <= head.right + 0.5 && selfBox!.width > 0 },
+          };
+        }));
+        await page.close();
+      }
+
+      const [registered, startDirectory] = heads;
+      assert.deepEqual(
+        [registered, { isStartDirectory: startDirectory?.isStartDirectory, self: startDirectory?.self }],
+        [{ isNameCut: true, isStartDirectory: false, self: { text: " (self-named)", isOutsideName: true, isWhole: true } }, { isStartDirectory: true, self: null }],
+      );
     });
 
     test("a 100-character session name stays on one cut line, its rail row 44 high and inside the rail", async () => {

@@ -464,6 +464,48 @@ describe("scan-approval answer and withdraw", () => {
     assert.deepEqual([response.statusCode, response.json().error, secretRequests.find(requestId)?.state], [409, "not_open", "pending"]);
   });
 
+  test("the owner list, done thread and item detail carry a scan approval's path, rule, agent type and request id while the store holds it, all null once gone; never a line, a hash, the session id or the agent id", async () => {
+    const pending = await postApproval();
+    const approved = await postApproval();
+    await answer(approved.itemId, SECRET_APPROVAL_CODE.APPROVE);
+    const gone = await postApproval();
+    await answer(gone.itemId, SECRET_APPROVAL_CODE.APPROVE);
+    assert.equal(consumeWrite(gone), gone.requestId);
+    const plainSessionId = await seedSession();
+    const plainItemId = Number(await seedDecision(plainSessionId));
+    const getHeldFacts = (posted: PostedApproval, state: string) => ({
+      state,
+      lineCount: 1,
+      expiresAt: secretRequests.find(posted.requestId)?.expiresAt.toISOString(),
+      path: writePath,
+      rule: "SEC-013",
+      agentType: "glass-atrium-dev-node",
+      requestId: posted.requestId,
+    });
+    const rows = [
+      { name: "pending", itemId: pending.itemId, sessionId: pending.sessionId, facts: getHeldFacts(pending, "pending") },
+      { name: "approved", itemId: approved.itemId, sessionId: approved.sessionId, facts: getHeldFacts(approved, "approved") },
+      { name: "gone after its consume", itemId: gone.itemId, sessionId: gone.sessionId, facts: { state: "gone", lineCount: null, expiresAt: null, path: null, rule: null, agentType: null, requestId: null } },
+      { name: "not a scan approval", itemId: plainItemId, sessionId: plainSessionId, facts: null },
+    ];
+    const capturedTexts = [pending, approved, gone].flatMap((posted) => [posted.line, getLineHash(posted.line)]).concat("a3f9c2d17b4e8f05");
+    const forbiddenKeys = ["hash", "hashes", "lines", "sessionId", "agentId", "agent", "id"];
+    for (const row of rows) {
+      const payloads = [
+        await send("GET", `/api/queue/owner/items?sessionId=${row.sessionId}`),
+        await send("GET", `/api/queue/owner/orders?kind=item&sessionIds=${row.sessionId}`),
+        await send("GET", `/api/queue/owner/items/${row.itemId}`),
+      ];
+      const [listed, done, detail] = payloads.map((response) => response.json());
+      const views = [...listed.items, ...done.items].filter((item: { id: number }) => item.id === row.itemId).concat(detail);
+      const facts = views.map((view: { scanApproval: Record<string, unknown> | null }) => view.scanApproval);
+      assert.ok(views.length >= 2, `${row.name}: the item is in neither owner list`);
+      assert.deepEqual(facts, views.map(() => row.facts), row.name);
+      assert.deepEqual(facts.flatMap((fact) => Object.keys(fact ?? {}).filter((key) => forbiddenKeys.includes(key))), [], row.name);
+      assert.deepEqual(payloads.map((response) => capturedTexts.filter((text) => response.body.includes(text))), payloads.map(() => []), row.name);
+    }
+  });
+
   test("the session's withdraw removes its item's request, pending or approved; a refused withdraw keeps it", async () => {
     const rows = [
       { name: "open item, pending request", prepare: async (_: PostedApproval) => {}, status: 200, isKept: false },

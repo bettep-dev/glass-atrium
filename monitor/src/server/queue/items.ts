@@ -1,7 +1,10 @@
 // Queue items, session side: post, get by id (owning session only), the source facts of a pull claim, and the count-only badge numbers.
 
+import { setTimeout } from "node:timers/promises";
+
 import { Prisma, type QueueItem, type QueueItemKind } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
+import { logger } from "../logger.js";
 import type { PullClaim } from "./delivery.js";
 import { QueueRequestError } from "./errors.js";
 import { ITEM_IMAGES_ARGS, type SessionImageView, getSessionImageViews } from "./images.js";
@@ -11,6 +14,8 @@ import { SECRET_REQUEST_LIMIT, secretRequests } from "./scan-approvals.js";
 import type { PostItemBody, SecretApprovalBody } from "./schemas.js";
 
 const APPROVE_LABEL = "Approve this write once";
+
+const UNLINKED_ITEM_DELETE = { ATTEMPTS: 3, PAUSE_MS: 100 } as const;
 
 /** A secret-approval item's two option codes; the owner's answer with one of them approves or declines the linked request. */
 export const SECRET_APPROVAL_CODE = { APPROVE: "R1", DECLINE: "R2" } as const;
@@ -65,7 +70,7 @@ export interface QueueCount {
 }
 
 export async function createItem(body: PostItemBody): Promise<{ id: number }> {
-  return getPrisma().$transaction(async (tx) => {
+  const created = await getPrisma().$transaction(async (tx) => {
     if ((await lockSession(tx, body.sessionId)) === null) {
       throw new QueueRequestError(404, "unknown_session", "session not registered");
     }
@@ -74,6 +79,8 @@ export async function createItem(body: PostItemBody): Promise<{ id: number }> {
     const item = await tx.queueItem.create({ data: buildItemRow(body) });
     return { id: Number(item.id) };
   });
+  if (body.kind === "secret-approval") await linkSecretRequest(created.id, body.requestId);
+  return created;
 }
 
 /** A relay's first fetch is stamped → a relay read without a claim still counts toward its reader's hop. */
@@ -127,16 +134,41 @@ export async function assertLinkedDocsExist(tx: Prisma.TransactionClient, linked
   if (row?.found !== linkedDocIds.length) throw new QueueRequestError(400, "unknown_linked_doc", "every linked doc id must exist");
 }
 
-/** Pending, this session's, unlinked; the caller's session lock serializes its posts → no racing link between read and insert. */
+/** Pending, this session's, under the linked ceiling, no item yet; the caller's session lock serializes its posts → no racing link between read and insert. */
 async function assertSecretRequestLinkable(tx: Prisma.TransactionClient, body: SecretApprovalBody): Promise<void> {
   const request = secretRequests.find(body.requestId);
   // another session's request answers the same as a missing one → no existence leak; Postgres uuid ignores letter case
   if (request === null || request.sessionId.toLowerCase() !== body.sessionId.toLowerCase()) {
     throw new QueueRequestError(404, "unknown_secret_request", "scan approval request not found for this session");
   }
-  secretRequests.assertPending(body.requestId);
+  secretRequests.assertLinkable(body.requestId);
   const linked = await tx.queueItem.findUnique({ where: { secretRequestId: body.requestId }, select: { id: true } });
   if (linked !== null) throw new QueueRequestError(409, "secret_request_linked", "scan approval request already has its item");
+}
+
+/** Links the request once its item has committed; a request lapsed or a ceiling reached by then → the item is removed and the post fails with the link error. */
+async function linkSecretRequest(itemId: number, requestId: string): Promise<void> {
+  try {
+    secretRequests.link(requestId);
+  } catch (error) {
+    await deleteUnlinkedItem(itemId, requestId);
+    throw error;
+  }
+}
+
+/** A few tries against a transient database error; an item still left names a request the store no longer holds → one error log: the ids and the database error, never a line. */
+async function deleteUnlinkedItem(itemId: number, requestId: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= UNLINKED_ITEM_DELETE.ATTEMPTS; attempt += 1) {
+    if (attempt > 1) await setTimeout(UNLINKED_ITEM_DELETE.PAUSE_MS);
+    try {
+      await getPrisma().queueItem.delete({ where: { id: BigInt(itemId) } });
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  logger.error({ err: lastError, itemId, requestId }, "secret-approval item left after its refused link — its removal failed, the item names a request the store does not hold");
 }
 
 function buildItemRow(body: PostItemBody): Prisma.QueueItemUncheckedCreateInput {

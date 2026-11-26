@@ -1006,19 +1006,19 @@ describe("queue filter bar", () => {
     });
   }
 
-  // one account and no account filter → nothing to choose: no bar, the first band follows the head
+  // one account and no account filter → nothing to choose: no Account filter in the bar, which holds the phone's statement on names alone
   const cardRows = [
-    { name: "open items of two accounts draw the bar", open: items, done: [], filter: { profile: "" }, hasBar: true },
-    { name: "an open and a done item of two accounts draw the bar", open: [items[0]], done: [{ ...items[1], id: 3, status: "seen", closedAt: "2026-11-10T07:00:00.000Z" }], filter: { profile: "" }, hasBar: true },
-    { name: "one account and no account filter draw no bar", open: [items[0]], done: [], filter: { profile: "" }, hasBar: false },
-    { name: "an applied account filter draws the bar whatever is loaded", open: [items[0]], done: [], filter: { profile: "personal" }, hasBar: true },
+    { name: "open items of two accounts draw the Account filter", open: items, done: [], filter: { profile: "" }, hasFilter: true },
+    { name: "an open and a done item of two accounts draw the Account filter", open: [items[0]], done: [{ ...items[1], id: 3, status: "seen", closedAt: "2026-11-10T07:00:00.000Z" }], filter: { profile: "" }, hasFilter: true },
+    { name: "one account and no account filter draw no Account filter", open: [items[0]], done: [], filter: { profile: "" }, hasFilter: false },
+    { name: "an applied account filter draws the Account filter whatever is loaded", open: [items[0]], done: [], filter: { profile: "personal" }, hasFilter: true },
   ];
   for (const row of cardRows) {
     test(`the list card: ${row.name}`, () => {
       const { queue } = buildQueue();
       const loaded = { ...withList(queue, row.open), filter: row.filter, done: { ...queue.done, thread: { ...queue.done.thread, items: row.done } } };
       const [card] = findNodes(render("QueueListQ", { queue: loaded }), (node) => node.props?.atom === "Card");
-      assert.equal(Boolean(card?.props.bar), row.hasBar);
+      assert.equal(findNodes(renderScreen(card?.props.bar) as RenderedNode, (node) => node.props?.atom === "FilterBar").length, row.hasFilter ? 1 : 0);
     });
   }
 
@@ -1185,7 +1185,7 @@ describe("done items in the one list", () => {
       [collectText(tag as RenderedNode), findNodes(tag as RenderedNode, (node) => node.props?.atom === "Badge").length, byClass(tag as RenderedNode, "queue-row-kind")[0]?.props.title, collectText(fact as RenderedNode), fact?.props.title, age?.props.title],
       ["Withdrawn", 0, "The session withdrew it.", "Report", undefined, "11-19 14:30"],
     );
-    assert.match(label, /^Report from atrium: Deploy 65 finished, Withdrawn, ended \S+ ago$/);
+    assert.match(label, /^Report from atrium \(self-named\): Deploy 65 finished, Withdrawn, ended \S+ ago$/);
   });
 
   test("the done read asks the history read for kind item, scoped by the ticks and the account", async () => {
@@ -1485,23 +1485,24 @@ describe("relays in the Done part", () => {
   // a refused relay's row (layout §1, §5): its sender, `→` its recipients and the reason's name; a name by id prefix from the loaded relays, else the rail's rows, else the id
   const GERSONA = FIXTURE_SESSION_IDS.gersona.slice(0, 8);
   const YOAIDA = FIXTURE_SESSION_IDS.yoaida.slice(0, 8);
-  const railRows = [{ sessionIdPrefix: GERSONA, name: "gersona" }, { sessionIdPrefix: YOAIDA, name: "yoaida" }];
-  // a send from GERSONA whose name is the peer's own writing, to a session that is not GERSONA
+  const railRows = [{ sessionIdPrefix: GERSONA, name: "gersona", isNameRegistered: true, cwdTail: "Users/owner" }, { sessionIdPrefix: YOAIDA, name: "yoaida", isNameRegistered: true, cwdTail: "Users/owner" }];
+  const startDirectoryRail = railRows.map((session) => ({ ...session, isNameRegistered: false }));
+  // a send from GERSONA under the name its session registered, to a session that is not GERSONA
   const sentAs = (selfDeclaredName: string) => [{ ...FORWARDED[0]!, relay: { ...FORWARDED[0]!.relay!, sender: { ...FORWARDED[0]!.relay!.sender, sessionIdPrefix: GERSONA, selfDeclaredName } } }];
+  // every registered name is the session's own writing → marked, the recipient bare in the title cell and in words in the accessible name
+  const BOTH_NAMED = { who: "gersona", isMarked: true, title: "→ yoaida Too many to one session", label: "Refused relay from gersona (self-named) to yoaida (self-named): Too many to one session" };
   const refusedRows = [
-    { name: "named by the loaded relays", refusal: REFUSAL, items: relays.items, rail: [], shape: { who: "gersona", isMarked: false, title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" } },
-    { name: "named by the rail's rows when no loaded relay names them", refusal: REFUSAL, items: [], rail: railRows, shape: { who: "gersona", isMarked: false, title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" } },
+    { name: "named by the loaded relays", refusal: REFUSAL, items: relays.items, rail: [], shape: BOTH_NAMED },
+    { name: "named by the rail's rows when no loaded relay names them", refusal: REFUSAL, items: [], rail: railRows, shape: BOTH_NAMED },
+    { name: "named by the rail's start-directory names → no mark", refusal: REFUSAL, items: [], rail: startDirectoryRail, shape: { who: "gersona", isMarked: false, title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" } },
     { name: "named by neither → its ids", refusal: REFUSAL, items: [], rail: [], shape: { who: GERSONA, isMarked: false, title: `→ ${YOAIDA} Too many to one session`, label: `Refused relay from ${GERSONA} to ${YOAIDA}: Too many to one session` } },
+    { name: "named only by a loaded relay's sender name", refusal: REFUSAL, items: sentAs("gersona"), rail: railRows.slice(1), shape: BOTH_NAMED },
     {
-      name: "named only by a loaded relay's own sender name → that name marked as self-named", refusal: REFUSAL, items: sentAs("gersona"), rail: railRows.slice(1),
-      shape: { who: "gersona", isMarked: true, title: "→ yoaida Too many to one session", label: "Refused relay from gersona (self-named) to yoaida: Too many to one session" },
+      name: "the rail's read of a name wins where a loaded relay's read differs, and that relay's name copying the recipient's shows both ids", refusal: REFUSAL, items: sentAs("yoaida"), rail: railRows,
+      shape: { who: "gersona", isMarked: true, title: `${GERSONA} → yoaida ${YOAIDA} Too many to one session`, label: `Refused relay from gersona (self-named) · ${GERSONA} to yoaida (self-named) · ${YOAIDA}: Too many to one session` },
     },
-    {
-      name: "a peer-written name never replaces the rail's name for its session", refusal: REFUSAL, items: sentAs("yoaida"), rail: railRows,
-      shape: { who: "gersona", isMarked: false, title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" },
-    },
-    { name: "to several → their count", refusal: { ...REFUSAL!, recipientIdPrefixes: [YOAIDA, GERSONA] }, items: relays.items, rail: [], shape: { who: "gersona", isMarked: false, title: "→ 2 sessions Too many to one session", label: "Refused relay from gersona to 2 sessions: Too many to one session" } },
-    { name: "to no resolvable session → the unknown count", refusal: { ...REFUSAL!, reason: "sender_cap", recipientIdPrefixes: [], unresolvedCount: 1 }, items: relays.items, rail: [], shape: { who: "gersona", isMarked: false, title: "→ 1 unknown recipient Too many from one session", label: "Refused relay from gersona to 1 unknown recipient: Too many from one session" } },
+    { name: "to several → their count", refusal: { ...REFUSAL!, recipientIdPrefixes: [YOAIDA, GERSONA] }, items: relays.items, rail: [], shape: { who: "gersona", isMarked: true, title: "→ 2 sessions Too many to one session", label: "Refused relay from gersona (self-named) to 2 sessions: Too many to one session" } },
+    { name: "to no resolvable session → the unknown count", refusal: { ...REFUSAL!, reason: "sender_cap", recipientIdPrefixes: [], unresolvedCount: 1 }, items: relays.items, rail: [], shape: { who: "gersona", isMarked: true, title: "→ 1 unknown recipient Too many from one session", label: "Refused relay from gersona (self-named) to 1 unknown recipient: Too many from one session" } },
   ];
   for (const row of refusedRows) {
     test(`a refused relay's row: ${row.name}, Refused its tag and Relay its fact, no badge, the tip its Done relay siblings carry`, () => {
@@ -1582,10 +1583,10 @@ describe("relays in the Done part", () => {
     assert.deepEqual(
       {
         head: flatText(head as RenderedNode), title: collectText(title as RenderedNode), date: flatText(byClass(tree, "queue-date-line")[0] as RenderedNode),
-        parts: ["From gersona · 25a65a54", "To yoaida · fa32c7cb", "Too many to one session — gersona hit the hourly limit for yoaida.", "Its text was not stored."].map((part) => body.includes(part)),
+        parts: ["From gersona (self-named) · 25a65a54", "To yoaida (self-named) · fa32c7cb", "Too many to one session — gersona (self-named) hit the hourly limit for yoaida (self-named).", "Its text was not stored."].map((part) => body.includes(part)),
         crit: findNodes(byClass(tree, "queue-date-line")[0] as RenderedNode, (node) => node.props?.className === "text-crit").map(flatText),
       },
-      { head: "Relay from gersona → to yoaida", title: "Refused relay from gersona to yoaida", date: "✕ Refused 2026-11-13 12:00 KST", parts: [true, true, true, true], crit: ["✕"] },
+      { head: "Relay from gersona (self-named) → to yoaida (self-named)", title: "Refused relay from gersona (self-named) to yoaida (self-named)", date: "✕ Refused 2026-11-13 12:00 KST", parts: [true, true, true, true], crit: ["✕"] },
     );
   });
 
@@ -2636,6 +2637,50 @@ function renderRail(sessions: Record<string, unknown> = {}) {
 
 const railRowOf = (tree: RenderedNode, id: string) => findNodes(tree, (node) => node.props?.["data-session"] === id)[0] as RenderedNode;
 
+// one page-drawn statement heads the rail in every state, read in place → never a tooltip, never hidden from a reader
+const RAIL_STATEMENT = "Session names are written by the sessions themselves and are not checked. Only the id identifies a session.";
+describe("the rail's statement on names", () => {
+  const regions = [
+    { name: "while the rail loads", region: { status: "loading", data: null, error: null, busy: false } },
+    { name: "while the rail cannot be read", region: { status: "error", data: null, error: { sentence: "The list could not be read.", next: "Retry.", detail: "503" }, busy: false } },
+    { name: "with no session", region: { status: "ready", data: { sessions: [], hasMore: false }, error: null, busy: false } },
+    { name: "with sessions and Ended closed", region: buildSessions().region },
+  ];
+  for (const row of regions) {
+    test(`the rail's head says names are the sessions' own unchecked writing and only the id identifies a session, ${row.name}`, () => {
+      const { queue } = buildQueue({ sessions: buildSessions({ region: row.region }) });
+      const [card] = findNodes(render("SessionsRegionQ", { queue: withList(queue, []) }), (node) => node.props?.atom === "Card");
+      const bar = renderScreen(card?.props.bar) as RenderedNode;
+      const concealed = findNodes(bar, (node) => ["aria-hidden", "hidden", "title"].some((key) => node.props?.[key] !== undefined));
+      assert.deepEqual([bar.type, collectText(bar), concealed.length], ["p", RAIL_STATEMENT, 0]);
+    });
+  }
+});
+
+// SR-3b: a sheet that draws its session's name past its head states once that names are unchecked; a sheet whose one name is its head states nothing
+const SHORT_STATEMENT = "Names are self-written and unchecked. Only the id identifies a session.";
+describe("the sheet's statement on names", () => {
+  const relaySender = { sessionIdPrefix: "9d2f4c10", profileLabel: "work", selfDeclaredName: "gersona", cwdTail: "git/gersona" };
+  const rows = [
+    { name: "an open decision", item: buildItem(), isNamedInBody: false },
+    { name: "a relay to its recipient", item: buildItem({ kind: "relay", status: "answered", options: [], sendId: "relay-send-7", relay: { hop: 0, parent: null, sender: relaySender, fetchedAt: null, redaction: null, lapsedAt: null } }), isNamedInBody: true },
+    { name: "an answered decision its live session gets at its next turn", item: buildItem({ status: "answered", answeredAt: "2026-11-10T06:20:00.000Z", answer: { code: "R2", text: null }, session: buildSession({ state: "live" }) }), isNamedInBody: true },
+    { name: "a decision its session did not acknowledge", item: buildItem({ status: "unacked", answeredAt: "2026-11-10T06:20:00.000Z", answer: { code: "R2", text: null } }), isNamedInBody: true },
+  ];
+  for (const row of rows) {
+    test(`${row.name} states it ${row.isNamedInBody ? "once, as a plain line outside the body" : "nowhere"}, as its body ${row.isNamedInBody ? "names" : "does not name"} the session`, () => {
+      const tree = renderSheet({ item: row.item, queue: buildQueue().queue });
+      const [body] = byClass(tree, "card-body");
+      const notes = findNodes(tree, (node) => typeof node.type === "string" && collectText(node) === SHORT_STATEMENT && (node.children ?? []).every((child) => typeof child === "string"));
+      const concealed = notes.flatMap((note) => ["aria-hidden", "hidden", "title", "aria-live", "role"].filter((key) => note.props?.[key] !== undefined));
+      assert.deepEqual(
+        { isNamedInBody: collectText(body!).includes(row.item.session.name), notes: notes.map((note) => note.type), concealed, isInBody: notes.some((note) => findNodes(body!, (node) => node === note).length > 0) },
+        { isNamedInBody: row.isNamedInBody, notes: row.isNamedInBody ? ["p"] : [], concealed: [], isInBody: false },
+      );
+    });
+  }
+});
+
 describe("sessions rail rows", () => {
   test("a row shows the registered name, and a nameless row shows its start-directory name marked as such", () => {
     const { tree } = renderRail({ isEndedShown: true });
@@ -2754,12 +2799,6 @@ describe("sessions rail rows", () => {
   test("ticking adds a row and ticking it again removes it, keeping the other ticks", () => {
     assert.deepEqual(call("putToggledIdQ", [SESSION_ID], ENDED_ID), [SESSION_ID, ENDED_ID]);
     assert.deepEqual(call("putToggledIdQ", [SESSION_ID, ENDED_ID], SESSION_ID), [ENDED_ID]);
-  });
-
-  test("ended rows stay folded until the Ended band is open", () => {
-    const ids = (isEndedShown: boolean) => call<Array<{ id: string }>>("getShownSessionsQ", SESSION_ROWS, isEndedShown).map((row) => row.id);
-    assert.deepEqual(ids(false), [SESSION_ID]);
-    assert.deepEqual(ids(true), [SESSION_ID, ENDED_ID, REPLACED_ID]);
   });
 
   test("the waiting count is the row's count atom in the tag fill, never solid, and a session with nothing waiting shows none", () => {
@@ -4160,7 +4199,7 @@ describe("In delivery rows", () => {
     const [option] = findNodes(tree, (node) => node.props?.role === "option");
     const slots = (option?.children ?? []).flatMap((child) => (typeof child === "object" && child !== null ? [String((child as RenderedNode).props?.className ?? "")] : []));
     const empty = ["queue-row-tag", "queue-row-fact"].map((name) => collectText(byClass(tree, name)[0] as RenderedNode));
-    assert.deepEqual([slots, collectText(byClass(tree, "queue-row-who")[0] as RenderedNode), empty], [["queue-row-who", "queue-row-title", "queue-row-tag", "queue-row-fact", "queue-row-age", "queue-row-chevron"], "gersona", ["", ""]]);
+    assert.deepEqual([slots, collectText(byClass(tree, "queue-row-who")[0] as RenderedNode), empty], [["queue-row-who", "queue-row-title", "queue-row-tag", "queue-row-fact", "queue-row-age", "queue-row-chevron block"], "gersona self", ["", ""]]);
   });
 
   // spec §4.2: what is off the row — the account, a name's start-directory mark — stays in the row's title and accessible name
@@ -4202,24 +4241,43 @@ describe("In delivery rows", () => {
     });
   }
 
-  // one sender reads as one name on every row; a self-declared name adds the page's own mark beside it, never in it
-  test("a sender's name reads the same on its decision row and its relay row; only a self-declared name adds the self mark, its words in the tooltips", () => {
-    const relay = getRelayThreadFixture().items.find((copy) => copy.id === 398)!;
-    const decision = buildItem({ session: buildSession({ name: "atrium" }) });
-    const unnamed = { ...relay, relay: { ...relay.relay!, sender: { ...relay.relay!.sender, selfDeclaredName: null } } };
-    const cellOf = (item: unknown) => {
-      const tree = render("RowWhoQ", { row: { id: 1, item, copies: [item] } });
+  // one row rule: every name a session wrote for itself takes the page's own mark beside it, never in it; a start directory, an id or a count never
+  const relay398 = getRelayThreadFixture().items.find((copy) => copy.id === 398)!;
+  const markedCell = (name: string) => ({ name, tip: `${name} (self-named)`, mark: { text: "self", tip: "self-named", isHidden: true }, isMarkInName: false });
+  const unmarkedCell = (name: string) => ({ name, tip: name, mark: undefined, isMarkInName: false });
+  const rowMarks = [
+    { name: "a decision from a registered name", item: buildItem({ session: buildSession({ name: "atrium" }) }), copies: 1, cell: markedCell("atrium") },
+    { name: "a report from a registered name", item: buildItem({ kind: "report", session: buildSession({ name: "atrium" }) }), copies: 1, cell: markedCell("atrium") },
+    { name: "a relay from a registered sender", item: relay398, copies: 1, cell: markedCell("atrium") },
+    { name: "a decision from a start-directory name", item: buildItem({ session: buildSession({ name: "atrium-hooks", isNameRegistered: false }) }), copies: 1, cell: unmarkedCell("atrium-hooks") },
+    { name: "a relay from a sender that registered none", item: { ...relay398, relay: { ...relay398.relay!, sender: { ...relay398.relay!.sender, selfDeclaredName: null } } }, copies: 1, cell: unmarkedCell(relay398.relay!.sender.sessionIdPrefix) },
+    { name: "an order to several registered sessions", item: buildItem({ kind: "message", sendId: "send-1" }), copies: 2, cell: unmarkedCell("2 sessions") },
+  ];
+  for (const row of rowMarks) {
+    test(`row self mark: ${row.name}`, () => {
+      const copies = Array.from({ length: row.copies }, (_, index) => ({ ...row.item, id: row.item.id + index }));
+      const tree = render("RowWhoQ", { row: { id: 1, item: row.item, copies } });
       const [name] = byClass(tree, "queue-row-name");
       const [mark] = byClass(tree, "queue-row-mark");
       const isMarkInName = mark !== undefined && name !== undefined && findNodes(name, (node) => node === mark).length > 0;
-      return { name: collectText(name!), tip: name?.props.title, mark: mark && { text: collectText(mark), tip: mark.props.title, isHidden: mark.props["aria-hidden"] === "true" }, isMarkInName };
-    };
-    assert.deepEqual([cellOf(decision), cellOf(relay), cellOf(unnamed)], [
-      { name: "atrium", tip: "atrium", mark: undefined, isMarkInName: false },
-      { name: "atrium", tip: "atrium (self-named)", mark: { text: "self", tip: "self-named", isHidden: true }, isMarkInName: false },
-      { name: relay.relay!.sender.sessionIdPrefix, tip: relay.relay!.sender.sessionIdPrefix, mark: undefined, isMarkInName: false },
-    ]);
-  });
+      assert.deepEqual({ name: collectText(name!), tip: name?.props.title, mark: mark && { text: collectText(mark), tip: mark.props.title, isHidden: mark.props["aria-hidden"] === "true" }, isMarkInName }, row.cell);
+    });
+  }
+
+  // the row's accessible name replaces its children → it says the mark in words, and a start directory as its own fact
+  const rowLabels = [
+    { name: "a registered decision", item: buildItem(), label: "Decision from glass-atrium (self-named): Pick the migration order" },
+    { name: "a registered report", item: buildItem({ kind: "report", title: "Nightly sweep done" }), label: "Report from glass-atrium (self-named): Nightly sweep done" },
+    { name: "a start-directory decision", item: buildItem({ session: buildSession({ isNameRegistered: false }) }), label: "Decision from glass-atrium: Pick the migration order" },
+  ];
+  for (const row of rowLabels) {
+    test(`row accessible name: ${row.name} reads its sender as the mark says`, () => {
+      const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
+      const [option] = findNodes(render("QueueRowQ", { row: call("getSingleRowQ", row.item), isSelected: false, cols: ["tag", "fact"], view, onSelect: () => undefined, onOrder: () => undefined }), (node) => node.props?.role === "option");
+      const label = String(option?.props["aria-label"]);
+      assert.deepEqual([label.split(", ")[0], label.includes("start directory")], [row.label, row.item.session.isNameRegistered === false]);
+    });
+  }
 });
 
 describe("the sheet's letterhead and record", () => {
@@ -4244,14 +4302,16 @@ describe("the sheet's letterhead and record", () => {
     assert.deepEqual([body?.children[0] === line, collectText(line as RenderedNode).replace(/\s+/g, " ").trim()], [true, "Not received Answered 2026-11-12 21:26 KST"]);
   });
 
+  // the rail's row of the sheet's own session, under the name its items carry
+  const SHEET_SESSIONS = buildSessions({ region: { status: "ready", data: { sessions: [buildSessionRow({ name: "glass-atrium" })], hasMore: false }, error: null, busy: false } });
   test("the sheet's head holds the way back, the kind tag and name as its h2, the position and the stepping", () => {
-    const { calls, queue } = buildQueue({ steps: { index: 0, count: 8, prevId: null, nextId: 7 } });
+    const { calls, queue } = buildQueue({ steps: { index: 0, count: 8, prevId: null, nextId: 7 }, sessions: SHEET_SESSIONS });
     const tree = renderSheet({ item: buildItem(), queue });
     const [head] = byClass(tree, "card-head");
     const buttons = findNodes(head as RenderedNode, (node) => node.type === "button");
     for (const button of buttons) if (!button.props.disabled) (button.props.onClick as () => void)();
     assert.deepEqual(buttons.map((button) => [button.props["aria-label"], button.props.title, Boolean(button.props.disabled)]), [["Back to the list", "Back to the list (Esc)", false], ["Previous item", "Previous item (K)", true], ["Next item", "Next item (J)", false]]);
-    assert.equal(collectText(findNodes(head as RenderedNode, (node) => node.type === "h2")[0] as RenderedNode).replace(/\s+/g, " ").trim(), "Decision from glass-atrium");
+    assert.equal(collectText(findNodes(head as RenderedNode, (node) => node.type === "h2")[0] as RenderedNode).replace(/\s+/g, " ").trim(), "Decision from glass-atrium (self-named)");
     assert.ok(collectText(head as RenderedNode).includes("1 of 8"));
     assert.deepEqual(getPlain(calls), [["back"], ["selectRow", 7]]);
   });
@@ -4296,19 +4356,90 @@ describe("the sheet's letterhead and record", () => {
 
   // the session's facts ride its name; the id or the account shows only while it tells two loaded sessions apart
   const twin = buildSession({ id: "b7c6d5e4-0000-4000-8000-000000000001" });
-  const elsewhere = buildSession({ id: "c1d2e3f4-0000-4000-8000-000000000002", name: "aidl", profileLabel: ".claude-personal" });
+  const elsewhere = buildSession({ id: "c1d2e3f4-0000-4000-8000-000000000002", name: "aidl", profileLabel: ".claude-personal", cwd: "/Users/owner/Desktop/git/aidl", cwdTail: "git/aidl" });
   const nameRows = [
-    { name: "a name no other loaded session carries stands alone", items: [buildItem()], expected: "glass-atrium" },
-    { name: "a name two loaded sessions share takes the 8-character id", items: [buildItem(), buildItem({ id: 42, session: twin })], expected: "glass-atrium · 6f1c2a9e" },
-    { name: "items from more than one account add the account", items: [buildItem(), buildItem({ id: 42, session: elsewhere })], expected: "glass-atrium · work-dev" },
+    { name: "a name no other loaded session carries stands alone", items: [buildItem()], expected: "glass-atrium (self-named)" },
+    { name: "a name two loaded sessions share takes the 8-character id", items: [buildItem(), buildItem({ id: 42, session: twin })], expected: "glass-atrium (self-named) · 6f1c2a9e" },
+    { name: "items from more than one account add the account", items: [buildItem(), buildItem({ id: 42, session: elsewhere })], expected: "glass-atrium (self-named) · work-dev" },
   ];
   for (const row of nameRows) {
     test(`the sheet's session name: ${row.name}`, () => {
-      const { queue } = buildQueue({ list: { status: "ready", data: { items: row.items, nextCursor: null }, newIds: [] } });
+      const { queue } = buildQueue({ list: { status: "ready", data: { items: row.items, nextCursor: null }, newIds: [] }, sessions: SHEET_SESSIONS });
       const [name] = byClass(renderSheet({ item: row.items[0], queue }), "queue-letter-name");
       assert.equal(collectText(name as RenderedNode).replace(/\s+/g, " ").trim(), row.expected);
     });
   }
+
+  // the head is where the owner acts → a registered name is said as the session's own writing, by a page-drawn element beside the name, never in it
+  const headRows = [
+    { name: "a registered decision", item: buildItem(), head: "Decision from glass-atrium (self-named)", suffix: "(self-named)" },
+    { name: "a registered report", item: buildItem({ kind: "report" }), head: "Report from glass-atrium (self-named)", suffix: "(self-named)" },
+    { name: "a start-directory decision", item: buildItem({ session: buildSession({ isNameRegistered: false }) }), head: "Decision from glass-atrium start directory", suffix: null },
+  ];
+  for (const row of headRows) {
+    test(`the sheet's head: ${row.name} reads as its name says who wrote it`, () => {
+      const [head] = byClass(renderSheet({ item: row.item, queue: buildQueue({ sessions: SHEET_SESSIONS }).queue }), "card-head");
+      const [h2] = findNodes(head as RenderedNode, (node) => node.type === "h2");
+      const [name] = byClass(head as RenderedNode, "queue-letter-text");
+      const suffixes = findNodes(head as RenderedNode, (node) => collectText(node).trim() === "(self-named)" && typeof node.props?.className === "string");
+      const isSuffixInName = suffixes.some((suffix) => name !== undefined && findNodes(name, (node) => node === suffix).length > 0);
+      assert.deepEqual(
+        [collectText(h2 as RenderedNode).replace(/\s+/g, " ").trim(), suffixes.map((suffix) => collectText(suffix).trim())[0] ?? null, isSuffixInName],
+        [row.head, row.suffix, false],
+      );
+    });
+  }
+
+  // a name the session wrote can copy another's → every session the page loaded is compared after normalizing, and a name that could be mistaken shows the id
+  const CONFUSED_ID = "5e55a000-1b2c-4d3e-8f4a-5b6c7d8e9f01";
+  const CONFUSED = CONFUSED_ID.slice(0, 8);
+  const OTHER = OTHER_RAIL_ID.slice(0, 8);
+  const OWN = SESSION_ID.slice(0, 8);
+  const railOf = (overrides: Record<string, unknown>) => buildSessionRow({ id: CONFUSED_ID, cwd: "/Users/owner/Desktop/git/yoaida", cwdTail: "git/yoaida", ...overrides });
+  const relayed = getRelayThreadFixture().items.find((copy) => copy.id === 412)!;
+  const relayFrom = (selfDeclaredName: string) => ({ ...relayed, relay: { ...relayed.relay!, sender: { ...relayed.relay!.sender, sessionIdPrefix: CONFUSED, selfDeclaredName, cwdTail: "git/sender" } } });
+  const confusableRows = [
+    { name: "a name and the same name in another case with a trailing space show both ids", items: [buildItem({ session: buildSession({ name: "Gersona" }) })], rail: [railOf({ name: "gersona " })], shown: [CONFUSED, OWN] },
+    { name: "a full-width copy of a name shows both ids", items: [buildItem({ session: buildSession({ name: "ｇｅｒｓｏｎａ" }) })], rail: [railOf({ name: "gersona" })], shown: [CONFUSED, OWN] },
+    { name: "a registered name equal to another session's id prefix shows the id", items: [buildItem({ session: buildSession({ name: OTHER }) })], rail: [buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", cwd: "/Users/owner/Desktop/git/yoaida", cwdTail: "git/yoaida" })], shown: [OTHER, OWN] },
+    { name: "a registered name equal to another session's start-directory name shows the id", items: [buildItem({ session: buildSession({ name: "yoaida" }) })], rail: [railOf({ name: "aidl" })], shown: [CONFUSED, OWN] },
+    { name: "two start-directory names alike show both ids", items: [buildItem({ session: buildSession({ name: "glass-atrium", isNameRegistered: false }) })], rail: [railOf({ name: "glass-atrium", isNameRegistered: false, cwd: "/Users/owner/Desktop/git/glass-atrium", cwdTail: "git/glass-atrium" })], shown: [CONFUSED, OWN] },
+    { name: "a relay sender's name and an Orders recipient's alike show both ids", relays: [relayFrom("Hermes")], orders: [buildItem({ id: 77, kind: "message", status: "delivered", sendId: "s-77", answeredAt: "2026-11-12T12:26:40.118Z", session: buildSession({ name: "hermes" }) })], rail: [], shown: [CONFUSED, OWN] },
+    { name: "unrelated names show none", items: [buildItem({ session: buildSession({ name: "gersona" }) })], rail: [railOf({ name: "yoaida" })], shown: [] },
+    { name: "one session read from several sources is no copy of itself", items: [buildItem({ session: buildSession({ name: "gersona" }) })], rail: [buildSessionRow({ name: "gersona" })], shown: [] },
+  ];
+  for (const row of confusableRows) {
+    test(`the page's names: ${row.name}`, () => {
+      const { queue } = buildQueue({
+        list: { status: "ready", data: { items: row.items ?? [], nextCursor: null }, newIds: [] },
+        relays: { thread: { status: "ready", hasRead: true, items: row.relays ?? [], nextCursor: null, error: null, refusals: [], refusalCutAt: null } },
+        orders: buildOrders({ thread: { status: "ready", items: row.orders ?? [], nextCursor: null, error: null } }),
+        sessions: buildSessions({ region: { status: "ready", data: { sessions: row.rail, hasMore: false }, error: null, busy: false } }),
+      });
+      const names = (screen.getPageNamesQ as (q: unknown) => Map<string, { idPrefix?: string }>)(queue);
+      assert.deepEqual([...names].filter(([, who]) => who.idPrefix !== undefined).map(([prefix, who]) => [prefix, who.idPrefix]).sort(), row.shown.sort().map((prefix) => [prefix, prefix]));
+    });
+  }
+
+  // the id shows in each place the name is drawn, as text beside the name, not only in a tooltip
+  test("a confusable name shows its id on its row, its sheet head, its rail entry and its Orders recipient", () => {
+    const item = buildItem({ session: buildSession({ name: "Gersona" }) });
+    const order = buildItem({ id: 77, kind: "message", status: "delivered", sendId: "s-77", answeredAt: "2026-11-12T12:26:40.118Z", session: buildSession({ name: "Gersona" }) });
+    const sessions = buildSessions({ region: { status: "ready", data: { sessions: [railOf({ name: "gersona " })], hasMore: false }, error: null, busy: false } });
+    const { queue } = buildQueue({ sessions, orders: buildOrders({ thread: { status: "ready", items: [order], nextCursor: null, error: null } }) });
+    const listed = withList(queue, [item]);
+    const [group] = listed.groups as unknown[];
+    const rowTree = render("QueueGroupQ", { group, queue: listed, view: { isNameShown: true, isAccountShown: false, tabStopId: null } });
+    const [option] = findNodes(rowTree, (node) => node.props?.role === "option");
+    const [title] = byClass(rowTree, "queue-row-title");
+    const [head] = byClass(renderSheet({ item, queue: listed }), "queue-letter-name");
+    const [railId] = byClass(railRowOf(renderCard("SessionsRegionQ", { queue: listed }), CONFUSED_ID), "queue-rail-id");
+    const [recipient] = byClass(renderCard("OrdersViewQ", { queue: listed }), "queue-recipient");
+    assert.deepEqual(
+      [String(option?.props["aria-label"]).startsWith(`Decision from Gersona (self-named) · ${OWN}: `), collectText(title as RenderedNode).trim().startsWith(OWN), collectText(head as RenderedNode).replace(/\s+/g, " ").trim(), collectText(railId as RenderedNode).trim(), collectText(recipient as RenderedNode).includes(OWN)],
+      [true, true, `Gersona (self-named) · ${OWN}`, CONFUSED, true],
+    );
+  });
 
   test("the record is no visible line, and a not received answer says why and what to run", () => {
     const text = collectText(render("CardStateQ", { item, cliPath: CLI_PATH }));
@@ -4418,6 +4549,9 @@ describe("the secret-approval card", () => {
   const SCAN_BODY = "Approve this write once (R1) lets the write pass once, within 10 minutes of the answer. Decline (R2) when a line holds a real password or key.";
   const SCAN_PATH = "/Users/owner/Desktop/git/glass-atrium/monitor/src/server/queue/example-config.ts";
   const FAR = "2099-11-27T05:50:00.000Z";
+  const REQUEST_ID = "5ca1ab1e-0000-4000-8000-000000000077";
+  // the list facts the server hands while its store holds the request (owner-views.ts → getScanApprovalFacts)
+  const getHeldFacts = (state: string, expiresAt: string, agentType: string | null = "glass-atrium-dev-front") => ({ state, lineCount: 1, expiresAt, path: SCAN_PATH, rule: "SEC-013", agentType, requestId: REQUEST_ID });
   // harmless parts joined at run time → an assignment the scanner never refuses
   const getLine = (value: string) => ["greeting = ", QUOTE, value, QUOTE, ";"].join("");
   const getRead = (lines: string[], agentType = "glass-atrium-dev-front") => ({
@@ -4430,7 +4564,7 @@ describe("the secret-approval card", () => {
       { code: "R1", label: "Approve this write once", pros: "The refused write lands as written.", cons: "A real secret in a line would be written to the file." },
       { code: "R2", label: "Decline", pros: "Nothing is written and the request is dropped.", cons: "The session rewrites the line." },
     ],
-    scanApproval: { state: "pending", lineCount: 1, expiresAt: FAR }, ...overrides,
+    scanApproval: getHeldFacts("pending", FAR), ...overrides,
   });
   const READY = (lines: string[], agentType?: string) => ({ status: "ready", data: getRead(lines, agentType) });
   const renderCard = (item: unknown, scanRead: unknown = READY([getLine("hello")])) => render("SheetBodyQ", { item, draft: {}, onDraft: () => undefined, cliPath: CLI_PATH, scanRead });
@@ -4523,18 +4657,79 @@ describe("the secret-approval card", () => {
     }
   });
 
-  test("the facts carry the full path, the whole session id, the rule and the agent, none cut", () => {
-    const facts = (agentType: string) => {
-      const [list] = byClass(renderCard(scanItem(), READY([getLine("hello")], agentType)), "scan-facts");
-      const cells = findNodes(list as RenderedNode, (node) => node.type === "dt" || node.type === "dd").map((node) => textOf(node));
-      return Object.fromEntries(cells.flatMap((cell, index) => (index % 2 === 0 ? [[cell, cells[index + 1]]] : [])));
-    };
+  // [label, value] per row, in the sheet's order
+  const factRows = (tree: RenderedNode) => {
+    const cells = byClass(tree, "scan-facts").flatMap((list) => findNodes(list, (node) => node.type === "dt" || node.type === "dd").map((node) => textOf(node)));
+    return cells.flatMap((cell, index) => (index % 2 === 0 ? [[cell, cells[index + 1]]] : []));
+  };
+
+  test("the facts carry the full path, the whole session id, the rule, the agent and the request id, none cut", () => {
+    const facts = (agentType: string) => Object.fromEntries(factRows(renderCard(scanItem(), READY([getLine("hello")], agentType))));
     const shown = facts("glass-atrium-dev-front");
     assert.deepEqual(shown, {
-      File: SCAN_PATH, Rule: "SEC-013 credential assignment", Session: `glass-atrium ${SESSION_ID}`, Agent: "glass-atrium-dev-front",
+      File: SCAN_PATH, Rule: "SEC-013 credential assignment", Session: `glass-atrium ${SESSION_ID}`, Agent: "glass-atrium-dev-front", Request: REQUEST_ID,
       Approval: "Once, within 10 minutes of your yes", Waits: `Until ${call<string>("getEndTimeQ", FAR)}`,
     });
     assert.deepEqual([Object.values(shown).some((value) => String(value).includes("…")), facts("").Agent], [false, "Main session"]);
+  });
+
+  // the scan read answers only while the request waits → the list facts carry what an approval binds; a gone request carries none
+  describe("without the scan read the facts come from the list while the store holds the request", () => {
+    const UNTIL = "2099-11-26T06:04:00.000Z";
+    const approved = (facts: unknown) => scanItem({ status: "answered", answeredAt: "2026-11-26T05:54:00.000Z", answer: { code: "R1", text: null }, scanApproval: facts });
+    const session = ["Session", `glass-atrium ${SESSION_ID}`];
+    const rows = [
+      {
+        name: "approved, window open", item: approved(getHeldFacts("approved", UNTIL)),
+        expected: [["File", SCAN_PATH], ["Rule", "SEC-013 credential assignment"], session, ["Agent", "glass-atrium-dev-front"], ["Request", REQUEST_ID], ["Approval", "Once, until 15:04"]],
+      },
+      {
+        name: "approved for the main session", item: approved(getHeldFacts("approved", UNTIL, null)),
+        expected: [["File", SCAN_PATH], ["Rule", "SEC-013 credential assignment"], session, ["Agent", "Main session"], ["Request", REQUEST_ID], ["Approval", "Once, until 15:04"]],
+      },
+      {
+        name: "pending, the lines still reading", item: scanItem(), read: { status: "loading", data: null },
+        expected: [["File", SCAN_PATH], ["Rule", "SEC-013 credential assignment"], session, ["Agent", "glass-atrium-dev-front"], ["Request", REQUEST_ID], ["Approval", "Once, within 10 minutes of your yes"], ["Waits", `Until ${call<string>("getEndTimeQ", FAR)}`]],
+      },
+      {
+        name: "approved, then gone", item: approved({ state: "gone", lineCount: null, expiresAt: null, path: null, rule: null, agentType: null, requestId: null }),
+        expected: [],
+      },
+    ];
+    for (const row of rows) test(row.name, () => assert.deepEqual(factRows(renderCard(row.item, row.read ?? { status: "loading", data: null })), row.expected));
+  });
+
+  describe("the sheet's own scan read", () => {
+    // one mount of the hook with its effects run and the reply settled
+    const runRead = async (item: unknown, status: number) => {
+      const paths: string[] = [];
+      let reloads = 0;
+      const stateful = createStatefulReact();
+      const page = (await loadScreenModule(QUEUE_SRC, {
+        React: stateful.react, URLSearchParams, window: { UI: uiStub(), location: { hash: "#queue" } },
+        fetch: async (path: string) => { paths.push(path); return { status, json: async () => (status === 200 ? getRead([getLine("hello")]) : { error: "secret_request_gone" }) }; },
+      })) as ScreenModule;
+      stateful.resetCursor();
+      (page.useScanReadQ as (item: unknown, onGone: () => void) => unknown)(item, () => { reloads += 1; });
+      stateful.flushEffects();
+      await new Promise((resolve) => setImmediate(resolve));
+      return { paths, reloads };
+    };
+
+    test("after the yes no request reaches the scan read route", async () => {
+      const item = scanItem({ status: "answered", answeredAt: "2026-11-26T05:54:00.000Z", answer: { code: "R1", text: null }, scanApproval: getHeldFacts("approved", FAR) });
+      assert.deepEqual(await runRead(item, 409), { paths: [], reloads: 0 });
+    });
+
+    // the list still read pending → a 409 means the store dropped it: the list's next read shows that state at once
+    const rows = [
+      { name: "a 409 re-reads the list at once", status: 409, reloads: 1 },
+      { name: "the lines on screen re-read nothing", status: 200, reloads: 0 },
+      { name: "an outage re-reads nothing", status: 503, reloads: 0 },
+    ];
+    for (const row of rows) {
+      test(row.name, async () => assert.deepEqual(await runRead(scanItem(), row.status), { paths: ["/api/queue/owner/items/77/scan-approval"], reloads: row.reloads }));
+    }
   });
 
   test("the warning line stands directly above the options and the item body is not drawn", () => {

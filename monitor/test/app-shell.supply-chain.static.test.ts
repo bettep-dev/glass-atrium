@@ -101,6 +101,36 @@ describe("the shell CSP allows exactly the scripts the shell runs", () => {
   });
 });
 
+describe("the shell CSP refuses every fetch kind it does not name", () => {
+  test("default-src is 'none' — a fetch kind with no directive of its own loads nothing", () => {
+    assert.deepEqual(getDirectives().get("default-src"), ["'none'"]);
+  });
+
+  // the Tailwind runtime, mermaid's SVG and document bodies write <style> elements at run time → no hash can name them
+  // a source names origin + path only → the Google Fonts query (it holds ";") stays out of the policy
+  test("style-src is self, each external stylesheet by origin and path, and inline for the style elements written at run time", () => {
+    const stylesheets = root.querySelectorAll('link[rel="stylesheet"]').map((node) => node.getAttribute("href") ?? "");
+    const external = stylesheets.filter((href) => /^https?:/.test(href)).map((href) => {
+      const url = new URL(href);
+      return `${url.origin}${url.pathname}`;
+    });
+    assert.ok(external.length > 0, "no external stylesheet found — the URL arm would be vacuous");
+    const expected = ["'self'", "'unsafe-inline'", ...external];
+    assert.deepEqual([...(getDirectives().get("style-src") ?? [])].sort(), [...expected].sort());
+  });
+
+  test("images come only from this origin and from the data: and blob: URLs the page builds itself", () => {
+    assert.deepEqual([...(getDirectives().get("img-src") ?? [])].sort(), ["'self'", "blob:", "data:"]);
+  });
+
+  test("fonts come only from the font folders the two external font stylesheets point at", () => {
+    assert.deepEqual([...(getDirectives().get("font-src") ?? [])].sort(), [
+      "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/static/",
+      "https://fonts.gstatic.com/s/jetbrainsmono/",
+    ]);
+  });
+});
+
 describe("the Tailwind runtime is the vendored file its sidecar pins", () => {
   const provenance = JSON.parse(readFileSync(PATH.TAILWIND_PROVENANCE, "utf8")) as TailwindProvenance;
 
