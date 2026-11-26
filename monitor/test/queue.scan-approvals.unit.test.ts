@@ -1,4 +1,4 @@
-// Secret-scan approval store: the canonical line hash against the shared vectors, register / approve / delete /
+// Secret-scan approval store: the canonical line hash against the shared vectors, register / link / approve / delete /
 // consume / expiry, and the owner's display form with its value cue.
 // Runner: npx tsx --test test/queue.scan-approvals.unit.test.ts (no database)
 
@@ -21,6 +21,7 @@ import {
 const FIELD_LENGTH = SECRET_REQUEST_LIMIT.FIELD_LENGTH;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
+const { UNLINKED_MS, LINKED_MS } = SECRET_REQUEST_LIMIT;
 const VECTORS: { lines: Array<{ name: string; text: string; sha256: string }> } = JSON.parse(
   readFileSync(new URL("../../hooks/test/fixtures/scan-approval-vectors.json", import.meta.url), "utf8"),
 );
@@ -79,7 +80,7 @@ describe("canonical line hash", () => {
 });
 
 describe("register", () => {
-  test("a request whose hashes match its lines is held pending for 24 hours under the write's tuple", () => {
+  test("a request whose hashes match its lines is held pending for 15 minutes under the write's tuple", () => {
     const { store, clock } = createStore();
     const input = buildInput([LINE.host]);
 
@@ -94,7 +95,7 @@ describe("register", () => {
       rule: "SEC-013",
       hashes: [sha256(LINE.host)],
       createdAt: clock.at,
-      expiresAt: new Date(clock.at.getTime() + 24 * HOUR_MS),
+      expiresAt: new Date(clock.at.getTime() + 15 * MINUTE_MS),
     });
   });
 
@@ -202,12 +203,85 @@ describe("register caps", () => {
 
     assert.equal(repeat, ids[0]);
   });
+
+  test("a full session and a full machine refuse the new request and keep every existing request of every session", () => {
+    const { store } = createStore();
+    const sessionId = randomUUID();
+    const ids = Array.from({ length: SECRET_REQUEST_LIMIT.SESSION_REQUESTS }, (_, i) => store.create(buildInput([`retries = ${i}`], { sessionId })));
+    const others = SECRET_REQUEST_LIMIT.MACHINE_REQUESTS - ids.length;
+    ids.push(...Array.from({ length: others }, (_, i) => store.create(buildInput([`timeout = ${i}`], { sessionId: randomUUID() }))));
+
+    const codes = [
+      getRefusalCode(() => store.create(buildInput([LINE.host], { sessionId }))),
+      getRefusalCode(() => store.create(buildInput([LINE.host], { sessionId: randomUUID() }))),
+    ];
+
+    assert.deepEqual(codes, ["secret_request_cap", "secret_request_cap"]);
+    assert.deepEqual(ids.filter((id) => store.find(id) === null), []);
+  });
+
+  test("linked requests leave the session and machine caps: one session holding a machine cap of linked requests still registers", () => {
+    const { store } = createStore();
+    const sessionId = randomUUID();
+    for (let i = 0; i < SECRET_REQUEST_LIMIT.MACHINE_REQUESTS; i += 1) store.link(store.create(buildInput([`retries = ${i}`], { sessionId })));
+
+    assert.equal(typeof store.create(buildInput([LINE.host], { sessionId })), "string");
+  });
+
+  test("past the machine ceiling of linked requests a link is refused and the request keeps its 15-minute lapse", () => {
+    const { store, clock } = createStore();
+    for (let i = 0; i < SECRET_REQUEST_LIMIT.LINKED_REQUESTS; i += 1) store.link(store.create(buildInput([`retries = ${i}`], { sessionId: randomUUID() })));
+    const id = store.create(buildInput([LINE.host]));
+
+    const code = getRefusalCode(() => store.link(id));
+
+    assert.deepEqual({ code, expiresAt: store.find(id)?.expiresAt }, { code: "secret_request_link_cap", expiresAt: new Date(clock.at.getTime() + UNLINKED_MS) });
+  });
+});
+
+describe("link", () => {
+  test("linking moves the expiry to 24 hours after the request's creation, however late it links", () => {
+    const { store, clock, advance } = createStore();
+    const createdAt = clock.at;
+    const id = store.create(buildInput([LINE.host]));
+    advance(10 * MINUTE_MS);
+
+    store.link(id);
+
+    assert.deepEqual(store.find(id)?.expiresAt, new Date(createdAt.getTime() + 24 * HOUR_MS));
+  });
+
+  test("a repeat registration never moves an expiry: a repeat at minute 14 still lapses at minute 15", () => {
+    const { store, advance } = createStore();
+    const input = buildInput([LINE.host]);
+    const id = store.create(input);
+    advance(14 * MINUTE_MS);
+    store.create(input);
+    advance(MINUTE_MS);
+
+    assert.equal(store.find(id), null);
+  });
+
+  const refusals: Array<{ name: string; arrange: (fixture: ReturnType<typeof createStore>) => string; code: string }> = [
+    { name: "a request past its 15-minute lapse", arrange: ({ store, advance }) => { const id = store.create(buildInput([LINE.host])); advance(UNLINKED_MS); return id; }, code: "secret_request_gone" },
+    { name: "a declined request", arrange: ({ store }) => { const id = store.create(buildInput([LINE.host])); store.delete(id); return id; }, code: "secret_request_gone" },
+    { name: "an approved request", arrange: ({ store }) => { const id = store.create(buildInput([LINE.host])); store.approve(id); return id; }, code: "secret_request_not_pending" },
+  ];
+  for (const row of refusals) {
+    test(`linking ${row.name} is refused`, () => {
+      const fixture = createStore();
+      const id = row.arrange(fixture);
+
+      assert.equal(getRefusalCode(() => fixture.store.link(id)), row.code);
+    });
+  }
 });
 
 describe("approve", () => {
   test("approval keeps the hashes, removes the lines from the store and lives 10 minutes from the yes", () => {
     const { store, clock, advance } = createStore();
     const id = store.create(buildInput([LINE.host]));
+    store.link(id);
     advance(3 * HOUR_MS);
 
     store.approve(id);
@@ -228,6 +302,18 @@ describe("approve", () => {
     store.approve(id, yesAt);
 
     assert.deepEqual(store.find(id)?.expiresAt, new Date(yesAt.getTime() + 10 * MINUTE_MS));
+  });
+
+  test("an approval near a linked request's 24-hour end never outlives the request's creation plus 24 hours", () => {
+    const { store, clock, advance } = createStore();
+    const createdAt = clock.at;
+    const id = store.create(buildInput([LINE.host]));
+    store.link(id);
+    advance(LINKED_MS - 5 * MINUTE_MS);
+
+    store.approve(id);
+
+    assert.deepEqual(store.find(id)?.expiresAt, new Date(createdAt.getTime() + LINKED_MS));
   });
 
   test("a caller time later than the store's clock never extends the approval past 10 minutes", () => {
@@ -253,7 +339,8 @@ describe("approve", () => {
   const refusals: Array<{ name: string; arrange: (fixture: ReturnType<typeof createStore>) => string; code: string }> = [
     { name: "an unknown request", arrange: () => randomUUID(), code: "secret_request_gone" },
     { name: "a declined request", arrange: ({ store }) => { const id = store.create(buildInput([LINE.host])); store.delete(id); return id; }, code: "secret_request_gone" },
-    { name: "a pending request past 24 hours", arrange: ({ store, advance }) => { const id = store.create(buildInput([LINE.host])); advance(24 * HOUR_MS); return id; }, code: "secret_request_gone" },
+    { name: "an unlinked pending request at 15 minutes", arrange: ({ store, advance }) => { const id = store.create(buildInput([LINE.host])); advance(15 * MINUTE_MS); return id; }, code: "secret_request_gone" },
+    { name: "a linked pending request at 24 hours", arrange: ({ store, advance }) => { const id = store.create(buildInput([LINE.host])); store.link(id); advance(24 * HOUR_MS); return id; }, code: "secret_request_gone" },
     { name: "an already approved request", arrange: ({ store }) => { const id = store.create(buildInput([LINE.host])); store.approve(id); return id; }, code: "secret_request_not_pending" },
   ];
   const operations: Array<{ name: string; run: (store: SecretRequestRepository, id: string) => void }> = [
@@ -369,10 +456,10 @@ describe("expiry on every access", () => {
     { name: "delete", read: (store, id) => store.delete(id), gone: false },
   ];
   for (const row of accessors) {
-    test(`${row.name} treats a pending request at 24 hours as gone`, () => {
+    test(`${row.name} treats an unlinked pending request at 15 minutes as gone`, () => {
       const { store, advance } = createStore();
       const id = store.create(buildInput([LINE.host]));
-      advance(24 * HOUR_MS);
+      advance(15 * MINUTE_MS);
 
       assert.deepEqual(row.read(store, id), row.gone);
     });
@@ -382,7 +469,7 @@ describe("expiry on every access", () => {
     const { store, advance } = createStore();
     const sessionId = randomUUID();
     for (let i = 0; i < SECRET_REQUEST_LIMIT.SESSION_REQUESTS; i += 1) store.create(buildInput([`retries = ${i}`], { sessionId }));
-    advance(24 * HOUR_MS);
+    advance(UNLINKED_MS);
 
     assert.equal(typeof store.create(buildInput([LINE.host], { sessionId })), "string");
   });
@@ -390,9 +477,9 @@ describe("expiry on every access", () => {
   test("the sweep removes expired requests and keeps live ones", () => {
     const { store, advance } = createStore();
     const old = store.create(buildInput([LINE.host]));
-    advance(23 * HOUR_MS);
+    advance(14 * MINUTE_MS);
     const fresh = store.create(buildInput([LINE.port]));
-    advance(HOUR_MS);
+    advance(MINUTE_MS);
 
     const removed = store.deleteExpired();
 

@@ -3,7 +3,7 @@
 // Home is a mktemp fixture passed as a plugin option → no live config dir is read.
 // Every session id a test creates is tracked and its rows are deleted in after().
 
-import test, { after, before, describe } from "node:test";
+import test, { type TestContext, after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -19,8 +19,9 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions, type LightMyR
 import type { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { ANSWERED_IDS_LIMIT, PULL, WAIT_FRESH_MS, isSessionWaiting } from "../src/server/queue/delivery.js";
+import { QueueRequestError } from "../src/server/queue/errors.js";
 import { AWAITING_IDS_LIMIT } from "../src/server/queue/registry.js";
-import { getLineHash, secretRequests } from "../src/server/queue/scan-approvals.js";
+import { SECRET_REQUEST_LIMIT, getLineHash, secretRequests } from "../src/server/queue/scan-approvals.js";
 import { registerQueueRoutes } from "../src/server/routes/queue.js";
 import { deleteDirectory } from "./lib/remove-dir.js";
 import { lockQueueRows, unlockQueueRows, withQueueRowsExclusive } from "./lib/queue-rows-lock.js";
@@ -658,6 +659,26 @@ describe("secret-approval post", () => {
   };
   const approvalPost = (sessionId: string, requestId: string, extra: object = {}): object => ({ kind: "secret-approval", sessionId, requestId, ...extra });
   const findLinkedItem = (requestId: string) => getPrisma().queueItem.findUnique({ where: { secretRequestId: requestId } });
+  const getLifetimeMs = (requestId: string): number | undefined => {
+    const request = secretRequests.find(requestId);
+    return request === null ? undefined : request.expiresAt.getTime() - request.createdAt.getTime();
+  };
+  /** The item transaction runs its work, then `afterWork` before the commit → a failure or a lapse lands between the link check and the commit. */
+  const interceptTransaction = (t: TestContext, afterWork: () => void): void => {
+    const prisma = getPrisma();
+    const original = prisma.$transaction;
+    const intercepted = (work: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+      original.call(prisma, async (tx: Prisma.TransactionClient) => {
+        const result = await work(tx);
+        afterWork();
+        return result;
+      });
+    // the client is a Proxy node:test's mock.method finds no method descriptor on → a plain swap; the item post uses the callback form only
+    prisma.$transaction = intercepted as typeof original;
+    t.after(() => {
+      prisma.$transaction = original;
+    });
+  };
   const getOptionLabels = (options: Prisma.JsonValue): Record<string, string> => {
     assert.ok(Array.isArray(options), "options are not an array");
     return Object.fromEntries(
@@ -680,7 +701,71 @@ describe("secret-approval post", () => {
       [Number(item?.id), item?.kind, item?.isApprovalClass, item?.isFreeTextAllowed, item?.status],
       [posted.json().id, "decision", true, false, "open"],
     );
-    assert.equal(secretRequests.find(requestId)?.state, "pending");
+    assert.deepEqual([secretRequests.find(requestId)?.state, getLifetimeMs(requestId)], ["pending", SECRET_REQUEST_LIMIT.LINKED_MS]);
+  });
+
+  test("a post rolled back after the link check leaves the request unlinked: its 15-minute lapse kept and still counted toward the session cap", async (t) => {
+    const sessionId = await seedSession();
+    const requestId = createRequest(sessionId);
+    interceptTransaction(t, () => {
+      throw new Error("item transaction failed after the link check");
+    });
+
+    const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+
+    assert.deepEqual([posted.statusCode, await findLinkedItem(requestId), getLifetimeMs(requestId)], [503, null, SECRET_REQUEST_LIMIT.UNLINKED_MS]);
+    for (let index = 1; index < SECRET_REQUEST_LIMIT.SESSION_REQUESTS; index += 1) createRequest(sessionId);
+    assert.throws(() => createRequest(sessionId), { code: "secret_request_cap" });
+  });
+
+  test("a request that lapses between the link check and the commit fails the post and leaves no item naming it", async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    const sessionId = await seedSession();
+    const requestId = createRequest(sessionId);
+    interceptTransaction(t, () => t.mock.timers.tick(SECRET_REQUEST_LIMIT.UNLINKED_MS));
+
+    const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+
+    const linked = await getPrisma().queueItem.count({ where: { secretRequestId: requestId } });
+    assert.deepEqual([posted.statusCode, posted.json().error, linked], [409, "secret_request_gone", 0]);
+  });
+
+  test("a request past its 15-minute lapse is refused as unknown and links no item", async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    const sessionId = await seedSession();
+    const requestId = createRequest(sessionId);
+    t.mock.timers.tick(SECRET_REQUEST_LIMIT.UNLINKED_MS);
+
+    const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+
+    assert.deepEqual([posted.statusCode, posted.json().error, await findLinkedItem(requestId)], [404, "unknown_secret_request", null]);
+  });
+
+  test("past the machine ceiling of linked requests the post is refused 429, no item stored, the request keeping its 15-minute lapse", async () => {
+    const filler: string[] = [];
+    try {
+      // the one store keeps earlier tests' linked requests → filled up to its ceiling from whatever it holds
+      for (let index = 0; index < SECRET_REQUEST_LIMIT.LINKED_REQUESTS; index += 1) {
+        filler.push(createRequest(randomUUID()));
+        try {
+          secretRequests.link(filler[index]);
+        } catch (error) {
+          assert.ok(error instanceof QueueRequestError && error.code === "secret_request_link_cap", String(error));
+          break;
+        }
+      }
+      const sessionId = await seedSession();
+      const requestId = createRequest(sessionId);
+
+      const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+
+      assert.deepEqual(
+        [posted.statusCode, posted.json().error, await findLinkedItem(requestId), getLifetimeMs(requestId)],
+        [429, "secret_request_link_cap", null, SECRET_REQUEST_LIMIT.UNLINKED_MS],
+      );
+    } finally {
+      for (const requestId of filler) secretRequests.delete(requestId);
+    }
   });
 
   test("the server writes the item text: the same title, body and options for every request, the body naming the approving option", async () => {

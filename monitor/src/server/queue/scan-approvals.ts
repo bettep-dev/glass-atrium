@@ -1,19 +1,32 @@
 // Scan-approval store: the SEC-013 lines a secret-scan refusal captured, held in this process's memory only until the
-// owner approves one write of them, declines, or they expire. No route, no persistence: never on disk, in the
-// database, in a log or in an item; a monitor restart empties it.
+// owner approves one write of them, declines, or they expire. No persistence: never on disk, in the database, in a log
+// or in an item; a monitor restart empties it.
+// The refused line is held only in the monitor's process memory, for at most 15 minutes while no queue item names its
+// request and at most 24 hours once one does; the owner's answer, a withdrawal, a consumed write or a monitor restart
+// removes it sooner.
+// A local process without a browser signal can still keep the unlinked caps full by registering again every 15 minutes;
+// while it runs, a new scan approval cannot be requested and the refused write stays refused.
+// Posting a secret-approval item with a lapsed request id is refused as unknown; retrying the write registers a fresh id,
+// so a subagent hands the id up in its next result rather than at the end of long further work.
 
 import { createHash, randomUUID } from "node:crypto";
 
 import { INVISIBLE_CHARACTER } from "./envelope.js";
 import { QueueRequestError } from "./errors.js";
 
-/** Per-request, per-session and per-machine bounds; past any of them the hook refuses as it does without the store. */
+/**
+ * Per-request, per-session and per-machine bounds; past any of them the hook refuses as it does without the store.
+ * - SESSION_REQUESTS / MACHINE_REQUESTS count unlinked pending requests only · LINKED_REQUESTS counts linked ones, pending or approved
+ * - UNLINKED_MS / LINKED_MS run from the request's creation · APPROVED_MS from the owner's yes, never past the request's current expiry
+ */
 export const SECRET_REQUEST_LIMIT = {
   REQUEST_LINES: 16,
   REQUEST_BYTES: 4096,
   SESSION_REQUESTS: 8,
   MACHINE_REQUESTS: 64,
-  PENDING_MS: 24 * 60 * 60_000,
+  LINKED_REQUESTS: 256,
+  UNLINKED_MS: 15 * 60_000,
+  LINKED_MS: 24 * 60 * 60_000,
   APPROVED_MS: 10 * 60_000,
   // UTF-16 code units, as Zod's string max counts → the register schema takes these caps
   FIELD_LENGTH: { SESSION_ID: 36, PATH: 4096, AGENT_ID: 64, AGENT_TYPE: 128 },
@@ -46,7 +59,7 @@ export interface SecretWrite {
   readonly hashes: readonly string[];
 }
 
-/** A request's facts — everything but its lines; `expiresAt` is 24 h after register, then 10 min after the yes. */
+/** A request's facts — everything but its lines and its link; `expiresAt` per `SECRET_REQUEST_LIMIT`. */
 export interface SecretRequestFacts {
   readonly id: string;
   readonly state: "pending" | "approved";
@@ -91,6 +104,8 @@ export interface SecretLineView extends LineDisplay {
 interface StoredRequest extends SecretRequestFacts {
   // null once approved → only the hashes outlive the owner's yes
   readonly lines: SecretRequestInput["lines"] | null;
+  // true once the item naming the request committed; memory only, the item's secret_request_id column is its one record
+  readonly isLinked: boolean;
 }
 
 /** In-memory store of scan-approval requests; every access first removes the expired ones from the store. */
@@ -100,10 +115,12 @@ export class SecretRequestRepository {
   constructor(private readonly now: () => Date = () => new Date()) {}
 
   /**
-   * Registers a refused write's SEC-013 lines → its request id, pending for 24 h.
-   * A repeat of a pending request's session, path, rule and line set returns that request's id, even at a cap.
+   * Registers a refused write's SEC-013 lines → its request id, pending and unlinked for 15 minutes.
+   * A repeat of a pending request's session, path, rule and line set returns that request's id, even at a cap, and
+   * leaves its expiry as it is.
    * @throws QueueRequestError — a rule other than SEC-013, a size past the caps, a malformed line, a hash that is not
-   * its line's, or a session or machine at its request cap; no message carries line text
+   * its line's, or a session or machine at its request cap; no message carries line text; a cap never removes,
+   * shortens or lapses an existing request
    */
   create(input: SecretRequestInput): string {
     assertRequestInput(input);
@@ -123,22 +140,42 @@ export class SecretRequestRepository {
       hashes: input.lines.map((line) => line.hash),
       lines: input.lines.map((line) => ({ text: line.text, hash: line.hash })),
       createdAt,
-      expiresAt: new Date(createdAt.getTime() + SECRET_REQUEST_LIMIT.PENDING_MS),
+      expiresAt: new Date(createdAt.getTime() + SECRET_REQUEST_LIMIT.UNLINKED_MS),
+      isLinked: false,
     });
     return id;
+  }
+
+  /**
+   * The committed item post naming the request: it lives 24 h from its creation and leaves the unlinked caps.
+   * Call only after the item's insert commits → a rolled-back or refused post leaves the request unlinked.
+   * @throws QueueRequestError — the `assertLinkable` refusals
+   */
+  link(id: string): void {
+    const request = this.getLinkableOrThrow(id);
+    const expiresAt = new Date(request.createdAt.getTime() + SECRET_REQUEST_LIMIT.LINKED_MS);
+    this.requests.set(id, { ...request, isLinked: true, expiresAt });
+  }
+
+  /**
+   * The check `link` makes, without linking → the item post refuses before its insert.
+   * @throws QueueRequestError — 409 `secret_request_gone` · 409 `secret_request_not_pending` · 429 `secret_request_link_cap`
+   */
+  assertLinkable(id: string): void {
+    this.getLinkableOrThrow(id);
   }
 
   /**
    * The owner's yes: the request turns approved for 10 minutes and its lines are removed from the store (hashes kept).
    * Lines are immutable after register and the id is a fresh UUID → the approved hashes are the ones the owner was shown.
    * @param approvedAt - the time of the yes → the 10 minutes run from it, however late the request turns approved;
-   * a time later than the store's clock counts as the store's now
+   * a time later than the store's clock counts as the store's now · never past the request's current expiry
    * @throws QueueRequestError 409 — `secret_request_gone` (unknown, declined or expired) · `secret_request_not_pending`
    */
   approve(id: string, approvedAt: Date = this.now()): void {
     const request = this.getPendingOrThrow(id);
     const startMs = Math.min(approvedAt.getTime(), this.now().getTime());
-    const expiresAt = new Date(startMs + SECRET_REQUEST_LIMIT.APPROVED_MS);
+    const expiresAt = new Date(Math.min(startMs + SECRET_REQUEST_LIMIT.APPROVED_MS, request.expiresAt.getTime()));
     this.requests.set(id, { ...request, state: "approved", lines: null, expiresAt });
   }
 
@@ -212,6 +249,15 @@ export class SecretRequestRepository {
     return request;
   }
 
+  private getLinkableOrThrow(id: string): StoredRequest {
+    const request = this.getPendingOrThrow(id);
+    const linkedCount = [...this.requests.values()].filter((stored) => stored.isLinked).length;
+    if (!request.isLinked && linkedCount >= SECRET_REQUEST_LIMIT.LINKED_REQUESTS) {
+      throw new QueueRequestError(429, "secret_request_link_cap", "scan approval requests linked to items are at their machine ceiling");
+    }
+    return request;
+  }
+
   // the agent is no part of the match → a second agent's same tuple returns the first agent's request
   private findRepeat(input: SecretRequestInput): string | null {
     const hashes = input.lines.map((line) => line.hash);
@@ -223,8 +269,9 @@ export class SecretRequestRepository {
   }
 
   private assertCapacity(sessionId: string): void {
-    const sessionCount = [...this.requests.values()].filter((request) => request.sessionId === sessionId).length;
-    if (sessionCount >= SECRET_REQUEST_LIMIT.SESSION_REQUESTS || this.requests.size >= SECRET_REQUEST_LIMIT.MACHINE_REQUESTS) {
+    const unlinked = [...this.requests.values()].filter((request) => request.state === "pending" && !request.isLinked);
+    const sessionCount = unlinked.filter((request) => request.sessionId === sessionId).length;
+    if (sessionCount >= SECRET_REQUEST_LIMIT.SESSION_REQUESTS || unlinked.length >= SECRET_REQUEST_LIMIT.MACHINE_REQUESTS) {
       throw new QueueRequestError(429, "secret_request_cap", "scan approval requests are at their session or machine cap");
     }
   }
