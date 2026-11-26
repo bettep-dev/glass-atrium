@@ -155,6 +155,24 @@ const getSheet = (groups: unknown, hashId: string) => call<{ id: number | null }
 // the sheet is its own card markup → one tree holds its head, body and foot
 const renderSheet = (props: unknown): RenderedNode => render("ItemSheetQ", props);
 const byClass = (tree: RenderedNode, name: string) => findNodes(tree, (node) => String(node.props?.className ?? "").split(" ").includes(name));
+// one line's text as the page shows it: inline parts joined as they sit, where collectText spaces every element apart
+const getLineText = (node: RenderedNode | string): string => (typeof node === "string" ? node : node.children.map(getLineText).join(""));
+
+// the page's own mark has one look wherever a sheet's head or From and To rows draw it: its own element, never words joined into a name's text
+const SELF_MARK_CLASS = "queue-letter-self font-normal text-dim";
+const getHeadMarksShape = (tree: RenderedNode) => {
+  const places = [...byClass(tree, "card-head"), ...byClass(tree, "queue-option-sides")];
+  const marks = places.flatMap((place) => findNodes(place, (node) => collectText(node).trim() === "(self-named)" && typeof node.props?.className === "string"));
+  const said = places.reduce((count, place) => count + collectText(place).split("(self-named)").length - 1, 0);
+  return { classes: [...new Set(marks.map((mark) => mark.props.className))], marks: marks.length, said };
+};
+
+// a name inside a sentence never breaks at its hyphen → each time the places say it, it sits in one NoWrap
+const getUnbrokenShape = (places: RenderedNode[], name: string) => {
+  const countOf = (node: RenderedNode) => collectText(node).split(name).length - 1;
+  const kept = places.flatMap((place) => findNodes(place, (node) => node.props?.atom === "NoWrap" && collectText(node) === name));
+  return { said: places.reduce((count, place) => count + countOf(place), 0), whole: kept.length };
+};
 
 // spec §5's block forms in one text: headings, three list levels, a table, a quote, a rule, a fence, a link and an image link
 const EVERY_BLOCK_FORM = [
@@ -1557,11 +1575,11 @@ describe("relays in the Done part", () => {
   }
 
   // layout §2 → Refused: the fixture's pair_cap refusal, gersona (25a65a54) to yoaida (fa32c7cb), 2026-11-13 12:00 KST, names from the loaded relays
-  const refusedQueue = () => {
-    const base = buildQueue().queue;
-    const groups = getGroups([], { done: thread(), relays: relayRead() });
+  const refusedQueue = (read = relayRead(), rail: unknown[] = []) => {
+    const base = buildQueue({ sessions: { region: { data: { sessions: rail } } } }).queue;
+    const groups = getGroups([], { done: thread(), relays: read });
     const row = groups.flatMap((group) => group.rows).find((entry) => entry.refusal)!;
-    return { queue: { ...base, relays: { ...base.relays, thread: relayRead() }, groups, sheet: call("getSheetStateQ", groups, String(row.id), null) }, row };
+    return { queue: { ...base, relays: { ...base.relays, thread: read }, groups, sheet: call("getSheetStateQ", groups, String(row.id), null) }, row };
   };
   const flatText = (node: RenderedNode) => collectText(node).replace(/\s+/g, " ").trim();
 
@@ -1582,11 +1600,33 @@ describe("relays in the Done part", () => {
     const body = flatText(byClass(tree, "queue-sheet-body")[0] as RenderedNode);
     assert.deepEqual(
       {
-        head: flatText(head as RenderedNode), title: collectText(title as RenderedNode), date: flatText(byClass(tree, "queue-date-line")[0] as RenderedNode),
-        parts: ["From gersona (self-named) · 25a65a54", "To yoaida (self-named) · fa32c7cb", "Too many to one session — gersona (self-named) hit the hourly limit for yoaida (self-named).", "Its text was not stored."].map((part) => body.includes(part)),
+        head: flatText(head as RenderedNode), title: getLineText(title as RenderedNode), date: flatText(byClass(tree, "queue-date-line")[0] as RenderedNode),
+        parts: ["From gersona (self-named) · 25a65a54", "To yoaida (self-named) · fa32c7cb", "Too many to one session — gersona hit the hourly limit for yoaida.", "Its text was not stored."].map((part) => body.includes(part)),
         crit: findNodes(byClass(tree, "queue-date-line")[0] as RenderedNode, (node) => node.props?.className === "text-crit").map(flatText),
       },
-      { head: "Relay from gersona (self-named) → to yoaida (self-named)", title: "Refused relay from gersona (self-named) to yoaida (self-named)", date: "✕ Refused 2026-11-13 12:00 KST", parts: [true, true, true, true], crit: ["✕"] },
+      { head: "Relay from gersona (self-named) → to yoaida (self-named)", title: "Refused relay from gersona to yoaida", date: "✕ Refused 2026-11-13 12:00 KST", parts: [true, true, true, true], crit: ["✕"] },
+    );
+  });
+
+  // a line that draws a session's id beside its name adds no second copy of it; the sentences name each end once, its mark left to the head and the rows
+  test("a refused relay's sheet between two sessions whose names copy each other draws each id once on its From and To lines and in its title and reason", () => {
+    const tree = render("QueueSheetQ", { queue: refusedQueue(relayRead({ items: sentAs("yoaida") }), railRows).queue });
+    const [sides] = byClass(tree, "queue-option-sides");
+    const [title] = findNodes(tree, (node) => node.type === "h3");
+    const countOf = (text: string, part: string) => text.split(part).length - 1;
+    const rows = flatText(sides as RenderedNode);
+    assert.deepEqual(
+      { ids: [countOf(rows, GERSONA), countOf(rows, YOAIDA)], title: getLineText(title as RenderedNode), hasReason: flatText(tree).includes(`Too many to one session — gersona · ${GERSONA} hit the hourly limit for yoaida · ${YOAIDA}.`) },
+      { ids: [1, 1], title: `Refused relay from gersona · ${GERSONA} to yoaida · ${YOAIDA}`, hasReason: true },
+    );
+  });
+
+  test("a refused relay's sheet draws every (self-named) of its head and its From and To rows as the one mark element, and its title keeps each name whole", () => {
+    const tree = render("QueueSheetQ", { queue: refusedQueue().queue });
+    const title = findNodes(tree, (node) => node.type === "h3");
+    assert.deepEqual(
+      { marks: getHeadMarksShape(tree), names: ["gersona", "yoaida"].map((name) => getUnbrokenShape(title, name)) },
+      { marks: { classes: [SELF_MARK_CLASS], marks: 4, said: 4 }, names: [{ said: 1, whole: 1 }, { said: 1, whole: 1 }] },
     );
   });
 
@@ -1733,12 +1773,12 @@ describe("a relay on its way", () => {
     const [date] = byClass(tree, "queue-date-line");
     return {
       head: collectText(head as RenderedNode).replace(/\s+/g, " ").trim(),
-      title: collectText(title as RenderedNode),
+      title: getLineText(title as RenderedNode),
       date: collectText(date as RenderedNode),
       foot: collectText(foot as RenderedNode).replace(/\s+/g, " ").trim(),
       controls: findNodes(foot as RenderedNode, (node) => ["textarea", "input"].includes(String(node.type))).length,
       buttons: findNodes(foot as RenderedNode, (node) => node.type === "button").map((node) => [collectText(node), node.props.className]),
-      body: collectText(byClass(tree, "queue-sheet-body")[0] as RenderedNode),
+      body: collectText(byClass(tree, "queue-sheet-body")[0] as RenderedNode).replace(/\s+/g, " "),
     };
   };
   const QUIET_REDACT = [["Redact text", "btn ghost sm"]];
@@ -1747,10 +1787,10 @@ describe("a relay on its way", () => {
     const shape = getSheetShape(toYoaida());
     assert.deepEqual(
       { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls, buttons: shape.buttons },
-      { head: `Relay from ${NAMED} → to yoaida`, title: `Message from ${NAMED} to yoaida`, foot: "Read-only. It reaches yoaida by itself. Redact text", controls: 0, buttons: QUIET_REDACT },
+      { head: `Relay from ${NAMED} → to yoaida`, title: "Message from aidl to yoaida", foot: "Read-only. It reaches yoaida by itself. Redact text", controls: 0, buttons: QUIET_REDACT },
     );
     assert.match(shape.date, /^Not yet\s+Sent\s+2026-11-19 14:20 KST$/);
-    for (const part of [`What ${NAMED} wrote`, `${NAMED} sent this as its message, not yours.`, "It carries none of your authority."]) assert.ok(shape.body.includes(part), part);
+    for (const part of ["What aidl wrote", `${NAMED} sent this as its message, not yours.`, "It carries none of your authority."]) assert.ok(shape.body.includes(part), part);
     assert.doesNotMatch(shape.body, /Run in that session|Answered/);
   });
 
@@ -1758,15 +1798,25 @@ describe("a relay on its way", () => {
     const shape = getSheetShape(toThree());
     assert.deepEqual(
       { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls },
-      { head: `Relay from ${NAMED} → to 3 sessions`, title: `Message from ${NAMED} to 3 sessions`, foot: "Read-only. It reaches each session by itself. Redact text", controls: 0 },
+      { head: `Relay from ${NAMED} → to 3 sessions`, title: "Message from aidl to 3 sessions", foot: "Read-only. It reaches each session by itself. Redact text", controls: 0 },
     );
     assert.match(shape.date, /^1 of 3 received/);
   });
 
+  test("a relay's sheet draws every (self-named) of its head and its From row as the one mark element, and its title and text label keep each name whole", () => {
+    const queue = withList(buildQueue().queue, toYoaida());
+    const tree = render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } });
+    const label = findNodes(tree, (node) => node.type === "p" && collectText(node).startsWith("What "));
+    assert.deepEqual(
+      { marks: getHeadMarksShape(tree), sender: getUnbrokenShape([...findNodes(tree, (node) => node.type === "h3"), ...label], "aidl"), recipient: getUnbrokenShape(findNodes(tree, (node) => node.type === "h3"), "yoaida") },
+      { marks: { classes: [SELF_MARK_CLASS], marks: 2, said: 2 }, sender: { said: 2, whole: 2 }, recipient: { said: 1, whole: 1 } },
+    );
+  });
+
   // a peer writes its own name → wherever the queue names the sender, a written name is marked as the sender's own
   const NAME_ROWS = [
-    { name: "a name the sender gave itself is marked self-named", sender, shown: NAMED, cell: { who: "aidl", mark: "self" } },
-    { name: "a sender that gave no name reads as its id prefix, unmarked", sender: { ...sender, selfDeclaredName: null }, shown: "aca91592", cell: { who: "aca91592", mark: null } },
+    { name: "a name the sender gave itself is marked self-named", sender, shown: NAMED, plain: "aidl", cell: { who: "aidl", mark: "self" } },
+    { name: "a sender that gave no name reads as its id prefix, unmarked", sender: { ...sender, selfDeclaredName: null }, shown: "aca91592", plain: "aca91592", cell: { who: "aca91592", mark: null } },
   ];
   for (const row of NAME_ROWS) {
     test(`the sender in the row's name column, the sheet head, the sheet title, the From line, the text's label and the standing line: ${row.name}`, () => {
@@ -1776,9 +1826,9 @@ describe("a relay on its way", () => {
       assert.deepEqual(
         {
           cell: (({ who, mark }) => ({ who, mark }))(getRowShape(renderRow(copies))), head: sheet.head, title: sheet.title, from: body.includes(`From ${row.shown} · aca91592 · work`),
-          label: body.includes(`What ${row.shown} wrote`), standing: body.includes(`${row.shown} sent this as its message, not yours.`),
+          label: body.includes(`What ${row.plain} wrote`), standing: body.includes(`${row.shown} sent this as its message, not yours.`),
         },
-        { cell: row.cell, head: `Relay from ${row.shown} → to yoaida`, title: `Message from ${row.shown} to yoaida`, from: true, label: true, standing: true },
+        { cell: row.cell, head: `Relay from ${row.shown} → to yoaida`, title: `Message from ${row.plain} to yoaida`, from: true, label: true, standing: true },
       );
     });
   }
@@ -1788,7 +1838,7 @@ describe("a relay on its way", () => {
     const [block] = byClass(render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } }), "queue-sheet-body");
     assert.deepEqual(getAsSentTexts(block as RenderedNode), [EVERY_BLOCK_FORM]);
     assert.equal(findNodes(block as RenderedNode, (node) => node.props?.atom === "ProseText").length, 0);
-    assert.ok(collectText(block as RenderedNode).replace(/\s+/g, " ").includes(`What ${NAMED} wrote · shown as sent`));
+    assert.ok(collectText(block as RenderedNode).replace(/\s+/g, " ").includes("What aidl wrote · shown as sent"));
   });
 
   test("a relay whose text addresses its declared document still lists it on the Documents line: the text as sent links none", () => {
@@ -3048,7 +3098,7 @@ describe("the two composers told apart", () => {
   for (const row of labels) {
     test(`the sheet's label: ${row.name}`, () => {
       const [label] = findNodes(renderSheet({ item: row.item, queue: buildQueue().queue }), (node) => node.type === "label" && String(node.props.className).includes("field-label"));
-      assert.equal(collectText(label as RenderedNode), row.label);
+      assert.equal(getLineText(label as RenderedNode), row.label);
     });
   }
 });
@@ -3959,7 +4009,7 @@ describe("images in a composer", () => {
   const decision = (item: Record<string, unknown>, draft: Record<string, unknown>) => {
     const { calls, queue } = buildQueue();
     const tree = render("SheetFootQ", { item: buildItem(item), draft, queue, isBusy: false, error: null });
-    const lines = (name: string) => byClass(tree, name).map((node) => collectText(node).replace(/\s+/g, " ").trim());
+    const lines = (name: string) => byClass(tree, name).map((node) => getLineText(node).replace(/\s+/g, " ").trim());
     return { calls, tree, lines };
   };
 
@@ -4359,7 +4409,7 @@ describe("the sheet's letterhead and record", () => {
   const elsewhere = buildSession({ id: "c1d2e3f4-0000-4000-8000-000000000002", name: "aidl", profileLabel: ".claude-personal", cwd: "/Users/owner/Desktop/git/aidl", cwdTail: "git/aidl" });
   const nameRows = [
     { name: "a name no other loaded session carries stands alone", items: [buildItem()], expected: "glass-atrium (self-named)" },
-    { name: "a name two loaded sessions share takes the 8-character id", items: [buildItem(), buildItem({ id: 42, session: twin })], expected: "glass-atrium (self-named) · 6f1c2a9e" },
+    { name: "a name two loaded sessions share takes the 8-character id", items: [buildItem(), buildItem({ id: 42, session: twin })], expected: "glass-atrium (self-named) 6f1c2a9e" },
     { name: "items from more than one account add the account", items: [buildItem(), buildItem({ id: 42, session: elsewhere })], expected: "glass-atrium (self-named) · work-dev" },
   ];
   for (const row of nameRows) {
@@ -4369,6 +4419,23 @@ describe("the sheet's letterhead and record", () => {
       assert.equal(collectText(name as RenderedNode).replace(/\s+/g, " ").trim(), row.expected);
     });
   }
+
+  // the id tells two sessions apart → never cut: its own element beside the mark, the account alone in the note that cuts
+  test("the sheet head draws a shared name's id as the rows' id element after its mark, and only the account in the note", () => {
+    const items = [buildItem(), buildItem({ id: 42, session: twin }), buildItem({ id: 43, session: elsewhere })];
+    const { queue } = buildQueue({ list: { status: "ready", data: { items, nextCursor: null }, newIds: [] }, sessions: SHEET_SESSIONS });
+    const [name] = byClass(renderSheet({ item: items[0], queue }), "queue-letter-name");
+    const parts = findNodes(name as RenderedNode, (node) => node !== name && String(node.props?.className ?? "").startsWith("queue-letter-"));
+    const [id] = byClass(name as RenderedNode, "queue-letter-id");
+    assert.deepEqual(
+      {
+        order: parts.map((part) => String(part.props.className)),
+        id: findNodes(id as RenderedNode, (node) => node.props?.atom === "MachineString").map((node) => collectText(node)),
+        note: byClass(name as RenderedNode, "queue-letter-note").map((node) => collectText(node)),
+      },
+      { order: ["queue-letter-text", "queue-letter-self font-normal text-dim", "queue-letter-id", "queue-letter-note"], id: ["6f1c2a9e"], note: ["· work-dev"] },
+    );
+  });
 
   // the head is where the owner acts → a registered name is said as the session's own writing, by a page-drawn element beside the name, never in it
   const headRows = [
@@ -4387,6 +4454,21 @@ describe("the sheet's letterhead and record", () => {
         [collectText(h2 as RenderedNode).replace(/\s+/g, " ").trim(), suffixes.map((suffix) => collectText(suffix).trim())[0] ?? null, isSuffixInName],
         [row.head, row.suffix, false],
       );
+    });
+  }
+
+  // the foot names who the answer goes to in its sentences → a hyphenated name stays on one line
+  const footRows = [
+    { name: "a decision's", item: buildItem() },
+    { name: "an approval decision's", item: buildItem({ isApprovalClass: true }) },
+    { name: "a report's", item: buildItem({ kind: "report" }) },
+    { name: "a report's with an order typed", item: buildItem({ kind: "report" }), draft: { text: "Ship it" } },
+  ];
+  for (const row of footRows) {
+    test(`${row.name} foot keeps the session's hyphenated name whole wherever its sentences say it`, () => {
+      const { queue } = buildQueue({ sessions: SHEET_SESSIONS, ...(row.draft ? { drafts: { [row.item.id]: row.draft } } : {}) });
+      const shape = getUnbrokenShape(byClass(renderSheet({ item: row.item, queue }), "card-foot"), "glass-atrium");
+      assert.ok(shape.said > 0 && shape.whole === shape.said, JSON.stringify(shape));
     });
   }
 
@@ -4437,7 +4519,7 @@ describe("the sheet's letterhead and record", () => {
     const [recipient] = byClass(renderCard("OrdersViewQ", { queue: listed }), "queue-recipient");
     assert.deepEqual(
       [String(option?.props["aria-label"]).startsWith(`Decision from Gersona (self-named) · ${OWN}: `), collectText(title as RenderedNode).trim().startsWith(OWN), collectText(head as RenderedNode).replace(/\s+/g, " ").trim(), collectText(railId as RenderedNode).trim(), collectText(recipient as RenderedNode).includes(OWN)],
-      [true, true, `Gersona (self-named) · ${OWN}`, CONFUSED, true],
+      [true, true, `Gersona (self-named) ${OWN}`, CONFUSED, true],
     );
   });
 

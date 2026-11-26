@@ -96,7 +96,7 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.deepEqual(found, {
-      count: 1, nodes: ["#text"], text: relay?.body, type: ["pre-wrap", "15px", "24px", "auto"], parsed: 0, label: "What aidl (self-named) wrote · shown as sent",
+      count: 1, nodes: ["#text"], text: relay?.body, type: ["pre-wrap", "15px", "24px", "auto"], parsed: 0, label: "What aidl wrote · shown as sent",
     });
   });
 
@@ -288,7 +288,7 @@ describe("queue page on the mockup fixtures", () => {
 
     assert.deepEqual(
       { ...found, title: title.replace(/\s+/g, " ").trim() },
-      { focused: "Message from aidl (self-named) to 2 sessions", foot: "✓ Text redacted.", texts: 0, line: true, marker: false, title: "→ 2 sessions Text redacted" },
+      { focused: "Message from aidl to 2 sessions", foot: "✓ Text redacted.", texts: 0, line: true, marker: false, title: "→ 2 sessions Text redacted" },
     );
   });
 
@@ -2322,13 +2322,18 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(ids, [[FIXTURE_SESSION_IDS.gersona.slice(0, 8), true], [CONFUSABLE_SESSION_ID.slice(0, 8), true]]);
     });
 
-    test("an item from one of two sessions with one name shows that session's 8-character id after the name in its letterhead", async () => {
-      const page = await openEdgePage(harness);
+    // the id is what tells the two apart → at the owner's narrowest desk it stays whole while the name is cut
+    test("at 1280 an item from one of two sessions with one name shows that session's 8-character id whole after the name in its letterhead", async () => {
+      const page = await openEdgePage(harness, MIN_WINDOW);
       await selectRow(page, EDGE_IDS.declaredReport);
-      const name = await page.evaluate(() => document.querySelector(".queue-letter [title]")?.textContent);
+      const id = await page.evaluate(() => {
+        const shown = document.querySelector<HTMLElement>(".queue-sheet .queue-letter-name code");
+        const head = document.querySelector<HTMLElement>(".queue-sheet .queue-letter-name")!.getBoundingClientRect();
+        return shown === null ? null : { text: shown.textContent, isWhole: shown.scrollWidth <= shown.clientWidth && shown.getBoundingClientRect().right <= head.right + 0.5 };
+      });
       await page.close();
 
-      assert.equal(name, `atrium (self-named) · ${EDGE_SESSION_IDS.twin.slice(0, 8)}`);
+      assert.deepEqual(id, { text: EDGE_SESSION_IDS.twin.slice(0, 8), isWhole: true });
     });
 
     // the registered 100-character name cut in the 104 column, the page's mark whole beside it; a start directory's name never marked

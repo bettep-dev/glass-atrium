@@ -1375,7 +1375,7 @@ label.ctl-checkbox-hit {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-/* a decision's or report's head: its name cut first, the page's (self-named) beside it whole; pre keeps each part's leading space */
+/* a decision's or report's head: its name cut first, then the account; the page's (self-named) and the id beside it whole; pre keeps each part's leading space */
 .queue-letter-name:has(> .queue-letter-text) {
 	display: flex;
 }
@@ -1386,7 +1386,12 @@ label.ctl-checkbox-hit {
 	text-overflow: ellipsis;
 	white-space: pre;
 }
-.queue-letter-self {
+/* shrink weighted far above the note's → the name gives its width before the account gives any */
+.queue-letter-text {
+	flex-shrink: 1000;
+}
+.queue-letter-self,
+.queue-letter-id {
 	flex: none;
 	white-space: pre;
 }

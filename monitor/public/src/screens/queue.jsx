@@ -2355,7 +2355,7 @@ function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, is
 	const names = getPageNamesQ(queue);
 	return (
 		<div className="card queue-pane queue-sheet">
-			<SheetHeadQ queue={queue}><LetterheadQ item={item} copies={copies} kind={kind} nameNote={getNameNoteQ(item.session, queue, names)} names={names} /></SheetHeadQ>
+			<SheetHeadQ queue={queue}><LetterheadQ item={item} copies={copies} kind={kind} note={getNameNoteQ(item.session, queue, names)} names={names} /></SheetHeadQ>
 			{isNamedInBodyQ(item, isDone) && <div className="card-bar"><NamesNoteQ /></div>}
 			<div className="card-body" tabIndex={-1}>
 				<SheetBodyQ item={item} copies={copies} rails={queue.sessions?.region.data?.sessions ?? []} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} scanRead={scanRead} />
@@ -2450,21 +2450,21 @@ function SheetHeadQ({ queue, children }) {
 	);
 }
 
-// visible only where it tells two apart: the 8-character id where the page's names hold one (getPageNamesQ), the account while items span accounts (spec §4.3, §9.1)
+/** Visible only where it tells two apart `{ idPrefix, account }`: the 8-character id where the page's names hold one (getPageNamesQ), the account while items span accounts (spec §4.3, §9.1). */
 function getNameNoteQ(session, queue, names) {
 	const items = queue.list.data?.items ?? [];
 	const isManyAccounts = new Set(items.map((item) => item.session.profileLabel)).size > 1;
-	return [names.get(getSessionPrefixQ(session))?.idPrefix, isManyAccounts && session.profileLabel].filter(Boolean).map((part) => ` · ${part}`).join("");
+	return { idPrefix: names.get(getSessionPrefixQ(session))?.idPrefix, account: (isManyAccounts && session.profileLabel) || undefined };
 }
 
 // the head's h2 content: read as `Decision from gersona`; the session's account, directory and id ride its title ·
 // a relay's two ends, read as `Relay from aidl to yoaida`: the sheet's Who lines carry their facts (spec §9.9)
-function LetterheadQ({ item, copies = [item], kind, nameNote = "", names = null }) {
+function LetterheadQ({ item, copies = [item], kind, note = {}, names = null }) {
 	const { Badge } = window.UI;
 	const { session } = item;
 	if (item.kind === "relay") {
 		const from = getPageWhoQ(getSenderWhoQ(item.relay.sender), item.relay.sender.sessionIdPrefix, names);
-		return <RelayLetterheadQ kind={kind} from={getWhoLabelQ(from)} to={getWhoLabelQ(getCopiesToQ(copies, names))} />;
+		return <RelayLetterheadQ kind={kind} from={from} to={getCopiesToQ(copies, names)} />;
 	}
 	const where = [session.profileLabel, session.cwd, session.id].filter(Boolean).join(" · ");
 	return (
@@ -2473,22 +2473,41 @@ function LetterheadQ({ item, copies = [item], kind, nameNote = "", names = null 
 			<span className="sr-only">{" from "}</span>
 			<span className="queue-letter-name" title={where}>
 				<span className="queue-letter-text"><ItemSessionNameQ session={session} /></span>
-				{getSessionWhoQ(session).isSelfNamed && <span className="queue-letter-self font-normal text-dim">{" (self-named)"}</span>}
-				{nameNote && <span className="queue-letter-note">{nameNote}</span>}
+				{getSessionWhoQ(session).isSelfNamed && <SelfNamedQ />}
+				{note.idPrefix !== undefined && <span className="queue-letter-id"><IdNoteQ idPrefix={note.idPrefix} /></span>}
+				{note.account && <span className="queue-letter-note">{`${note.idPrefix === undefined ? " " : ""}· ${note.account}`}</span>}
 			</span>
 		</span>
 	);
 }
 
-// a relay's two ends, sent or refused
+// a relay's two ends, sent or refused: each `who` its name, the page's mark, then its id where the page's names hold one
 function RelayLetterheadQ({ kind, from, to }) {
 	return (
 		<span className="queue-letter">
 			<window.UI.Badge fill="tag">{kind}</window.UI.Badge>
 			<span className="sr-only">{" from "}</span>
-			<span className="queue-letter-name">{from}<span aria-hidden="true" className="font-normal text-dim">{" → "}</span><span className="sr-only">{" to "}</span>{to}</span>
+			<span className="queue-letter-name">
+				<WhoNameQ who={from} />{getIdTailQ(from)}
+				<span aria-hidden="true" className="font-normal text-dim">{" → "}</span><span className="sr-only">{" to "}</span>
+				<WhoNameQ who={to} />{getIdTailQ(to)}
+			</span>
 		</span>
 	);
+}
+
+// a name drawn as the session wrote it, the page's (self-named) its own element beside it
+function WhoNameQ({ who, className }) {
+	return <><span className={className}>{who.name}</span>{who.isSelfNamed && <SelfNamedQ />}</>;
+}
+
+// the page's mark on a name the session wrote: one look wherever drawn, whole (pre), never joined into the name's text
+function SelfNamedQ() {
+	return <span className="queue-letter-self font-normal text-dim">{" (self-named)"}</span>;
+}
+
+function getIdTailQ({ idPrefix }) {
+	return idPrefix === undefined ? "" : ` · ${idPrefix}`;
 }
 
 // a send to several reads received of sent → `1 of 3 received`
@@ -2767,14 +2786,16 @@ function getScanEndLineQ(state, at) {
  * and that it carries none of the owner's authority. Redacted only once every copy is → until then a kept copy's text.
  */
 function RelayBlockQ({ item, copies, rails = [], isDone = false }) {
+	const { NoWrap } = window.UI;
 	const { sender } = item.relay;
 	const from = getSenderLabelQ(sender);
+	const { name } = getSenderWhoQ(sender);
 	const kept = copies.find((copy) => copy.relay.redaction === null);
 	return (
 		<>
-			<h3 id={SHEET_TITLE_ID_Q} tabIndex={-1} className="queue-sheet-title">{`Message from ${from} to ${getCopiesNameQ(copies)}`}</h3>
+			<h3 id={SHEET_TITLE_ID_Q} tabIndex={-1} className="queue-sheet-title">{"Message from "}<NoWrap>{name}</NoWrap>{" to "}<NoWrap>{getCopiesNameQ(copies)}</NoWrap></h3>
 			<RelayWhoQ sender={sender} copies={copies} rails={rails} isDone={isDone} />
-			<p className="fs-meta font-semibold text-dim">{`What ${from} wrote`}{kept !== undefined && <span className="font-normal text-faint">{" · shown as sent"}</span>}</p>
+			<p className="fs-meta font-semibold text-dim">{"What "}<NoWrap>{name}</NoWrap>{" wrote"}{kept !== undefined && <span className="font-normal text-faint">{" · shown as sent"}</span>}</p>
 			{kept === undefined ? <p className="fs-meta text-dim">{getRedactionLineQ(item.relay.redaction)}</p> : <ItemProseQ item={kept} />}
 			<DocumentsLineQ item={item} />
 			<RelayHopLineQ relay={item.relay} at={item.askedAt} />
@@ -2808,7 +2829,7 @@ function RelayWhoQ({ sender, copies, rails = [], isDone = false }) {
 		<div className="queue-option-sides">
 			<span className="queue-label">From</span>
 			<span>
-				<span className="font-semibold">{getSenderLabelQ(sender)}</span>
+				<WhoNameQ who={getSenderWhoQ(sender)} className="font-semibold" />
 				{" · "}<MachineString>{sender.sessionIdPrefix}</MachineString>{` · ${getSessionPlaceQ(sender)}`}
 			</span>
 			{copies.map((copy, index) => (
@@ -3052,7 +3073,7 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 	const { zone, tray } = useTrayZoneQ(fieldId, box, "answer");
 	const lines = getDecisionLinesQ(item, draft, item.isFreeTextAllowed ? tray : null, fieldId);
 	const resend = item.canResend ? [{ label: "Resend", onPress: () => queue.send(item.id, "resend") }] : [];
-	const rest = `${draft.code ? `${draft.code} picked` : "No option picked"}. Goes to ${item.session.name}.`;
+	const rest = <>{`${draft.code ? `${draft.code} picked` : "No option picked"}. Goes to `}<window.UI.NoWrap>{item.session.name}</window.UI.NoWrap>{"."}</>;
 	return (
 		<ComposerQ field={item.isFreeTextAllowed ? { id: fieldId, label: "Your own answer or a note on this decision (optional)" } : null} tray={lines.tray} zone={zone.handlers}
 			head={lines.head} trayNote={lines.trayNote} text={box.text} onText={box.setText} isBusy={isBusy || Boolean(draft.isWaiting)}
@@ -3080,7 +3101,7 @@ function ApprovalLineQ({ id, name }) {
 		<p id={id} className="fs-meta queue-approval-line">
 			<span aria-hidden="true" className="text-info">{`${window.UI.TONE_GLYPH.info} `}</span>
 			<span className="text-ink">Approval: approving here approves the action once.</span>{" "}
-			<span className="text-ink">{`${name} does not ask again in its terminal.`}</span>
+			<span className="text-ink"><window.UI.NoWrap>{name}</window.UI.NoWrap>{" does not ask again in its terminal."}</span>
 		</p>
 	);
 }
@@ -3095,7 +3116,7 @@ function sendAnswerQ(queue, item, draft, box) {
 
 // Mark as read carries the ink while the box is empty, Send order once it holds text or an image; order, labels and widths never change
 function ReportComposerQ({ item, draft, queue, isBusy, error }) {
-	const name = item.session.name;
+	const name = <window.UI.NoWrap>{item.session.name}</window.UI.NoWrap>;
 	const fieldId = `queue-reply-${item.id}`;
 	const box = getDraftBoxQ(queue, item.id, draft);
 	const hasText = box.text.trim() !== "";
@@ -3104,9 +3125,9 @@ function ReportComposerQ({ item, draft, queue, isBusy, error }) {
 	const markRead = () => (hasContent ? putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.unsentOrder, fieldId) : queue.settle(item.id, "seen"));
 	const sendOrder = () => (hasText ? sendDraftQ(queue, item.id, box, (ids) => queue.settle(item.id, "reply", getImageBodyQ({ text: box.text }, ids))) : putInvalidQ(queue, item.id, COMPOSER_ERROR_Q.noOrder, fieldId));
 	const order = item.isFreeTextAllowed ? [{ label: "Send order", isInk: hasContent, onPress: sendOrder }] : [];
-	const rest = hasContent ? `Send order delivers this to ${name} and closes the report.` : `Mark as read closes this report. ${name} hears nothing.`;
+	const rest = hasContent ? <>{"Send order delivers this to "}{name}{" and closes the report."}</> : <>{"Mark as read closes this report. "}{name}{" hears nothing."}</>;
 	return (
-		<ComposerQ field={item.isFreeTextAllowed ? { id: fieldId, label: `Order to ${name} on this report (optional)` } : null} tray={item.isFreeTextAllowed ? tray : null} zone={zone.handlers}
+		<ComposerQ field={item.isFreeTextAllowed ? { id: fieldId, label: <>{"Order to "}{name}{" on this report (optional)"}</> } : null} tray={item.isFreeTextAllowed ? tray : null} zone={zone.handlers}
 			text={box.text} onText={box.setText} isBusy={isBusy || Boolean(draft.isWaiting)}
 			buttons={[{ label: "Mark as read", isInk: !hasContent, keyName: "e", onPress: markRead }, ...order]}
 			note={<ComposerNoteQ error={error ?? draft.error} tray={tray} fieldId={fieldId} rest={rest} />}
@@ -4290,11 +4311,12 @@ function getRelayRefusalLineQ(reason, names) {
 function RefusedSheetQ({ refusal, queue }) {
 	const { TONE_GLYPH } = window.UI;
 	const names = getPageNamesQ(queue);
-	const { sender, to } = getRefusalEndsQ(refusal, names);
-	const line = getRelayRefusalLineQ(refusal.reason, { sender, recipient: to });
+	const { NoWrap } = window.UI;
+	const { who, toWho } = getRefusalEndsQ(refusal, names);
+	const line = getRelayRefusalLineQ(refusal.reason, { sender: getUnmarkedLabelQ(who), recipient: getUnmarkedLabelQ(toWho) });
 	return (
 		<div className="card queue-pane queue-sheet">
-			<SheetHeadQ queue={queue}><RelayLetterheadQ kind={DONE_KIND_Q.relay} from={sender} to={to} /></SheetHeadQ>
+			<SheetHeadQ queue={queue}><RelayLetterheadQ kind={DONE_KIND_Q.relay} from={who} to={toWho} /></SheetHeadQ>
 			<div className="card-bar"><NamesNoteQ /></div>
 			<div className="card-body" tabIndex={-1}>
 				<div className="queue-sheet-body">
@@ -4302,7 +4324,7 @@ function RefusedSheetQ({ refusal, queue }) {
 						<span className="queue-date-facts fs-meta"><span aria-hidden="true" className="text-crit">{`${TONE_GLYPH.crit} `}</span><span className="text-dim">Refused</span></span>
 						<span className="fs-meta text-faint tabular-nums" title={`Refused ${getDatedTimeQ(refusal.at)}`}>{getDatedTimeQ(refusal.at)}</span>
 					</p>
-					<h3 className="queue-sheet-title">{`${REFUSED_KIND_Q} from ${sender} to ${to}`}</h3>
+					<h3 className="queue-sheet-title">{`${REFUSED_KIND_Q} from `}<NoWrap>{who.name}</NoWrap>{getIdTailQ(who)}{" to "}<NoWrap>{toWho.name}</NoWrap>{getIdTailQ(toWho)}</h3>
 					<RefusedWhoQ refusal={refusal} names={names} />
 					<p className="fs-meta">
 						<span className="font-semibold">{line.name}</span>
@@ -4338,10 +4360,10 @@ function RefusedWhoQ({ refusal, names }) {
 	);
 }
 
-// `yoaida · 5e55a000`, or the bare id no loaded session names
+// `yoaida · 5e55a000`, or the bare id no loaded session names: the line draws the id once, so the name adds none
 function SessionPrefixQ({ prefix, names }) {
 	const who = names.get(prefix);
-	return <>{who !== undefined && <><span className="font-semibold">{getWhoLabelQ(who)}</span>{" · "}</>}<window.UI.MachineString>{prefix}</window.UI.MachineString></>;
+	return <>{who !== undefined && <><WhoNameQ who={who} className="font-semibold" />{" · "}</>}<window.UI.MachineString>{prefix}</window.UI.MachineString></>;
 }
 
 function getUnresolvedTextQ(count) {
@@ -4388,6 +4410,11 @@ function getSessionWhoQ(session) {
 // a name the session wrote is marked as its own wherever it is painted, never read as the queue's fact; its id follows where it could be mistaken
 function getWhoLabelQ({ name, isSelfNamed, idPrefix }) {
 	return `${name}${isSelfNamed ? " (self-named)" : ""}${idPrefix === undefined ? "" : ` · ${idPrefix}`}`;
+}
+
+// a name inside the page's own sentence: the mark is the head's and the rows', its id kept where the page's names hold one
+function getUnmarkedLabelQ(who) {
+	return getWhoLabelQ({ ...who, isSelfNamed: false });
 }
 
 // account + start-directory tail → tells two same-named sessions apart
