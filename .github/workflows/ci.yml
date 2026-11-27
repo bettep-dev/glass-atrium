@@ -1057,9 +1057,8 @@ jobs:
             echo "LIVE_CLAUDE_BEFORE=absent" >> "${GITHUB_ENV}"
           fi
 
-      # Retired-map carry-forward. Bare --check cannot see a retired key dropped
-      # from the committed map — it rebuilds the expected map from that same map —
-      # so the PR target's tip manifest is the reference that still carries it.
+      # Retired-map carry-forward. Bare --check holds the map to HEAD's, so it misses
+      # a key a branch commit dropped; the PR target's tip manifest still carries it.
       # The merge base would miss keys the target added after it, which is where a
       # lane-side conflict resolution drops them. A push has no target, so the step
       # skips. One ref at depth 1, no history walk; anonymous on this public repo.
