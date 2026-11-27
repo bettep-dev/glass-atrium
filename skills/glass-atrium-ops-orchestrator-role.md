@@ -636,6 +636,7 @@ The owner queue carries a session's reports and decisions to the monitor's Queue
   - an approval a high-impact action needs — the post asks; the approving answer is the approval;
   - the end report — the one report when work the owner asked for finishes; an interim turn reply is not one.
 - `post` takes the kind: `report` posts a report; `decision` posts a decision with its options.
+  - How to write the body: `## Owner Queue Body`.
 - **Turn record**: a turn of either session kind above that called a tool judges itself against the kinds above, posts what is owed, then calls `record` — alone, as the turn's last tool call.
   - Form `nothing`: the turn owed no post — in a background job session, after `### Turn-record self-check`.
   - Form `posted`: the id of every item the turn posted, never a relay's.
@@ -715,6 +716,79 @@ Claim first: `claim` on the tool route; on the CLI, `wait` or `pending` → `get
   - Why: the listener announces what a `wait` would claim, and a `wait` displaces it.
 - A session no listener serves still starts `wait` — a background job, a print-mode run or a session started before the listener's binding, for example.
 - A `next` step and the turn-end check's line say which a session is: each says to start `wait` only where no listener serves it.
+
+## Owner Queue Body
+
+Binds the body of a `report` or `decision` post, which the owner reads on the Queue page; a relay's text is shown as sent, with no notation drawn.
+
+### Body form
+
+- **First line**: the conclusion in one sentence — what happened, or what the owner decides.
+  - Why: the owner decides from that line whether to read on.
+- **Short item**: an item with one point stays two or three plain sentences, with no heading and no list.
+- **Long item**: more than one point, or a point that needs its evidence, goes under short `## ` headings in the owner's language.
+  - The usual set is evidence · impact · recommendation; a conclusion heading only where the conclusion needs more than the first line; drop any the item does not need.
+- **Lists and tables**: parallel items are a list, steps in order a numbered list, a comparison across the same attributes a table.
+- **Text to forward**: text the owner is meant to copy and send elsewhere stands alone in a `>` quote block.
+  - A quote holds lines only: a list marker or heading inside it shows as typed, as a pasted copy needs.
+- **Notation**: only the forms `### Notation the page draws` lists; any other shows as literal characters.
+- **Kept out**: a raw file or log dump — name the file and say what it holds; a wall of prose; notation the page does not draw.
+- **Language**: the body is written in the owner's language; identifiers, paths, commands and code keep their own form.
+- **Options**: a decision's options carry their own label, pros and cons, so the body names the recommended option and its reason and repeats no option's pros or cons.
+  - An approval body also states what `## Owner Queue Authority` → `### Posting an approval` lists.
+- The reader is the one `skills/glass-atrium-ops-orchestrator.md` → `### Low-Context Reader Rules` describes.
+- Honest backing — honor-system: no hook reads a body's form; the page draws what it parses and shows the rest as typed.
+
+### Notation the page draws
+
+Parser: `monitor/public/src/ui.jsx` → `getProseBlocks`, for a report or decision body.
+
+| Form | Write it as |
+|---|---|
+| paragraph | lines of text; a blank line starts the next, a single line break is kept |
+| heading, two sizes | `# ` or `## ` larger, `### ` to `###### ` smaller, at the line's start |
+| bullet list | `- ` (or `* `, `• `) at the line's start |
+| numbered list | `1. ` or `1) ` at the line's start |
+| nested list | indented with spaces past the item above, three levels at most |
+| table | a header row over a `---` delimiter row, both holding a bar, at most 12 columns |
+| quote | `> ` at the line's start; lines only, no block inside |
+| divider | `---` alone on a line |
+| code block | a line of three backticks above and below; a report folds one over 20 lines |
+| inline code | one backtick each side |
+| bold | `**` each side |
+| document link | `clauded-docs/<id>`, or a bare id the post lists in `linkedDocIds` |
+
+- Shown as typed, never drawn: italic, strikethrough, checkboxes, HTML, tab indents, and web addresses, which are not clickable.
+- `[label](target)` shows as `label (target)`, and an image `![alt](src)` as `alt (src)` with no image drawn: only a document address inside it links.
+
+### Worked pair
+
+Invented content; the Korean stands for the owner's language, not a language rule.
+
+Good — a report: the conclusion first, evidence as a list, a comparison as a table, the text to forward alone in a quote.
+
+```
+알림 지연 문제를 고쳤습니다. 결정할 것은 없습니다.
+
+## 근거
+- 재현 테스트: 수정 전 실패, 수정 후 통과
+- 전체 테스트 통과
+
+## 영향
+| 항목 | 이전 | 이후 |
+|---|---|---|
+| 알림 도착 | 몇 분 지연 | 즉시 |
+
+## 전달할 글
+> 알림 지연은 고쳐졌습니다. 따로 하실 일은 없습니다.
+```
+
+Bad — process narration first, the conclusion buried at the end, italic and a web link the page shows as typed, a raw log pasted in.
+
+```
+먼저 설정 파일을 열어 *중요한* 부분을 확인하고 테스트를 돌렸는데 처음에는 실패해서 다시 고쳐 돌렸고 그 기록은 [여기](https://example.com/log)에 있으며 결국 알림 지연은 고쳐진 것 같습니다.
+ERROR worker retry=3 timeout ... (이하 수백 줄)
+```
 
 ## Owner Queue Waiting
 
