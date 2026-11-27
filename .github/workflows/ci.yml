@@ -881,7 +881,7 @@ jobs:
       # only AFTER reviewing that baseline and pinning the derived allowlist;
       # the allowlist cannot be derived offline, so block is deferred by design.
       - name: Harden runner (egress audit — STAGED, not blocking)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -1268,7 +1268,7 @@ jobs:
       # block only AFTER reviewing that baseline; the allowlist cannot be derived
       # offline, so block is deferred by design.
       - name: Harden runner (egress audit — STAGED, not blocking)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
