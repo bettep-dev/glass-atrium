@@ -415,3 +415,57 @@ test("an empty or missing text renders an empty atom, never a stray paragraph", 
     assert.equal(innerMarkup(text as string), "", JSON.stringify(text));
   }
 });
+
+// keeps skills/glass-atrium-ops-orchestrator-role.md → `### Notation the page draws` true of the page: one body, every row's form
+describe("the owner-queue body notation: drawn forms render, every other form shows as typed", () => {
+  const typed = (text: string) => `<p>${text.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>`;
+  const tableCells = (count: number, cell: (index: number) => string) => Array.from({ length: count }, (_, index) => cell(index)).join("");
+  const LINKED_DOC_IDS = [44071];
+  const rows = [
+    { name: "a paragraph keeps a single line break", text: "첫 줄\n둘째 줄", html: "<p>첫 줄<br></br>둘째 줄</p>" },
+    { name: "one or two hashes draw the larger heading, three to six the smaller", text: "# 큰 제목\n## 큰 제목 둘\n### 작은 제목\n###### 작은 제목 여섯",
+      html: "<h4>큰 제목</h4><h4>큰 제목 둘</h4><h5>작은 제목</h5><h5>작은 제목 여섯</h5>" },
+    { name: "dash, star and bullet markers draw a bullet list", text: "- 하나\n* 둘\n• 셋", html: "<ul><li>하나</li><li>둘</li><li>셋</li></ul>" },
+    { name: "dot and parenthesis markers draw a numbered list", text: "1. 하나\n2) 둘", html: '<ol><li value="1">하나</li><li value="2">둘</li></ol>' },
+    { name: "space indents draw a nested list three levels deep at most", text: "- 1단\n  - 2단\n    - 3단\n      - 4단",
+      html: "<ul><li>1단<ul><li>2단<ul><li>3단</li><li>4단</li></ul></li></ul></li></ul>" },
+    { name: "a header row over a delimiter row draws a table of up to 12 columns", text: getTableText(12),
+      html: table(tableCells(12, (index) => th(`c${index + 1}`)), [td("1") + tableCells(11, () => td(""))]) },
+    { name: "a 13-column header draws no table", text: getTableText(13), html: `<p>${getTableText(13).split("\n").join("<br></br>")}</p>` },
+    { name: "quote lines draw a quote holding lines only", text: "> 전달할 글\n> - 목록 아님", html: "<blockquote>전달할 글<br></br>- 목록 아님</blockquote>" },
+    { name: "three dashes alone on a line draw a divider", text: "---", html: "<hr></hr>" },
+    { name: "three backticks above and below draw a code block, every line where the fold is off", text: getFence(21),
+      html: `<pre class="prose-pre">${getFenceText(21)}</pre>` },
+    { name: "one backtick each side draws inline code", text: "실행 `npm test` 후", html: `<p>실행 ${code("npm test")} 후</p>` },
+    { name: "two stars each side draw bold", text: "**중요** 확인", html: "<p><strong>중요</strong> 확인</p>" },
+    { name: "a document address, or a bare id the post declares, draws a document link", text: "clauded-docs/44060 · 문서 44071",
+      html: `<p>clauded-docs/${link("44060")} · 문서 ${link("44071")}</p>` },
+    { name: "italic shows as typed", text: "*기울임* _기울임_", html: typed("*기울임* _기울임_") },
+    { name: "strikethrough shows as typed", text: "~~취소선~~", html: typed("~~취소선~~") },
+    { name: "a checkbox shows as typed inside its list item", text: "- [ ] 할 일\n- [x] 끝난 일", html: "<ul><li>[ ] 할 일</li><li>[x] 끝난 일</li></ul>" },
+    { name: "HTML shows as typed", text: "<b>굵게</b> <img src=x>", html: typed("<b>굵게</b> <img src=x>") },
+    { name: "a tab indent shows as typed, never a nested item", text: "- 위 항목\n\t- 탭 항목", html: `<ul><li>위 항목</li></ul>${typed("\t- 탭 항목")}` },
+    { name: "a web address shows as typed, never clickable", text: "https://example.com/a?b=1&c=2", html: typed("https://example.com/a?b=1&c=2") },
+    { name: "link syntax shows as label (target), only a document address inside it linking",
+      text: "[가이드](https://example.com/g) · [명세](clauded-docs/44060)", html: `<p>가이드 (https://example.com/g) · 명세 (clauded-docs/${link("44060")})</p>` },
+  ];
+  const BODY = rows.map((row) => row.text).join("\n\n");
+  const markup = innerMarkup(BODY, LINKED_DOC_IDS);
+
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.ok(markup.includes(row.html), `${row.html}\n--- not in ---\n${markup}`);
+    });
+  }
+
+  test("a blank line starts the next block, so the body renders as its rows' blocks in order", () => {
+    assert.equal(markup, rows.map((row) => row.html).join(""));
+  });
+
+  test("a report, whose fold is on, folds a code block over 20 lines", () => {
+    const tree = renderScreen(React.createElement(UI.ProseText as Component, { text: BODY, linkedDocIds: LINKED_DOC_IDS, canFoldCode: true })) as RenderedNode;
+    const fence = findNodes(tree, (node) => node.type === "pre").find((node) => collectText(node).startsWith("line 1\n"));
+    const labels = findNodes(tree, (node) => node.type === "summary").map((node) => collectText(node).trim());
+    assert.deepEqual([fence && collectText(fence), labels], [getFenceText(20), ["Show all 21 lines"]]);
+  });
+});
