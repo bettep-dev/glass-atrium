@@ -697,9 +697,9 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # AutoAgent self-improvement loop: Python stdlib `unittest` suites. No DB, no
-  # third-party deps, no `claude` CLI — pure-stdlib by design, so the 3.11/3.12
-  # matrix carries no dependency-install risk. fail-fast:false so one version's
-  # failure does not cancel the other.
+  # `claude` CLI; the only third-party install is the two pinned database drivers
+  # hooks/test/test_pg_write.py needs (it talks to a fake server, never a real DB).
+  # fail-fast:false so one version's failure does not cancel the other.
   # ---------------------------------------------------------------------------
   test-python:
     name: "test: autoagent unittest"
@@ -739,6 +739,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # test_pg_write.py → ConnectTolerance skips unless both import: psycopg (v3 writers) + psycopg2 (_pg-write.py).
+      - name: Install the hook writers' database drivers
+        run: python3 -m pip install --disable-pip-version-check psycopg==3.3.4 psycopg2-binary==2.9.12
+
       # unittest prints its "Ran N tests ... OK/FAILED (...)" trailer to STDERR.
       # We tee that stream to a file, then emit a GITHUB_STEP_SUMMARY aggregate
       # line — WITHOUT swallowing the exit code. `set -o pipefail` makes each
@@ -777,12 +781,17 @@ jobs:
             verdict="$(grep -E '^(OK|FAILED)' "${log}" | tail -n1)"
             echo "- ${ran:-Ran ? tests}"
             echo "- result: ${verdict:-unknown}"
+            # a skip-decorated class still reads OK above → its own ran/skipped count
+            connect_re='^test_[a-z_]+ \(test_pg_write\.ConnectTolerance\.'
+            connect_total="$(grep -cE "${connect_re}" "${log}" || true)"
+            connect_skipped="$(grep -E "${connect_re}" "${log}" | grep -c ' \.\.\. skipped' || true)"
+            echo "- hooks ConnectTolerance: $((${connect_total:-0} - ${connect_skipped:-0})) ran, ${connect_skipped:-0} skipped"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   # ---------------------------------------------------------------------------
   # scripts/test Python suites: a SIBLING job rather than a step inside
-  # test-python, because that job is declared pure-stdlib by design and this one
-  # installs pytest. pytest natively collects the unittest-style files too, so a
+  # test-python, because that job installs only the hook database drivers and
+  # this one installs pytest. pytest natively collects the unittest-style files too, so a
   # single invocation covers every scripts/test/test_*.py — none of which any CI
   # job read before. Dependencies come from requirements-dev.txt (CI-only) so the
   # shipped requirements.txt declaration set never carries a test package.
