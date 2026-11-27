@@ -23,6 +23,7 @@ import type { AuditChangeCarrier } from "../middleware/audit-log.js";
 import { respondDbFailure } from "../db-failure.js";
 import { putChildStdin } from "../child-stdin.js";
 import { TASK_TYPES } from "../task-types.js";
+import { buildDayWindow, computeBucketTzToday, DAY_BUCKET_TIMEZONE } from "../timezone.js";
 import type {
   AgentMutationErrorBody,
   AgentMutationInternalBody,
@@ -342,7 +343,7 @@ async function handleBudgetOverages(
     return reply.code(400).send(invalidDays());
   }
 
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     // NULL agent_type rows (sidecar recovery miss) can't map to a summary row →
@@ -355,7 +356,7 @@ async function handleBudgetOverages(
         MAX(crossed_pct)    AS max_crossed_pct,
         MAX(ts)             AS latest_ts
       FROM core.budget_overages
-      WHERE ts >= ${windowLowerBound}
+      WHERE ${buildWindowFilter(Prisma.sql`ts`, dayWindow)}
         AND agent_type IS NOT NULL
       GROUP BY agent_type
       ORDER BY overage_count DESC
@@ -397,7 +398,7 @@ async function handleSuccessRate(
     return reply.code(400).send(invalidDays());
   }
 
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     // Canonical-membership gate — show only Atrium-system agents (registry SoT).
@@ -409,15 +410,13 @@ async function handleSuccessRate(
       await loadCanonicalAgentKeys(),
     );
 
-    // Date bucket uses server-local TZ (`record_ts::date`) — matches cost.ts and
-    // dashboard.ts conventions where derived day-buckets follow PG server TZ
-    // (KST), so the FE 'last N days' window aligns with the user's wall clock.
+    // Date bucket = the bucket-tz calendar day, the day the window edges name.
     // FILTER (WHERE …) avoids correlated subqueries — single index scan.
     const rows = await prisma.$queryRaw<SuccessRateDbRow[]>`
       SELECT
         agent,
         task_type::text                                                AS task_type,
-        record_ts::date                                                AS event_date,
+        (record_ts AT TIME ZONE ${DAY_BUCKET_TIMEZONE}::text)::date     AS event_date,
         COUNT(*) FILTER (
           WHERE result::text IN ('done', 'done_with_concerns')
         )::bigint                                                      AS success_count,
@@ -441,9 +440,9 @@ async function handleSuccessRate(
           )::numeric(8,6)
         END                                                            AS success_rate
       FROM core.outcomes
-      WHERE record_ts >= ${windowLowerBound}
+      WHERE ${buildWindowFilter(Prisma.sql`record_ts`, dayWindow)}
         ${agentMembershipFilter}
-      GROUP BY agent, task_type, record_ts::date
+      GROUP BY agent, task_type, event_date
       ORDER BY agent ASC, task_type ASC, event_date ASC
       LIMIT ${SUCCESS_RATE_LIMIT}
     `;
@@ -454,7 +453,7 @@ async function handleSuccessRate(
     // composite degrades to success_rate (advisory-first, never blocks the response).
     const efficiency = await loadSuccessEfficiency(
       prisma,
-      windowLowerBound,
+      dayWindow,
       request.log,
     );
     const mapped = mapSuccessRateRows(rows, efficiency);
@@ -518,7 +517,7 @@ export function mapSuccessRateRows(
 // success_rate rather than failing the whole success-rate route.
 async function loadSuccessEfficiency(
   prisma: ReturnType<typeof getPrisma>,
-  windowLowerBound: Prisma.Sql,
+  dayWindow: DayWindow,
   log: FastifyRequest["log"],
 ): Promise<SuccessEfficiencyContext | null> {
   try {
@@ -527,7 +526,7 @@ async function loadSuccessEfficiency(
         AVG((input_tokens + output_tokens)::numeric)::numeric(20,4) AS avg_tokens,
         AVG(duration_ms::numeric)::numeric(20,4)                    AS avg_duration_ms
       FROM core.cost_events
-      WHERE event_date >= ${windowLowerBound}
+      WHERE event_date BETWEEN ${dayWindow.firstDay} AND ${dayWindow.lastDay}
         AND kind = 'turn'
         AND duration_ms >= 0
     `;
@@ -563,7 +562,7 @@ async function handleRevisionDistribution(
     return reply.code(400).send(invalidDays());
   }
 
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     // Canonical-membership gate (registry SoT) — this is the MASTER set driving
@@ -594,7 +593,7 @@ async function handleRevisionDistribution(
           END                                                          AS sort_key,
           COUNT(*)::bigint                                             AS occurrence_count
         FROM core.outcomes
-        WHERE record_ts >= ${windowLowerBound}
+        WHERE ${buildWindowFilter(Prisma.sql`record_ts`, dayWindow)}
           ${agentMembershipFilter}
         GROUP BY agent, revision_bucket, sort_key
       ) buckets
@@ -655,7 +654,7 @@ async function handleReviewFlagTimeseries(
   // FILTERs carry an `o.id IS NOT NULL` guard: a gap day's LEFT JOIN emits a phantom
   // all-NULL `o` row for which `metric_pass IS NULL` is TRUE — without the guard it
   // would inflate empty_metric_count/ratio to 1 on a zero-activity day.
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     // Canonical-membership gate (registry SoT) — excludes non-registry noise
@@ -693,13 +692,12 @@ async function handleReviewFlagTimeseries(
           )::numeric(8,6)
         END                                                            AS empty_metric_ratio
       FROM generate_series(
-        ${windowLowerBound},
-        CURRENT_DATE,
+        ${dayWindow.firstDay},
+        ${dayWindow.lastDay},
         '1 day'
       ) d
       LEFT JOIN core.outcomes o
-        ON o.record_ts >= d::date
-        AND o.record_ts <  (d::date + INTERVAL '1 day')
+        ON ${buildWindowFilter(Prisma.sql`o.record_ts`, { firstDay: Prisma.sql`d::date`, lastDay: Prisma.sql`d::date` })}
         ${agentMembershipFilter}
       GROUP BY d
       ORDER BY d ASC
@@ -749,7 +747,7 @@ async function handleReviewFlagByAgent(
     return reply.code(400).send(invalidDays());
   }
 
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     // Canonical-membership gate (registry SoT) — the FE Health Index joins these
@@ -759,8 +757,8 @@ async function handleReviewFlagByAgent(
     const agentMembershipFilter = buildAgentMembershipFilter(
       await loadCanonicalAgentKeys(),
     );
-    // GROUP BY agent over the window — same record_ts >= CURRENT_DATE - INTERVAL
-    // bound as success-rate/failure-patterns. Denominator excludes only
+    // GROUP BY agent over the window — same day window as
+    // success-rate/failure-patterns. Denominator excludes only
     // needs_context (matches the success-rate result-set convention: keeps
     // blocked+fail, drops the not-an-evaluation needs_context rows). Both the
     // total_count denominator and the review_flagged numerator filter on the
@@ -800,7 +798,7 @@ async function handleReviewFlagByAgent(
           )::numeric(8,6)
         END                                                          AS review_flag_ratio
       FROM core.outcomes
-      WHERE record_ts >= ${windowLowerBound}
+      WHERE ${buildWindowFilter(Prisma.sql`record_ts`, dayWindow)}
         ${agentMembershipFilter}
       GROUP BY agent
       ORDER BY total_count DESC, agent ASC
@@ -859,7 +857,7 @@ async function handleFailurePatterns(
     return reply.code(400).send(invalidDays());
   }
 
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     // CTE strategy:
@@ -894,7 +892,7 @@ async function handleFailurePatterns(
           )::bigint                                                 AS reconstructed_count,
           MAX(record_ts)                                            AS last_breakage_at
         FROM core.outcomes
-        WHERE record_ts >= ${windowLowerBound}
+        WHERE ${buildWindowFilter(Prisma.sql`record_ts`, dayWindow)}
           AND result::text IN ('fail', 'blocked')
           ${agentMembershipFilter}
         GROUP BY agent
@@ -904,7 +902,7 @@ async function handleFailurePatterns(
           agent,
           COUNT(*)::bigint AS total_outcomes
         FROM core.outcomes
-        WHERE record_ts >= ${windowLowerBound}
+        WHERE ${buildWindowFilter(Prisma.sql`record_ts`, dayWindow)}
           ${agentMembershipFilter}
         GROUP BY agent
       ),
@@ -922,7 +920,7 @@ async function handleFailurePatterns(
             unnest(o.concerns) AS concern,
             COUNT(*)           AS occurrences
           FROM core.outcomes o
-          WHERE o.record_ts >= ${windowLowerBound}
+          WHERE ${buildWindowFilter(Prisma.sql`o.record_ts`, dayWindow)}
             AND o.result::text IN ('fail', 'blocked')
             AND o.concerns IS NOT NULL
             AND array_length(o.concerns, 1) > 0
@@ -1010,7 +1008,7 @@ async function handleLifecycleStats(
     return reply.code(400).send(invalidDays());
   }
 
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     // CTE strategy:
@@ -1044,7 +1042,7 @@ async function handleLifecycleStats(
             - MIN(event_ts) FILTER (WHERE event_name = 'SubagentStart')
           )) AS duration_sec
         FROM core.agent_events
-        WHERE event_ts >= ${windowLowerBound}
+        WHERE ${buildWindowFilter(Prisma.sql`event_ts`, dayWindow)}
           ${agentMembershipFilter}
         GROUP BY agent_type, agent_id
         HAVING
@@ -1057,7 +1055,7 @@ async function handleLifecycleStats(
           COUNT(*) FILTER (WHERE event_name = 'SubagentStart')::bigint AS start_count,
           COUNT(*) FILTER (WHERE event_name = 'SubagentStop')::bigint  AS stop_count
         FROM core.agent_events
-        WHERE event_ts >= ${windowLowerBound}
+        WHERE ${buildWindowFilter(Prisma.sql`event_ts`, dayWindow)}
           ${agentMembershipFilter}
         GROUP BY agent_type
       ),
@@ -1153,7 +1151,7 @@ async function handleSummary(
     return reply.code(400).send(invalidRangeParam("limit", SUMMARY_LIMIT_MIN, SUMMARY_LIMIT_MAX));
   }
 
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     // 4-way parallel (independent fetches) — outcomes-side aggregates +
@@ -1172,7 +1170,7 @@ async function handleSummary(
             record_ts AS last_run_at,
             result::text AS last_result
           FROM core.outcomes
-          WHERE record_ts >= ${windowLowerBound}
+          WHERE ${buildWindowFilter(Prisma.sql`record_ts`, dayWindow)}
           ORDER BY agent, record_ts DESC
         ),
         rollup AS (
@@ -1189,7 +1187,7 @@ async function handleSummary(
               WHERE result::text = 'needs_context'
             )::bigint                                                     AS needs_context_count
           FROM core.outcomes
-          WHERE record_ts >= ${windowLowerBound}
+          WHERE ${buildWindowFilter(Prisma.sql`record_ts`, dayWindow)}
           GROUP BY agent
         )
         SELECT
@@ -1212,7 +1210,7 @@ async function handleSummary(
               - MIN(event_ts) FILTER (WHERE event_name = 'SubagentStart')
             )) * 1000.0 AS duration_ms
           FROM core.agent_events
-          WHERE event_ts >= ${windowLowerBound}
+          WHERE ${buildWindowFilter(Prisma.sql`event_ts`, dayWindow)}
           GROUP BY agent_type, agent_id
           HAVING
             MIN(event_ts) FILTER (WHERE event_name = 'SubagentStart') IS NOT NULL
@@ -1234,7 +1232,7 @@ async function handleSummary(
           agent_type,
           COUNT(*)::bigint AS invocations
         FROM core.agent_events
-        WHERE event_ts >= ${windowLowerBound}
+        WHERE ${buildWindowFilter(Prisma.sql`event_ts`, dayWindow)}
           AND event_name = 'SubagentStart'
         GROUP BY agent_type
       `,
@@ -1454,7 +1452,7 @@ async function handleLatency(
     return reply.code(400).send(invalidRangeParam("days", LATENCY_DAYS_MIN, LATENCY_DAYS_MAX));
   }
 
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     // Canonical-membership gate (registry SoT) — filter raw core.agent_events by
@@ -1478,7 +1476,7 @@ async function handleLatency(
             - MIN(event_ts) FILTER (WHERE event_name = 'SubagentStart')
           )) * 1000.0 AS duration_ms
         FROM core.agent_events
-        WHERE event_ts >= ${windowLowerBound}
+        WHERE ${buildWindowFilter(Prisma.sql`event_ts`, dayWindow)}
           ${agentMembershipFilter}
         GROUP BY agent_type, agent_id
         HAVING
@@ -1580,7 +1578,7 @@ async function handleFailureReasons(
     } satisfies AgentsErrorBody);
   }
 
-  const windowLowerBound = buildWindowLowerBound(days);
+  const dayWindow = buildDayWindow(computeBucketTzToday(new Date()), days);
   const prisma = getPrisma();
   try {
     // Canonical-membership gate (registry SoT) — a non-registry `agent` query
@@ -1596,7 +1594,7 @@ async function handleFailureReasons(
     const rows = await prisma.$queryRaw<FailureReasonDbRow[]>`
       SELECT directive_hint, concerns, summary
       FROM core.outcomes
-      WHERE record_ts >= ${windowLowerBound}
+      WHERE ${buildWindowFilter(Prisma.sql`record_ts`, dayWindow)}
         AND result::text = ${resultType}
         AND agent = ${agent}
         ${agentMembershipFilter}
@@ -1714,14 +1712,12 @@ function parseDaysParam(raw: string | undefined): AgentsWindowDays | null {
   return parsed as AgentsWindowDays;
 }
 
-// Agents-screen "last N days" window lower bound: CURRENT_DATE - (days-1), today counted
-// = exactly `days` calendar days of the PG session's CURRENT_DATE — not the bucket-tz
-// day of timezone.ts buildDayWindow, which the cost reads use. Rolling NOW()-N is reserved for liveness
-// fields only, never rate aggregates — /summary last_run_at/status stay liveness
-// signals but derive from rows inside this calendar window.
-// Prisma.raw is safe: `days` is allowlist/range-validated; `days - 1` is derived.
-function buildWindowLowerBound(days: number): Prisma.Sql {
-  return Prisma.raw(`CURRENT_DATE - INTERVAL '${days - 1} days'`);
+type DayWindow = ReturnType<typeof buildDayWindow>;
+
+// Timestamptz column inside the bucket-tz day window, cut on instants so the column's index range-scans.
+function buildWindowFilter(column: Prisma.Sql, dayWindow: DayWindow): Prisma.Sql {
+  return Prisma.sql`${column} >= ((${dayWindow.firstDay})::timestamp AT TIME ZONE ${DAY_BUCKET_TIMEZONE}::text)
+    AND ${column} < ((${dayWindow.lastDay} + 1)::timestamp AT TIME ZONE ${DAY_BUCKET_TIMEZONE}::text)`;
 }
 
 // buildAgentMembershipFilter now lives in the shared `agents/registry.js` module
