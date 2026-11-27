@@ -174,12 +174,17 @@ run_file_drift() {
 @test "agent bodies and top-level hooks on disk but absent from the manifest are reported as surplus" {
   printf -- '---\nname: rogue\n---\n' >"${ROOT}/agents/rogue.md"
   printf '#!/usr/bin/env bash\n' >"${ROOT}/hooks/rogue.sh"
-  mkdir -p "${ROOT}/agents/references"
+  printf 'import os\n' >"${ROOT}/hooks/_rogue_module.py"
+  printf 'import os\n' >"${ROOT}/hooks/listed_module.py"
+  write_manifest agents/dev-a.md agent-registry.json hooks/inject-scope-rules.sh hooks/hook-a.sh hooks/listed_module.py
+  mkdir -p "${ROOT}/agents/references" "${ROOT}/hooks/__pycache__"
   printf 'nested\n' >"${ROOT}/agents/references/note.md"
+  printf 'bytecode\n' >"${ROOT}/hooks/__pycache__/listed_module.cpython-312.pyc"
 
   run_detector get_surplus_file_drift
 
-  [[ "${output}" == "2" && "${stderr}" == *"surplus file: agents/rogue.md"* && "${stderr}" == *"surplus file: hooks/rogue.sh"* ]] || {
+  [[ "${output}" == "3" && "${stderr}" == *"surplus file: agents/rogue.md"* && "${stderr}" == *"surplus file: hooks/rogue.sh"* &&
+    "${stderr}" == *"surplus file: hooks/_rogue_module.py"* ]] || {
     echo "surplus '${output}': ${stderr}"
     return 1
   }

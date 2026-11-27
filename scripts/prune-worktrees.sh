@@ -75,6 +75,7 @@ TERM_WAIT_SECS="${GA_PRUNE_WORKTREES_TERM_WAIT_SECS:-10}"
 readonly TERM_WAIT_SECS
 readonly SEP=$'\x1f'
 
+# Verdict functions answer through globals, not $( ): inside one, a handled rc 1 still trips this trap.
 trap 'echo "ERROR: line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 APPLY=0
@@ -106,7 +107,8 @@ main() {
   ((IS_LIST_ALL == 0)) || get_linked_worktrees
   get_ancestor_pids
   # shellcheck disable=SC2310  # no claude ancestor → empty: every session process inside is another's
-  OWN_SESSION_PID="$(get_session_ancestor "$$")" || OWN_SESSION_PID=""
+  get_session_ancestor "$$" || SESSION_ANCESTOR=""
+  OWN_SESSION_PID="${SESSION_ANCESTOR}"
   # From / on: no child of this run (lsof, git, ps) holds a cwd inside a worktree it inspects.
   cd /
   local target
@@ -173,12 +175,12 @@ close_out_worktree() {
     IS_REFUSED=1
     return 0
   fi
-  local wt="${RESOLVED_WT}" holder
+  local wt="${RESOLVED_WT}"
   printf 'worktree: %s\n' "${wt}"
   # shellcheck disable=SC2310  # the lock verdict is branched on
-  if holder="$(get_live_lock_holder)"; then
-    printf '  skipped: live writer lock held by %s\n' "${holder}"
-    REPORT_KEPT+=("${wt} — lock: fail (live writer lock held by ${holder})")
+  if get_live_lock_holder; then
+    printf '  skipped: live writer lock held by %s\n' "${LOCK_HOLDER}"
+    REPORT_KEPT+=("${wt} — lock: fail (live writer lock held by ${LOCK_HOLDER})")
     return 0
   fi
   # shellcheck disable=SC2310  # the live-agent verdict is branched on
@@ -244,7 +246,8 @@ get_main_checkout() {
   fi
 }
 
-# The lock key derives from the path a writer's tool call named, so both spellings are looked up.
+# Sets LOCK_HOLDER on a live lock; rc 1 = none. The lock key derives from the path a writer's tool call
+# named, so both spellings are looked up.
 get_live_lock_holder() {
   local root
   for root in "${RESOLVED_GIVEN}" "${RESOLVED_WT}"; do
@@ -254,7 +257,7 @@ get_live_lock_holder() {
     worktree_lock_is_live "${worktree_lock_dir_out}" || continue
     # shellcheck disable=SC2310  # an unreadable holder is still a live lock
     worktree_lock_read_holder "${worktree_lock_dir_out}" || worktree_lock_holder_out='(unreadable holder)'
-    printf '%s\n' "${worktree_lock_holder_out}"
+    LOCK_HOLDER="${worktree_lock_holder_out}"
     return 0
   done
   return 1
@@ -384,17 +387,16 @@ check_clean() {
 }
 
 check_lock() {
-  local holder
   # shellcheck disable=SC2310  # the lock verdict is branched on
-  if holder="$(get_live_lock_holder)"; then
-    PART_FACT="live writer lock held by ${holder}"
+  if get_live_lock_holder; then
+    PART_FACT="live writer lock held by ${LOCK_HOLDER}"
     return 1
   fi
   PART_FACT='no live writer lock'
 }
 
 check_live_agents() {
-  local live owner
+  local live
   # shellcheck disable=SC2310  # an unreadable record store is the failing fact
   if ! live="$(hook_get_live_child_count)"; then
     PART_FACT="cannot read the live-agent records in ${LIVE_CHILD_DIR}"
@@ -406,8 +408,8 @@ check_live_agents() {
     return 1
   fi
   # shellcheck disable=SC2310  # the ownership verdict is branched on
-  if owner="$(get_owned_process_inside "${live}")"; then
-    PART_FACT="${owner}"
+  if get_owned_process_inside "${live}"; then
+    PART_FACT="${OWNER_FACT}"
     return 1
   fi
   if ((live == 0)); then
@@ -417,30 +419,30 @@ check_live_agents() {
   fi
 }
 
-# Prints why the first process inside (worktree_processes_out) may have a live owner; rc 1 = none.
+# Sets OWNER_FACT to why the first process inside (worktree_processes_out) may have a live owner; rc 1 = none.
 # Owner = nearest claude ancestor: another session's always counts, the caller's own only while $1 > 0
 # agents are live (markers record no main session). No claude ancestor = orphan. This run's chain is skipped.
 get_owned_process_inside() {
-  local live="${1}" entry pid session
+  local live="${1}" entry pid
   for entry in "${worktree_processes_out[@]+"${worktree_processes_out[@]}"}"; do
     pid="${entry%%"${SEP}"*}"
     [[ "${ANCESTOR_PIDS}" != *" ${pid} "* ]] || continue
     # shellcheck disable=SC2310  # the ancestry verdict is branched on
-    session="$(get_session_ancestor "${pid}")" || continue
-    if [[ "${session}" != "${OWN_SESSION_PID}" ]]; then
-      printf 'pid=%s runs under another Claude session pid=%s\n' "${pid}" "${session}"
+    get_session_ancestor "${pid}" || continue
+    if [[ "${SESSION_ANCESTOR}" != "${OWN_SESSION_PID}" ]]; then
+      printf -v OWNER_FACT 'pid=%s runs under another Claude session pid=%s' "${pid}" "${SESSION_ANCESTOR}"
       return 0
     fi
     if ((live > 0)); then
-      printf 'pid=%s runs under this Claude session pid=%s while %s agent(s) are live, and no record says whose it is\n' \
-        "${pid}" "${session}" "${live}"
+      printf -v OWNER_FACT 'pid=%s runs under this Claude session pid=%s while %s agent(s) are live, and no record says whose it is' \
+        "${pid}" "${SESSION_ANCESTOR}" "${live}"
       return 0
     fi
   done
   return 1
 }
 
-# The nearest claude process from $1 up its parent chain, $1 itself included; rc 1 = none.
+# Sets SESSION_ANCESTOR to the nearest claude process from $1 up its parent chain, $1 itself included; rc 1 = none.
 get_session_ancestor() {
   local pid="${1}" line ppid args
   while [[ "${pid}" =~ ^[0-9]+$ ]] && ((pid > 1)); do
@@ -451,7 +453,7 @@ get_session_ancestor() {
     args="${args#"${args%%[![:space:]]*}"}"
     # shellcheck disable=SC2310  # the name verdict is branched on
     if is_session_command "${args}"; then
-      printf '%s\n' "${pid}"
+      SESSION_ANCESTOR="${pid}"
       return 0
     fi
     pid="${ppid}"

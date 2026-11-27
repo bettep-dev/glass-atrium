@@ -2610,12 +2610,12 @@ except Exception as exc:  # stderr is dropped by the caller → the reason goes 
 PY
 }
 
-# Agent bodies (agents/*.md) and top-level hooks (hooks/*.sh) on disk that the manifest does not list —
+# Agent bodies (agents/*.md) and top-level hooks (hooks/*.sh, hooks/*.py) on disk that the manifest does not list —
 # the NEW-file half manifest_hash_drift cannot see. Logs each; stdout = the count.
 get_surplus_file_drift() {
   local listed path rel count=0
   listed=$'\n'"$(jq -r '(.files // [])[]' -- "${MANIFEST}" 2>/dev/null)"$'\n' || listed=$'\n'
-  for path in "${GA_ROOT}"/agents/*.md "${GA_ROOT}"/hooks/*.sh; do
+  for path in "${GA_ROOT}"/agents/*.md "${GA_ROOT}"/hooks/*.sh "${GA_ROOT}"/hooks/*.py; do
     [[ -f "${path}" ]] || continue
     rel="${path#"${GA_ROOT}/"}"
     [[ "${listed}" == *$'\n'"${rel}"$'\n'* ]] && continue
