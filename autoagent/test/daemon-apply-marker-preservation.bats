@@ -233,7 +233,7 @@ case "${sql}" in
     printf '%s\n' "${verdict}"
     ;;
   *"id::text = :'pid'"*)
-    emit_row "|${row_status}|ok"
+    emit_row "|${row_status}|auto|ok"
     ;;
   *"to_regclass('core.autoagent_apply_records')"*)
     printf 't\n'

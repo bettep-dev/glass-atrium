@@ -4,17 +4,18 @@
 
 ## Reach the destination through a sanctioned flow FIRST
 
-- A direct write into the live harness surface is blocked agent_id-independently by `enforce-harness-critical.sh`, so a delegation that just `cp`s there fails at the gate, not at review.
+- No hook blocks a direct write into the live harness surface, so a delegation that just `cp`s there lands.
   - Live harness surface: `~/.glass-atrium/{hooks,agents,autoagent,scripts,skills}/`, `~/.claude/{hooks,agents}/`, `settings.json`, the `com.*.plist` files.
+  - Reported afterwards only where the integrity comparison looks: `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
+    - A deployed `com.*.plist` is outside it: the doctor's launchd deploy-drift check (`lib/ga-doctor.sh` → `launchd_deploy_drift`) compares those.
+    - Any other path in the surface is compared by neither, so a stray copy there goes unreported.
 
 Pick one of these flows:
 
 - **Updater local-source seam** — stage the tree, then let `scripts/update.sh` deploy it (`ATRIUM_UPDATE_SRC_DIR` + `ATRIUM_UPDATE_SRC_MANIFEST`).
   - The sanctioned default: the manifest gate, the agent EDITABLE-region merge and the backup/rollback transaction all still run.
   - The apply is unattended — no prompt stands between the staged tree and the live install.
-- **Launch-env grant** — `HARNESS_PROTECTION_APPROVE=1` must be in the environment Claude Code was launched with.
-  - An in-session `export` via the Bash tool never reaches the hook (hooks inherit the launch environment), so this is a session-start decision a delegation cannot arrange for itself.
-- **Worktree-then-deploy** — do the work in a git worktree (unprotected), land it through review, and let the installer / `update.sh` / the `agent_lifecycle` CLI perform the live write.
+- **Worktree-then-deploy** — do the work in a git worktree, land it through review, and let the installer / `update.sh` / the `agent_lifecycle` CLI perform the live write.
 
 ## The copy step — three anti-patterns, then the sanctioned idiom
 
@@ -29,7 +30,7 @@ Pick one of these flows:
 Sanctioned idiom (bash 3.2-safe):
 
 ```bash
-# DST = the staging tree the sanctioned flow deploys from (e.g. ATRIUM_UPDATE_SRC_DIR), or the live surface only under the Launch-env grant.
+# DST = the staging tree the sanctioned flow deploys from (e.g. ATRIUM_UPDATE_SRC_DIR).
 while IFS= read -r rel; do
   [[ -z "${rel}" ]] && continue
   cp -- "${SRC}/${rel}" "${DST}/${rel}"

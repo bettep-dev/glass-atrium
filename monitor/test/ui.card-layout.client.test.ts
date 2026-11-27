@@ -30,8 +30,8 @@ describe("split row ratio presets", () => {
     });
   }
 
-  test("only the even and the two-to-one spans are offered", () => {
-    assert.deepEqual(Object.keys(ratios).sort(), ["1:1", "2:1"]);
+  test("the even, wide-even and two-to-one spans and the rest-beside-content span are offered", () => {
+    assert.deepEqual(Object.keys(ratios).sort(), ["1:1", "1:1-wide", "2:1", "rest:content"]);
   });
 
   test("an unknown ratio falls back to the even split rather than a missing modifier", () => {
@@ -60,6 +60,14 @@ describe("split row layout variants", () => {
     assert.ok(classesOf(rowOf({})).includes(`split-row--${layouts.equal}`));
   });
 
+  test("an aligned row carries its own modifier, so peer cards share the row's tracks", () => {
+    assert.ok(classesOf(rowOf({ layout: "aligned" })).includes("split-row--aligned"));
+  });
+
+  test("a divided row carries its own modifier, so two in-card blocks part on a hairline", () => {
+    assert.ok(classesOf(rowOf({ layout: "divided" })).includes("split-row--divided"));
+  });
+
   test("an unknown layout falls back to equal rather than a missing modifier", () => {
     assert.ok(classesOf(rowOf({ layout: "masonry" })).includes(`split-row--${layouts.equal}`));
   });
@@ -78,19 +86,6 @@ describe("split column stack", () => {
       findNodes(render("SplitColumn", props, "x"), (n) => classesOf(n).includes("split-col--rail")).length;
     assert.equal(railOf({ isRail: true }), 1);
     assert.equal(railOf({}), 0);
-  });
-});
-
-describe("tile split", () => {
-  test("the value side reads before the detail side", () => {
-    const tree = render("TileSplit", { lead: "42", detail: "since 09:00" });
-    assert.equal(collectText(tree).replace(/\s+/g, ""), "42since09:00");
-    assert.equal(findNodes(tree, (n) => classesOf(n).includes("tile-split-detail")).length, 1);
-  });
-
-  test("with no detail the tile renders no empty second column", () => {
-    const tree = render("TileSplit", { lead: "42" });
-    assert.equal(findNodes(tree, (n) => classesOf(n).includes("tile-split-detail")).length, 0);
   });
 });
 
@@ -134,6 +129,17 @@ describe("card header", () => {
     assert.ok(String(button.props["aria-label"] ?? "").length > 0, "an accessible name");
     assert.equal(typeof button.props.onClick, "function", "opens on click and keyboard, not on hover");
   });
+
+  const compactRows = [
+    { name: "a compact header carries the compact modifier", isCompact: true, hasModifier: true },
+    { name: "a default header carries none", isCompact: undefined, hasModifier: false },
+  ];
+  for (const row of compactRows) {
+    test(row.name, () => {
+      const [head] = findNodes(headOf({ title: "Run log", isCompact: row.isCompact }), (n) => classesOf(n).includes("card-head"));
+      assert.equal(classesOf(head).includes("card-head--compact"), row.hasModifier);
+    });
+  }
 
   test("a header with no info renders no trigger", () => {
     assert.equal(findNodes(headOf({ title: "Spend by model" }), (n) => n.type === "button").length, 0);
@@ -201,8 +207,19 @@ describe("card", () => {
     assert.ok(bodyAt >= 0 && footAt > bodyAt, `parts ${JSON.stringify(parts)}`);
   });
 
-  test("a card with no foot renders no empty foot strip", () => {
-    assert.equal(findNodes(render("Card", { title: "Runs" }, "rows"), (n) => classesOf(n).includes("card-foot")).length, 0);
+  test("the bar sits between the head and the body, so filters read before the rows", () => {
+    const card = findNodes(render("Card", { title: "Runs", bar: "filters" }, "rows"), (n) => classesOf(n).includes("card"))[0];
+    const nodes = card.children.filter((c): c is RenderedNode => typeof c !== "string");
+    const parts = nodes.map((c) => classesOf(c));
+    const headAt = nodes.findIndex((c) => c.props.title === "Runs");
+    const barAt = parts.findIndex((c) => c.includes("card-bar"));
+    const bodyAt = parts.findIndex((c) => c.includes("card-body"));
+    assert.ok(headAt >= 0 && barAt > headAt && bodyAt > barAt, `parts ${JSON.stringify(parts)}`);
+  });
+
+  test("a card with no bar or foot renders neither empty strip", () => {
+    const card = render("Card", { title: "Runs" }, "rows");
+    assert.equal(findNodes(card, (n) => classesOf(n).includes("card-foot") || classesOf(n).includes("card-bar")).length, 0);
   });
 });
 

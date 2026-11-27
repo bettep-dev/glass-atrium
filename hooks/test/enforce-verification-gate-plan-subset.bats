@@ -1,13 +1,12 @@
 #!/usr/bin/env bats
 # enforce-verification-gate-plan-subset.bats — pins the C3-H [PLAN-SUBSET] presence NUDGE.
 #
-# ADVISORY ONLY (stderr + exit 0), deliberately NOT a fifth exit-2 gate: the attestation is
-# conditional on the delegation being a strict subset of a plan, so its absence is often correct.
-# Every case below asserts exit 0 — a promotion to a block would fail here, which is the intent.
+# ADVISORY ONLY (stderr + exit 0): the attestation is conditional on the delegation being a strict
+# subset of a plan, so its absence is often correct.
 #
-# Fixtures carry a [SIZE-EST] attestation so the sibling VGATE-SIZE-001 block does not preempt this
+# Fixtures carry a [SIZE-EST] attestation so the sibling VGATE-SIZE-001 warning does not preempt this
 # surface, and a qa-code-reviewer line is pre-stamped in the sandboxed session-spawns marker so the
-# reviewer-miss block does not either.
+# reviewer-miss warning does not either.
 #
 # BATS GATING NOTE (measured, bats 1.13.0 both legs): a mid-body `[[ ]]` gates on Linux bash 5 but
 # not on macOS bash 3.2 — every assertion carries `|| return 1`, which gates on both.

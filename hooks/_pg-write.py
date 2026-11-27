@@ -8,14 +8,14 @@ the calling hook (so jsonl is preserved bit-for-bit if PG fails).
 Contract (per plan §7.3 fail-loud-and-skip):
   1. Connect via Unix socket (Const-16 — `dbname=glass_atrium` only, no host=).
   2. Execute the INSERT.
-  3. On OperationalError / InterfaceError: 1 retry after 100ms backoff.
+  3. On OperationalError / InterfaceError: 1 retry after RETRY_BACKOFF_SEC.
   4. On 2nd failure: log structured stderr line + best-effort INSERT into
      core.hook_failures (which itself swallows all errors — no recursion).
   5. Always emit `[<hook_name>] elapsed_ms=N` to stderr (AC1-3 latency).
   6. Always exit 0 — never block the Claude session.
 
-Connection timeout: 1 second (so a dead postmaster does not stall the hook
-beyond the latency budget).
+Connection timeout: CONNECT_TIMEOUT_SEC per connect (so a dead postmaster does
+not stall the hook beyond the latency budget).
 
 Usage from a hook:
     python3 _pg-write.py <hook_name> <table> <<<'<json_row>'
@@ -32,6 +32,8 @@ import sys
 import time
 from typing import Any
 
+from _pg_connect import CONNECT_TIMEOUT_SEC, RETRY_BACKOFF_SEC
+
 # psycopg2 is the installed driver (psycopg 3 is not available system-wide).
 # Const-16 Unix-socket-only requirement; psycopg2 honors
 # this when no host= is passed (libpq defaults to /tmp socket).
@@ -45,10 +47,6 @@ except ImportError as e:
         % str(e).replace('"', "'")
     )
     sys.exit(0)
-
-
-CONNECT_TIMEOUT_SEC = 1
-RETRY_BACKOFF_SEC = 0.1
 
 
 # Identifier allowlist — table + column names are f-string-interpolated into the
@@ -180,7 +178,7 @@ def pg_dual_write(
     row: dict[str, Any],
     payload_ref: str | None,
 ) -> int:
-    """Insert `row` into `table` with 1-retry-100ms-backoff. Returns elapsed ms.
+    """Insert `row` into `table` with one retry after RETRY_BACKOFF_SEC. Returns elapsed ms.
 
     On failure: emits structured stderr line + records hook_failure. Never raises.
     """

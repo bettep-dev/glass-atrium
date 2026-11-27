@@ -14,7 +14,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | Reader | What it reads | Consequence |
 |---|---|---|
 | `hooks/inject-scope-rules.sh` → `read_max_turns` | `^maxTurns:` at column 0 | turn-budget meter sizing |
-| `hooks/enforce-harness-critical.sh` | live frontmatter identity keys (name, tools, scope) and the fence-line count | a live edit changing either is blocked for every caller (LLM06) |
+| `lib/ga-doctor.sh` → `get_integrity_drift` | live frontmatter identity keys (name, tools, scope) and text outside EDITABLE regions | a live edit to either is reported as drift, never blocked |
 | `autoagent/daemon_cycle.py` → `match_sensitive_diff` | added lines of any patch to this body | `git stash` bare, or with any subcommand but `push`, `apply` or `list`, routes the patch to safety |
 | `autoagent/lib/editable_merge.py` | EDITABLE region count, local vs release | a count change routes the merge to the manual structural-change ceremony |
 

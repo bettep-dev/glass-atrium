@@ -4,25 +4,16 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { contrastRatio, type Rgba } from "./lib/wcag-contrast.js";
+import { getRootBlock, getTripletOrFail } from "./lib/css-source.js";
+import { contrastRatio } from "./lib/wcag-contrast.js";
 import { collectText, createEffectReact, createFakeDocument, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = resolve(__dirname, "../public");
 const SRC = resolve(PUBLIC, "src");
-const THEME_CSS = readFileSync(resolve(PUBLIC, "styles/tokens.css"), "utf8");
+const TOKENS_CSS = readFileSync(resolve(PUBLIC, "styles/tokens.css"), "utf8");
 
 type Component = (props: Record<string, unknown>) => unknown;
-
-function getBlock(source: string, selector: string): string {
-  const open = source.indexOf("{", source.indexOf(selector));
-  return source.slice(open + 1, source.indexOf("}", open));
-}
-
-function getTriplet(block: string, name: string): Rgba | null {
-  const m = block.match(new RegExp(`${name}\\s*:\\s*(\\d{1,3})\\s+(\\d{1,3})\\s+(\\d{1,3})`));
-  return m ? { r: Number(m[1]), g: Number(m[2]), b: Number(m[3]), a: 1 } : null;
-}
 
 function getSourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
@@ -30,18 +21,12 @@ function getSourceFiles(dir: string): string[] {
   );
 }
 
-test("the focus colour clears 3:1 against every surface it can sit on, in both themes", () => {
-  const light = getBlock(THEME_CSS, ":root");
-  const dark = getBlock(THEME_CSS, '[data-theme="dark"]');
-  for (const [theme, block] of [["light", light], ["dark", dark]] as const) {
-    const ring = getTriplet(block, "--focus-ring");
-    assert.ok(ring, `${theme} theme declares --focus-ring`);
-    for (const surface of ["--surface", "--elev", "--sunken"]) {
-      const bg = getTriplet(block, surface);
-      assert.ok(bg, `${theme} ${surface}`);
-      const ratio = contrastRatio(ring, bg);
-      assert.ok(ratio >= 3, `${theme} --focus-ring on ${surface} = ${ratio.toFixed(2)}:1`);
-    }
+test("the focus colour clears 3:1 against every surface it can sit on", () => {
+  const tokens = getRootBlock(TOKENS_CSS);
+  const ring = getTripletOrFail(tokens, "--focus-ring");
+  for (const surface of ["--surface", "--elev", "--sunken"]) {
+    const ratio = contrastRatio(ring, getTripletOrFail(tokens, surface));
+    assert.ok(ratio >= 3, `--focus-ring on ${surface} = ${ratio.toFixed(2)}:1`);
   }
 });
 
@@ -77,6 +62,27 @@ test("every status dot tone carries a distinct glyph and a word, so state surviv
   assert.equal(glyphs.size, tones.length, `glyphs distinct per tone: ${[...glyphs].join(" ")}`);
   assert.equal(words.size, tones.length, `words distinct per tone: ${[...words].join(" ")}`);
   assert.ok(![...glyphs, ...words].includes(""), "no empty glyph or word");
+});
+
+test("a status dot given its own word names its state in that word, under its tone's glyph", async () => {
+  const ui = await loadScreenModule(resolve(SRC, "ui.jsx"));
+  const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
+
+  const dot = renderScreen(React.createElement(ui.StatusDot as Component, { status: "ok", word: "Done:" }));
+
+  const glyph = findNodes(dot, (n: RenderedNode) => n.props["aria-hidden"] === "true");
+  const word = findNodes(dot, (n: RenderedNode) => String(n.props.className ?? "").includes("sr-only"));
+  assert.deepEqual({ glyph: glyph.map(collectText), word: word.map(collectText) }, { glyph: ["✓"], word: ["Done:"] });
+});
+
+test("a status dot set in a line of text takes the line's own type and spacing, and leaves the naming to the line", async () => {
+  const ui = await loadScreenModule(resolve(SRC, "ui.jsx"));
+  const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
+
+  const dot = renderScreen(React.createElement(ui.StatusDot as Component, { status: "warn", isInText: true }));
+
+  const [outer] = findNodes(dot, (n: RenderedNode) => n.type === "span");
+  assert.deepEqual({ className: outer?.props.className, title: outer?.props.title }, { className: "text-warn", title: undefined });
 });
 
 test("the document root declares the UI copy language, English", () => {
@@ -150,19 +156,19 @@ test("a shared-outage banner leaving with its Retry focused hands focus to the f
   const shared = { sources: ["cost trend", "token trend"], error: "HTTP 500" };
   const rows = [
     { name: "covered regions declared their cards", regionCardIds: ["cost-trend", "cost-tokens"], expected: "cost-trend" },
-    { name: "no covered region declared a card", regionCardIds: [undefined, undefined], expected: "cost-verdict" },
+    { name: "no covered region declared a card", regionCardIds: [undefined, undefined], expected: "cost-region-kpis" },
   ];
   for (const row of rows) {
     fxDoc.reset();
-    for (const id of ["cost-trend", "cost-tokens", "cost-verdict"]) fxDoc.elements.set(id, getFakeCard(id));
+    for (const id of ["cost-trend", "cost-tokens", "cost-region-kpis"]) fxDoc.elements.set(id, getFakeCard(id));
     shared.sources.forEach((source, index) => {
       const covered = renderScreen(fxH(fxUi.RegionFailure, { source, error: shared.error, shared, focusTargetId: row.regionCardIds[index] })) as RenderedNode;
-      fxDoc.attached.push(...findNodes(covered, (n) => n.type === "div"));
+      fxDoc.attached.push(...findNodes(covered, () => true));
     });
     const retry = { name: "retry" };
     let banner = null as RenderedNode | null;
     const render = () => {
-      banner = renderScreen(fxH(fxUi.PageErrorBanner, { ...shared, onRetry: () => undefined, focusTargetId: "cost-verdict" })) as RenderedNode;
+      banner = renderScreen(fxH(fxUi.PageErrorBanner, { ...shared, onRetry: () => undefined, focusTargetId: "cost-region-kpis" })) as RenderedNode;
       (getRetry(banner).props.ref as { current: unknown }).current = retry;
       return banner;
     };

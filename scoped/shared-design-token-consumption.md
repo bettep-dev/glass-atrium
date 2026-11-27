@@ -13,6 +13,8 @@ Run this before any UI decision — component implementation, page layout, anima
 | neither exists | proceed on framework defaults, and flag the absence in `[COMPLETION]` `concerns` |
 
 - Why the flag: it lets an operator ask glass-atrium-design-designer to author the missing document.
+- With no `DESIGN.md`, check framework defaults against the trope SoT: `~/.glass-atrium/agents/glass-atrium-design-designer.md` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`, its `#### Admin-console tropes (data screens)` bundle on console screens only.
+  - Remove a matched trope and invent no new direction: the `concerns` flag stays the route to one.
 - Re-deriving a token value from a screenshot, a mockup, a description, or memory instead of reading the document is FORBIDDEN.
 
 ## Token Lookup Order
@@ -43,7 +45,8 @@ Writing a hex / rgb / oklch / px / dp literal without first checking whether a t
   - Fallback: swap the element's Spatial family for the matching Effects family (overshoot removed), or go opacity-only.
   - A hard cut — an instant jump, or the animation stripped entirely — is FORBIDDEN: keep a non-spatial cue.
   - Concrete tokens come from the project's `motion-philosophy.md` reduced-motion contract.
-- **Mixing**: mixing the Spatial and Effects families on one element within a flow is FORBIDDEN.
+- **Mixing**: mixing the Spatial and Effects families on one property of an element within a flow is FORBIDDEN.
+  - One element may carry both families on different properties: an element that moves and fades takes a Spatial family on its position and an Effects family on its opacity.
 
 ## DTCG 2025.10 Awareness
 

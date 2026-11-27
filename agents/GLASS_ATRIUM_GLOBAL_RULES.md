@@ -87,12 +87,15 @@ The canonical rule for what language this system writes in.
 
 - **No guessing**: when a request is unclear, ask one question per issue — re-ground the context, simplify it, recommend with your reason, then offer options with their pros and cons.
 - **Assumptions Disclosure obligation**: `scope-dev.md` → Ambiguity Gate → Assumptions Disclosure (DEV+PLANNING scope MUST · other scopes recommended) — surface implicit assumptions at turn-0 to prevent silent embedding.
+- **Owner-decision labels**: a choice written as the user's (owner's) decision — in a delegation, plan, doc or progress file — carries the user's own words that made it; without them it is an assumption, disclosed as one, never labelled a decision.
 
 ### Verified References
 
 - File names, class names, symbols, APIs → use only verified references.
 - **Anchor by symbol, never by line** — cite as `<path> → <anchor>`: an identifier, a marker literal, a heading, a table row's first cell, a bullet's bolded lead, or for bare prose a short verbatim quote.
-  - Resolve it by bare-name `grep`/`jq` before citing — no hit means halt, several mean qualify.
+  - Resolve it by bare-name `grep`/`jq` before citing.
+    - No hit → the anchor is unverified: find the real one or report the miss, and do not cite it.
+    - Several hits → qualify it.
   - Why: a stale line still resolves, so it is silently wrong; a renamed symbol resolves to nothing, so it is loudly wrong and stops the reader.
 - **A line number is an observation, never a target**: reporting what a tool returned — diff hunk, stack trace, measured span, a count — is permitted and carries its revision (`parseBody() (L410, @ 7cda954)`).
   - Telling a later actor where to go and edit is not permitted.
@@ -128,14 +131,21 @@ The canonical rule for what language this system writes in.
 
 - **Task-class rule**: a **Task-class targets** line alone never justifies setting or changing a spawn's tier.
   - A tier moves for a task-class reason only through a measured per-class decision, `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop` → **Retry effort escalation**, or a deliberate measurement arm listed in the run's record of its arms.
+- **Tiers are per model**: the same level buys a different amount of thinking on each model, so a tier measured on one model is not evidence for another.
+  - A model change — a spawn's or the main session's — moves no tier by itself: the tier in use stays in use, and work does not wait on a measurement.
+    - After a model change, a tier moves only through the **Task-class rule** paths.
+  - Until it is measured on the new model, that tier is unmeasured there: say so wherever a plan, delegation or report cites it as evidence.
 - **Task-class targets**:
   - Effort buys verification depth and edge-case coverage, so verification and brownfield bug fixing target high or above.
-  - xhigh or max suit autonomous end-to-end builds and other long-horizon reasoning; `max` can overthink, so keep it for the hardest tasks.
+  - Above high the gain is uneven and task-dependent: xhigh suits autonomous end-to-end builds and other long-horizon work where a gain was measured.
+  - `max` can overthink, so keep it for the hardest tasks.
   - Security review and vulnerability hunting carry no charter tier; glass-atrium-sec-guard keeps its frontmatter key.
   - Low is for in-the-loop sketching, which delegated subagents never are.
   - Detailed specs narrow the gap between tiers, so plan-backed implementation is the first candidate for a lower tier.
 - **Thinking is on**: `effort` governs thinking volume, not visible response length — ask for concision explicitly when short output is wanted.
-  - Control thinking through `effort` alone: never write a "do not think" rule or tell an agent that reasoning is off; raise `effort` when reasoning is shallow.
+  - Control thinking through `effort` alone: never write a "do not think" rule or tell an agent that reasoning is off.
+    - Why: a prose line asking for less thinking does not reliably reduce it; `effort` does.
+  - Raise `effort` when reasoning is shallow.
   - Never instruct a model to reproduce its reasoning in its response — the request can be declined as `reasoning_extraction`.
 - **API request facts**: code that builds Claude API requests loads the `claude-api` skill first for its request-surface facts and never relies on remembered values.
   - The facts: thinking and effort parameters, `max_tokens` sizing, prefill, refusal stop reasons, context and output limits, long-request timeouts.
@@ -158,6 +168,8 @@ The canonical rule for what language this system writes in.
 | **Confirm** | File modification, external calls, installation |
 | **Forbidden** | Deleting source, documents or config (move to `~/.Trash/`: File Deletion Policy), security violations, sensitive files |
 
+- A removal under `rules/glass-atrium/core-security.md` → **Worktree close-out exception** is not "Deleting source": every tracked file stays in the repository under a contained commit, and that standing approval is its confirmation.
+
 ### File Deletion Policy [ALL]
 
 - `rm` forbidden for source code, documents, and config files → use `mv ~/.Trash/` instead (macOS).
@@ -174,10 +186,41 @@ The canonical rule for what language this system writes in.
 | a command the agent runs, anywhere | a path guard inside the command | none — a command has no site to annotate, so move the target to `~/.Trash/` instead |
 
 - Exception: `rm` may delete a single named entry directly in `~/.Trash/` — one literal name, no glob, no deeper path, no trailing slash — and for that delete this exception overrides the table's "a command the agent runs" row, so no path guard is required; the Trash directory itself, a path below an entry, and anything outside the Trash keep the move-to-Trash rule.
+  - Run that delete as `~/.glass-atrium/scripts/ga-trash-purge.sh <entry>`, only for an entry you moved there yourself: every live profile denies a direct `rm`, and the script applies this exception's own check before it deletes.
 
 ### Temporary Files [ALL]
 
 - Default: create temporary files and directories with bare `mktemp` / `mktemp -d` — no template path — so they land under the per-user `$TMPDIR`.
+- Trash purge: permanently deleting scratch you moved to `~/.Trash/` follows `### File Deletion Policy [ALL]` → the `~/.Trash/` exception.
+
+## Obstacles and Blockers [ALL]
+
+When something stops a step, classify it before you stop or push on.
+
+| Class | What it is | What to do |
+|---|---|---|
+| ordinary obstacle | a failure nobody placed on purpose | diagnose it, then work through it |
+| deliberate blocker | a control placed to stop this action | leave it in place, report it, and finish what does not depend on it |
+
+- **Ordinary obstacle** — an error, a timeout, a file locked by another process, an empty result, a failing tool or test.
+  - Work through it: wait and retry a call that is safe to repeat, fix the request, or use another tool or source your role already holds.
+  - It is not by itself a reason to end the run, hand the work back or report `blocked`.
+- **Deliberate blocker** — a hook block, a permission or sandbox denial (an `EPERM` on a path you were not granted included), an approval gate, an action a rule forbids, a file marked do-not-touch, withheld access, a safety guardrail.
+  - Report plainly what stopped you and where.
+  - Never retry it in another spelling or route around it: the control is there on purpose.
+  - An approval gate opens only on the approval it names: ask for it, never assume it.
+- **Working through stays inside your grant and the rules**:
+  - It never crosses an approval gate or widens your own tools or permissions: a high-impact action waits for approval, a wider grant for re-authorization (`rules/glass-atrium/core-security.md` → `## Agent Tool Authorization [LLM06:2025]`).
+  - A way through that a rule forbids is a deliberate blocker, not a way through — finding the monitor by scanning, for example (`## Absolute Rules [ALL]` → **Monitor address**).
+  - Retries stay bounded (`rules/glass-atrium/core-security.md` → **Unbounded consumption [LLM10:2025]**).
+  - A stop point your scope or agent body sets for repeated failure outranks it — the DEV · QA second-failure stop (`scoped/shared-investigation-discipline.md`) and the orchestrator's `### Failure Recovery Loop` (`skills/glass-atrium-ops-orchestrator-role.md`).
+- **Diagnosis decides the class**: a message marks a deliberate blocker when it reports a control refusing your own action — a hook block or deny verdict on your call, a permission or sandbox denial of your request, an approval your action waits on.
+  - A message that only names a hook, a rule, a permission or an approval does not mark one.
+    - A lint error naming its rule and a failing suite that tests a hook are ordinary obstacles.
+    - A hook advisory that lets the call through is a warning to weigh, not a blocker.
+  - Still unsure after diagnosing → treat it as a deliberate blocker and report it.
+- A budget ceiling is neither class: the `Turn Budget & Graceful Exit` section under `## Cross-Session Continuity (progress.md) [ALL]` governs it.
+- Why: stopping at an ordinary obstacle leaves owed work undone, while working around a deliberate blocker defeats the control that placed it.
 
 ## Context Management [ALL]
 
@@ -220,6 +263,8 @@ The canonical rule for what language this system writes in.
 #### Work-unit checkpoint dimension
 
 - A single turn can exhaust a token or tool-use budget before any turn boundary fires, so checkpoint the resume point to the progress file after each completed work-unit (each file, each fix), not only at turn boundaries.
+- Index owner in code work: the work-unit checkpoint is also a commit — `rules/glass-atrium/core-git-workflow.md` → `### Worktree occupancy` → **Who commits**.
+- A work-unit that cannot be completed and verified before the ceiling is split or not opened.
 
 #### Truncation recovery
 
@@ -247,7 +292,7 @@ The canonical rule for what language this system writes in.
 - Stay inside the requested scope.
 - Report uncertainty instead of projecting confidence.
 - Fix or flag a problem you see rather than accepting it silently.
-- Main-session user-facing reply form (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `skills/glass-atrium-ops-orchestrator.md` → `### Reply Form Contract`; the response-language rule above is unaffected by it.
+- Main-session user-facing reply form (BLUF · Delta · Next/blocked · Divergence detail) is single-sited at `skills/glass-atrium-ops-orchestrator.md` → `### Reply Form Contract` · `### Low-Context Reader Rules`; the response-language rule above is unaffected by it.
 - A comment `shared-comment-logging.md` makes mandatory is needed length, not padding.
 
 ## System Prompt Protection [ALL]

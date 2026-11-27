@@ -43,7 +43,7 @@ concurrency:
 jobs:
   publish:
     name: publish GitHub Release (manifest + hashed bundle)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -117,8 +117,19 @@ jobs:
 
       # Refuse a stale manifest: version + per-file hashes + file list must match
       # the tracked tree (generate-manifest.sh --check, exit 1 on any drift).
-      - name: Verify manifest integrity (--check)
-        run: ./scripts/generate-manifest.sh --check
+      # HEAD is the tagged commit, so --check's own HEAD reference sees no dropped
+      # retired key here: the nearest earlier v* tag holds the map consumers last
+      # received, and a first release has none.
+      - name: Verify manifest integrity (--check against the last release)
+        run: |
+          tags="$(git tag --list 'v*' --merged "${GITHUB_SHA}^" --sort=-v:refname)"
+          previous="${tags%%$'\n'*}"
+          if [[ -z "${previous}" ]]; then
+            ./scripts/generate-manifest.sh --check
+          else
+            git show "${previous}:manifest.json" >"${RUNNER_TEMP}/last-release-manifest.json"
+            ./scripts/generate-manifest.sh --check --reference "${RUNNER_TEMP}/last-release-manifest.json"
+          fi
 
       # The pushed tag MUST equal v<manifest.version> so the release version of
       # record cannot drift from the asset it ships.

@@ -4,9 +4,10 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
+# shellcheck source-path=SCRIPTDIR source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 if [[ -r "${BASH_SOURCE%/*}/lib/pipe-drain.sh" ]]; then
-  # shellcheck source=lib/pipe-drain.sh
+  # shellcheck source-path=SCRIPTDIR source=lib/pipe-drain.sh
   source "${BASH_SOURCE%/*}/lib/pipe-drain.sh"
 else
   # Library missing or unreadable → the same drain_after in place, so the hook keeps its verdict.
@@ -20,26 +21,34 @@ else
 fi
 
 # Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
-export -n INPUT COMMAND context ctx input
+export -n INPUT COMMAND context ctx input rest
 INPUT=$(hook_read_input)
 COMMAND=$(hook_get_tool_input "${INPUT}" "command")
 
 # Dangerous command patterns — data-driven loop.
 # Field delimiter is US (Unit Separator, 0x1F) — a control byte that can never
-# appear inside a regex or a human-readable message. A regex '|' alternation is
-# therefore preserved intact. The previous pipe ('|') delimiter collided with the
-# alternation inside the force-push / push-to-main patterns: the split truncated
-# each pattern mid-regex, silently disarming both blocks (and GIT-006 truncated to
-# 'git\s+push\s+\S+\s+(main' — an unbalanced '(' that grep rejected as invalid).
-# Format: regex<US>code<US>message<US>suggestion
+# appear inside a regex or a human-readable message, so the force-push pattern's
+# '|' alternation stays intact (a '|' delimiter would truncate it mid-regex).
+# Format: regex<US>code<US>message<US>suggestion[<US>exempt]
+# exempt (optional): a regex whose matched spans are cut from the command before the rule's regex is
+# tried again; the command passes only when nothing matches what is left. A non-compiling exempt blocks.
 readonly US=$'\x1f'
+# GIT-006 pieces. IDX_VERB: the subcommand that writes the index — a checkout, or a restore --staged.
+# IDX_EXEMPT: a non-empty GIT_INDEX_FILE= set in the same statement as that verb, or exported in an
+# earlier statement; its span runs through the verb, so a later statement without one still blocks.
+# Spellings that pass this fixed-spelling guard and still write the shared index:
+#   - git --git-dir=<repo>/.git checkout <ref> -- . run from a foreign cwd (no work tree is spelled);
+#   - a GIT_WORK_TREE assigned and exported in separate statements (GIT_WORK_TREE=<dir>; export GIT_WORK_TREE).
+readonly IDX_VERB="[[:space:]](checkout([[:space:]]|\$)|restore[[:space:]]([^;&|]*[[:space:]])?(--staged|-[A-Za-z]*S[A-Za-z]*)([[:space:]=]|\$))"
+readonly IDX_VALUE="[\"']?[^[:space:];&|'\"]"
+readonly IDX_EXEMPT="(^|[[:space:];&|(])(GIT_INDEX_FILE=${IDX_VALUE}[^;&|]*|export[[:space:]]+([^;&|]*[[:space:]])?GIT_INDEX_FILE=${IDX_VALUE}.*)${IDX_VERB}"
 RULES=(
   "git\s+push\s+.*--force|git\s+push\s+-f\b${US}GIT-001${US}Force push blocked${US}This hook blocks force push whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+reset\s+--hard${US}GIT-002${US}Hard reset blocked${US}This hook blocks git reset --hard whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+clean\s+-fd${US}GIT-003${US}Clean force-delete blocked${US}This hook blocks git clean -fd whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+checkout\s+\.\s*\$${US}GIT-004${US}Discard-all blocked${US}This hook blocks git checkout . whatever the approval; if the user confirms it, ask them to run it themselves"
   "git\s+restore\s+\.\s*\$${US}GIT-005${US}Restore-all blocked${US}This hook blocks git restore . whatever the approval; if the user confirms it, ask them to run it themselves"
-  "git\s+push\s+\S+\s+(main|master)\b${US}GIT-006${US}Push to main/master blocked${US}Create a feature branch and use a pull request"
+  "(--work-tree|GIT_WORK_TREE)[=[:space:]][^;&|]*${IDX_VERB}|export[[:space:]]+([^;&|]*[[:space:]])?GIT_WORK_TREE=[^;&|]*[;&|].*${IDX_VERB}${US}GIT-006${US}Checkout into another work tree blocked${US}A checkout, or a restore --staged, under --work-tree or GIT_WORK_TREE (an exported one included) writes this repository's index (a --git-dir naming it included), so the other tree gets staged here; read a tree read-only with git archive <ref> | tar -x -C <dir>, or git worktree add <dir> <ref>, or give the command its own index with GIT_INDEX_FILE=<scratch file>${US}${IDX_EXEMPT}"
 )
 
 # Rule-table lint (recurrence guard): assert a pattern compiles under grep -E
@@ -55,7 +64,7 @@ pattern_compiles() {
 }
 
 for rule in "${RULES[@]}"; do
-  IFS="${US}" read -r pattern code message suggestion <<<"${rule}"
+  IFS="${US}" read -r pattern code message suggestion exempt <<<"${rule}"
   # SC2310: pattern_compiles is a pure predicate — set -e disable under `if !` is intended.
   # shellcheck disable=SC2310
   if ! pattern_compiles "${pattern}"; then
@@ -66,7 +75,14 @@ for rule in "${RULES[@]}"; do
     exit 2
   fi
   # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-  if printf '%s' "${COMMAND}" | drain_after grep -qE "${pattern}"; then
+  printf '%s' "${COMMAND}" | drain_after grep -qE "${pattern}" || continue
+  rest="${COMMAND}"
+  if [[ -n "${exempt}" ]]; then
+    # A failed cut (an exempt that does not compile) keeps the whole command, so the rule still blocks.
+    rest=$(printf '%s' "${COMMAND}" | sed -E "s${US}${exempt}${US}${US}g" 2>/dev/null) || rest="${COMMAND}"
+  fi
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if printf '%s' "${rest}" | drain_after grep -qE "${pattern}"; then
     context="{\"command\":\"${COMMAND}\"}"
     # emit_error hands the context to jq as one argument; Linux refuses one of 131072 bytes or more.
     if (($(LC_ALL=C && printf '%s' "${#context}") >= 131072)); then context='{}'; fi
@@ -87,8 +103,6 @@ done
 # genuinely worktree-isolated concurrent agent raises this note even though it is the
 # CORRECT configuration; (2) it observes the commit half only, and the ultracode
 # spawn path fires no PreToolUse(Agent) at all, so coverage there is zero.
-readonly LIVE_CHILD_TTL_MIN=360
-live_child_dir="${HOOK_DATA_DIR}/live-children"
 
 # A truncated/killed subagent never fires SubagentStop, so its marker is never
 # removed. Sweep anything older than the TTL before counting — best-effort, and a
@@ -100,23 +114,16 @@ sweep_stale_markers() {
     if ga_guard_path "${marker}"; then
       rm -f -- "${marker:?}"
     fi || true
-  done < <(find "${live_child_dir}" -type f -mmin "+${LIVE_CHILD_TTL_MIN}" -print0 2>/dev/null || true)
-}
-
-count_live_children() {
-  local n
-  n="$(find "${live_child_dir}" -type f -mmin "-${LIVE_CHILD_TTL_MIN}" 2>/dev/null | grep -c '' || true)"
-  [[ "${n}" =~ ^[0-9]+$ ]] || n=0
-  printf '%s' "${n}"
+  done < <(find "${LIVE_CHILD_DIR}" -type f -mmin "+${LIVE_CHILD_TTL_MIN}" -print0 2>/dev/null || true)
 }
 
 # SC2310: hook_is_subagent and the drain_after reader yield verdicts — set -e disable under `if` intended.
 # shellcheck disable=SC2310
-if [[ -d "${live_child_dir}" ]] \
+if [[ -d "${LIVE_CHILD_DIR}" ]] \
   && printf '%s' "${COMMAND}" | drain_after grep -qE '(^|[^A-Za-z0-9_-])git([[:space:]]+-[^[:space:]]+)*[[:space:]]+commit([^A-Za-z0-9_-]|$)' \
   && ! hook_is_subagent "${INPUT}"; then
   sweep_stale_markers
-  live_count="$(count_live_children)"
+  live_count="$(hook_get_live_child_count)" || live_count=0
   if [[ "${live_count}" -gt 0 ]]; then
     emit_error "GIT-ADV-001" "warn" \
       "Committing from the main session while ${live_count} delegated child agent(s) appear to be still live — the orchestrator does not commit another agent's work, and a commit taken before an agent's completion is established can capture a half-written tree." \

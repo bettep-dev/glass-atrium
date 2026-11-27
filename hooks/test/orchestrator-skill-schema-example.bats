@@ -120,10 +120,9 @@ assert_absent() {
   done
 }
 
-# ── Pointer to the promotion condition (recorded in the hook header, NOT restated here) ──
+# ── Pointer to the mechanical backstop ───────────────────────────────────────────────────
 
-@test "POINTER the promotion-to-blocking condition is referenced, not restated" {
-  assert_present "promotion-to-blocking condition"
+@test "the skill names the hook that backstops the schema-cap rules" {
   assert_present "enforce-workflow-verify-stage.sh"
 }
 

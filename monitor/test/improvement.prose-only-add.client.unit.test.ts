@@ -1,6 +1,6 @@
-// Roster guard for the Add-only patches card in public/src/screens/improvement-instrumentation.jsx.
-// The server sends the roster ordered by agent name, so the card must rank it by count before its
-// S slot cuts it — otherwise the collapsed card hides the agents with the most add-only patches.
+// Card guards for public/src/screens/improvement-instrumentation.jsx: the Add-only patches roster
+// ranks by count before its S slot cuts it (the server orders by agent name), the tables use the
+// house Table, and a card with nothing to show is its head and one line.
 //
 // Runner: npx tsx --test test/improvement.prose-only-add.client.unit.test.ts
 
@@ -26,7 +26,7 @@ interface RosterEntry {
 
 interface CardSandbox {
   React: { createElement: unknown; useState: unknown };
-  window: { UI: { CARD_SLOTS: Record<string, { rowCount: number }> } };
+  window: { UI: { CARD_SLOTS: Record<string, { rowCount: number }>; Table: unknown; TableRow: unknown; TableCell: unknown; AgentName: unknown } };
   ProseOnlyAddCardI: (props: Record<string, unknown>) => unknown;
 }
 
@@ -56,7 +56,14 @@ sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | n
   type,
   props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
 });
+// the screen-shared atoms improvement.jsx publishes; the badge only names a mark, which these pins do not read
+(sandbox.window as unknown as Record<string, unknown>).ImprovementShared = {
+  SymI: () => null, confidenceBadgeMetaI: () => ({ symbol: "✓", tone: "text-ok" }),
+};
 const slotRowCount = sandbox.window.UI.CARD_SLOTS.S.rowCount;
+
+// a wide two-column view → the rows the card hands its Table
+const WIDE_VIEW = { isStacked: false, columnCount: 2 };
 
 function renderCard(agents: RosterEntry[], isShowingAll: boolean) {
   sandbox.React.useState = () => [isShowingAll, () => {}];
@@ -64,12 +71,14 @@ function renderCard(agents: RosterEntry[], isShowingAll: boolean) {
   const card = sandbox.ProseOnlyAddCardI({
     state: { status: "ready", data: {}, error: null },
     summary: { window_days: 30, agents, total },
-  });
-  const agentRows = findElements(card, (el) => el.type === "tr" && el.props.key !== undefined);
-  const foot = findElements(card, (el) => el.props.className === "card-foot")[0];
+  }) as RecordedElement;
+  const [table] = findElements(card, (el) => el.type === sandbox.window.UI.Table);
+  const agentRows = (table.props.children as (view: typeof WIDE_VIEW) => unknown)(WIDE_VIEW);
+  const rows = findElements(agentRows, (el) => el.type === sandbox.window.UI.TableRow);
   return {
-    shownAgents: agentRows.map((row) => getText(findElements(row, (el) => el.type === "td")[0])),
-    foot: foot ? getText(foot) : null,
+    // the agent cell names its agent through the shared short-name atom → read the full name it carries
+    shownAgents: rows.map((row) => findElements(row, (el) => el.type === sandbox.window.UI.AgentName)[0]?.props.name),
+    foot: card.props.foot ? getText(card.props.foot) : null,
   };
 }
 
@@ -135,15 +144,11 @@ describe("the add-only roster ranks by count, ties by name, before the slot cuts
   }
 });
 
-// R-d: the instrumentation tables sit off .tbl, so their body rows reach the 32 compact step through the shared
-// tbody.tbl-compact atom; a cell carrying its own block padding would move the row off that step
-test("the three instrumentation tables put their body rows on the shared compact atom, no cell padding its own block", () => {
+// the instrumentation tables read like every other table: the house Table and its cell atom, never a raw table or cell
+test("the three instrumentation tables render through the shared Table and its cell atom, no raw table markup", () => {
   const tables = sandbox as unknown as Record<string, (props: Record<string, unknown>) => unknown>;
+  const ui = sandbox.window.UI as unknown as Record<string, unknown>;
   sandbox.React.useState = () => [false, () => {}];
-  // the screen-shared atoms improvement.jsx publishes; the badge only names a mark, which this pin does not read
-  (sandbox.window as unknown as Record<string, unknown>).ImprovementShared = {
-    SymI: () => null, confidenceBadgeMetaI: () => ({ symbol: "✓", tone: "text-ok" }),
-  };
   const rendered = [
     { name: "confidence lanes", tree: tables.ConfidenceLaneTableI({ buckets: [{ promotion_tier: "auto", proposal_count: 3, confidence_observed_avg: 0.7 }] }) },
     { name: "add-only patches", tree: sandbox.ProseOnlyAddCardI({
@@ -153,13 +158,236 @@ test("the three instrumentation tables put their body rows on the shared compact
     { name: "style-ref agents", tree: tables.StyleRefAgentTableI({ rows: [{ agent: "glass-atrium-dev-db", emission_count: 1, emission_total: 2 }] }) },
   ];
   for (const { name, tree } of rendered) {
-    const bodies = findElements(tree, (el) => el.type === "tbody");
-    assert.equal(bodies.length, 1, `${name}: one body`);
-    assert.equal(bodies[0].props.className, "tbl-compact", `${name}: the body takes the compact atom`);
-    const cells = findElements(bodies[0], (el) => el.type === "td");
-    assert.ok(cells.length > 0, `${name}: the body carries cells`);
-    for (const cell of cells) {
-      assert.doesNotMatch(String(cell.props.className ?? ""), /\b(py|pt|pb)-|\bflex\b/, `${name}: a cell stays a plain table cell`);
-    }
+    const houseTables = findElements(tree, (el) => el.type === ui.Table);
+    assert.equal(houseTables.length, 1, `${name}: one house Table`);
+    const rows = (houseTables[0].props.children as (view: typeof WIDE_VIEW) => unknown)(WIDE_VIEW);
+    const cells = findElements(rows, (el) => el.type === ui.TableCell);
+    assert.ok(cells.length > 0, `${name}: the rows carry cell atoms`);
+    const raw = findElements([tree, rows], (el) => ["table", "thead", "tbody", "tr", "td", "th"].includes(String(el.type)));
+    assert.deepEqual(raw.map((el) => el.type), [], `${name}: no raw table markup beside the house Table`);
   }
+});
+
+const READY = { status: "ready", data: {}, error: null };
+
+// spec 44084 §2.2 Empty: the body is the one line, flush so the line starts at the title's inset; no stat, gate or None beside it
+const EMPTY_CARDS = [
+  {
+    name: "corpus growth with no audit row",
+    card: "CorpusGrowthCardI",
+    props: { state: { status: "ready", data: { total_audits: 0, audits: [] }, error: null } },
+    message: "No corpus readings yet — each daemon cycle writes one",
+  },
+  {
+    name: "detection agreement with no correction signal",
+    card: "CorrectionSignalsCardI",
+    props: { state: { status: "ready", data: { total_signals: 0 }, error: null } },
+    message: "No correction signals yet — each detection logs one",
+  },
+  {
+    name: "style-check rate with no reported rate",
+    card: "StyleRefCardI",
+    props: { state: READY, styleRef: { overall_emission_rate: null, overall_uncorroborated_rate: null, agents: [] } },
+    message: "No task results in this window",
+  },
+  {
+    name: "add-only patches with no agent row",
+    card: "ProseOnlyAddCardI",
+    props: { state: READY, summary: { window_days: 30, agents: [], total: 0 } },
+    message: "No add-only patches in this window",
+  },
+  {
+    name: "results by check status with no task",
+    card: "TierBreakdownCardI",
+    props: { state: READY, tierBreakdown: { window_days: 30, code_based_pass_30d: 0, code_based_fail_30d: 0, pre_3tier_baseline_count: 0 } },
+    message: "No task results in this window",
+  },
+  {
+    name: "suggestion confidence with no proposal",
+    card: "ConfidenceDistCardI",
+    props: { state: READY, confidenceDist: { buckets: [], overall_confidence_observed_avg: null } },
+    message: "No suggestions in this window",
+  },
+];
+
+describe("an instrumentation card with nothing to show is its head and one flush line", () => {
+  const ui = sandbox.window.UI as unknown as Record<string, unknown>;
+  for (const row of EMPTY_CARDS) {
+    test(row.name, () => {
+      sandbox.React.useState = () => [false, () => {}];
+      const cards = sandbox as unknown as Record<string, (props: unknown) => RecordedElement>;
+      const form = cards[row.card](row.props);
+      // the card hands its empty case to the screen's one empty-card form → read the Card that form renders
+      const card = (form.type as (props: unknown) => RecordedElement)(form.props);
+      const body = card.props.children;
+
+      assert.equal(card.type, ui.Card, "the card renders the shared Card");
+      assert.equal(card.props.isFlush, true, "the body is flush, so the line's own inset is the one inset");
+      assert.ok(isElement(body) && body.type === ui.EmptyState, "the body is the one empty line, nothing beside it");
+      assert.deepEqual({ message: body.props.message, hint: body.props.hint }, { message: row.message, hint: undefined });
+    });
+  }
+});
+
+const ADD_ONLY_CAVEAT = "Floor, not a total — the stored diff is truncated before classification.";
+
+// one head in every state: what a card measures still holds at zero → the empty form keeps the data form's title, sub and info
+// a sub that prints a figure from the read is left out of its row's keys
+const HEAD_FORMS = [
+  {
+    name: "results by check status",
+    card: "TierBreakdownCardI",
+    keys: ["title", "sub", "info"],
+    empty: { state: READY, tierBreakdown: { window_days: 30, code_based_pass_30d: 0, code_based_fail_30d: 0, pre_3tier_baseline_count: 0 } },
+    data: { state: READY, tierBreakdown: { window_days: 30, code_based_pass_30d: 12406, code_based_fail_30d: 538, pre_3tier_baseline_count: 0 } },
+  },
+  {
+    name: "style-check rate",
+    card: "StyleRefCardI",
+    keys: ["title", "sub", "info"],
+    empty: { state: READY, styleRef: { overall_emission_rate: null, overall_uncorroborated_rate: null, agents: [] } },
+    data: { state: READY, styleRef: { overall_emission_rate: 0.6, overall_uncorroborated_rate: 0.05, agents: [] } },
+  },
+  {
+    name: "add-only patches",
+    card: "ProseOnlyAddCardI",
+    keys: ["title", "sub", "info"],
+    empty: { state: READY, summary: { window_days: 30, agents: [], total: 0, truncation_caveat: ADD_ONLY_CAVEAT } },
+    data: { state: READY, summary: { window_days: 30, agents: [{ agent: "glass-atrium-dev-db", count: 2 }], total: 2, truncation_caveat: ADD_ONLY_CAVEAT } },
+  },
+  {
+    name: "suggestion confidence",
+    card: "ConfidenceDistCardI",
+    keys: ["title", "sub", "info"],
+    empty: { state: READY, confidenceDist: { buckets: [], overall_confidence_observed_avg: null } },
+    data: { state: READY, confidenceDist: { buckets: [{ promotion_tier: "candidate", proposal_count: 12, confidence_observed_avg: 0.75 }], overall_confidence_observed_avg: 0.75 } },
+  },
+  {
+    name: "detection agreement",
+    card: "CorrectionSignalsCardI",
+    keys: ["title", "info"],
+    empty: { state: { status: "ready", data: { total_signals: 0 }, error: null } },
+    data: {
+      state: {
+        status: "ready",
+        error: null,
+        data: {
+          total_signals: 128,
+          latest_event_ts: "2026-11-20T05:00:00Z",
+          agreement: { total: 128, agreement_count: 120, both_matched: 70, stage1_only: 5, stage2_only: 3, neither_matched: 50 },
+          revision_delta_sum: 4,
+          revision_delta_max: 2,
+        },
+      },
+    },
+  },
+  {
+    name: "corpus growth",
+    card: "CorpusGrowthCardI",
+    keys: ["title", "info"],
+    empty: { state: { status: "ready", data: { total_audits: 0, audits: [] }, error: null } },
+    data: { state: { status: "ready", error: null, data: { total_audits: 1, audits: [{ cycle_date: "2026-11-20", word_count: 41250, seeded_threshold: 60000 }] } } },
+  },
+];
+
+describe("an empty instrumentation card keeps the head its data form shows", () => {
+  const ui = sandbox.window.UI as unknown as Record<string, unknown>;
+  const cards = sandbox as unknown as Record<string, (props: unknown) => RecordedElement>;
+  // the empty form is the screen's one empty-card component → expand it to the Card it renders
+  const getHead = (form: RecordedElement, keys: string[]) => {
+    const card = form.type === ui.Card ? form : (form.type as (props: unknown) => RecordedElement)(form.props);
+    return Object.fromEntries(keys.map((key) => [key, card.props[key]]));
+  };
+  for (const row of HEAD_FORMS) {
+    test(row.name, () => {
+      sandbox.React.useState = () => [false, () => {}];
+      const empty = getHead(cards[row.card](row.empty), row.keys);
+      const data = getHead(cards[row.card](row.data), row.keys);
+
+      assert.deepEqual(empty, data);
+    });
+  }
+});
+
+// one head in every state: a failed read swaps the card's body, never its title, sub, ⓘ or head link
+describe("a failed instrumentation region keeps the head its data form shows", () => {
+  const ui = sandbox.window.UI as unknown as Record<string, unknown>;
+  const screen = sandbox as unknown as Record<string, (props: unknown) => RecordedElement>;
+  const failed = { status: "error", data: null, error: "HTTP 503" };
+  const regions = [
+    { name: "flagged results", state: "statsState", card: "FlaggedResultsCardI", data: { status: "ready", error: null, data: { review_flag_last_7d: 3 } } },
+    { name: "corpus growth", state: "corpusAuditState", card: "CorpusGrowthCardI", data: HEAD_FORMS[5].data.state },
+    { name: "detection agreement", state: "correctionState", card: "CorrectionSignalsCardI", data: HEAD_FORMS[4].data.state },
+  ];
+  const getHead = (card: RecordedElement) => ({
+    title: card.props.title,
+    sub: card.props.sub,
+    info: card.props.info,
+    right: getText(card.props.right),
+  });
+  const ready = { status: "ready", error: null, data: {} };
+  for (const row of regions) {
+    test(row.name, () => {
+      sandbox.React.useState = () => [false, () => {}];
+      const view = screen.ImprovementInstrumentationViewI({
+        statsState: ready, listState: ready, correctionState: ready, corpusAuditState: ready,
+        [row.state]: failed,
+        failures: [], onRetry: () => {},
+      });
+      const [banner] = findElements(view, (el) => el.type === screen.PayloadErrorCardI);
+      assert.ok(banner, "the failed region draws its error card");
+      const errorCard = (banner.type as (props: unknown) => RecordedElement)(banner.props);
+      const dataCard = screen[row.card]({ state: row.data, reviewReasons: null });
+
+      assert.equal(errorCard.type, ui.Card);
+      assert.deepEqual(getHead(errorCard), getHead(dataCard));
+    });
+  }
+});
+
+// the list read is open → the add-only card holds its slot as the card below it in the column does, with the same height
+test("while the list read is open, the add-only card is its titled S card with one announced placeholder", () => {
+  const ui = sandbox.window.UI as unknown as Record<string, unknown>;
+  const cards = sandbox as unknown as Record<string, (props: unknown) => RecordedElement>;
+  const loading = { status: "loading", data: null, error: null };
+  sandbox.React.useState = () => [false, () => {}];
+
+  const card = sandbox.ProseOnlyAddCardI({ state: loading, summary: null }) as RecordedElement;
+  const below = cards.TierBreakdownCardI({ state: loading, tierBreakdown: null });
+  const [placeholder] = findElements(card, (el) => el.type === ui.LoadingPlaceholder);
+  const [belowPlaceholder] = findElements(below, (el) => el.type === ui.LoadingPlaceholder);
+
+  assert.equal(card?.type, ui.Card, "the loading form is the shared Card");
+  assert.deepEqual({ size: card.props.size, title: card.props.title, sub: card.props.sub }, { size: "S", title: "Add-only patches", sub: undefined });
+  assert.deepEqual(
+    { label: placeholder?.props.label, minHeight: placeholder?.props.minHeight },
+    { label: "add-only patches", minHeight: belowPlaceholder?.props.minHeight },
+  );
+});
+
+// spec 44084 §2.2 Zero: outcomes exist and none reported a style check → a measured 0, not an empty card
+test("a known zero style-check rate keeps the stat row and the per-agent table", () => {
+  const ui = sandbox.window.UI as unknown as Record<string, unknown>;
+  const card = (sandbox as unknown as Record<string, (props: unknown) => RecordedElement>).StyleRefCardI({
+    state: READY,
+    styleRef: {
+      overall_emission_rate: 0,
+      overall_uncorroborated_rate: null,
+      agents: [{ agent: "glass-atrium-dev-db", emission_count: 0, emission_total: 13, emission_rate: 0, eligible_count: 0 }],
+    },
+  });
+  // a table body carries its stat row as its lead prop
+  const leads = findElements(card, () => true).map((el) => el.props.lead);
+  const types = findElements([card, leads], () => true).map((el) => el.type);
+
+  assert.ok(types.includes(ui.StatRow), "the stat row stays");
+  assert.ok(types.includes((sandbox as unknown as Record<string, unknown>).StyleRefAgentTableI), "the per-agent table stays");
+  assert.ok(!types.includes(ui.EmptyState), "no empty line");
+});
+
+// the title already says flagged results over 7 days → zero rows draw the 0 stat alone, no bars and no restating line
+test("zero flagged rows draw no reason bars and no line under the stat", () => {
+  const bars = (sandbox as unknown as Record<string, (props: unknown) => unknown>).FlaggedReasonBarsI;
+
+  assert.equal(bars({ segments: { items: [], classifiedTotal: 0 } }), null);
 });

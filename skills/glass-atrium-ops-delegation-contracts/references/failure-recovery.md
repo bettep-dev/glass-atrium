@@ -5,6 +5,7 @@
 ## Honor-system checks — why
 
 - No code tracks the attempt count, enforces the transition or reads a diagnosis for evidence.
+- No code detects a regression chain either (`skills/glass-atrium-ops-orchestrator-role.md` → **Regression-chain trigger**).
 
 ## Circuit-breaker — the code backing
 

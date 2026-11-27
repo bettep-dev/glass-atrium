@@ -9,7 +9,7 @@
 // tier_distribution is process-cached for STATS_CACHE_TTL_MS (monotonic clock);
 // main /api/improvement re-computes per-request.
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -24,6 +24,7 @@ import {
 import { STRUCTUREDOUTPUT_COMPLETION_SOURCE } from "../attribution-sources.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
+import { errnoCode } from "../errno.js";
 import { parseIdParam } from "../route-params.js";
 import { TASK_TYPES } from "../task-types.js";
 import type {
@@ -417,18 +418,13 @@ const SUPPRESSION_EVAL_RESULTS = [
 // and a reader comparing the lists must not meet two descriptions of one thing.
 const NON_AUTO_FIXABLE_COPY = {
   label: "Non-auto-fixable",
-  hint:
-    "The proposal removes a line outside every editable region, which add-only " +
-    "synthesis cannot express. Re-arm by wrapping the target in an EDITABLE region.",
+  hint: "The fix would remove a locked line. Wrap it in an EDITABLE region.",
 };
 
 const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = {
   "repeat-apply-cap": {
     label: "Repeat-apply cap",
-    hint:
-      "N applied patches did not abate the signal, so the loop stopped stacking " +
-      "another. Terminal, and no status reset clears it — see the parked-pattern " +
-      "warning below. Open design decision.",
+    hint: "Applied fixes did not reduce it, so the loop stopped. Nothing here restarts it.",
   },
   "no-metric-key": {
     label: "No metric key",
@@ -438,9 +434,7 @@ const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = 
   },
   "non-promptable": {
     label: "Non-promptable signal (retired)",
-    hint:
-      "The retired label-set intake skip, now the no-metric-key skip. A terminal " +
-      "row stamped by it stays as it was; its events age out of the window.",
+    hint: "Set aside by a retired intake rule. Nothing to do.",
   },
   "stale-pattern-skip": {
     label: "Pair re-check skip",
@@ -464,9 +458,7 @@ const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = 
   },
   "roster-mismatch": {
     label: "Roster mismatch",
-    hint:
-      "The pattern's agent is not an agents/*.md stem, so no patch could land. " +
-      "Fix the agent column or retire the row.",
+    hint: "It names an agent with no agent file. Correct the name or retire the row.",
   },
   "aggregator-pair": {
     label: "Pair verdict not met",
@@ -478,15 +470,11 @@ const SUPPRESSION_CAUSE_COPY: Record<string, { label: string; hint: string }> = 
   },
   "reject-streak-snooze": {
     label: "Reject-streak snooze",
-    hint:
-      "Consecutive proposals were refused by review. Terminal; re-arming needs " +
-      "the reject evidence cleared or scoped.",
+    hint: "Review refused this fix several times in a row. Clear those refusals to restart it.",
   },
   "reverted-snooze": {
     label: "Reverted snooze",
-    hint:
-      "A covering applied proposal was backed out by a human. Terminal; " +
-      "re-proposing would re-land what was just reverted.",
+    hint: "A person reverted the applied fix. Nothing to do.",
   },
   "non-auto-fixable": NON_AUTO_FIXABLE_COPY,
   // Same gate, two keys: the transition-reason marker above, the eval_result token
@@ -1856,6 +1844,56 @@ export function resolveApplyScript(): string {
   return path.join(homedir(), ".glass-atrium", "autoagent", "daemon-apply.sh");
 }
 
+const APPLY_TIMEOUT_MS = 10 * 60 * 1000; // --auto-regen runs a model regen + pre-verify → minutes, never unbounded
+const APPLY_STDERR_MAX_CHARS = 64 * 1024;
+
+// AUTOAGENT_APPLY_TIMEOUT_MS: server-startup test seam (process-env, never request-derived).
+function getApplyTimeoutMs(): number {
+  const override = Number.parseInt(process.env.AUTOAGENT_APPLY_TIMEOUT_MS ?? "", 10);
+  return Number.isInteger(override) && override > 0 ? override : APPLY_TIMEOUT_MS;
+}
+
+interface ApplyRun {
+  exitCode: number;
+  stderr: string;
+  isTimedOut: boolean;
+}
+
+// Own process group → the timeout ends the script's python / git children too, which would otherwise hold its pipes open.
+async function runApplyScript(args: string[]): Promise<ApplyRun> {
+  const child = spawn(resolveApplyScript(), args, { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    if (stderr.length < APPLY_STDERR_MAX_CHARS) stderr += chunk;
+  });
+  let isTimedOut = false;
+  const timer = setTimeout(() => {
+    isTimedOut = true;
+    killProcessGroup(child.pid);
+  }, getApplyTimeoutMs());
+  try {
+    const exitCode = await new Promise<number>((resolve) => {
+      child.once("error", (error) => {
+        stderr ||= error.message;
+        resolve(-1);
+      });
+      child.once("close", (code) => resolve(code ?? -1));
+    });
+    return { exitCode, stderr, isTimedOut };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function killProcessGroup(pid: number | undefined): void {
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch (error) {
+    if (errnoCode(error) !== "ESRCH") throw error;
+  }
+}
+
 // Who an approval through this route files the row under. One member of the closed
 // actor set declared at monitor/prisma/schema.prisma -> AutoagentProposal, and the
 // same literal handleReject stamps: both routes are the same operator, so both name
@@ -1896,6 +1934,11 @@ const REVIEW_ACTOR_OPERATOR = "monitor-user";
 //        not be computed) AFTER the bytes landed and the row flipped applied — answered
 //        200 applied + record_missing; the JSONL applied row holds the record and stderr
 //        names the cause token
+//   27 = live-trial refusal (a live trial pre-registered the proposal; its decision state,
+//        not the click, picks the actor; nothing applied, row untouched) — 409. Its
+//        unread-state leg prints no REFUSED line → a failed read, answered as infra
+//   28 = approval-tier refusal (tier not auto for a non-click actor, or unreadable;
+//        nothing applied, row untouched) — 409
 //   2 = bad arg · 3 = no psql · 6 = DB update failed · 17 = parked-pattern guard gave
 //       no verdict (infra-class failures)
 const APPLY_EXIT_APPLIED = 0;
@@ -1913,6 +1956,8 @@ const APPLY_EXIT_QUERY_FAILED = 21;
 const APPLY_EXIT_ROW_UNREADABLE = 23;
 const APPLY_EXIT_RECORD_TABLE_UNCONFIRMED = 25;
 const APPLY_EXIT_RECORD_NOT_WRITTEN = 26;
+const APPLY_EXIT_LIVE_TRIAL = 27;
+const APPLY_EXIT_TIER_NOT_AUTO = 28;
 
 // Approve-only exit-18 refusal — route-local like RestoreErrorBody
 interface ApproveRefusalBody {
@@ -1945,32 +1990,26 @@ async function handleApprove(
     return { status: "invalid_param", param: "id" };
   }
 
-  // execFile (not exec) — id passed as a discrete argv element, no shell interpolation
-  // (defense-in-depth atop the int guard). --auto-regen: on a stale stored diff the script
+  // spawn with an argv array, no shell → the id is a discrete argv element (defense-in-depth atop the int guard);
+  // own process group → the timeout ends the script's children too. --auto-regen: on a stale stored diff the script
   // regenerates + pre-verifies + re-applies inline instead of dead-ending at exit 9.
-  let exitCode: number;
-  let stderr: string;
-  try {
-    await execFileAsync(resolveApplyScript(), [
-      "--proposal-id",
-      String(id),
-      "--auto-regen",
-      "--actor",
-      REVIEW_ACTOR_OPERATOR,
-    ]);
-    // Resolved promise → exit 0.
-    exitCode = APPLY_EXIT_APPLIED;
-    stderr = "";
-  } catch (error) {
-    const parsed = parseExecFileError(error);
-    exitCode = parsed.code;
-    stderr = parsed.stderr;
-  }
+  const run = await runApplyScript(["--proposal-id", String(id), "--auto-regen", "--actor", REVIEW_ACTOR_OPERATOR]);
+  const { exitCode, stderr } = run;
 
   // Loud-fail logging — never swallow the exit code / stderr. info on the
   // actionable branches, error on the infra-class failures so a 500 is observable
   // in the daemon log.
   const logBase = { route: "/api/improvement/:id/approve", id, exitCode, durationMs: Date.now() - start };
+
+  if (run.isTimedOut) {
+    request.log.error({ ...logBase, stderr }, "approve failed — daemon-apply ran past its timeout and was stopped");
+    reply.code(504);
+    return {
+      status: "apply_error",
+      id,
+      reason: `daemon-apply ran past ${Math.round(getApplyTimeoutMs() / 1000)} s and was stopped — refresh the board before approving again`,
+    };
+  }
 
   if (exitCode === APPLY_EXIT_APPLIED) {
     request.log.info(logBase, "proposal approved + applied via daemon-apply --proposal-id");
@@ -2094,6 +2133,12 @@ async function handleApprove(
       reason: `use Reject — generation outcome${outcomeText} is not ok-prefixed, nothing applied (override: AUTOAGENT_ALLOW_HAIKU_SKIP=1)`,
     };
   }
+  const policyRefusal = getPolicyRefusal(exitCode, stderr, id);
+  if (policyRefusal) {
+    request.log.warn({ ...logBase, stderr }, `approve refused (${policyRefusal.status} — row left as it was)`);
+    reply.code(409);
+    return policyRefusal;
+  }
   if (exitCode === APPLY_EXIT_QUERY_FAILED) {
     request.log.error({ ...logBase, stderr }, "approve failed — proposal DB query failed (nothing applied)");
     reply.code(503);
@@ -2167,8 +2212,8 @@ async function handleReject(
   // UPDATE ... RETURNING — the returned row count IS the idempotency gate:
   //   - 1 row  → transitioned pending/snoozed → rejected (200).
   //   - 0 rows → predicate matched nothing = already terminal/approved (409).
-  // reviewed_by stamped 'monitor-user' — local single-user trust boundary (no
-  // auth layer, 127.0.0.1 only).
+  // reviewed_by 'monitor-user' — one owner on the Mac and every registered device (no per-device rights);
+  // a remote call passes the device gate first and its audit row's actor names the device.
   interface RejectedRow {
     id: bigint;
     reviewed_at: Date;
@@ -3154,6 +3199,25 @@ function parseParkedRows(stderr: string): string | undefined {
 function parseGenerationOutcome(stderr: string): string | undefined {
   const match = /use Reject — proposal id=\d+ generation outcome haiku_status=([\w:.<>-]{1,32}) is not ok-prefixed/.exec(stderr);
   return match?.[1];
+}
+
+type PolicyRefusalBody = Extract<ImprovementMutationErrorBody, { status: "live_trial" | "tier_not_auto" }>;
+
+// Exit-27/28 refusal → its body; exit 27 with no REFUSED line is a failed read → undefined (infra).
+// Captured tokens only — no free stderr text rides into the reason.
+function getPolicyRefusal(exitCode: number, stderr: string, id: number): PolicyRefusalBody | undefined {
+  if (exitCode === APPLY_EXIT_LIVE_TRIAL) {
+    const state = /REFUSED proposal id=\d+ actor=[\w-]+ — its live trial is (open|won|decided)\b/.exec(stderr)?.[1];
+    if (!state) return undefined;
+    const reason = `nothing applied — its live trial is ${state}; the trial's decision, not Approve, picks who applies it`;
+    return { status: "live_trial", id, reason };
+  }
+  if (exitCode !== APPLY_EXIT_TIER_NOT_AUTO) return undefined;
+  const tier = /REFUSED proposal id=\d+ actor=[\w-]+ — its approval tier is ([a-z-]{1,16}), not auto/.exec(stderr)?.[1];
+  if (tier) return { status: "tier_not_auto", id, reason: `nothing applied — approval tier is ${tier}, not auto` };
+  const isUnread = stderr.includes("approval tier could not be read");
+  const leg = isUnread ? "approval tier could not be read" : "approval tier is not auto";
+  return { status: "tier_not_auto", id, reason: `nothing applied — ${leg}` };
 }
 
 // Exit-26 cause token — value charset only, so no free stderr text rides into the reason

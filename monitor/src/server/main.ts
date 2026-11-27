@@ -1,26 +1,27 @@
-// Fastify server entry — single-origin localhost; bind 127.0.0.1 ONLY (never 0.0.0.0 / ::).
-// Static public/ at /, API at /api/*; graceful shutdown SIGINT/SIGTERM -> app.close() + prisma.$disconnect().
+// Fastify server entry — the login-free app binds 127.0.0.1 ONLY (never 0.0.0.0 / ::); the opt-in remote listener is remote/start.ts.
+// Static public/ at /, API at /api/*; graceful shutdown SIGINT/SIGTERM -> queue scheduler stop, app.close() + prisma.$disconnect().
 
 import "dotenv/config";
 
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import type { FastifyInstance } from "fastify";
 
-import Fastify, { type FastifyInstance } from "fastify";
-import fastifyStatic from "@fastify/static";
-
+import { buildApp, warmHotRoutes } from "./app.js";
 import { logger } from "./logger.js";
 import { assertSessionTimezoneIsUtc, disconnectPrisma, getPrisma } from "./db.js";
-import { registerRoutes } from "./routes/index.js";
-import { probeBrowserLaunch, registerBrowserShutdownHook } from "./clauded-docs/browser-pool.js";
-import { registerAuditLogHook } from "./middleware/audit-log.js";
+import { probeBrowserLaunch } from "./clauded-docs/browser-pool.js";
 import { auditHtmlRootAtBoot } from "./maintenance/html-root-audit.js";
 import { isLoopbackHost } from "./host-guard.js";
-import { registerRequestGuards } from "./request-guards.js";
+import { getMonitorPort } from "./monitor-port.js";
+import { type QueueScheduler, getSweepDeps, startQueueScheduler } from "./queue/scheduler.js";
+import { DeviceConnections } from "./remote/connections.js";
+import { listActiveDevices, revokeAllDevices, revokeDevice } from "./remote/devices.js";
+import { buildRemoteAuditWriter } from "./middleware/audit-log.js";
+import { RegistrationCodes } from "./remote/registration-code.js";
+import { getRemoteSettings } from "./remote/settings.js";
+import { buildRemoteAccessSwitch } from "./remote/start.js";
 
-// Port SoT = config.toml [ports].monitor → 배포 시 ATRIUM_MONITOR_PORT 렌더(render-monitor-env.sh); 미설정 → 16145 default, PORT = generic fallback
 const HOST = process.env.ATRIUM_MONITOR_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.ATRIUM_MONITOR_PORT ?? process.env.PORT ?? 16145);
+const PORT = getMonitorPort();
 // Reject a non-bindable port loudly — never silently bind a wrong port.
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   logger.error(
@@ -38,30 +39,19 @@ if (!isLoopbackHost(HOST)) {
   );
   process.exit(1);
 }
-const HERE = dirname(fileURLToPath(import.meta.url));
-const PUBLIC_ROOT = resolve(HERE, "..", "..", "public");
-
-async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({ loggerInstance: logger, disableRequestLogging: false });
-
-  registerRequestGuards(app);
-
-  await app.register(fastifyStatic, {
-    root: PUBLIC_ROOT,
-    prefix: "/",
-    index: ["index.html"],
-  });
-
-  await registerRoutes(app);
-
-  // audit-trail hook — mutating write 를 monitor.audit_log 에 fire-and-forget 기록(mutation 미차단)
-  registerAuditLogHook(app);
-
-  // onClose 에서 chromium 종료 → SIGTERM 시 zombie chromium 미잔류
-  registerBrowserShutdownHook(app);
-
-  return app;
-}
+let queueScheduler: QueueScheduler | null = null;
+// one owner → the remote gate tracks device sockets here and a cut-off closes them
+const deviceConnections = new DeviceConnections();
+// one owner → the Mac's loopback page opens the code the remote code POST consumes
+const registrationCodes = new RegistrationCodes();
+// one owner of the feature state → the boot record, the listener, the Mac page's view and its acts agree
+const remoteAccess = buildRemoteAccessSwitch({
+  settings: getRemoteSettings(process.env, PORT),
+  monitorPort: PORT,
+  connections: deviceConnections,
+  codes: registrationCodes,
+  log: logger,
+});
 
 function attachShutdown(app: FastifyInstance): void {
   let shuttingDown = false;
@@ -79,6 +69,8 @@ function attachShutdown(app: FastifyInstance): void {
 
 async function shutdown(app: FastifyInstance, signal: NodeJS.Signals): Promise<void> {
   try {
+    await queueScheduler?.stop();
+    await remoteAccess.stop();
     await app.close();
     await disconnectPrisma();
     app.log.info({ signal }, "graceful shutdown complete");
@@ -90,7 +82,15 @@ async function shutdown(app: FastifyInstance, signal: NodeJS.Signals): Promise<v
 }
 
 async function main(): Promise<void> {
-  const app = await buildApp();
+  const app = await buildApp(PORT, {
+    admin: {
+      codes: registrationCodes,
+      devices: { list: () => listActiveDevices(getPrisma()), revoke: (id) => revokeDevice(getPrisma(), id), revokeAll: () => revokeAllDevices(getPrisma()) },
+      connections: deviceConnections,
+      audit: buildRemoteAuditWriter(),
+      access: remoteAccess,
+    },
+  });
   attachShutdown(app);
   // Top-level handlers — log + exit so launchd respawns cleanly.
   process.on("unhandledRejection", (reason) => {
@@ -119,6 +119,16 @@ async function main(): Promise<void> {
   // DB gate + pre-warm 통과 후에만 포트 bind — DB unavailable 은 여기 도달 전 exit
   await app.listen({ host: HOST, port: PORT });
   app.log.info(`listening on http://${HOST}:${PORT}`);
+
+  // after listen → a DB gate failure above exits before any sweep runs
+  queueScheduler = startQueueScheduler(getSweepDeps());
+
+  // after the loopback listener → a remote failure never takes the Mac's own page down
+  try {
+    await remoteAccess.boot();
+  } catch (error) {
+    app.log.error({ err: error }, "remote access start failed — remote listener stays closed");
+  }
 
   // boot-stage chromium launch probe — playwright 업그레이드 후 브라우저 바이너리 드리프트를 부팅 시점에 loud 표면화 (/api/health browser 필드 + health 카드).
   await probeStartupBrowser(app);
@@ -153,11 +163,12 @@ async function prewarmPool(app: FastifyInstance): Promise<void> {
   try {
     // 1) 커넥션 생성 + SELECT 1 shape compile (min:1 floor 가 유지할 첫 커넥션 확보)
     await getPrisma().$queryRaw`SELECT 1`;
-    // 2) hot-route self-call — app.inject = 외부 TCP/port 노출 없이 in-process handler 실행 · Promise.allSettled = 한 route 실패가 다른 warmup 미차단
-    await Promise.allSettled([
-      app.inject({ method: "GET", url: "/api/improvement" }),
-      app.inject({ method: "GET", url: "/api/clauded-docs" }),
-    ]);
+    // 2) hot-route self-call — app.inject = 외부 TCP/port 노출 없이 in-process handler 실행 · 한 route 실패가 다른 warmup 미차단
+    const unwarmed = await warmHotRoutes(app, PORT);
+    if (unwarmed.length > 0) {
+      app.log.warn({ unwarmed }, "pool pre-warm incomplete — these hot routes did not answer 2xx");
+      return;
+    }
     app.log.info("pool pre-warm complete");
   } catch (error) {
     // log+continue: pre-warm 은 성능 최적화일 뿐 정합성 요건 아님 → 실패해도 boot 진행

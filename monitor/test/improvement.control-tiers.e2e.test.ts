@@ -1,5 +1,5 @@
 // Learning controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and the screen's
-// own style block, rendered from the shipped components: the view toggle, the suggestion board rows and the held-cause fold —
+// own style block, rendered from the shipped components: the view toggle, the suggestion board rows and the held-cause toggle —
 // each keeps one box in every state (§7.16) — the Instrumentation corpus-growth value row on one baseline, and the Learning memory
 // headline counts on the ladder's 4 value step.
 // Runner: npx tsx --test test/improvement.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
@@ -13,6 +13,7 @@ import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { createControlProbe, isSameBox } from "./lib/control-probe.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -46,23 +47,24 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   .flex { display: flex; } .inline-flex { display: inline-flex; } .block { display: block; } .flex-wrap { flex-wrap: wrap; }
   .items-center { align-items: center; } .items-baseline { align-items: baseline; } .self-center { align-self: center; }
   .flex-1 { flex: 1 1 0%; } .shrink-0 { flex-shrink: 0; } .min-w-0 { min-width: 0; } .w-full { width: 100%; } .max-w-\\[10rem\\] { max-width: 10rem; }
-  .gap-1 { gap: 0.25rem; } .gap-1\\.5 { gap: 0.375rem; } .gap-2 { gap: 0.5rem; } .gap-3 { gap: 0.75rem; } .gap-4 { gap: 1rem; }
+  .gap-1\\.5 { gap: 0.375rem; } .gap-2 { gap: 0.5rem; } .gap-3 { gap: 0.75rem; } .gap-4 { gap: 1rem; }
   .ml-auto { margin-left: auto; } .mt-1 { margin-top: 0.25rem; } .mt-1\\.5 { margin-top: 0.375rem; }
-  .p-0 { padding: 0; } .p-3 { padding: 0.75rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
+  .p-3 { padding: 0.75rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
   .py-1\\.5 { padding-top: 0.375rem; padding-bottom: 0.375rem; } .px-4 { padding-left: 1rem; padding-right: 1rem; } .pb-4 { padding-bottom: 1rem; }
   .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.5rem; }
   .text-left { text-align: left; } .whitespace-nowrap { white-space: nowrap; } .overflow-hidden { overflow: hidden; }
   .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .line-clamp-1, .line-clamp-3 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; }
   .line-clamp-1 { -webkit-line-clamp: 1; } .line-clamp-3 { -webkit-line-clamp: 3; }
-  .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; } .font-medium { font-weight: 500; }
+  .font-medium { font-weight: 500; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
   .uppercase { text-transform: uppercase; } .tracking-wider { letter-spacing: 0.05em; } .rounded-md { border-radius: 0.375rem; }`;
 
 const noop = () => undefined;
 const LONG =
   "Move the verification gate ahead of the regex removal so reviewers see the API change before the three matching suite edits, " +
   "then rerun the full suite once the gate lands so the recorded red value and the green value come from one tree";
-const getToggle = (view: string) => getMarkup("ViewToggleI", { view, onChange: noop });
+const getToggle = (view: string) => getMarkup("ViewTabsI", { view, onChange: noop });
 const getLane = () =>
   [
     getMarkup("AppliedHistoryRowI", {
@@ -73,7 +75,16 @@ const getLane = () =>
     getMarkup("CompactProposalCardI", { row: { id: 43, rationale: LONG, status: "unadjudicated" }, onClick: noop }),
     getMarkup("ProposalCardI", { row: { id: 44, pattern_label: LONG, rationale: LONG, status: "applied" }, onClick: noop }),
   ].join("");
-const HELD_CAUSE = getMarkup("HeldCauseGroupI", { bucket: { cause: "missing-approval", label: "Missing approval" }, rows: [] });
+const AWAITING_CARD = getMarkup("ProposalCardI", {
+  row: { id: 45, pattern_label: LONG, rationale: LONG, status: "pending", approval_tier: "user" },
+  onClick: noop,
+  onAction: noop,
+  pendingActionId: null,
+});
+const HELD_CAUSE = getMarkup("HeldCauseTableI", {
+  buckets: [{ cause: "missing-approval", label: "Missing approval", count: 2, agents: 1, hint: "Approve the pending row to let it through." }],
+  rows: [],
+});
 const CORPUS_GROWTH = getMarkup(
   "CorpusGrowthCardI",
   {
@@ -84,30 +95,37 @@ const CORPUS_GROWTH = getMarkup(
   },
   instrumentationScreen,
 );
+const FLAGGED = getMarkup(
+  "FlaggedResultsCardI",
+  { state: { status: "ready", data: { review_flag_last_7d: 3 } }, reviewReasons: null },
+  instrumentationScreen,
+);
 const LEARNING_MEMORY = getMarkup("BucketRowI", {
   state: { status: "ready", busy: false, data: {}, error: null }, buckets: { ctm: 12, epm: 3 }, failures: [], onRetry: noop,
 });
 
 // the board lane widths the audit measured: 1440 (378) and 820 (226)
 const LANE_WIDTHS = [378, 226] as const;
-const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div style="padding: 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px;">
     <div id="view-operator">${getToggle("operator")}</div>
     <div id="view-instrumentation">${getToggle("instrumentation")}</div>
   </div>
   ${LANE_WIDTHS.map((w) => `<div id="lane-${w}" style="width: ${w}px; padding: 0; display: flex; flex-direction: column; gap: 8px;">${getLane()}</div>`).join("")}
+  <div id="awaiting" style="width: 600px; padding: 24px;">${AWAITING_CARD}</div>
   <div id="held" style="width: 420px; padding: 24px;">${HELD_CAUSE}</div>
   <div id="corpus" style="width: 560px; padding: 24px;">${CORPUS_GROWTH}</div>
   <div id="learning-memory" style="width: 560px; padding: 24px;">${LEARNING_MEMORY}</div>
+  <div id="flagged" style="width: 560px; padding: 24px;">${FLAGGED}</div>
 </body></html>`;
 
 const TOGGLE_OPTIONS = ["Operator", "Instrumentation"] as const;
-const SUMMARY = "#held details > summary";
+const HELD_TOGGLE = "#held button.inline-target";
 
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
-const { readBox, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
+const { readBox, assertBoxHeldAcrossStates } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -116,7 +134,8 @@ before(async () => {
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
   await page.addStyleTag({ content: SCREEN_CSS });
-  cdp = await page.context().newCDPSession(page);
+  await page.addStyleTag({ content: getRoleKeyCss() });
+  cdp =await page.context().newCDPSession(page);
   await cdp.send("DOM.enable");
   await cdp.send("CSS.enable");
 });
@@ -125,14 +144,14 @@ after(async () => {
   await browser?.close();
 });
 
-const getOption = (view: string, label: string) => `#view-${view} .seg > button:nth-child(${TOGGLE_OPTIONS.indexOf(label as never) + 1})`;
+const getOption = (view: string, label: string) => `#view-${view} [role="tab"]:nth-child(${TOGGLE_OPTIONS.indexOf(label as never) + 1})`;
 
-describe("the Learning view toggle keeps one box per option whichever view is pressed", () => {
+describe("the Learning view tabs keep one box per tab whichever view is selected", () => {
   for (const label of TOGGLE_OPTIONS) {
-    test(`the ${label} option is as wide pressed as unpressed`, async () => {
+    test(`the ${label} tab is as wide selected as unselected`, async () => {
       const operator = await readBox(getOption("operator", label));
       const instrumentation = await readBox(getOption("instrumentation", label));
-      assert.ok(isSameBox(operator, instrumentation), `${label} ${operator.width}x${operator.height} with Operator pressed vs ${instrumentation.width}x${instrumentation.height}`);
+      assert.ok(isSameBox(operator, instrumentation), `${label} ${operator.width}x${operator.height} with Operator selected vs ${instrumentation.width}x${instrumentation.height}`);
       assert.equal(operator.height, 32);
     });
   }
@@ -161,66 +180,133 @@ describe("a suggestion board row sits on the 32 control tier and keeps it in eve
 describe("a proposal card keeps its clamped text under hover and focus", () => {
   for (const width of LANE_WIDTHS) {
     test(`hover, focus-visible and active keep the card's box at ${width} wide`, () =>
-      assertBoxHeldAcrossStates(`#lane-${width} > .sub-card > button.i-row-card`));
+      assertBoxHeldAcrossStates(`#lane-${width} > div > button.i-row-card`));
   }
 });
 
-describe("the held-cause fold opens on the disclosure atom", () => {
-  test("its summary is a 32 disclosure with the chevron as the one open-state cue, turned 90 once open", () => assertFoldOnOneBox("#held details", SUMMARY));
+describe("an awaiting suggestion's actions are a word-only button pair at its row end", () => {
+  const readActions = () =>
+    page.$eval("#awaiting", (root) => {
+      const card = root.firstElementChild as HTMLElement;
+      const buttons = [...card.querySelectorAll<HTMLButtonElement>("button.btn")];
+      const actionRow = buttons[0].closest("#awaiting > div > div") as HTMLElement;
+      const call = [...actionRow.children].find((el) => el.textContent?.includes("Your call")) as HTMLElement;
+      return {
+        cardBox: card.getBoundingClientRect().toJSON() as DOMRect,
+        callLeft: call.getBoundingClientRect().left,
+        buttons: buttons.map((button) => {
+          const words = document.createRange();
+          words.selectNodeContents(button);
+          const style = getComputedStyle(button);
+          const frame = ["paddingLeft", "paddingRight", "borderLeftWidth", "borderRightWidth"]
+            .reduce((sum, key) => sum + parseFloat(style[key as keyof CSSStyleDeclaration] as string), 0);
+          const box = button.getBoundingClientRect();
+          return {
+            text: button.textContent?.trim() ?? "",
+            glyphs: button.querySelectorAll("svg").length,
+            left: box.left, right: box.right, width: box.width,
+            wordsWidth: words.getBoundingClientRect().width + frame,
+            color: style.color, borderColor: style.borderTopColor,
+          };
+        }),
+      };
+    });
 
-  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(SUMMARY));
+  test("Reject comes before Approve, each reading its word alone", async () => {
+    const { buttons } = await readActions();
+    assert.deepEqual(buttons.map((b) => b.text), ["Reject", "Approve"]);
+    assert.deepEqual(buttons.map((b) => b.glyphs), [0, 0], "no glyph inside either button");
+    assert.ok(buttons[0].right < buttons[1].left, "Reject sits left of Approve");
+  });
+
+  test("each button is as wide as its word, the pair ending on the card's end edge", async () => {
+    const { cardBox, buttons } = await readActions();
+    for (const b of buttons) assert.ok(Math.abs(b.width - b.wordsWidth) < 1, `${b.text} ${b.width} wide for ${b.wordsWidth} of word and frame`);
+    assert.ok(Math.abs(buttons[1].right - cardBox.right) < 0.5, `pair ends at ${buttons[1].right}, card at ${cardBox.right}`);
+  });
+
+  test("Your call starts the action row on the card's start edge", async () => {
+    const { cardBox, callLeft } = await readActions();
+    assert.ok(Math.abs(callLeft - cardBox.left) < 0.5, `Your call at ${callLeft}, card at ${cardBox.left}`);
+  });
+
+  test("Reject and Approve share one ink and one edge", async () => {
+    const [reject, approve] = (await readActions()).buttons;
+    assert.deepEqual([reject.color, reject.borderColor], [approve.color, approve.borderColor]);
+  });
 });
 
-// the value row's text items, found by their text: the 24 mono figure, its unit, the delta line
+describe("a held cause's name opens its rows on the ledger expander's inline target", () => {
+  test("the toggle is one 24 inline target", async () => {
+    assert.equal((await readBox(HELD_TOGGLE)).height, 24);
+  });
+
+  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(HELD_TOGGLE));
+});
+
+// the corpus-growth headline stat: the figure with its attached unit, the delta on the stat's context line
 const CORPUS_TEXT = { value: "77,003", unit: "words", delta: "▲ +120 words vs previous" } as const;
 
-describe("the corpus-growth value row sets its figure, unit and delta on one baseline", () => {
-  // a 0 x 0 inline-block appended to an item sits on that item's baseline, so its bottom is the baseline
-  const readTextItem = (text: string) =>
-    page.$eval("[data-testid=corpus-growth-card]", (card, wanted) => {
-      const el = [...card.querySelectorAll("span")].find((span) => span.textContent?.trim() === wanted);
-      if (!el) throw new Error(`no span reads "${wanted}"`);
+describe("the corpus-growth headline sets its figure and unit on one baseline, the delta on the line below", () => {
+  // a 0 x 0 inline-block appended to an element sits on that element's last baseline, so its bottom is the baseline
+  const readStatPart = (selector: string) =>
+    page.$$eval(".card", (cards, partSelector) => {
+      const card = cards.find((el) => el.querySelector(".card-title")?.textContent === "Corpus growth");
+      const el = card?.querySelector<HTMLElement>(partSelector);
+      if (!el) throw new Error(`no ${partSelector} in the Corpus growth card`);
       const probe = document.createElement("span");
       probe.style.cssText = "display: inline-block; width: 0; height: 0;";
       el.append(probe);
       const baseline = probe.getBoundingClientRect().bottom;
       probe.remove();
-      const { left, right } = el.getBoundingClientRect();
-      return { baseline, left, right };
-    }, text);
+      const { top, left, right } = el.getBoundingClientRect();
+      return { text: el.textContent?.trim() ?? "", baseline, top, left, right };
+    }, selector);
 
-  test("the figure, its unit and the delta share one baseline", async () => {
-    const value = await readTextItem(CORPUS_TEXT.value);
-    for (const name of ["unit", "delta"] as const) {
-      const { baseline } = await readTextItem(CORPUS_TEXT[name]);
-      assert.ok(Math.abs(baseline - value.baseline) <= 0.5, `${name} baseline ${baseline} vs figure ${value.baseline}`);
-    }
+  test("the figure and its unit share one baseline, the unit after the figure", async () => {
+    const value = await readStatPart(".stat-value");
+    const unit = await readStatPart(".stat-value .unit");
+    assert.ok(value.text.startsWith(CORPUS_TEXT.value), `figure reads "${value.text}"`);
+    assert.equal(unit.text, CORPUS_TEXT.unit);
+    assert.ok(Math.abs(unit.baseline - value.baseline) <= 0.5, `unit baseline ${unit.baseline} vs figure ${value.baseline}`);
   });
 
-  test("the unit sits 4 from its figure, and the delta one group step (12) after the unit", async () => {
-    const value = await readTextItem(CORPUS_TEXT.value);
-    const unit = await readTextItem(CORPUS_TEXT.unit);
-    const delta = await readTextItem(CORPUS_TEXT.delta);
-    assert.ok(Math.abs(unit.left - value.right - 4) < 0.01, `figure ↔ unit ${unit.left - value.right}`);
-    assert.ok(Math.abs(delta.left - unit.right - 12) < 0.01, `unit ↔ delta ${delta.left - unit.right}`);
+  test("the delta sits on the context line under the figure", async () => {
+    const value = await readStatPart(".stat-value");
+    const delta = await readStatPart(".stat-context");
+    assert.equal(delta.text, CORPUS_TEXT.delta);
+    assert.ok(delta.top >= value.baseline, `delta top ${delta.top} above the figure baseline ${value.baseline}`);
+  });
+});
+
+describe("the flagged-results head leads to Task results on the Link atom", () => {
+  test("its one way out is an inline link to #outcomes whose accessible name is Task results, never a button", async () => {
+    const head = page.locator("#flagged .card-head");
+    const link = head.getByRole("link", { name: "Task results", exact: true });
+
+    assert.equal(await head.getByRole("link").count(), 1, "the head has one link");
+    assert.equal(await link.count(), 1, "the link's accessible name is Task results");
+    assert.equal(await link.getAttribute("href"), "#outcomes");
+    assert.equal(await head.locator(".btn").count(), 0, "the head has no button");
+    assert.ok((await readBox("#flagged .card-head a.link")).height < 32, "the link keeps its inline height");
   });
 });
 
 describe("the Learning memory headline sets each count on the ladder's value step", () => {
-  // per count: its glyph, figure and label in order — each 4 from the one before
+  // per count: its figure then its label, 4 apart, no tone glyph before the figure
   const readMetricSteps = () =>
     page.$$eval("#learning-memory .i-loop-metric > span", (counts) =>
       counts.map((count) => {
-        const [glyph, figure, label] = [...count.children].map((el) => el.getBoundingClientRect());
-        return { text: count.textContent ?? "", glyphToFigure: figure.left - glyph.right, figureToLabel: label.left - figure.right };
+        const [figure, label] = [...count.children].map((el) => el.getBoundingClientRect());
+        return { text: count.textContent ?? "", parts: count.children.length, figureToLabel: label.left - figure.right };
       }),
     );
 
-  test("glyph to figure and figure to label are 4 apart in both counts", async () => {
+  test("figure to label are 4 apart in both counts, with no glyph before the figure", async () => {
     const counts = await readMetricSteps();
     assert.equal(counts.length, 2, "Confirmed wins and Mistake patterns");
-    for (const { text, glyphToFigure, figureToLabel } of counts) {
-      assert.ok(Math.abs(glyphToFigure - 4) < 0.01, `${text}: glyph ↔ figure ${glyphToFigure}`);
+    for (const { text, parts, figureToLabel } of counts) {
+      assert.equal(parts, 2, `${text}: figure and label only`);
       assert.ok(Math.abs(figureToLabel - 4) < 0.01, `${text}: figure ↔ label ${figureToLabel}`);
     }
   });

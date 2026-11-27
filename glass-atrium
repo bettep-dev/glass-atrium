@@ -617,9 +617,9 @@ STEP_INDEX_BASE=""
 # fall back to base+STEP_TOTAL byte-for-byte. Set only on the install-panel path; swept by _clear_step_state.
 GRAND_TOTAL=""
 # INSTALL_PLAN_LEN — the install build_step_plan length as a STATIC literal, NOT ${#STEP_FN[@]}:
-# preflight_count_and_gate runs BEFORE build_step_plan install, so the array is not yet 14 at count time.
+# preflight_count_and_gate runs BEFORE build_step_plan install, so the array is still empty at count time.
 # A drift guard (test/install-step-counter-grand-total.bats) pins this to the live plan length after build_step_plan.
-INSTALL_PLAN_LEN=14
+INSTALL_PLAN_LEN=15
 STEP_LABEL_ACTIVE_CUR=""   # present-progressive label for the step currently running
 STEP_BAR_CUR=""            # ITEM 4: the prebuilt dominant progress-bar string for the running step
                            # (built ONCE per step in run_plan so the 100ms spinner tick never recomputes it)
@@ -750,7 +750,8 @@ PREFLIGHT_GROUP2_RUNNABLE=0
 # the subcommand to the caller (already peeled off). Both the install-side flags
 # (--dry-run/--repoint-launchd/--load-launchd/--no-load-launchd/--re-render/
 # --collision-prompt/--recreate-db/--recreate-yes) and the uninstall-side flags
-# (--orphan-scan/--purge-config/--verify-clean/--yes) are recognized; an unknown
+# (--orphan-scan/--purge-config/--verify-clean/--yes) are recognized, and install, uninstall and
+# queue-mcp take --approve-profile-writes (put_queue_mcp_registration); an unknown
 # flag is a loud die. --no-load-launchd is the CHANGE 1 opt-out for the menu's
 # auto-load 11th step (inert on the passthrough path, which loads only behind
 # --load-launchd); accepting it here keeps a CI harness that drives the menu's
@@ -768,6 +769,7 @@ ga_parse_args() {
       --recreate-yes) RECREATE_YES=true ;;
       --orphan-scan) SCAN_ONLY=true ;;
       --purge-config) PURGE_CONFIG=true ;;
+      --approve-profile-writes) APPROVE_PROFILE_WRITES=true ;;
       --verify-clean) VERIFY_CLEAN=true ;;
       --yes) ASSUME_YES=true ;;
       *) die "unknown argument: $1" ;;
@@ -880,12 +882,20 @@ passthrough() {
       exit "${pf_rc}"
       ;;
     wire-hooks) wire_hooks ;;
+    queue-mcp) put_queue_mcp_registration add ;;
     render-config) render_config ;;
+    repair-config-binaries) repair_config_binaries ;;
     render-plists) render_plists ;;
     db-setup) run_db_setup ;;
     agents-only) run_agents_only ;;
     migrate) migrate_layout ;;
     prune) run_prune ;;
+    reload-launchd)
+      # the doctor's launchd remedy; the rc is the reload verdict, so `exit` it (as in the doctor branch)
+      local reload_rc=0
+      reload_launchd_jobs || reload_rc=$?
+      exit "${reload_rc}"
+      ;;
     retire-launchd-jobs)
       # the autoagent-cycle retirement stage's entry: the routine's rc is the stage verdict, so `exit` it
       # (a non-zero `return` would trip the echo-only ERR trap, as in the doctor branch)
@@ -937,6 +947,11 @@ glass-atrium — the sole entry point for the Glass Atrium harness.
   glass-atrium                 launch the interactive menu (the only invocation)
   glass-atrium --ascii         launch the menu with ASCII glyphs + mono palette
   glass-atrium -h | --help     show this help
+  glass-atrium remote <sub>    monitor access from registered devices on a trusted Wi-Fi:
+                               on · off · list · revoke <id> · revoke-all · trust · reissue
+  glass-atrium reload-launchd  re-render the launchd jobs and reload them (refused while an update runs)
+  glass-atrium repair-config-binaries
+                               re-resolve config.toml's node_bin / claude_bin; nothing else in it changes
 
 The menu is the whole interface (arrow keys / j,k to move · Enter to select · q to quit):
   Install      deps preflight + install + monitor build + health gate
@@ -966,6 +981,15 @@ main() {
         ;;
       *) : ;; # first token => internal passthrough subcommand — handled below
     esac
+  fi
+
+  # `remote <sub> [id]` takes its own argv (two tokens) → routed before the one-subcommand passthrough;
+  # `exit` the rc so a refusal never trips the echo-only ERR trap
+  if [[ $# -gt 0 && "$1" == "remote" ]]; then
+    shift
+    local remote_rc=0
+    ga_remote_main "$@" || remote_rc=$?
+    exit "${remote_rc}"
   fi
 
   # Any remaining argument => the internal/undocumented passthrough (engine call).

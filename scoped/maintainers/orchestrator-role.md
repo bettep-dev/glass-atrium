@@ -61,7 +61,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - the `[SIZE-EST]` key names on the `#### Delegation-size discipline` pointer;
   - the `[SCOPE]` grammar;
   - the six-plus-`7th` delegation-element count — `scoped/orchestrator-core.md` → `## Request flow` mirrors the six, so the two move together;
-  - `Rule 2` and the three BASENAME names;
+  - `Rule 1` and the three BASENAME names;
   - `AUTOAGENT_PREFLIGHT_ACTIVE=1 scripts/run-bats-parallel.sh`;
   - the Document-Driven Workflow step numbers.
 - The statement of this duty for that skill's editors, covering `references/ultracode-declaration-contract.md` and `references/delegation-size-discipline.md`: `scoped/maintainers/glass-atrium-ops-delegation-contracts.md` → Edit Rules → **Machine-read literals**.
@@ -72,22 +72,23 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - **Verdict names** — `block-nodecl` · `block-grammar` · `block-norev` · `block-noverifydev` · `block-declspawn` · `block-undecl` · `block-computed` · `block-order` · `block-upstream`.
   - Each is a trace tag `hooks/enforce-workflow-verify-stage.sh` emits. The rule file names them; the hook defines them.
 - **Headings** cited by name elsewhere in the corpus:
-  - `## Orchestrator Identity` · `## Delegation Criteria` · `## Delegation Workflow` · `## Document-Driven Workflow` · `## Harness Path Protection` (with its `Rule 2`, `### Write routes`, `### Staged lane`, `### Progress-file exclusion`, `### Reach of the gate`).
+  - `## Orchestrator Identity` · `## Delegation Criteria` · `## Delegation Workflow` · `## Document-Driven Workflow` · `## Harness Path Protection` (with its `Rule 1`, `### Write routes`, `### Progress-file exclusion`).
   - `### Phase Notes`, with `#### Entry classification (DEV delegations)` · `#### Plan edge discovery`.
   - `#### Decision-phase probes` · `#### Deliverable exposure and designer composition` · `#### Monitoring-phase notes` · `#### Scan boundary and provenance`.
   - `### Plan Direction Verification (Stage-2 gate)` · `### Spawn Budget` (with Delegation-size discipline) · `#### Automatic Parallelization` (with guardrail `(a)`) · `### Context Handoff Size` · the Cost-Tier Selection heading · `### Failure Recovery Loop`.
   - Pointer sites, the `block-*` verdict table's file included: `skills/glass-atrium-ops-delegation-contracts/SKILL.md` → Reference Index.
   - Cited by that skill's reference files: `#### Backstop asymmetry (manual vs. ultracode)`.
   - Cited from `scoped/orchestrator-core.md` and `skills/glass-atrium-ops-orchestrator.md`: `#### Depth and concurrency ceilings`.
+  - Cited from `scoped/orchestrator-core.md` only: `## Owner Queue`.
 - **Bolded leads** cited by name:
   - under the phase-note H4s:
-    - `#### Decision-phase probes`: Foreground Probe · Capability Probe · Compatibility Probe;
+    - `#### Decision-phase probes`: Capability Probe · Compatibility Probe;
     - `#### Deliverable exposure and designer composition (Decision phase)`: Exposure Determination · Visual-Weight Probe;
     - `#### Monitoring-phase notes`: Verbatim forward-relay · glass-atrium-dev-front markup-exception Monitoring judgment;
   - under `### Spawn Budget`: Split triggers · HARD SECONDARY · Empirical tool_use calibration · Standing obligation (the one under `#### Delegation-size discipline`) · COUNTER-CAVEAT (over-fragmentation);
   - under `#### Analysis fan-out and team cardinality`: Effort-scaling by task shape;
   - under `### Context Handoff Size`: Attestation-token placement;
-  - under `### Failure Recovery Loop`: Backing honesty (which stages are enforced) · Retry effort escalation;
+  - under `### Failure Recovery Loop`: Backing honesty (which stages are enforced) · Retry effort escalation · Regression-chain trigger;
   - under `## Document-Driven Workflow` step 6: Prompt-file tail.
 - Neither list is exhaustive: grep the corpus for a heading or bolded lead before renaming it.
 
@@ -151,7 +152,7 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 - The gate-operation canonical is the pointer plus `references/plan-direction-verification.md`.
 - The participant-duty canonicals are the two scope-file headings the pointer's **Ownership** line names.
-- The hooks quote only the gate heading (`hooks/enforce-verification-gate.sh` reviewer-miss reason, `hooks/enforce-workflow-verify-stage.sh` DEV hard-gate block), which stays.
+- The hooks quote only the gate heading (`hooks/enforce-verification-gate.sh` reviewer-miss reason, `hooks/enforce-workflow-verify-stage.sh` DEV hard-gate warning), which stays.
 - The reference's cited `##` headings, text and level fixed: `scoped/maintainers/glass-atrium-ops-delegation-contracts.md` → Edit Rules → **Cited headings**.
   - Citer naming the `##` level: `scoped/maintainers/scope-qa.md` (two Team-composition citations).
 - Location-only citer that stays: `skills/glass-atrium-ops-orchestrator.md` → `#### Pipeline Acceptance Criteria` → the Stage 2 bullet names the gate heading for team composition, DEV hard gate, activation scope and direction-not-completeness. The pointer keeps all four.
@@ -192,6 +193,13 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - Guardrail (a)'s agent-binding rules, the index-mutation class and the mechanisms they answer live in Tier-1 `rules/glass-atrium/core-git-workflow.md` → Commits → **Concurrent worktree** · **Worktree occupancy**, which reaches every agent on the host channel.
   - Never copy them back into the rule file: its opening line tells subagents to ignore it, so a rule placed there loses its agent audience.
 - `skills/glass-atrium-ops-orchestrator.md` cites the Tier-1 home and the leads of `references/automatic-parallelization.md` directly. Before renaming such a lead, grep for its citers (`scoped/maintainers/glass-atrium-ops-delegation-contracts.md` → Edit Rules → **Cited leads**).
+- Main-session copies in `scoped/orchestrator-core.md` → `## Routing` move with their rule-file sites:
+  - the compound-request line ↔ the `## Delegation Workflow` Forbidden row `Collapsing compound requests into a single agent that does not fit every part` ↔ `skills/glass-atrium-ops-orchestrator.md` → `#### Selection procedure` ("route it by fit").
+    - The core line carries the full scope: one agent takes only the parts it fits and its context can carry, in step with `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Sub-Agent Spawn Policy [ALL]`.
+    - The row and the skill line state its short form.
+  - the parallel-by-default line ↔ `#### Automatic Parallelization` → **Standing obligation**.
+    - Decided keep: it orders sub-tasks already split and keeps both conditions (independent, non-overlapping), so the spawn policy still decides the split; reword it only on observed over-delegation.
+    - The bullet under that H4 that opens `The default orders sub-tasks already split` states that reading and points at the spawn policy.
 
 ## Linkage — handoff and recovery
 
@@ -213,6 +221,9 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 - The bolded lead **Retry effort escalation** under `### Failure Recovery Loop` has no other maintained copy.
   - `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Thinking Budget Policy [ALL]` → **Task-class rule** cites it by name as one tier mover.
   - `references/failure-recovery.md` carries no Retry or tier text.
+- The deliberate-blocker exception to the loop sits at `#### Monitoring-phase notes` → **Blocker class**, not under this H3, which is at its cap; the loop's opening line names that bullet as the only way a `blocked` result enters.
+  - `#### Decision-phase probes` states a handling policy — treat a failed probe as a deliberate blocker — and leaves the class definition to the charter section.
+  - That bullet and `#### Decision-phase probes` cite `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`: a rename of that heading lands in both.
 - The rule file carries no pointer to `skills/glass-atrium-ops-orchestrator.md` → `### Self-Improvement User-Approval Trigger`.
   - The orchestrator reaches that section through Tier-1 `rules/glass-atrium/core-learning-log.md` → Instruction Improvement Approval Tier.
 
@@ -238,12 +249,199 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
 
 ### `## Harness Path Protection`
 
-- Hook internals behind Rule 2 and `### Reach of the gate`, kept here because the orchestrator acts on none of them:
-  - A directory symlink the walk crosses before entering a root, leading inside a root rather than onto the root itself, voids every exemption.
-  - Outside the scan's reach: a home written as a run-time expansion the hook does not read as home · a glob standing in for a root letter · a root named only as a bare word in prose, the file named relative to it.
-  - The hook does not examine a symlink inside a root it has entered: it judges the rest of the path as written.
-  - Past its candidate cap, the hook blocks fail-safe rather than leave candidates unresolved.
-  - On the resolved-install-target route, no hook guards the install's `rules/` and `scoped/` trees.
-- The layer meant to catch the writes the prompt scan cannot see is a Write/Edit/Bash gate on calls carrying an `agent_id`.
-  - Not built; its home is `hooks/enforce-harness-critical.sh`.
-  - It is also the candidate cover for the Workflow-tool `agent()` gap: whether a Workflow agent's Write/Edit/Bash calls carry an `agent_id` is unmeasured.
+- No hook stands behind the section: Rule 1 is honor-system, and no write in its scope is blocked.
+- The detection statement is single-sited at `rules/glass-atrium/core-security.md` → `### Enforcement boundary` → **Harness integrity**.
+  - The section (its `### Write routes` included), `scoped/orchestrator-core.md` → `## Harness path protection`, `skills/glass-atrium-ops-orchestrator.md` and `references/deploy-safety-idiom.md` each point there; none restates the compared kinds.
+
+## Linkage — owner queue
+
+### `## Owner Queue`
+
+- The section is the only rule text telling a session what to post and when to use the queue; `scoped/orchestrator-core.md` → `## Where the rest lives` carries its trigger line.
+  - That line stays one line: the core is printed whole at SessionStart, inside `hooks/inject-session-context.sh` → `CONTEXT_CAP_UNITS`.
+  - The trigger line states the must-not-miss obligation, the turn's `record` call and the relay keyword, and nothing more of the rule.
+    - Single-sited in the section: the posting table, the must-not-miss kinds list and the record's forms.
+  - The trigger line names no wait: a session reaches the wait rows through a trigger it already has — background job, posting, or the resume prompt's own wait step.
+  - The trigger line states no relay rule: a recipient reaches `## Owner Queue Relay` through the `[ATRIUM-QUEUE]` trigger and `### Claimed items`, and each relay's provenance line states its own reading.
+- The section restates no command list or item JSON: their home is `scripts/atrium-queue.sh` → `print_usage`.
+  - A tool's inputs live in the MCP adapter's tool schemas (`scripts/atrium-queue-mcp.sh` → `TOOLS`): `## Owner Queue Tools` names the tools and their CLI counterparts, and no input.
+  - Its `wait` exit rows, under `### On a wait's exit`, are the one exit-code list it carries: a mirror of `print_usage` → `On a wait's exit`, canonical there, so both stay.
+    - `print_usage` states each action bare; the rule binds the rows to a background job session and a resumed one, and has an interactive session restart no `wait`.
+  - The wait's bound is named, never quoted: its values live in `scripts/atrium-queue.sh` → `WAIT_MINUTES_DEFAULT` · `WAIT_MINUTES_MAX`.
+  - The section's `"again once"` restart row reads `once` as one restart, then stop: `print_usage` states no second failure.
+- The posting table defines a background job session by how it started, never by `CLAUDE_JOB_DIR`.
+  - Why: a process started inside a job inherits that variable (`scripts/lib/queue-session.sh` → `queue_get_job_name`).
+  - The listener's run condition does read that variable, in the closed direction only: an inherited one costs a session its listener and never starts one (`hooks/queue-listener.sh` → `is_listenable_session`).
+
+### Owner Queue — split points
+
+- `## Owner Queue Tools`, `## Owner Queue Authority`, `## Owner Queue Relay`, `## Owner Queue Listener` and `## Owner Queue Waiting` are split points holding `## Owner Queue` under the 8 KB H2 cap.
+  - A citer outside the rule file names `## Owner Queue`, never a split: the core's trigger line names it alone.
+  - `## Owner Queue` keeps one pointer line to each of `## Owner Queue Tools`, `## Owner Queue Authority` and `## Owner Queue Relay`, in its lead list.
+    - Single-sited in `## Owner Queue Tools`: which route a session takes, the tool-to-CLI table, the CLI's spelling, the main-session rule with its backing, and what each claimed item calls for.
+    - Single-sited in `## Owner Queue Authority`: the trust rule and its source-and-first keying, the approval scope, the approval posting form, the owner-only actions and their honest backing.
+    - Single-sited in `## Owner Queue Relay`: when and how to relay, the bounds by name, the reading of a received relay and the relay's honest backing.
+    - `### Claimed items` and `### Untrusted sources` each carry a relay row that only points at `## Owner Queue Relay`.
+    - `### Envelopes and authority`, `### Untrusted sources`, `### Provenance and images` and `### Owner-only actions` live in `## Owner Queue Authority`; the middle two are split points holding `### Envelopes and authority` under the 3 KB H3 cap.
+  - A session reaches `## Owner Queue Listener` through the pointer on the wait table's `[ATRIUM-QUEUE]` `pending` row, where a woken session looks.
+    - The action on a wake stays single-sited in the wait table's `[ATRIUM-QUEUE]` rows.
+  - `### On a wait's exit` is a split point holding `### Answers and messages` under the 3 KB H3 cap: the wait table's last row points to it.
+    - It sits under `## Owner Queue Waiting`: a session reaches its rows only through that row, after a `wait` it started has exited, and the core's trigger line names no wait — so the split loses no reader the trigger sends.
+  - `### Last-act post` is a split point holding `### Posting and registering` under the 3 KB H3 cap: the **Turn record** tool-route bullet points to it.
+  - `### Wait or listener` is a split point of the same H3 and the single site of the wait-or-listener rule.
+    - Its pointers: the wait table's two `next` rows · `## Owner Queue Listener` · the interactive bullet of `### On a wait's exit`.
+    - It stays under `## Owner Queue`: the core's trigger line names that heading alone, so a rule under a split reaches no session the trigger sends.
+  - The section names the listener's lifetime, never quotes it: its value lives in `scripts/atrium-queue.sh` → `LISTEN_LIFETIME_S`.
+  - The section's announce bound mirrors constants of `scripts/atrium-queue.sh`, canonical there: change each literal with its constant.
+    - `twice` and `a further two`: `LISTEN_ANNOUNCE_MAX`.
+    - `three times` and `the third`: `LISTEN_INTERVAL_RESETS_MAX`.
+    - The nudge interval is cited by its constant, never quoted: `scripts/lib/queue-session.sh` → `QUEUE_NUDGE_INTERVAL_MIN`.
+
+### Owner Queue — texts in sync
+
+- Texts that tell the session the same thing; a change to one lands in each of the others:
+  - the fetch → ack → act order and the `first` rule: `monitor/src/server/queue/envelope.ts` → `buildEnvelope` · `scripts/atrium-queue.sh` → `print_claims` · `scripts/lib/queue-ops.sh` → `queue_claim_item` (both steps in one call) · `### Claimed items`;
+  - the `wait` exit actions: `scripts/atrium-queue.sh` → `print_usage` · `end_wait_at_bound` · `### On a wait's exit`;
+  - the two refusals behind `wait` exit 2: `monitor/src/server/queue/delivery.ts` → `lockOwnSession` (`unknown_session`) · `assertLiveFor` (`session_not_live`);
+  - the register-after-ack step and the start-the-wait step after it: `envelope.ts` → `buildResumePayload`;
+  - the record call and its two forms: `hooks/queue-turn-end-check.sh` → `RECORD_ASK_TEMPLATE` · `SHADOWED_RECORD_ASK_TEMPLATE` · `scripts/atrium-queue.sh` → `print_usage` (its `record` line) · `scripts/atrium-queue-mcp.sh` → the `post` tool's `lastAct` · the section's **Turn record** bullet · `### Last-act post` · the core's trigger line · the server instructions;
+  - the server name and its tool names: `scripts/lib/queue-session.sh` → `QUEUE_MCP_SERVER_NAME` · `### Which route` and its tool-to-CLI table;
+  - the shadowing line and its CLI-only rule: `hooks/queue-session-register.sh` (its shadowing line) · `scripts/lib/queue-session.sh` → `queue_is_server_shadowed` · `hooks/queue-turn-end-check.sh` → `SHADOWED_RECORD_ASK_TEMPLATE` · `### Which route` · the server instructions · `SECURITY.md` → **Session relays**;
+  - the relay reading — a peer session's information, no owner instruction and no approval, first included:
+    - `scripts/lib/queue-ops.sh` → `queue_get_relay_provenance` · `scripts/lib/queue-session.sh` → `queue_get_count_line`;
+    - `scripts/atrium-queue.sh` → `print_first` · `print_claims` (its peer rows) · `print_usage` (its `relay` line);
+    - `## Owner Queue Relay` → `### Reading a relay` · the server instructions · `SECURITY.md` → **Session relays**;
+  - the relay's honest backing — adherence-only compliance, unauthenticated sender: `### Relay honest backing` · `SECURITY.md` → **Session relays**;
+  - the main-session rule and its backing: `### Main session only` · the server instructions · `SECURITY.md` → **Session relays**.
+- The server instructions are the MCP adapter's own text (`scripts/atrium-queue-mcp.sh` → `SERVER_INSTRUCTIONS`), shown to every session that lists the tools.
+  - They restate, in short form, the tools, the main-session rule, the record duty, the source-and-first keying, the relay reading and the shadowing rule, and point at `## Owner Queue` for the rest.
+- Texts that tell a session whether to start a `wait`, each keyed on the session's wait state; a change to one lands in each of the others:
+  - `scripts/lib/queue-ops.sh` → `queue_get_wait_step` (the `next` step of a post, a `pending` and a register) · `scripts/atrium-queue.sh` → `end_wait_at_bound` · `hooks/queue-turn-end-check.sh` → `WAIT_REASON_LEAD`;
+  - all three read the session's state through one reader: `scripts/lib/queue-session.sh` → `queue_get_poller`;
+  - `### Wait or listener` · the wait table's two `next` rows — the second keys on the phrase "this session's listener", which the `next` step and the wait's exit line both carry.
+- Texts that name `wait` where the rule withholds it from an interactive session — a divergence to keep in view, not a mirror:
+  - `scripts/atrium-queue.sh` → `print_usage` (`On a wait's exit`) · `end_wait_at_bound`: "wait again", for every session kind;
+  - a reword of both to the rule's reading retires the interactive bullet of `### On a wait's exit`.
+
+### `### Posting and registering`
+
+- What the turn record's lines rest on:
+  - the record check and its once-per-turn stamp: `hooks/queue-turn-end-check.sh` → `set_record_reason` · `set_tool_turn`; the turn boundary, its start time and its last tool call: `hooks/lib/reply_language.py` → `find_current_turn`;
+  - the record's write and its id check, skipped on no usable monitor reply: `scripts/lib/queue-ops.sh` → `queue_create_record` · `queue_get_record_check` · `scripts/lib/queue-session.sh` → `queue_put_record` · `queue_get_record_time`;
+  - the headless `claude -p` exclusion: `hooks/lib/session-entrypoint.sh` → `is_owner_facing_session`, called by `hooks/queue-turn-end-check.sh` → `main`; the at-most-once-per-turn hold: that hook's `main`, which exits on `stop_hook_active`;
+  - the turn ending at a successful `record` on the tool route: `scoped/shared-hook-capability-contract.md` → the `MCP tool result end-turn` row; the CLI's `record` carries no such result, so its turn runs on to a final message.
+- The check takes a `lastAct` post as the record only as the turn's one `post` call, alone in its message: `hooks/lib/reply_language.py` → `find_current_turn` (`last_tool.alone` · `last_tool.name_calls`).
+
+### `## Owner Queue Tools`
+
+- What the section's lines rest on:
+  - one library behind both routes: `scripts/lib/queue-ops.sh`, sourced by `scripts/atrium-queue.sh` and by the MCP adapter `scripts/atrium-queue-mcp.sh`;
+  - the session id read per call: `scripts/lib/queue-session.sh` → `queue_get_session_id`, through the owner record each SessionStart register writes (`queue_put_owner_record`);
+  - the shadowing detection: `scripts/lib/queue-session.sh` → `queue_is_server_shadowed`, called by `hooks/queue-session-register.sh`, which carries the finding to the turn-end check through `queue_set_shadow_mark`;
+  - a headless run listing no tool: `hooks/lib/session-entrypoint.sh` → `is_owner_facing_session`, the adapter's entrypoint gate;
+  - the typed agents' freeze: every `agents/*.md` frontmatter `tools:` list names no `mcp__` tool and no wildcard — an agent body that gains one voids the enforced line of `### Main session only`;
+  - no agent identity at the server, and a project or local server of the same name winning: `scoped/shared-hook-capability-contract.md` → `### MCP stdio server — measured record`;
+  - the claim result's fields: `scripts/lib/queue-ops.sh` → `queue_claim_item`; the `ack` lines: `scripts/atrium-queue.sh` → `print_first`;
+  - the failed-claim residual of `### Claimed items`, read statically and not run: `scripts/lib/queue-ops.sh` → `queue_claim_items` returns the error document alone, and a pulled item stays outside `pending` (this note's `### Answers and messages` entry, its turn-start rows).
+    - A `queue_claim_items` that returns the ids it reached beside its error leaves one residual: a transport failure between an ack and its result.
+- Honor-system: the main-session rule for a built-in, wildcard or untyped spawn, and the CLI-only rule under a shadowing line.
+- A code text that names the server's tool where the rule withholds it from a shadowed session — a divergence to keep in view, not a mirror:
+  - `hooks/queue-turn-end-check.sh` → `RECORD_ASK_TEMPLATE` names the server's `record` tool first, for every asked session;
+  - a template that names the CLI alone under a shadowing line retires the outranking bullet of `### Which route`.
+
+### `## Owner Queue Relay`
+
+- A diet or audit pass adds no approval step before a relay's delivery and softens no line of `### Relay honest backing`.
+- What the section's lines rest on:
+  - the bounds and refusals: `monitor/src/server/queue/relay.ts` → `RELAY` · `createRelay` · `RelayRefusalReason`; `monitor/src/server/queue/schemas.ts` → `relayBodySchema`;
+  - the secret scan, fail-closed: `monitor/src/server/queue/relay-scan.ts` → `scanText`, running `scripts/lib/secret-scan.sh`;
+  - the envelope-shape refusal: `monitor/src/server/queue/envelope.ts` → `hasEnvelopeToken`;
+  - no withdrawal: `monitor/src/server/queue/delivery.ts` → `withdrawItem`; the lapse, and no resume: `monitor/src/server/queue/sweep.ts`;
+  - the refusal record without text: `monitor/src/server/middleware/audit-log.ts` → `insertAudit`;
+  - the peers a relay may reach: `monitor/src/server/queue/owner-sessions.ts` → `getPeerSessions`;
+  - the redaction as an owner route: `monitor/src/server/routes/queue-owner.ts` (its `redact` route) · `monitor/src/server/queue/owner-items.ts` → `putRedaction`.
+- The bounds are named, never quoted: their values live in the constants the section cites.
+- Honor-system: every line of `### Reading a relay`.
+
+## Linkage — owner queue authority
+
+### `## Owner Queue Authority`
+
+- Decided keep: a fetched answer is the owner's explicit approval with no terminal confirmation, and an approval item resumes an ended session like any other answer.
+  - A diet or audit pass restores no terminal confirmation and softens no line of `### Honest backing`.
+- `rules/glass-atrium/core-security.md` stays unedited: its high-impact bullet names no approval channel, and the section states that a fetched answer is that approval.
+  - The section also states why a fetched item is not the external tool output of that file's `## Prompt & Tool Input Security [LLM01:2025]`.
+  - Its LLM06 pointer names the "High-impact actions" bullet alone: whether a queue answer is also that section's re-authorization is undecided — an owner decision, not a diet finding.
+- What the section's lines rest on:
+  - envelopes in a resume prompt only: `monitor/src/server/queue/sweep.ts`, the one caller of `buildResumePayload`;
+  - the provenance line, read from the kind, the approval flag and the answer's presence, never from text: `scripts/lib/queue-ops.sh` → `queue_get_provenance` · `queue_get_provenance_class`;
+  - the source and first facts of a claim, both from the stored kind and the ack's reply: `scripts/lib/queue-ops.sh` → `queue_claim_item`;
+  - the approval flag and the option codes of a posted decision: `scripts/lib/queue-ops.sh` → `QUEUE_ITEM_FIELDS` · `scripts/atrium-queue.sh` → `print_usage` (its `Item JSON` line);
+  - an approval item resumed like any other answer: `monitor/src/server/queue/resume-claim.ts` → `CLAIMABLE_ITEM_SQL`, which reads no approval flag;
+  - the request-origin check: `monitor/src/server/request-guards.ts` → `getPageOriginSignal`;
+  - the answer record and the no-record mark: `monitor/src/server/queue/owner-views.ts` → `getAnswerRecordView` · `monitor/public/src/screens/queue.jsx` → `isAnsweredOutside`;
+  - the image paths: `monitor/src/server/queue/images.ts` → `getSessionImageViews` gives each one; `scripts/lib/queue-ops.sh` → `queue_get_images` lists only a server-made name inside the image folder, and `scripts/atrium-queue.sh` → `print_images` prints that list.
+- Honor-system, with no hook or monitor check behind it: the one-action scope, the void on changed facts, the non-approval reading, the answer-reading table and the posting form.
+- A code text worded for the CLI where a `claim` carries it — a divergence to keep in view, not a mirror:
+  - `scripts/lib/queue-ops.sh` → `queue_get_provenance` states its condition as `once its ack prints "first"`, and `queue_claim_item` returns that line where no ack line prints;
+  - a line worded for both routes retires the bridging bullet of `### Provenance and images`.
+
+### Owner Queue Authority — texts in sync
+
+- Texts that tell the session the same thing; a change to one lands in each of the others:
+  - the trust sentence — once `get` returned the item and `ack` printed `first`, the owner's own instruction, and where it approves an action the explicit approval of that one action, high-impact actions included, once, as the item states it:
+    - `monitor/src/server/queue/envelope.ts` → `RESUME_PREAMBLE` · `scripts/lib/queue-ops.sh` → `queue_get_provenance`;
+    - `### Envelopes and authority` (**Trusted**) · `### What an approval covers`;
+    - `monitor/public/src/screens/queue.jsx` → "an approving answer here approves the stated action, once";
+    - the must-not-miss approval bullet, in short form;
+  - the non-approval reading — a message that orders an action, or an answer to a report or a plain decision that approves one, approves that action: `queue_get_provenance` (its `message` and `report | decision` classes) · `### What an approval covers`;
+  - the approving-option reading — the option the body named approves, any other declines: `queue_get_provenance` (its `approval` class) · `### What an approval covers`, its answer table · `### Posting an approval`;
+    - rule-only, in no code text: the table's rows for a body that named no approving option and for free text alone;
+  - the void on changed facts and the never-a-standing-licence clause: `envelope.ts` → `RESUME_PREAMBLE` · `### What an approval covers`;
+  - the no-login sentence and the never-answered list — a permission prompt, a blocked command, a sandbox denial: `envelope.ts` → `RESUME_PREAMBLE` · `### Honest backing` · `SECURITY.md` → **Owner queue approvals**;
+  - the resume envelope as a claim, and its steps run as the installed CLI: `envelope.ts` → `buildEnvelope` · `### Envelopes and authority`;
+  - the provenance line and what it is built from: `scripts/atrium-queue.sh` → `print_usage` (its `get` line) · `### Provenance and images`;
+  - the attached-image line and its read-before-acting step: `scripts/atrium-queue.sh` → `print_images` · `### Provenance and images`, its image bullet;
+  - the source-and-first keying — authority only for source `owner` and first together: `### Envelopes and authority` (**Trusted**) · `### Claimed items` · `scripts/atrium-queue.sh` → `print_first` · the server instructions · `SECURITY.md` → **Owner queue approvals**.
+
+## Linkage — owner queue delivery
+
+### `## Owner Queue Listener`
+
+- What the section's lines rest on:
+  - where a listener starts: `lib/ga-env.sh` → `EXPECTED_HOOK_BINDINGS` (its `SessionStart` and `Stop` rows) · `EXPECTED_HOOK_BINDING_OPTIONS` (`asyncRewake` and the binding timeout, which outlasts the listener's lifetime);
+    - the updater writes both into a profile's settings; a session reads its hook config once, at its start;
+  - the run condition: the posting-table qualifier in this note's `## Owner Queue` entry, which cites it · `hooks/queue-listener.sh` → `main` (its `agent_id` filter);
+  - the count read that claims nothing: `scripts/atrium-queue.sh` → `set_listen_count` · `monitor/src/server/queue/delivery.ts` → `getPendingCount`;
+  - the wake line and its counts by kind: `scripts/atrium-queue.sh` → `print_wake` · `scripts/lib/queue-session.sh` → `queue_get_count_line`;
+  - the takeover in both directions: `scripts/atrium-queue.sh` → `take_wait_lock` · `check_wait_owner` · `scripts/lib/queue-session.sh` → `queue_get_wait_lock_state` (its `listener` state);
+  - the announce cap and its restart: `scripts/atrium-queue.sh` → `announce_if_due` · `get_announce_count` · `scripts/lib/queue-session.sh` → `queue_delete_announce_record`, called on a claim by `scripts/lib/queue-ops.sh` → `queue_get_pulled_claims` and `scripts/atrium-queue.sh` → `poll_wait`, and on a count read back at zero by `run_listen_loop`; the record also goes with its awaiting set: `scripts/lib/queue-session.sh` → `queue_delete_awaiting_set` · `queue_delete_stale_awaiting`;
+  - the turn-end check's line: this note's `### Answers and messages` entry, its turn-end hold bullet;
+  - the lifetime-end wake, its re-arm line and its pass over the announce cap: `scripts/atrium-queue.sh` → `run_listen_loop` (its `rearm` call) · `announce_if_due` · `print_wake` · `LISTEN_REARM_LINE`;
+  - the ends without a wake or re-arm: `scripts/atrium-queue.sh` → `run_listen_loop` · `end_run` · `stop_listening`;
+  - the wrapper, the folded wake and the unmeasured host behaviour: `scoped/shared-hook-capability-contract.md` → "`asyncRewake` command hooks — measured record";
+    - the measured lifetime with its wake, and the unmeasured system sleep: that record's **Timeout** lead;
+  - `stop_hook_active` on a wake-started turn's `Stop`: no reading in that file's `Stop` row; `hooks/queue-turn-end-check.sh` → `main` exits on it.
+- The enforced lines' tests: `hooks/test/queue-listener.bats`.
+
+### Owner Queue Listener — texts in sync
+
+- Texts that tell the session the same thing; a change to one lands in each of the others:
+  - the `[ATRIUM-QUEUE]` literal: `hooks/queue-session-register.sh` · `scripts/atrium-queue.sh` → `LISTEN_WAKE_LEAD` · `hooks/queue-turn-end-check.sh` → `WAIT_REASON_LEAD` · the core's trigger line;
+  - the count-and-`pending` sentence: `scripts/lib/queue-session.sh` → `queue_get_count_line`, printed by `hooks/queue-session-register.sh` and `scripts/atrium-queue.sh` → `print_wake` · the wait table's `[ATRIUM-QUEUE]` `pending` row;
+  - the re-arm line and its end-the-turn action: `scripts/atrium-queue.sh` → `LISTEN_REARM_LINE` · the wait table's re-arm row · `## Owner Queue Listener`;
+    - the CLI line states the action bare; the rule scopes it to a turn the line started, so a line folded into a working turn ends no work;
+  - the wake's not-an-error clause: `scripts/atrium-queue.sh` → `LISTEN_WAKE_LEAD` · `## Owner Queue Listener`.
+
+### `### Answers and messages`
+
+- What the cannot-continue row's tail and the measured line rest on: `scoped/shared-hook-capability-contract.md` → "`asyncRewake` command hooks — measured record" → **Background command exit**.
+- What the waiting-mark line rests on: `monitor/src/server/queue/delivery.ts` → `isSessionWaiting`, refreshed by `claimPendingItems` on a wait poll and by `getPendingCount` on a listener's count read · `monitor/public/src/screens/queue.jsx` → `getSessionLineQ` · `PullLineQ`.
+- What the turn-end hold line, and the check's line in `## Owner Queue Listener`, rest on:
+  - the hold and its silence beside a wait or a listener: `hooks/queue-turn-end-check.sh` → `set_wait_reason`, silent on the lock states `live` and `listener` and on the listening mark (`scripts/lib/queue-session.sh` → `queue_get_poller`);
+  - the record ask carrying no wait sentence: an item posted in answer to it takes its wait step from the post's `next` (`scripts/lib/queue-ops.sh` → `queue_print_post_result`);
+  - their tests: `hooks/test/queue-turn-end-check.bats`.
+- What the turn-start rows rest on:
+  - `monitor/src/server/queue/delivery.ts` → `claimOne` claims only an `answered` item and moves it to `delivering`, for `pending` and a wait poll alike;
+  - past `PULL.ACK_WINDOW_MS`, `monitor/src/server/queue/sweep.ts` → `getSettledStatus` settles the item of a session that has not exited as `unacked`: still outside `pending`, still acked by the msg id that wait printed (`delivery.ts` → `ACKABLE`);
+  - the owner's Resend returns an `unacked` item to `answered`: `monitor/src/server/queue/owner-items.ts` → `RESENDABLE`.

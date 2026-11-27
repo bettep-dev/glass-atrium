@@ -29,7 +29,8 @@ Please include:
 - The hook enforcement layer (`hooks/` — secret-scan, delegation, and
   verification gates wired into Claude Code).
 - The Atrium Monitor (Node service bound to loopback, `127.0.0.1:16145`) and
-  its API routes.
+  its API routes, including the opt-in remote listener described under
+  [Remote access](#remote-access-opt-in).
 - The launchd daemons (monitor + self-improvement loop) and their rendered
   plists.
 - The secret-scan / PII-scan gates (`scripts/pii-scan.sh` and the fail-closed
@@ -55,10 +56,115 @@ appreciated).
 - **Per-file SHA-256 release verification** — every bundled file is hash-
   pinned in `manifest.json`; `glass-atrium doctor` verifies integrity on the
   installed tree.
-- **Loopback-only monitor** — the monitor binds `127.0.0.1:16145` and is
-  never exposed on an external interface; PostgreSQL is peer-auth over a
-  Unix socket with no password material in the repository.
+- **Loopback-only monitor by default** — the monitor binds `127.0.0.1:16145`;
+  only the opt-in remote listener below ever binds another interface.
+  PostgreSQL is peer-auth over a Unix socket with no password material in
+  the repository.
 - **Least-privilege agents** — each agent's tool allowlist is frozen at spawn
   time; high-impact actions require explicit user approval.
+- **Owner queue approvals** — an owner answer or owner message counts as
+  that explicit approval, for the one action it states, once the session
+  has claimed it as an owner item delivered first: its claim names the
+  source `owner` and the delivery first, or `get` has returned it for that
+  session and `ack` has printed `first`.
+  - The queue has no login: any process on the same machine can produce an
+    answer, and a session acts on any answer the monitor holds.
+  - So a forged or mistaken approval is acted on, and can resume an ended
+    session that carries out a high-impact action with no one at its
+    terminal.
+  - The monitor records each answer's route and request signal, and the
+    Queue page marks an answer it holds no record of; the mark is for the
+    owner and stops no session.
+  - A host permission prompt, a blocked command or a sandbox denial is never
+    answered by the queue.
+- **Session relays** — a session can send a text to peer sessions through
+  the queue with no owner approval before delivery. A relay is a peer
+  session's information: never the owner's instruction and never an
+  approval, whatever it says and whoever sent it.
+  - Honest backing: nothing mechanical stops a recipient from obeying a
+    relay. A session in bypass or auto mode that a peer's text talks into
+    an action will do it, and the history shows it afterwards.
+  - Sender attribution is unauthenticated: the queue has no login, so any
+    process on the same machine can send as any session. The history is
+    evidence for tracing a cause, not prevention.
+  - The monitor bounds reach and speed, never compliance: caps per sender,
+    per sender–recipient pair and machine-wide, a hop bound on chains, a
+    refusal of envelope-shaped text, and a fail-closed secret scan before
+    any text is stored. A relay never starts or resumes a session.
+  - Every relay is kept with its sender, recipients, hop, parent and
+    outcome, and every refusal is recorded without its text. The Queue
+    page shows both, read-only, and raises one non-blocking signal for a
+    refusal, a relay sent on from a received one, or a redaction.
+  - Redaction is the one owner control: it replaces a stored relay's text
+    with a fixed marker, irreversibly, through an owner route behind the
+    page-origin check (`POST /api/queue/owner/items/:id/redact`) that no
+    session route reaches. A process on the same machine can call it too,
+    so a redacted entry is itself a fact to weigh when tracing.
+  - The session-side tools (the `atrium-queue` MCP server) add no
+    authority: any local process can do what they do. They are the main
+    session's: a typed Atrium agent is kept from them by its frozen tool
+    list, any other subagent by instruction text alone.
+  - A project or local MCP server named `atrium-queue` takes the install's
+    server's place in a session. The session start reports it in one
+    line, and that session is told to use the queue CLI only, at its
+    start and in every turn-end record ask, where only the CLI's record
+    counts; nothing stops a call to the shadowing server.
+  - That line reads only the start directory's project MCP file and the
+    profile's local entry for that directory. An ancestor directory's
+    project file, a local entry keyed by another directory, and the
+    managed and per-run server scopes go unread; whether the host takes
+    a same-name server from them is unmeasured, and such a server
+    shadows the queue server with no line.
 - **CI least privilege** — deny-all workflow token (`permissions: {}`),
   `pull_request` (never `pull_request_target`), pinned action SHAs.
+
+## Remote access (opt-in)
+
+Off by default. The installer asks once (default no; an install with no
+terminal stays loopback-only), `glass-atrium remote on|off` changes it later,
+and `glass-atrium update` never turns it on.
+
+- **What it opens** — a second HTTPS listener on the Mac's Wi-Fi address at
+  `[remote_access].port`, only while the Mac is on a network listed in
+  `[remote_access].trusted_networks` (the router's address and hardware
+  address; unreadable means closed). The trusted-network check is an accident
+  guard against opening on another Wi-Fi, not authentication.
+- **Who gets in** — only a registered device. A device registers once with a
+  short-lived code shown on the Mac's own monitor page; there is no CLI or
+  remote path that opens registration. A registered device then has every
+  function the Mac's page has, with no expiry, until it is revoked
+  (`glass-atrium remote revoke <id>` / `revoke-all`).
+- **Transport** — TLS with a local CA created on this Mac (name-constrained to
+  `.local` names and private address ranges). Each device trusts the CA
+  certificate once; the CA and leaf keys stay owner-only under
+  `monitor/data/remote-access/` and are excluded from Time Machine.
+  The running monitor and the updater reissue the leaf silently 30 days
+  before expiry and when the Wi-Fi address or the Bonjour name changes;
+  devices trust the CA, so nothing is asked again. `glass-atrium doctor`
+  checks the key modes, the exclusion, the leaf's host name, address and
+  expiry, the listener's bound address against the trusted network, and the
+  firewall state (read-only).
+- **Loopback stays login-free** — a request on the remote listener is never
+  judged as loopback.
+- **Uninstall** removes the keys and the device rows; remove the CA trust on
+  each device yourself.
+
+### Residual risks (accepted by the owner)
+
+- A lost, stolen or infected registered device can do everything the page can,
+  with no expiry, until it is revoked: answer and order sessions that run
+  without permission prompts (commands on this Mac), change settings, apply a
+  self-update, and read every document and session text. This is not designed
+  against.
+- Where a queue answer counts as approval and resumes an ended session, such a
+  device can approve a deploy, merge or deletion that runs unattended. The
+  queue record does not yet show whether an answer came from a phone; the
+  remote audit row does.
+- A copied session cookie equals the owner until the device is revoked.
+- A process running as the owner on this Mac can forge the page-origin
+  headers, open registration, read the code and register a device. The
+  devices list and the audit row make this visible; they do not prevent it.
+- The registration page is reachable by anyone on the trusted Wi-Fi.
+- A device that ignores the CA's name constraints would let anyone holding the
+  CA key, which never leaves this Mac, impersonate other private-network sites
+  to that device.

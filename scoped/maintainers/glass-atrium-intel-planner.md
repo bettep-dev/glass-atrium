@@ -14,7 +14,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | Reader | What it reads | Consequence |
 |---|---|---|
 | `scripts/test/agent-frontmatter-identity.bats` | frontmatter `name` / `tools` / `scope` against the cycle base | pins identity only; body text is outside its parse |
-| `hooks/enforce-harness-critical.sh` | live frontmatter identity keys (name, tools, scope) | live edits to them are blocked for every caller (LLM06) |
+| `lib/ga-doctor.sh` → `get_integrity_drift` | live frontmatter identity keys (name, tools, scope) and text outside EDITABLE regions | a live edit to either is reported as drift, never blocked |
 | `autoagent/lib/editable_merge.py` | EDITABLE region count and order, local vs release | a count change routes the merge to the manual structural-change ceremony |
 | `scripts/test/manifest-check-clean.bats` | the `manifest.json` hash entry for this path | any body edit needs a manifest regeneration — a whole-tree barrier, never run beside other writers |
 | `hooks/validate-scope-drift.sh` | a plan's `<section id="target-files">` (HTML) or `## Target Files` (md) | the body's `### Target-Files Section` shape rules are what this parser reads in plans — load-bearing |
@@ -22,7 +22,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 
 - Suites that name the agent in a roster or fixture read the NAME, never this body — for example:
   - `hooks/test/inject-scope-rules*.bats` · `hooks/test/enforce-*.bats`
-  - `hooks/test/block-doc-routing-leak.bats` · `hooks/test/h2-untrusted-ingest.bats`
+  - `hooks/test/h2-untrusted-ingest.bats`
   - `hooks/test/workflow-gate-completion-channel.bats` · `hooks/test/workflow-gate-plan-stage.bats`
   - `scripts/test/test_inject_sync.py` · `autoagent/test/test_pre_verify_budget_injection.py`
 - No suite checks that the body's headings still exist; the citers below are the only guard.

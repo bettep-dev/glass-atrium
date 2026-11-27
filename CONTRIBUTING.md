@@ -76,10 +76,11 @@ The refusal compares the two connection strings by resolved identity, not by
 text, so re-spelling the live URL (`127.0.0.1` for `localhost`, a different
 socket path for the same socket, an extra query parameter) does not get past it.
 
-Typecheck without a database is possible: `prisma generate` never connects,
-but Prisma's config resolves `env()` eagerly, so export dummy `DATABASE_URL`
-and `SHADOW_DATABASE_URL` values first (see the `gate-typecheck` job in
-`.github/workflows/ci.yml` for the exact shape).
+Typecheck without a database is possible:
+
+- Run `npm --prefix monitor run db:generate:offline`, then `npm --prefix monitor run typecheck` — the `gate-typecheck` CI job runs the same script.
+- The script sets placeholder connection values itself, since Prisma's config resolves `env()` eagerly even though `prisma generate` never connects — export nothing, and put no credential on the command line.
+- In a fresh checkout or git worktree, run the script rather than copying `monitor/src/generated` from another worktree.
 
 ## Testing changes against a live install
 

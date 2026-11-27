@@ -1,8 +1,7 @@
 /* Component classes — light wrappers over Tailwind */
 
 /* the one focus indicator — outline + offset gap, never box-shadow → rings drawn with box-shadow or stroke stay untouched */
-:focus-visible,
-[data-focus-handoff]:focus {
+:focus-visible {
 	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
 	outline-offset: var(--focus-ring-offset);
 }
@@ -27,6 +26,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .disclosure:hover {
 	color: rgb(var(--ink));
 }
+/* what a disclosure opens starts on its trigger's label: 14 = ui.jsx DISCLOSURE_CHEVRON_PX, then the .disclosure gap */
+.disclosure-body {
+	padding-inline-start: calc(14px + var(--space-1));
+}
 /* opt-in 24 hit target (WCAG 2.5.8) for a text link, a ledger expander or a checkbox hit area — never a global link rule, since
    prose links sit under the criterion's inline exception. Middle-aligned → the box keeps a 40 .tbl row and its text on the line.
    An inline-flex box takes no ellipsis of its own → a clipped label truncates on an inner span, so the target stays in its cell */
@@ -41,13 +44,18 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .inline-target.inline-target {
 	line-height: var(--lh-row);
 }
-/* the one checkbox visual (C24 inline target, §7.15) — a 16 token-drawn box, never the UA widget (light-scheme on a dark surface);
+/* row-line type key — a list row's text on the 20 row line box. Doubled class, not a Tailwind lineHeight key: the CDN
+   utilities load in <head>, so the body TypeScaleStyle .fs-* line-height would win over a single class */
+.leading-row.leading-row {
+	line-height: var(--lh-row);
+}
+/* the one checkbox visual (C24 inline target, §7.15) — a 16 token-drawn box, never the UA widget;
    neutral at rest, the one selected state when checked or mixed. Its label takes .inline-target for the 24 hit area.
    An input carries no pseudo-element in every engine → the check / minus glyph is a .ctl-checkbox-mark overlay. A toggle is discrete → no transition */
 .ctl-checkbox {
 	appearance: none;
-	width: 16px;
-	height: 16px;
+	width: var(--ctl-checkbox-size);
+	height: var(--ctl-checkbox-size);
 	margin: 0;
 	border: 1.5px solid rgb(var(--faint));
 	border-radius: var(--radius-inline);
@@ -65,9 +73,47 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .ctl-checkbox-mark {
 	color: rgb(var(--selected-ink));
 }
+/* the Checkbox atom's hit area → the mark centres over the box */
+.ctl-checkbox-hit {
+	position: relative;
+	justify-content: center;
+}
+/* the label form → the press area grows 4 each side, the layout box unmoved */
+label.ctl-checkbox-hit {
+	padding: var(--space-1);
+	margin: calc(-1 * var(--space-1));
+	cursor: pointer;
+}
+/* the one radio visual (C24 inline target, §7.15) — the checkbox's box drawn round, in rules of its own.
+   Checked = the selected fill; an inset ring of the box's own --elev draws the dot (a drawing, not depth) */
+.ctl-radio {
+	appearance: none;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	border: 1.5px solid rgb(var(--faint));
+	border-radius: 50%;
+	background: rgb(var(--elev));
+	cursor: pointer;
+}
+.ctl-radio:hover {
+	border-color: rgb(var(--dim));
+}
+.ctl-radio:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+.ctl-radio:disabled:hover {
+	border-color: rgb(var(--faint));
+}
+.ctl-radio:checked {
+	background: rgb(var(--selected-fill));
+	border-color: rgb(var(--selected-fill));
+	box-shadow: inset 0 0 0 3px rgb(var(--elev));
+}
 
-/* page header — top-aligned row; the h1 line box is one control height, so the controls and the
-   freshness line center on the title line with or without a sub-line. Narrow → the cluster wraps below the title. */
+/* page header — one line box: the h1 line is one control height, so back link, status and the cluster center on it.
+   Too narrow → the cluster wraps to a second line, its auto start margin keeping it right-aligned. */
 .page-head {
 	display: flex;
 	flex-wrap: wrap;
@@ -79,9 +125,12 @@ details[open] > summary.disclosure > .disclosure-chevron {
 .page-head-title {
 	line-height: var(--ctl-min-h);
 }
-/* the h1 takes focus on a route change → the sub-line starts past the focus ring's reach */
-.page-head-sub {
-	margin-top: max(var(--space-1), calc(var(--focus-ring-width) + var(--focus-ring-offset)));
+.page-head-lead {
+	min-width: 0;
+	min-height: var(--ctl-min-h);
+	display: flex;
+	align-items: center;
+	column-gap: var(--space-3);
 }
 /* actions group ↔ status group 24; inside a group 12 (freshness · range · refresh) */
 .page-head-cluster,
@@ -103,18 +152,18 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 
 /* flex column → the body takes the remaining height and the foot pins to the bottom edge.
-   Light rests on its 1px border alone (border-first elevation). */
+   One hairline edge — no shadow, no inset highlight.
+   clip, not hidden → no scroll container, so a sticky inside sticks to the page scroller;
+   min 0 on both axes = the automatic minimum a scroll container had → flex and grid parents lay out unchanged */
 .card {
 	display: flex;
 	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
 	background: rgb(var(--elev));
 	border: 1px solid rgb(var(--line));
 	border-radius: var(--radius-card);
-	overflow: hidden;
-}
-/* 상단 inset 하이라이트는 다크 전용 — 라이트 순백(255) 위 흰선 비가시(§7.1) */
-[data-theme="dark"] .card {
-	box-shadow: var(--shadow-raised), inset 0 1px 0 rgb(var(--glass-border) / 0.06);
+	overflow: clip;
 }
 /* one 48px line: title + meta left, actions right · wraps only when the controls do not fit.
    .control-row = the same geometry for a toolbar that is not the card's head — its direct children are groups, 12 apart */
@@ -160,6 +209,10 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	font-weight: 600;
 	letter-spacing: -0.005em;
 }
+/* a viewer's thin header → the title one step down, at the control size */
+.card-head--compact .card-title {
+	font-size: var(--fs-control);
+}
 /* 카드 캡션/설명 공용 — 읽기용 산문이라 --dim(AA-clean) + Pretendard sans.
    --faint + mono 는 timestamp/id 같은 진짜 메타데이터 전용 (이 클래스 대상 아님).
    기본 1행 클램프(nowrap+ellipsis) → 전체 내용은 native title 툴팁으로 hover 노출. */
@@ -187,15 +240,34 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	max-height: 70vh;
 	overflow-y: auto;
 }
-/* S/M lists cap by row count; a stretched row grows instead of nesting a scroller */
+/* S/M lists cap by row count; a stretched row and the Agent models roster grow instead of nesting a scroller → the page scrolls them */
 .split-row--equal .card-body,
 .card--s .card-body,
-.card--m .card-body {
+.card--m .card-body,
+.agent-card > .card-body {
 	max-height: none;
 	overflow-y: visible;
 }
 .card-body.flush {
 	padding: 0;
+}
+/* the body hands its whole box to one child that sizes or pans itself (a diagram canvas) → no height cap, no scroller of its own */
+.card--fill > .card-body {
+	flex: 1;
+	max-height: none;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+}
+/* filter bar or toolbar between head and body · on the card's inline column; block 8 around a 32 control → 48 */
+.card-bar {
+	flex: none;
+	padding: var(--space-2) var(--card-pad);
+}
+/* a bar whose content carries its own inset (a full-width strip) → the hairline alone parts it from the body */
+.card--bar-flush > .card-bar {
+	padding: 0;
+	border-bottom: 1px solid rgb(var(--line));
 }
 /* pinned foot — "Show all N" / "Other" / one footnote line up across a stretched row */
 .card-foot {
@@ -221,17 +293,13 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	font-size: var(--fs-control);
 	line-height: var(--lh-ctl); /* 6 + line + 6 + borders = exactly --ctl-min-h */
 	font-weight: 500;
-	border: 1px solid rgb(var(--line));
+	border: 1px solid rgb(var(--control-edge));
 	background: rgb(var(--elev));
 	color: rgb(var(--ink));
 	transition:
 		background 0.12s,
 		border-color 0.12s;
 	cursor: pointer;
-}
-/* a toggle rests on the control edge; declared before :hover (equal specificity) so hover still lifts it to --faint */
-.btn[aria-pressed] {
-	border-color: rgb(var(--control-edge));
 }
 .btn:hover {
 	background: rgb(var(--sunken));
@@ -244,7 +312,7 @@ details[open] > summary.disclosure > .disclosure-chevron {
 }
 .btn.danger {
 	background: rgb(var(--crit));
-	color: rgb(var(--elev)); /* knock-out like the alert-card glyph — white on the pale dark-theme crit is 2.77 */
+	color: rgb(var(--elev)); /* knock-out — white on the pale crit is 2.77 */
 	border-color: rgb(var(--crit));
 }
 .btn.ghost {
@@ -267,6 +335,12 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	height: var(--ctl-min-h);
 	justify-content: center;
 }
+/* the 40 tier (§7.15) — a composer's buttons only, beside its 40 box; the type stays the control's 14/500 */
+.btn.lg {
+	min-height: var(--ctl-h-lg);
+	padding: var(--space-2) var(--space-4);
+	line-height: var(--lh-ctl-lg);
+}
 .btn:disabled,
 .btn[aria-disabled="true"] {
 	opacity: 0.5;
@@ -275,43 +349,70 @@ details[open] > summary.disclosure > .disclosure-chevron {
 
 /* ── Badge shell — 단일 canonical FORM (전 role/변형 공용) ────────────────────
    window.UI.Badge(ui.jsx) 의 styling layer. 모든 role 이 이 neutral shell FORM 을 공유한다:
-   neutral(--sunken/--dim/--line) · min-height 24px + padding-block 0 / inline 8 · gap 4 (border-box) · --radius-badge · --fs-meta · weight 500.
+   neutral(--sunken/--dim, 테두리 없음) · height 20 + padding-block 0 / inline 8 · gap 4 (border-box) · --radius-inline · --fs-meta · weight 500.
+   20 → 정보 표기, 32px 컨트롤 높이에 맞추지 않음 (spec §3 Badge).
    tone 은 shell 에 칠하지 않는다 — 내부 심볼(Icon/glyph)에 text-{tone} 로만 (dead .pill.crit/.warn/.info/.ok 제거). */
 .pill {
 	display: inline-flex;
 	align-items: center;
 	gap: var(--space-1);
 	box-sizing: border-box;
-	min-height: 24px;
+	min-height: 20px;
 	padding: 0 var(--space-2);
 	font-size: var(--fs-meta);
 	font-weight: 500;
 	line-height: 1;
-	border-radius: var(--radius-badge);
+	border-radius: var(--radius-inline);
 	background: rgb(var(--sunken));
 	color: rgb(var(--dim));
-	border: 1px solid rgb(var(--line));
 	font-family: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui, sans-serif;
 	white-space: nowrap;
 }
-/* absent-data variant — 부재/미기록 값을 present 값보다 조용하게 (dashed + 무배경 + faint). canonical FORM 상속. */
+/* absent-data variant — 부재/미기록 값을 present 값보다 조용하게 (무배경 + faint). canonical FORM 상속. */
 .pill--absent {
 	background: transparent;
 	color: rgb(var(--faint));
-	border: 1px dashed rgb(var(--line));
 }
 /* metadata / count role — neutral(톤 없음), canonical FORM 상속(radius/height/font/weight 공유).
-   divergent radius/font-size/weight 제거 · 유일한 role 구분만 남긴다: meta=소문자 서술 속성 · count=tabular-nums 수량. */
+   divergent radius/font-size/weight 제거 · 유일한 role 구분만 남긴다: meta=소문자 서술 속성 · count=sans tabular-nums 수량. */
 .pill--meta {
 	text-transform: lowercase;
 }
 .pill--count {
-	font-family: "JetBrains Mono", monospace;
+	font-variant-numeric: tabular-nums;
+}
+/* the filled family (§7.3) — a shell a person reads at a glance; one weight for every fill, text always ink or the solid's surface */
+.pill--solid,
+.pill--tag,
+.pill--warn {
+	font-weight: 600;
+}
+/* waits for the owner — the system's strongest pair, so the desk keeps one hue */
+.pill--solid {
+	background: rgb(var(--ink));
+	color: rgb(var(--surface));
+}
+.pill--tag {
+	background: var(--tint-fill);
+	color: rgb(var(--ink));
+}
+/* the amber tint alone is 1.43:1 → the ⚠ and the word carry the state, both in ink */
+.pill--warn {
+	background: var(--tint-warn);
+	color: rgb(var(--ink));
+}
+/* count shape — a round chip, never narrower than its height */
+.pill--num {
+	min-width: 20px;
+	padding: 0 var(--space-1_5);
+	border-radius: 999px;
+	justify-content: center;
 	font-variant-numeric: tabular-nums;
 }
 /* height-match variant — model-config 메타/상태 배지를 같은 행 폼컨트롤(<select> · $ 입력, 둘 다 .field) 과 동일 HEIGHT 로 세로 정렬.
    canonical FORM(너비/폰트/radius) 유지 · HEIGHT 만 --ctl-h 로 .field 와 lockstep — min-height 가 base 24px 를 지배.
    box-sizing 은 base .pill 의 border-box 상속. */
+/* TODO(mon-ui/43942): deprecated — a badge never height-matches a control; delete once no caller remains */
 .pill--ctl-h {
 	height: auto;
 	min-height: var(--ctl-h);
@@ -324,11 +425,1694 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-width: 24px;
 	appearance: none;
 	margin: 0;
+	border: 1px solid transparent; /* the bordered .btn family's box, drawn borderless */
 	cursor: pointer;
 }
-/* a toggle chip rests on the control edge → its box reads at rest, not only once selected; non-toggle pills keep --line */
-.pill--interactive[aria-pressed] {
+
+/* a level above the rows of a list inside a card (§12.9) — the one row of a card body on the page ground, dim 13/600, its count a tag count badge.
+   Edge to edge with hairlines above and below; the label starts on the card's inset, where the rows' titles start */
+.queue-band {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1_5);
+	min-height: var(--row-h-compact);
+	padding: 0 var(--card-pad);
+	background: rgb(var(--surface));
+	border-block: 1px solid rgb(var(--line));
+	font-size: var(--fs-meta);
+	font-weight: 600;
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
+}
+
+/* the composer's box (§7.15, 40 tier) — the one bordered field of a pane: the field family's edge, hover and focus, worn by the box around a borderless text.
+   At rest one 14/22 line (40); the text grows with its content to 8 lines, then scrolls inside */
+.queue-compose-box {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: var(--ctl-h-lg);
+	background: rgb(var(--elev));
+	border: 1px solid rgb(var(--control-edge));
+	border-radius: var(--radius-control);
+}
+.queue-compose-box:hover {
+	border-color: rgb(var(--faint));
+}
+/* the ring sits on the box, where the edge is — the text inside draws none */
+.queue-compose-box:has(:focus-visible) {
+	border-color: rgb(var(--accent));
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: var(--focus-ring-offset);
+}
+.queue-compose-text {
+	display: block;
+	width: 100%;
+	max-height: calc(8 * var(--lh-ctl-lg) + 2 * var(--space-2));
+	margin: 0;
+	padding: var(--space-2) var(--space-3);
+	border: 0;
+	background: transparent;
+	color: rgb(var(--ink));
+	font: inherit;
+	font-size: var(--fs-control);
+	font-weight: 400;
+	line-height: var(--lh-ctl-lg);
+	resize: none;
+	field-sizing: content;
+	overflow-y: auto;
+}
+.queue-compose-text:focus-visible {
+	outline: none;
+}
+
+/* the Queue desk (§7.11) — the screen fills the viewport under main's padding and never scrolls; each pane scrolls its own body.
+   The rail fixed per step, the middle pane one fixed page: the list, or the opened row's sheet in its place */
+.queue-screen {
+	display: flex;
+	flex-direction: column;
+	height: calc(100dvh - 2 * var(--gap-page));
+	min-height: 608px;
+}
+/* three fixed-role columns above the phone's 640 (spec §3.2): the rail steps with the viewport; the middle pane is the 66ch page and its two
+   32 gutters, yielding only where Orders would drop under its minimum; Orders takes the rest. The ch resolves on the desk's 15px text.
+   Under 1440 Orders yields 48 → the rail keeps "All sessions" whole and a list title holds about 12 Hangul */
+.queue-desk {
+	--queue-rail-w: 224px;
+	--queue-page-max: calc(var(--measure-prose) + 2 * var(--space-8));
+	--queue-orders-min: 272px;
+	--queue-thread-w: 720px;
+	flex: 1 1 auto;
+	min-height: 560px;
+	min-width: 1012px;
+	display: grid;
+	grid-template-columns:
+		var(--queue-rail-w)
+		min(var(--queue-page-max), calc(100% - var(--queue-rail-w) - var(--queue-orders-min) - 2 * var(--gap-section)))
+		minmax(var(--queue-orders-min), 1fr);
+	grid-template-rows: minmax(0, 1fr);
+	gap: var(--gap-section);
+	font-size: var(--fs-body);
+}
+@media (min-width: 1440px) {
+	.queue-desk { --queue-rail-w: 232px; --queue-orders-min: 320px; }
+}
+@media (min-width: 1728px) {
+	.queue-desk { --queue-rail-w: 248px; }
+}
+@media (min-width: 2240px) {
+	.queue-desk { --queue-rail-w: 264px; }
+}
+@media (min-width: 2560px) {
+	.queue-desk { --queue-rail-w: 280px; }
+}
+/* the Queue page on a phone (screens/queue.jsx → PHONE_Q): the header's menu replaces the shell's sidebar, the desk drops its
+   desktop floors, the pane bleeds to the screen's edges with its content on the header's 16 inset. Other routes keep 1280 → never match */
+.queue-menu,
+.queue-scope-trigger,
+.queue-orders-open,
+.queue-view-back,
+.queue-names-note,
+.card-bar:has(> .queue-names-note:only-child) {
+	display: none;
+}
+@media (max-width: 640px) {
+	/* the short statement on names (screens/queue.jsx → NamesNoteQ): the phone's alone; above 640 the rail's full one is always on screen */
+	.queue-names-note,
+	.card-bar:has(> .queue-names-note:only-child) {
+		display: block;
+	}
+	[data-route="queue"] > .shell-sidebar {
+		display: none;
+	}
+	.queue-menu.btn.icon {
+		display: inline-flex;
+	}
+	.queue-screen {
+		min-height: 0;
+	}
+	/* one column, one view (screens/queue.jsx → useDeskViewQ): the list (or the sheet in its place), Sessions or Orders; the others stay mounted, undrawn */
+	.queue-desk {
+		grid-template-columns: minmax(0, 1fr);
+		min-width: 0;
+		min-height: 0;
+		margin-inline: calc(-1 * var(--gap-page));
+		margin-block-end: calc(-1 * var(--gap-page));
+	}
+	.queue-desk[data-view="list"] > :is(.queue-sessions, .queue-orders),
+	.queue-desk[data-view="sessions"] > :is(.queue-list-slot, .queue-sheet, .queue-orders),
+	.queue-desk[data-view="orders"] > :is(.queue-sessions, .queue-list-slot, .queue-sheet) {
+		display: none;
+	}
+	/* the list head: the scope trigger in the plain title's place, Orders at its end; no keys button, a phone has no keyboard (layout §2) */
+	.queue-scope-title,
+	.queue-list > .card-head [aria-haspopup="dialog"] {
+		display: none;
+	}
+	/* a 44 target in a head's 20 title line: the title holds its line, the target reaches into the head's padding */
+	.queue-desk .card-title:has(> :is(.queue-scope-trigger, .queue-view-back)) {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		overflow: visible;
+		margin-block: calc((var(--lh-row) - var(--ctl-min-h) - 2 * var(--space-1_5)) / 2);
+	}
+	.queue-scope-trigger.btn,
+	.queue-orders-open.btn,
+	.queue-view-back.btn.icon {
+		display: inline-flex;
+		height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+	}
+	.queue-view-back.btn.icon {
+		margin-inline-start: calc(-1 * var(--space-3));
+	}
+	/* the words keep the title's type and column and ellipsize; the chevron stays */
+	.queue-scope-trigger.btn {
+		min-width: 0;
+		max-width: 100%;
+		gap: var(--space-1);
+		padding-inline: var(--space-2);
+		font: inherit;
+	}
+	/* the cell, not the trigger, steps back by the trigger's inset → the cell is the trigger's whole width, the words cut only on a full head */
+	.queue-desk .card-title:has(> .queue-scope-trigger) {
+		margin-inline-start: calc(-1 * var(--space-2));
+	}
+	.queue-scope-words {
+		min-width: 0;
+		overflow: hidden;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+	}
+	.queue-scope-words::before {
+		content: attr(data-words);
+	}
+	.queue-desk :is(.queue-pane, .queue-orders-card) {
+		border-radius: 0;
+		border-inline-width: 0;
+		border-block-end-width: 0;
+	}
+	/* the two acts drop under the device label, each a 44 target; the spacer's own row gap is taken back */
+	.remote-banner {
+		flex-wrap: wrap;
+		padding-inline: var(--gap-page);
+	}
+	.remote-banner > .flex-1 {
+		flex-basis: 100%;
+		margin-block-start: calc(-1 * var(--gap-control));
+	}
+	.remote-banner > .btn {
+		min-height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+	}
+}
+/* the Sessions rail (spec §9.1): the All sessions band, a row per session, each one 44 line on fixed columns — box · state mark ·
+   name · tag · count. The bands share every column → the box or the Ended chevron in the box column, a band's label on the names' column;
+   an empty cell keeps its width */
+.queue-sessions {
+	--queue-rail-cols: 24px 8px minmax(0, 1fr) 16px 36px;
+}
+/* each label on one line; two buttons wider than the rail → the second drops to its own row (spec §9.1), never a wrapped label */
+.queue-sessions > .card-foot {
+	flex-wrap: wrap;
+	justify-content: space-between;
+	row-gap: var(--space-2);
+	padding-block: var(--space-1); /* one row: 4 + 32 + 4 → the foot's own 40 */
+}
+.queue-sessions > .card-foot > .btn {
+	white-space: nowrap;
+}
+.queue-rail-band {
+	display: grid;
+	grid-template-columns: var(--queue-rail-cols);
+	column-gap: var(--space-2);
+	padding-inline: var(--space-4);
+}
+/* the head's sub shows whole or not at all: one 20 line, a sub that does not fit wraps below it and is clipped */
+.queue-sessions > .card-head > .card-head-text {
+	flex-wrap: wrap;
+	max-height: var(--lh-row);
+	overflow: hidden;
+	line-height: var(--lh-row);
+}
+.queue-sessions > .card-head > .card-head-text > .card-sub {
+	flex: 0 0 auto;
+	contain: none;
+}
+.queue-rail-all {
+	grid-area: 1 / 3;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+/* the band is the 32 row: the disclosure spans it, never pushes it past 32 */
+.queue-rail-band > .disclosure {
+	grid-area: 1 / 1 / 2 / -1;
+	display: grid;
+	grid-template-columns: subgrid;
+	gap: inherit;
+	min-height: 0;
+	align-self: stretch;
+}
+.queue-rail-band > .disclosure > .disclosure-chevron {
+	justify-self: center;
+}
+/* a button centres its text → start, so the label starts on the names' x */
+.queue-rail-band > .disclosure > span {
+	grid-column: 3;
+	text-align: start;
+}
+.queue-rail-box {
+	grid-area: 1 / 1;
+	display: inline-flex;
+	justify-content: center;
+	width: 24px;
+}
+/* a phone's targets (layout §6): every Queue and menu control 44 = --ctl-min-h + its two 6 pads; after .btn.sm / .lg / .icon and the rail band's 32 */
+@media (max-width: 640px) {
+	:is(.queue-screen, [data-route="queue"] > .detail-drawer) :is(.btn, .nav-item, .disclosure) {
+		min-height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+	}
+	:is(.queue-screen, [data-route="queue"] > .detail-drawer) .btn.icon {
+		width: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+		height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+	}
+}
+/* one control per row (spec §9.1): the row is its box's label, one 20 line between 12 paddings → 44 */
+.queue-rail-row {
+	display: grid;
+	grid-template-columns: var(--queue-rail-cols);
+	column-gap: var(--space-2);
+	align-items: center;
+	padding: var(--space-3) var(--space-4);
+}
+.queue-rail-row + .queue-rail-row {
+	box-shadow: inset 0 1px 0 rgb(var(--line));
+}
+.queue-rail-row:hover {
+	background: rgb(var(--sunken));
+}
+.queue-rail-row > .queue-rail-mark { grid-area: 1 / 2; }
+.queue-rail-row > .queue-rail-name { grid-area: 1 / 3; }
+/* 8 across: live a filled --ok dot, any other state a hollow --faint ring */
+.queue-rail-mark {
+	justify-self: center;
+	width: 8px;
+	height: 8px;
+	border: 1px solid rgb(var(--faint));
+	border-radius: 50%;
+}
+.queue-rail-mark.is-live {
+	background: rgb(var(--ok));
+	border-color: rgb(var(--ok));
+}
+/* the row is the control → its ring, inset since the card clips it, stands for the box's (spec §9.1, §11) */
+.queue-rail-row:has(.ctl-checkbox:focus-visible) {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: calc(-1 * var(--focus-ring-offset));
+}
+.queue-rail-row .ctl-checkbox:focus-visible {
+	outline: none;
+}
+/* the tint beside the checked box, never the cue alone */
+.queue-rail-row:has(.ctl-checkbox:checked) {
+	background: var(--tint-select);
+}
+.queue-rail-name {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	min-width: 0;
+	font-size: var(--fs-control);
+	font-weight: 600;
+	line-height: var(--lh-row);
+	color: rgb(var(--ink));
+}
+.queue-rail-name-text {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.queue-rail-name-text > span {
+	font-size: var(--fs-meta);
+}
+/* the id beside a name the page could mistake for another's: whole, the name cut first */
+.queue-rail-id {
+	flex: none;
+	font-size: var(--fs-meta);
+	font-weight: 400;
+	color: rgb(var(--dim));
+}
+.queue-rail-row.is-ended .queue-rail-name {
+	color: rgb(var(--dim));
+}
+/* the 12 mark centred in the 16 tag column */
+.queue-rail-tag {
+	grid-area: 1 / 4;
+	display: flex;
+	justify-content: center;
+}
+/* a flex box → the 20 count badge sets the line, never the text strut around an inline badge; on the Ended band it sits over the
+   disclosure, so a press there still opens it */
+.queue-rail-count {
+	grid-area: 1 / 5;
+	justify-self: end;
+	display: flex;
+	align-items: center;
+	pointer-events: none;
+}
+/* a bare 12 mark, no shell (spec §9.1, §9.2): the warn sign in --warn, the pause glyph in --dim, the ended ring as the rail's own;
+   the glyph at the meta floor, centred on the 12 box */
+.queue-state-mark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 12px;
+	height: 12px;
+	font-size: var(--fs-meta);
+	line-height: 1;
+	vertical-align: -1px;
+}
+.queue-state-mark.is-warn { color: rgb(var(--warn)); }
+.queue-state-mark.is-pause { color: rgb(var(--dim)); }
+.queue-rail-box > .inline-target {
+	min-height: var(--lh-row);
+}
+/* the list stays mounted under a sheet (spec §3.3): hidden, its rows and state kept */
+.queue-list-slot {
+	display: contents;
+}
+.queue-list-slot[hidden] {
+	display: none;
+}
+/* Orders (spec §9.2): its own column on the card's 16 inline column; the thread is the body's one scroller */
+.queue-orders {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+/* head, thread and composer on one content column from the 16 start inset, at most --queue-thread-w: the free width at the far end only (spec §3.2).
+   Unregistered → the % resolves at each user against its containing block, for all three the card's inner width */
+.queue-orders-card {
+	--queue-orders-end: max(var(--card-pad), calc(100% - var(--card-pad) - var(--queue-thread-w)));
+	flex: 1 1 auto;
+	container: queue-orders / inline-size;
+}
+/* Orders' composer takes its form from the pane's width, never from the button's label → a tick that lengthens the label moves
+   nothing: the button under the box below a 420 pane, beside it from there (spec §3.2 / §4.5).
+   The label gives way, never the box: the button as wide as the label it shows, at most the row less --queue-box-min beside, the whole row under */
+.queue-orders-card .queue-compose-row > .queue-compose-box {
+	flex-basis: 100%;
+}
+.queue-orders-card .queue-compose-buttons {
+	flex: 0 1 auto;
+	min-width: 0;
+}
+.queue-orders-card .queue-compose-buttons > .btn {
+	min-width: 0;
+	max-width: 100%;
+}
+@container queue-orders (min-width: 420px) {
+	.queue-orders-card .queue-compose-row {
+		flex-wrap: nowrap;
+	}
+	.queue-orders-card .queue-compose-row > .queue-compose-box {
+		flex: 1 1 0;
+		min-width: var(--queue-box-min);
+	}
+}
+.queue-orders-card > .card-head,
+.queue-orders-card .queue-thread,
+.queue-orders-card .queue-composer {
+	padding-inline-end: var(--queue-orders-end);
+}
+.queue-orders-scope {
+	display: block;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.queue-loading > [role="status"] {
+	justify-content: flex-start;
+	padding: var(--space-4) var(--card-pad);
+}
+.queue-orders-card > .card-body {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+	max-height: none;
+	overflow: hidden;
+}
+/* the thread: the body's one scroller, oldest at the top, the newest directly above the composer */
+.queue-thread {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-6);
+	padding: var(--space-4) var(--card-pad);
+}
+.queue-thread > :first-child {
+	margin-top: auto;
+}
+/* the thread already pads to the 720 column → its empty state adds no inset of its own */
+.queue-thread > .placeholder {
+	padding: 0;
+}
+.queue-day-group:not(.queue-day-group ~ .queue-day-group) > .queue-day {
+	border-top-color: transparent;
+}
+.queue-earlier {
+	align-self: center;
+}
+.queue-day-group {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-6);
+}
+.queue-day {
+	display: flex;
+	align-items: center;
+	min-height: var(--row-h-compact);
+	border-top: 1px solid rgb(var(--line));
+	font-size: var(--fs-meta);
+	font-weight: 600;
+	color: rgb(var(--dim));
+}
+/* one order at the column's end, at most 66ch of its own 14px text */
+.queue-order {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: var(--space-1_5);
+	margin-inline-start: auto;
+	max-width: min(var(--measure-prose), 85%);
+	font-size: var(--fs-control);
+}
+.queue-order-time {
+	display: flex;
+	gap: var(--space-1_5);
+	max-width: 100%;
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+	color: rgb(var(--faint));
+	font-variant-numeric: tabular-nums;
+}
+.queue-order-re {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: rgb(var(--dim));
+}
+.queue-bubble {
+	max-width: 100%;
+	padding: var(--space-2) var(--space-3);
+	background: var(--tint-fill);
+	border-radius: var(--radius-card);
+	color: rgb(var(--ink));
+}
+/* --queue-clamp-lines comes from the page (ORDERS_Q.CLAMP_LINES) → one owner of the count.
+   A line clamp, never a height in lines: the gaps between paragraphs and list items would cut the last line through */
+.queue-bubble.is-clamped > .prose-text {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: var(--queue-clamp-lines);
+	overflow: hidden;
+}
+/* the clamp clips at the text's box, where an outside marker hangs → the numbered list's inset holds a two-digit marker */
+.queue-bubble > .prose-text ol {
+	padding-inline-start: var(--space-6);
+}
+/* an order's images inside its bubble, under its text (§9.8): 96 squares, wrapping */
+.queue-bubble-images {
+	--queue-thumb: 96px;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	margin-top: var(--space-2);
+}
+.queue-bubble-image {
+	flex: none;
+	width: var(--queue-thumb);
+	height: var(--queue-thumb);
+	padding: 0;
+	border: 0;
+	background: transparent;
+	border-radius: var(--radius-control);
+	cursor: zoom-in;
+}
+.queue-bubble-image > img,
+.queue-bubble-broken {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	border-radius: var(--radius-control);
+}
+.queue-bubble-broken {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-1);
+	padding: var(--space-1);
+	border: 1px solid rgb(var(--line));
+}
+.queue-bubble-broken-name {
+	max-width: 100%;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+/* the image viewer: one picture at its natural size, fitted to the window on the page ground over one foot bar; no zoom, no download */
+/* `.detail-panel` in the selector → outranks the `max-width` of `.detail-fullscreen .detail-panel`, which comes later on the same element */
+.detail-fullscreen .detail-panel.queue-viewer {
+	max-width: none;
+	background: rgb(var(--surface));
+}
+.queue-viewer-body {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+.queue-viewer-figure {
+	flex: 1 1 auto;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin: 0;
+	min-height: 0;
+	padding: var(--space-6);
+}
+.queue-viewer-figure > img {
+	display: block;
+	max-width: 100%;
+	max-height: 100%;
+	width: auto;
+	height: auto;
+	object-fit: contain;
+}
+.queue-viewer-bar {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: var(--card-head-h);
+	padding: 0 var(--space-6);
+	border-top: 1px solid rgb(var(--line));
+	background: rgb(var(--elev));
+}
+.queue-viewer-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+.queue-roll-up {
+	text-align: end;
+}
+/* the amber badge takes its own line when it does not fit beside the counts */
+.queue-roll-up > summary {
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	row-gap: var(--gap-stack);
+}
+/* counts wider than the column → they wrap at the spaces between segments, each line flush with the end */
+.queue-roll-up-counts {
+	text-align: end;
+}
+.queue-roll-up-lead,
+.queue-roll-up-unit {
+	white-space: nowrap;
+}
+/* the chevron rides the first segment; that segment's text holds the line's baseline */
+.queue-roll-up-lead {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+}
+.queue-roll-up-lead > span {
+	align-self: baseline;
+}
+.queue-recipients {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: var(--gap-stack);
+	max-width: 100%;
+}
+.queue-recipient {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1_5);
+	max-width: 100%;
+	min-height: 24px;
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+/* the name yields → one cut line, the full name in its title (as on the rail); the receipt and Resend keep their width */
+.queue-recipient > :not(.queue-recipient-name) {
+	flex: none;
+}
+.queue-recipient-name {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-weight: 600;
+	color: rgb(var(--ink));
+}
+/* the redaction dialog's error slot keeps its one line while empty → the buttons never move */
+.queue-relay-error {
+	min-height: var(--lh-row);
+}
+/* a pane: head, bar and foot fixed, the body the only scroller on its axis */
+.queue-pane > .card-body {
+	max-height: none;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+.queue-list > .card-body {
+	overflow-anchor: auto;
+}
+/* one 48 line level with Orders' head (spec §4.1): a scope title wider than the pane is cut, its whole text in its tooltip;
+   the waiting count and the keys button keep the line */
+.queue-list > .card-head {
+	flex-wrap: nowrap;
+}
+.queue-list > .card-head > .card-head-text > .card-sub {
+	flex: none;
+	contain: none;
+}
+.queue-list > .card-foot {
+	justify-content: space-between;
+}
+/* the status line's text ellipsizes; its quiet Show stays beside it */
+.queue-status-line {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: var(--gap-control);
+}
+.queue-status {
+	flex: 0 1 auto;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.queue-status-new {
+	flex: none;
+	white-space: nowrap;
+}
+/* the list's width decides whether the fact column fits beside the names (.queue-row) */
+.queue-listbox {
+	container: queue-list / inline-size;
+}
+.queue-listbox .queue-band {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+}
+/* a Done band's day (spec §4.6): in the count's place, the gap after "Done", at 400 */
+.queue-band-day {
+	font-weight: 400;
+}
+/* the list's end (spec §4.6): one 44 line after the last row, in the body's scroll — 6 + the 32 button + 6, start-aligned */
+.queue-list-end {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: calc(var(--row-h-compact) + 2 * var(--space-1_5));
+	padding: var(--space-1_5) var(--card-pad);
+	white-space: nowrap;
+}
+/* a row (spec §4.2): one 20 line between 12 paddings → 44 — name 104 · title · tag 80 · fact 64 · age 32 · chevron 16;
+   8 between columns, the title's 4 margins making its 12 on either side. 104 holds a nine-letter name and its self mark whole.
+   Template = the name lead + its band's tail (data-cols) → one band, one set of columns; a column a band leaves out gives the title its width */
+.queue-row {
+	--queue-row-name: 104px;
+	--queue-row-lead: var(--queue-row-name) minmax(0, 1fr);
+	display: grid;
+	grid-template-columns: var(--queue-row-lead) var(--queue-row-tail);
+	column-gap: var(--space-2);
+	align-items: center;
+	padding: var(--space-3) var(--card-pad);
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+	cursor: pointer;
+}
+/* one session ticked → the head names it, so no name column: the titles start on the bands' inset */
+.queue-row:not(:has(> .queue-row-who)) {
+	--queue-row-lead: minmax(0, 1fr);
+}
+[data-cols=""] > .queue-row {
+	--queue-row-tail: 32px 16px;
+}
+[data-cols="fact"] > .queue-row {
+	--queue-row-tail: 64px 32px 16px;
+}
+[data-cols="tag"] > .queue-row {
+	--queue-row-tail: 80px 32px 16px;
+}
+[data-cols="tag fact"] > .queue-row {
+	--queue-row-tail: 80px 64px 32px 16px;
+}
+/* under 160 of title the fact column is left out, its fact kept in the row's title and name — at the 1280 list only a band
+   drawing the tag beside the names; every other band keeps 160 there */
+@container queue-list (width < 536px) {
+	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) {
+		--queue-row-tail: 80px 32px 16px;
+	}
+	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) > .queue-row-fact,
+	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) .queue-row-tag-wide {
+		display: none;
+	}
+	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) .queue-row-tag-narrow {
+		display: inline-flex;
+	}
+}
+/* an ended request's word in the tag column → only where its fact cell is left out */
+.queue-row-tag-narrow {
+	display: none;
+}
+/* a phone row (layout §3): name 80 · title · tag 80 · age 32 on every band — the fact and the chevron left out, the fact kept in the
+   row's title and name, the whole row the target; .queue-listbox → level with the 536 rule above, later so it wins */
+@media (max-width: 640px) {
+	.queue-row {
+		--queue-row-name: 80px;
+	}
+	.queue-listbox :is([data-cols=""], [data-cols="fact"]) > .queue-row {
+		--queue-row-tail: 32px;
+	}
+	.queue-listbox :is([data-cols="tag"], [data-cols="tag fact"]) > .queue-row {
+		--queue-row-tail: 80px 32px;
+	}
+	.queue-row > :is(.queue-row-fact, .queue-row-chevron),
+	.queue-row .queue-row-tag-wide {
+		display: none;
+	}
+	.queue-row .queue-row-tag-narrow {
+		display: inline-flex;
+	}
+}
+/* the hairline is drawn inside the row → a row stays 44 */
+.queue-row + .queue-row {
+	box-shadow: inset 0 1px 0 rgb(var(--line));
+}
+.queue-row:hover {
+	background: rgb(var(--sunken));
+}
+.queue-row[aria-selected="true"] {
+	background: var(--tint-select);
+}
+/* rows the card clips (list rows, rail rows and their band) → the ring drawn inside them (spec §11) */
+.queue-row:focus-visible {
+	outline-offset: calc(-1 * var(--focus-ring-offset));
+}
+/* an entry takes focus only from the page (an order opened from its row) → the ring shows on every such focus, a mouse open included;
+   drawn outside the entry, in the thread's padding and gap → clear of the time line and of Resend's own edge */
+.queue-order:focus {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: var(--space-1_5);
+	border-radius: var(--radius-card);
+}
+.queue-sheet-title,
+.queue-option-head,
+.queue-option-sides,
+.queue-compose-text {
+	word-break: keep-all;
+	overflow-wrap: anywhere;
+}
+.queue-row-title {
+	margin-inline: calc(var(--space-3) - var(--space-2));
+	font-size: var(--fs-control);
+	font-weight: 600;
+	color: rgb(var(--ink));
+}
+.queue-row:not(:has(> .queue-row-who)) > .queue-row-title {
+	margin-inline-start: 0;
+}
+.queue-row-who {
+	display: flex;
+	min-width: 0;
+	font-weight: 600;
+	color: rgb(var(--ink));
+}
+/* a handled row recedes (spec §4.6): title and name dim at 400 in every state → ink rows wait, dim rows are done */
+.queue-row--done > .queue-row-title,
+.queue-row--done > .queue-row-who {
+	font-weight: 400;
+	color: rgb(var(--dim));
+}
+.queue-row-title,
+.queue-row-name,
+.queue-row-ends,
+.queue-row-fact {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+/* a self-declared sender's mark: the page's word, never the name's text → its own weight, tone and dotted rule; the name gives way, never the mark */
+.queue-row-mark {
+	flex: none;
+	margin-inline-start: var(--space-1);
+	font-weight: 400;
+	color: rgb(var(--faint));
+	text-decoration: underline dotted;
+	text-underline-offset: 2px;
+}
+/* one session ticked → the sender leads the title cell as the name column draws it, never wider than that column:
+   its name cut first, its mark whole, then the rest of the title cut on its own */
+.queue-row-title:has(> .queue-row-from) {
+	display: flex;
+	gap: var(--space-1);
+}
+.queue-row-from {
+	display: flex;
+	flex: none;
+	max-width: var(--queue-row-name);
+}
+/* up to two count atoms, worst first; both fit the 80 */
+.queue-row-tag {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	min-width: 0;
+}
+.queue-row-tag .pill--num {
+	gap: var(--space-1);
+}
+/* a done item's kind (spec §4.6): plain dim text, no shell — every done row has one */
+.queue-row-kind {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: rgb(var(--dim));
+}
+.queue-row-fact {
+	text-align: end;
+	color: rgb(var(--dim));
+	font-variant-numeric: tabular-nums;
+}
+/* a count and its tag sit one gap apart on the letterhead's date line */
+.queue-date-facts {
+	align-items: center;
+	gap: var(--space-1_5);
+}
+.queue-row-age {
+	text-align: end;
+	color: rgb(var(--faint));
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+/* faint on the select tint is a thin pass → the selected row's age takes dim */
+.queue-row[aria-selected="true"] .queue-row-age {
+	color: rgb(var(--dim));
+}
+.queue-row-chevron {
+	color: transparent;
+}
+.queue-row:hover .queue-row-chevron {
+	color: rgb(var(--faint));
+}
+.queue-row[aria-selected="true"] .queue-row-chevron {
+	color: rgb(var(--ink));
+}
+/* the sheet: one page column shared by its head, body and foot, on a constant 32 inset — the pane is cut to the measure (spec §3.2) */
+.queue-sheet {
+	--card-pad: var(--space-8);
+}
+.queue-sheet-head {
+	flex-wrap: nowrap;
+}
+/* the arrival count sits on the arrow's square, the head's gap and 8 more before the kind tag → it reads with the way back (§4.3) */
+.queue-back {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	margin-inline-end: var(--space-2);
+}
+.queue-sheet-head > .card-title,
+.queue-letter {
+	min-width: 0;
+}
+.queue-letter-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* a decision's or report's head: its name cut first, then the account; the page's (self-named) and the id beside it whole; pre keeps each part's leading space */
+.queue-letter-name:has(> .queue-letter-text) {
+	display: flex;
+}
+.queue-letter-text,
+.queue-letter-note {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: pre;
+}
+/* shrink weighted far above the note's → the name gives its width before the account gives any */
+.queue-letter-text {
+	flex-shrink: 1000;
+}
+.queue-letter-self,
+.queue-letter-id {
+	flex: none;
+	white-space: pre;
+}
+.queue-steps {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	margin-inline-start: auto;
+}
+.queue-steps > .tabular-nums {
+	margin-inline-end: var(--space-2);
+}
+.queue-date-facts {
+	display: inline-flex;
+}
+/* the letterhead's second line: what the item holds at its start, when at its end */
+.queue-date-line {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	min-height: var(--lh-row);
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
+}
+/* the key list: the meanings in one column directly after the keys */
+.queue-keys {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: var(--space-1) var(--space-4);
+	margin: 0;
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+}
+.queue-keys > dt {
+	font-weight: 600;
+	color: rgb(var(--ink));
+	white-space: nowrap;
+}
+.queue-keys > dd {
+	margin: 0;
+	color: rgb(var(--dim));
+}
+.queue-sheet .card-title {
+	font-size: var(--fs-control);
+}
+/* never wider than the head's title → the name inside it is what gives way */
+.queue-letter {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2);
+	max-width: 100%;
+}
+.queue-sheet > .card-body {
+	padding: var(--space-4) var(--card-pad) var(--space-8);
+}
+.queue-sheet-body > .queue-sheet-title {
+	margin-top: var(--space-2);
+}
+.queue-sheet-body > * + * {
+	margin-top: var(--space-3);
+}
+.queue-sheet-body > .queue-kind {
+	margin-top: var(--space-6);
+}
+.queue-sheet-title {
+	max-width: var(--measure-prose);
+	font-size: var(--fs-stat);
+	font-weight: 600;
+	line-height: calc(var(--fs-stat) + var(--space-2));
+	color: rgb(var(--ink));
+}
+/* 13/600/dim = a label for what follows, on the whole desk */
+.queue-label,
+.queue-options > legend {
+	padding: 0;
+	font-size: var(--fs-meta);
+	font-weight: 600;
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
+}
+.queue-answer {
+	font-size: var(--fs-body);
+	font-weight: 600;
+	line-height: 24px;
+}
+.queue-answer-reference {
+	margin-top: var(--space-2);
+}
+.queue-fold {
+	cursor: pointer;
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+.queue-options {
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+.queue-options > legend {
+	margin-bottom: var(--space-2);
+}
+/* an option row bleeds to the card's edges as a list row does; the radio and text stay on the sheet's column */
+.queue-option {
+	display: grid;
+	grid-template-columns: 16px minmax(0, 1fr);
+	column-gap: var(--space-3);
+	min-height: 48px;
+	margin-inline: calc(-1 * var(--card-pad));
+	padding: var(--space-3) var(--card-pad);
+	cursor: pointer;
+}
+.queue-option + .queue-option {
+	border-top: 1px solid rgb(var(--line));
+}
+.queue-option:hover {
+	background: rgb(var(--sunken));
+}
+.queue-option:has(:checked) {
+	background: var(--tint-select);
+}
+.queue-option:has(:focus-visible) {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: calc(-1 * var(--focus-ring-offset));
+}
+.queue-option > .ctl-radio {
+	margin-top: calc((var(--lh-ctl-lg) - 16px) / 2);
+}
+/* a closed option: code, label and sides dim at 400, no press; its one reason line under the label in ink */
+.queue-option.is-closed {
+	color: rgb(var(--dim));
+	cursor: default;
+}
+.queue-option.is-closed:hover {
+	background: none;
+}
+.queue-option.is-closed .queue-option-head {
+	font-weight: 400;
+	color: rgb(var(--dim));
+}
+.queue-option.is-closed .queue-option-reason {
+	color: rgb(var(--ink));
+}
+.queue-option-reason {
+	display: block;
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+}
+/* the secret-approval card: the cue, per captured line its head and plate, the facts; a plate is the line whole — wrapped, never cut, folded or scrolled */
+.scan-cue {
+	font-size: var(--fs-body);
+	color: rgb(var(--ink));
+}
+.scan-line-head {
+	display: grid;
+	grid-template-columns: 112px 128px minmax(0, 1fr);
+	column-gap: var(--space-3);
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+}
+.scan-line > .scan-plate {
+	margin-top: var(--gap-stack);
+}
+.scan-plate {
+	padding: var(--space-2) var(--space-3);
+	background: rgb(var(--sunken));
+	border-radius: var(--radius-control);
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	font-size: var(--fs-meta);
+	line-height: 1.5;
+	color: rgb(var(--ink));
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+/* a hidden character's tile: never the character, never split across rows, adjacent tiles apart */
+.scan-mark {
+	display: inline-block;
+	margin-inline: var(--space-0_5);
+	padding-inline: var(--space-1);
+	border-radius: var(--radius-inline);
+	background: rgb(var(--dim));
+	color: rgb(var(--surface));
+	font-family: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui, sans-serif;
+	font-size: var(--fs-meta);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.queue-sheet-body > .scan-line + .scan-facts {
+	margin-top: var(--space-6);
+}
+/* the warning guards the options → apart from the facts, close to the Options heading */
+.queue-sheet-body > .scan-warning {
+	margin-top: var(--space-6);
+}
+.queue-sheet-body > .scan-warning + .queue-kind {
+	margin-top: var(--space-3);
+}
+.scan-facts {
+	display: grid;
+	grid-template-columns: 64px minmax(0, 1fr);
+	gap: var(--gap-stack) var(--space-3);
+	margin-bottom: 0;
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+}
+.scan-facts > dt {
+	font-weight: 600;
+	color: rgb(var(--dim));
+}
+.scan-facts > dd {
+	min-width: 0;
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+	.queue-sheet {
+		--card-pad: var(--space-4);
+	}
+	/* the head in two rows (layout §4): back · count · previous / next, then the letterhead across the whole width */
+	.queue-sheet-head {
+		flex-wrap: wrap;
+		row-gap: var(--space-1);
+	}
+	.queue-sheet-head > .card-title {
+		order: 1;
+		flex-basis: 100%;
+	}
+	.scan-line-head {
+		grid-template-columns: 112px minmax(0, 1fr);
+	}
+	.scan-line-head > :last-child {
+		grid-column: 1 / -1;
+	}
+}
+.queue-option > .ctl-radio:focus-visible {
+	outline: none;
+}
+.queue-option-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--gap-control);
+	font-size: var(--fs-body);
+	font-weight: 600;
+	line-height: var(--lh-ctl-lg);
+	color: rgb(var(--ink));
+}
+.queue-option-sides {
+	display: grid;
+	grid-template-columns: 44px minmax(0, 1fr);
+	row-gap: var(--gap-stack);
+	margin-top: var(--space-1);
+	font-size: var(--fs-control);
+	line-height: var(--lh-row);
+}
+/* a relay's To line (layout §2 → Who): one line — pre keeps the separators' spaces at the flex items' edges; only the place gives way, cut */
+.queue-relay-to {
+	display: flex;
+	align-items: baseline;
+	white-space: pre;
+}
+.queue-relay-to > * {
+	flex: none;
+}
+.queue-relay-to > .queue-relay-place {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+/* the redact confirm (layout §2 → Redaction): the sheet's own act → the dialog centres on the sheet's column, the scrim the viewport's */
+.queue-confirm-place {
+	display: contents;
+}
+.queue-confirm-place > .detail-confirm {
+	padding-inline: var(--queue-sheet-start, 0px) var(--queue-sheet-end, 0px);
+}
+/* the composer: one pattern on every pane's foot — label, the box with its buttons, one reserved note line */
+.queue-sheet > .card-foot,
+.queue-orders-card > .card-foot {
+	display: block;
+	min-height: 0;
+	padding: 0;
+	border-top: 0;
+	font-size: var(--fs-body);
+	color: rgb(var(--ink));
+}
+.queue-composer {
+	padding: var(--space-4) var(--card-pad);
+	border-top: 1px solid rgb(var(--line));
+}
+.queue-composer > .field-label {
+	display: block;
+	margin-bottom: var(--gap-label);
+}
+/* the Orders label line: the receiving sessions are names → ink 600 inside the dim label (spec §9.2) */
+.queue-order-to {
+	font-weight: 600;
+	color: rgb(var(--ink));
+	white-space: nowrap;
+}
+.queue-compose-row {
+	--queue-box-min: 220px;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: var(--gap-control);
+}
+/* the button beside its box wherever the box keeps 220, under it below that (spec §4.5) */
+.queue-compose-row > .queue-compose-box {
+	flex: 1 1 var(--queue-box-min);
+}
+/* a phone (layout §4): 160 → Send answer stays beside the box at 360 */
+@media (max-width: 640px) {
+	.queue-compose-row {
+		--queue-box-min: 160px;
+	}
+}
+.queue-compose-buttons {
+	flex: none;
+	display: flex;
+	gap: var(--gap-control);
+	margin-inline-start: auto;
+}
+/* a send label in parts (queue.jsx → getSendPartsQ) on one line: only the session name gives way, down to 3ch;
+   a resume tail the button's room cannot hold (queue.jsx → getSendTailFitQ) is dropped whole, never cut (the whole label in the title) */
+.queue-send-label {
+	position: relative;
+	display: flex;
+	min-width: 0;
+	overflow: hidden;
+	white-space: pre;
+}
+.queue-send-label > span {
+	flex: none;
+}
+.queue-send-label > .queue-send-name {
+	flex: 0 1 auto;
+	min-width: 3ch;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+/* out of flow past the label's end → clipped, no width taken from the button; still laid out, so its width stays measurable */
+.queue-send-label > .queue-send-tail.is-dropped {
+	position: absolute;
+	inset-inline-start: 100%;
+}
+.queue-note {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: var(--ctl-min-h);
+	margin-top: var(--space-2);
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
+}
+.queue-note-text {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+/* a decision's foot lines (spec §6 → Foot lines): the approval's two sentences one line each above the label, the image lines on a reserved line of their own */
+.queue-composer > .queue-approval-line {
+	margin-bottom: var(--gap-label);
+	line-height: var(--lh-row);
+}
+.queue-approval-line > :last-child {
+	display: block;
+}
+.queue-tray-line {
+	min-height: var(--lh-row);
+	margin-top: var(--space-2);
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
+}
+/* ponytail: a line wider than the foot ends in an ellipsis, its whole text still read (role="alert"); a hover title or a shorter §12.7 string is the upgrade */
+.queue-tray-line p {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.queue-tray-line + .queue-note {
+	margin-top: var(--gap-stack);
+}
+.queue-note > .btn {
+	flex: none;
+	white-space: nowrap;
+}
+/* §12.5 — on the Queue screen a word button carries a 1px edge at rest, the bar's quiet Reset filters (§4.1) and the phone's scope trigger excepted; a glyph button (.icon) is the glyph alone in its 32 square.
+   Word ranks: three, six states, colours only (no size, no shadow); the edge walks control edge → faint → ink as the pointer commits,
+   the primary's fill ink → dim → faint. The drawer's own close button (.detail-head) stays the system's. */
+.queue-screen .btn.ghost:not(.detail-head .btn, .icon, .filter-bar-reset, .queue-scope-trigger) {
 	border-color: rgb(var(--control-edge));
+}
+.queue-screen .btn.ghost:not([aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .icon, .filter-bar-reset, .queue-scope-trigger):hover {
+	border-color: rgb(var(--faint));
+}
+.queue-screen .btn.primary:not([aria-busy="true"], :disabled, [aria-disabled="true"]):hover {
+	background: rgb(var(--dim));
+	border-color: rgb(var(--dim));
+}
+/* :is(.btn, .btn.ghost) → outranks the quiet hover edge while held */
+.queue-screen :is(.btn, .btn.ghost):not(.primary, [aria-busy="true"], :disabled, [aria-disabled="true"], .detail-head .btn, .icon):active {
+	background: rgb(var(--sunken));
+	border-color: rgb(var(--ink));
+	color: rgb(var(--ink));
+}
+.queue-screen .btn.primary:not([aria-busy="true"], :disabled, [aria-disabled="true"]):active {
+	background: rgb(var(--faint));
+	border-color: rgb(var(--faint));
+	color: rgb(var(--surface));
+}
+/* in progress → its rank's rest look at full strength (the system halves an aria-disabled button), under the pointer too */
+.queue-screen .btn[aria-busy="true"] {
+	opacity: 1;
+}
+.queue-screen .btn[aria-busy="true"]:hover {
+	background: rgb(var(--elev));
+	border-color: rgb(var(--control-edge));
+	color: rgb(var(--ink));
+}
+.queue-screen .btn.ghost[aria-busy="true"]:hover {
+	background: transparent;
+	color: rgb(var(--dim));
+}
+.queue-screen .btn.primary[aria-busy="true"]:hover {
+	background: rgb(var(--ink));
+	border-color: rgb(var(--ink));
+	color: rgb(var(--surface));
+}
+/* disabled → the press sign goes; the label or glyph stays readable at full strength, on no fill */
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon),
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon):is(:hover, :active),
+.queue-screen .btn.icon:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"]),
+.queue-screen .btn.icon:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"]):is(:hover, :active) {
+	opacity: 1;
+	background: transparent;
+	color: rgb(var(--faint));
+	cursor: not-allowed;
+}
+/* a word button's press sign is its control edge → the line edge once disabled; a glyph button has no edge in any state */
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon),
+.queue-screen .btn:is(:disabled, [aria-disabled="true"]):not([aria-busy="true"], .detail-head .btn, .icon):is(:hover, :active) {
+	border-color: rgb(var(--line));
+}
+/* a glyph button: no edge in any state (the ghost's transparent one) → the hover square is the pointer's only shape cue, so it takes
+   the selection tint a person can see (the sunken fill is 1.05:1 on the card) + ink glyph; held = the tag fill, one step stronger;
+   the drawer's own close button (.detail-head) stays the system's, as with the word buttons */
+.queue-screen .btn.ghost.icon:not(:disabled, [aria-disabled="true"], .detail-head .btn):hover {
+	background: var(--tint-select);
+	color: rgb(var(--ink));
+}
+.queue-screen .btn.ghost.icon:not(:disabled, [aria-disabled="true"], .detail-head .btn):active {
+	background: var(--tint-fill);
+	color: rgb(var(--ink));
+}
+/* a box that takes images (§9.8): Add images on its last line at its end, 4 from the edge; the text keeps that 40 free */
+.queue-compose-box.has-images {
+	position: relative;
+}
+.queue-compose-box.has-images > .queue-compose-text {
+	padding-inline-end: calc(var(--ctl-min-h) + 2 * var(--space-1));
+}
+/* a glyph button inside the one bordered field, 4 in from its end corner */
+.queue-compose-add {
+	position: absolute;
+	inset-inline-end: var(--space-1);
+	inset-block-end: var(--space-1);
+}
+/* a file hanging over the composer (or the order card) → ink edge + the selection tint */
+.queue-compose-box.is-drop {
+	border-color: rgb(var(--ink));
+	background: var(--tint-select);
+}
+/* the thumbnails row inside the box, above the text; the count follows the last thumbnail on the same wrapping line */
+.queue-thumbs {
+	--queue-thumb: 56px;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-2) var(--space-2) 0;
+}
+/* on a sheet one row that scrolls sideways → the foot never grows past one row of images, the options above keep their room */
+.queue-sheet .queue-thumbs {
+	flex-wrap: nowrap;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+.queue-sheet .queue-thumbs-count {
+	flex: none;
+	white-space: nowrap;
+}
+.queue-thumb-list {
+	display: contents;
+}
+.queue-thumb {
+	position: relative;
+	flex: none;
+	width: var(--queue-thumb);
+	height: var(--queue-thumb);
+}
+.queue-thumb > img,
+.queue-thumb-failed {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	border: 1px solid rgb(var(--line));
+	border-radius: var(--radius-control);
+}
+.queue-thumb-failed {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: rgb(var(--crit));
+}
+.queue-thumb.is-busy > img {
+	opacity: 0.5;
+}
+/* a 24 target holding the 20 square, at the thumbnail's top end corner; always shown, never on hover only */
+.queue-thumb-remove {
+	position: absolute;
+	top: calc(-1 * var(--space-2));
+	inset-inline-end: calc(-1 * var(--space-2));
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	cursor: pointer;
+}
+.queue-thumb-remove > span {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	background: rgb(var(--elev));
+	border-radius: var(--radius-inline);
+	color: rgb(var(--ink));
+	font-size: var(--fs-meta);
+	line-height: 1;
+}
+.queue-thumb-remove:focus-visible {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: 0;
+	border-radius: var(--radius-inline);
+}
+.queue-thumbs-count {
+	font-size: var(--fs-meta);
+	line-height: var(--lh-row);
+	color: rgb(var(--dim));
+}
+/* the note takes the wrap; Try again keeps its label on one line */
+.queue-note-failure {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+}
+.queue-note-failure > :first-child {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.queue-note-failure > .btn {
+	flex: none;
+	white-space: nowrap;
+}
+
+/* System map (architecture.jsx) — the map-legend mark: the key of a canvas ring, its mark inside a 2px ring.
+   Height = the meta line + both 2px borders, so the mark never spills over its ring */
+.arch-legend-swatch {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: calc(var(--fs-meta) + 4px);
+	border: 2px solid rgb(var(--faint));
+	border-radius: var(--radius-inline);
+}
+.arch-legend-swatch-warn {
+	border-color: rgb(var(--warn));
+	color: rgb(var(--warn));
+}
+.arch-legend-swatch-crit {
+	border-color: rgb(var(--crit));
+	color: rgb(var(--crit));
+}
+.arch-legend-swatch-dashed {
+	border-style: dashed;
+}
+.arch-legend-swatch-count {
+	width: auto;
+	padding: 0 var(--space-1);
+	border-color: rgb(var(--crit));
+	color: rgb(var(--crit));
+}
+
+/* Remote access (remote-access.jsx) — the connect card's procedure: the rail of steps beside the open step's pane */
+.ra-procedure {
+	container-type: inline-size;
+	border-block-start: 1px solid rgb(var(--line));
+}
+/* a container query sizes the container's children, never the container → the grid is its child */
+.ra-procedure-grid {
+	--ra-rail-w: 20rem;
+	display: grid;
+	grid-template-columns: var(--ra-rail-w) minmax(0, 1fr);
+}
+.ra-rail {
+	padding: var(--card-pad);
+	border-inline-end: 1px solid rgb(var(--line));
+}
+/* on the markers' column */
+.ra-rail-head {
+	margin-block-end: var(--gap-label);
+	padding-inline: var(--space-2);
+}
+/* 40 tall → a done row's target passes WCAG 2.5.8 without the .inline-target box; a long title wraps and grows the row */
+.ra-step {
+	display: grid;
+	grid-template-columns: 1.5rem minmax(0, 1fr);
+	column-gap: var(--space-2);
+	align-items: center;
+	width: 100%;
+	min-height: var(--row-h);
+	padding-inline: var(--space-2);
+	border-radius: var(--radius-control);
+	font-size: var(--fs-control);
+	line-height: var(--lh-row);
+	color: rgb(var(--ink));
+	text-align: start;
+}
+button.ra-step {
+	cursor: pointer;
+}
+button.ra-step:hover {
+	background: rgb(var(--sunken));
+}
+/* start-aligned → glyph and numeral stand under the head's first letter */
+.ra-step-mark {
+	justify-self: start;
+	font-variant-numeric: tabular-nums;
+}
+/* the open row is a fill, not a bar */
+.ra-step.is-open {
+	background: var(--tint-select);
+}
+/* numeral 600, title 400: at 500 the longest title outgrows the 20rem rail's line */
+.ra-step.is-open > .ra-step-mark {
+	font-weight: 600;
+}
+.ra-step.is-ahead {
+	color: rgb(var(--faint));
+}
+/* at least as tall as the rail (the grid row stretches) */
+.ra-pane {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+.ra-pane-body {
+	padding: var(--card-pad);
+}
+.ra-pane-body > * {
+	max-width: var(--measure-prose);
+}
+/* a tabindex -1 landing for assistive tech, not a control → no ring that reads as a field */
+.ra-pane-title:focus {
+	outline: none;
+}
+/* on the pane's bottom edge → Next keeps one place on the rail-high steps */
+.ra-pane-foot {
+	margin-block-start: auto;
+	justify-content: space-between;
+	border-block-start: 1px solid rgb(var(--line));
+}
+/* Next alone on step 1 still stands at the end */
+.ra-pane-next {
+	margin-inline-start: auto;
+}
+.ra-path-label {
+	white-space: nowrap;
+	font-weight: 500;
+	color: rgb(var(--ink));
+}
+/* --space-3 beyond the one space the text keeps → pairs match in fours, a copy reads as the phone writes it */
+.ra-fingerprint-group {
+	margin-inline-start: var(--space-3);
+}
+/* the QR field is its own scan margin: no frame, no fill around it */
+.ra-code {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	column-gap: var(--gap-control-group);
+	align-items: start;
+}
+/* typed route first, the QR code second · two routes, not one value and its label → the wider gap; a narrow pane wraps the QR code under */
+.ra-code.is-typed {
+	display: flex;
+	flex-wrap: wrap;
+	column-gap: var(--gap-group-above);
+	row-gap: var(--gap-block);
+}
+/* a narrow card stacks the rail over the pane; the rail's end rule becomes its bottom rule */
+@container (max-width: 44rem) {
+	.ra-procedure-grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.ra-rail {
+		border-inline-end: 0;
+		border-block-end: 1px solid rgb(var(--line));
+	}
 }
 
 /* ── Sub-card primitive (W1-T3) — 중첩 섹션/메트릭 타일 공용 면 ─────────────────
@@ -336,28 +2120,22 @@ details[open] > summary.disclosure > .disclosure-chevron {
    ring 은 box-shadow 로 표현(box model 무영향) — .card 와 달리 1px line 만, 그림자 없음(z-depth 하위). */
 .sub-card {
 	border-radius: var(--radius-tile);
-	padding: 16px;
+	padding: var(--card-pad);
 	box-shadow: 0 0 0 1px rgb(var(--line));
 }
-[data-theme="dark"] .sub-card {
-	box-shadow: 0 0 0 1px rgb(var(--line)), inset 0 1px 0 rgb(var(--glass-border) / 0.04);
-}
-/* 섹션 라벨 — 대문자 --dim, multi-section 뷰의 구획 헤더 (10.5px, letter-spacing). */
-.sub-card-label,
+/* 섹션 라벨 — 문장형 대소문자 --dim, multi-section 뷰의 구획 헤더. */
 .section-label {
 	font-size: var(--fs-meta);
 	font-weight: 600;
 	color: rgb(var(--dim));
-	text-transform: uppercase;
-	letter-spacing: 0.06em;
 }
-.sub-card-label { margin-bottom: var(--space-2); }
 
-/* ── Spacing standard (W1-T3) — 16px 카드 채널 / 24px 섹션 채널 (8px 리듬 배수) ────────
-   카드 그리드/스택 간격은 16px, 독립 섹션 사이는 24px. Tailwind gap/space-y 와 병용 가능. */
-.gap-card { gap: 16px; }
-.space-cards > * + * { margin-top: 16px; }
-.space-sections > * + * { margin-top: 24px; }
+/* ── Spacing standard (W1-T3) — 카드·섹션 채널 모두 --gap-section ────────
+   카드 그리드/스택·독립 섹션 사이 모두 --gap-section. Tailwind gap/space-y 와 병용 가능. */
+/* TODO(mon-ui/43942): deprecated for the Stack role keys — delete once no caller remains */
+.gap-card { gap: var(--gap-section); }
+.space-cards > * + * { margin-top: var(--gap-section); }
+.space-sections > * + * { margin-top: var(--gap-section); }
 
 /* Split row (SplitRow) — one stacked column below xl; ratio-preset columns from xl (1280px, Tailwind xl) */
 .split-row {
@@ -376,6 +2154,26 @@ details[open] > summary.disclosure > .disclosure-chevron {
 /* a collapsed fold keeps its header height instead of stretching into an empty box */
 .split-row--equal > .card.is-collapsed { align-self: start; }
 .split-row--equal > * > .card.is-collapsed { flex: none; }
+/* divided — two in-card blocks parted by one hairline a gap clear of each: above the second when stacked, between them from xl */
+.split-row--divided { align-items: stretch; }
+.split-row--divided > * + * {
+	padding-block-start: var(--gap-section);
+	border-block-start: 1px solid rgb(var(--line));
+}
+
+/* aligned — peer cards share the row's tracks (subgrid), one track per Card slot → heads, bars, bodies and feet start on one y.
+   The card's own row gap resets to 0, else the subgrid inherits the row's 16 between its slots */
+.split-row--aligned { align-items: stretch; }
+.split-row--aligned > .card {
+	display: grid;
+	grid-row: span 4;
+	grid-template-rows: subgrid;
+	row-gap: 0;
+}
+.split-row--aligned > .card > .card-head { grid-row: 1; }
+.split-row--aligned > .card > .card-bar { grid-row: 2; }
+.split-row--aligned > .card > .card-body { grid-row: 3; }
+.split-row--aligned > .card > .card-foot { grid-row: 4; }
 
 /* Split column (SplitColumn) — a card stack in one SplitRow column; the rail variant pins it while the taller column scrolls (xl only) */
 .split-col {
@@ -385,35 +2183,30 @@ details[open] > summary.disclosure > .disclosure-chevron {
 	min-width: 0;
 }
 
-/* Tile split (TileSplit) — value + badge over detail by default */
-/* 641px to below xl: the detail sits beside the lead while it keeps its basis, else it wraps under the lead */
-.tile-split {
-	--tile-split-detail-basis: 16rem; /* a two-line hint's width (a size, outside the ladder) */
-	display: grid;
-	grid-template-columns: minmax(0, 1fr);
-	gap: var(--space-1) var(--space-4);
-	align-items: start;
-}
-.tile-split-lead,
-.tile-split-detail { min-width: 0; }
-
-@media (min-width: 641px) and (max-width: 1279px) {
-	.tile-split {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-start;
-	}
-	.tile-split-lead { flex: 0 1 auto; max-width: 100%; }
-	.tile-split-detail { flex: 1 1 var(--tile-split-detail-basis); }
-}
-
 @media (min-width: 1280px) {
 	.split-row--1-1 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.split-row--2-1 { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+	.split-row--rest-content { grid-template-columns: minmax(0, 1fr) auto; }
+	.split-row--divided:not(.split-row--1-1-wide) > * + * {
+		padding-block-start: 0;
+		border-block-start: 0;
+		padding-inline-start: var(--gap-section);
+		border-inline-start: 1px solid rgb(var(--line));
+	}
 	.split-col--rail {
 		position: sticky;
 		top: 24px;
 		align-self: start;
+	}
+}
+/* the wide 1:1 pairs once each half holds a five-column table; until then it stacks like below xl */
+@media (min-width: 1920px) {
+	.split-row--1-1-wide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.split-row--1-1-wide.split-row--divided > * + * {
+		padding-block-start: 0;
+		border-block-start: 0;
+		padding-inline-start: var(--gap-section);
+		border-inline-start: 1px solid rgb(var(--line));
 	}
 }
 
@@ -428,9 +2221,14 @@ tbody.tbl-compact {
 	--tbl-ctl-pad-block: calc(var(--space-1) - var(--tbl-rule) / 2);
 	--tbl-head-pad-block: calc((var(--row-h-compact) - var(--lh-row) - var(--tbl-rule)) / 2);
 }
+/* --tbl-edge — the caption, edge cells and stacked rows inset; a nested ledger already sits on its card body's padded column → 0 */
 .tbl {
+	--tbl-edge: var(--card-pad);
 	width: 100%;
 	border-collapse: collapse;
+}
+.tbl--nested {
+	--tbl-edge: 0px;
 }
 /* geometry-only routing — a table routed onto .tbl for its padding, row height and alignment alone takes .tbl--own-face and keeps
    the body size, header face and row states its own classes give it. The house rules match it out through :where(), so
@@ -458,8 +2256,6 @@ tbody.tbl-compact {
 .tbl:where(:not(.tbl--own-face)) th {
 	font-weight: 500;
 	color: rgb(var(--dim));
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
 	background: rgb(var(--sunken));
 }
 /* a body row header (a group-label row, a row's th) takes the row step too → a label-only row is 40, never its 36 line box */
@@ -491,14 +2287,14 @@ tbody.tbl-compact > tr > :is(td, th) {
 tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 	vertical-align: top;
 }
-/* edge cells take the card padding → the first and last column line up with the card head; flush comes from an unpadded card body */
+/* edge cells take --tbl-edge → the first and last column line up with the card head; flush comes from an unpadded card body */
 .tbl th:first-child,
 .tbl td:first-child {
-	padding-inline-start: var(--space-4);
+	padding-inline-start: var(--tbl-edge);
 }
 .tbl th:last-child,
 .tbl td:last-child {
-	padding-inline-end: var(--space-4);
+	padding-inline-end: var(--tbl-edge);
 }
 /* control cell — a cell holding a --ctl-min-h control takes the --space-1 step (less half the rule), so the row stays --row-h beside its text cells.
    Block longhands, so the inline edge rule above still applies. A new 32px control class joins this list in the change that creates it.
@@ -536,12 +2332,11 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 .tbl:where(:not(.tbl--own-face)) tbody tr:hover {
 	background: rgb(var(--sunken));
 }
-.tbl tbody tr:last-child td {
+.tbl tbody tr:last-child > :is(td, th) {
 	border-bottom: none;
 }
 .tbl td.num,
 .tbl th.num {
-	font-family: "JetBrains Mono", monospace;
 	font-variant-numeric: tabular-nums;
 	text-align: right;
 	white-space: nowrap;
@@ -550,201 +2345,685 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 .tbl tbody tr.is-grouped > td {
 	border-bottom: none;
 }
+/* a second body and the foot are their own groups → each opens on a rule; the foot's last row closes on the card edge */
+.tbl :is(tbody + tbody, tfoot) > tr:first-child > :is(td, th) {
+	border-top: var(--tbl-rule) solid rgb(var(--line));
+}
+.tbl tfoot > tr:last-child > :is(td, th) {
+	border-bottom: none;
+}
 
-/* the outline is a shadow ring, not a border → the group is exactly its 32px buttons tall, so it fits the 40 control cell like every other control.
-   The ring takes the control edge and the dividers stay --line → the group reads as one box, not as separate buttons */
+/* Table's own measured wrapper — never a scroll container (clip, not auto), so a sticky th reaches the nearest vertical scroller.
+   min-width 0 → its width comes from its parent, never from the table; positioned → a cell's absolute sr-only span resolves here */
+.tbl-wrap {
+	position: relative;
+	min-width: 0;
+	overflow-x: clip;
+}
+/* lifted only while a row menu is open, as .card is */
+.tbl-wrap:has(.menu) {
+	overflow: visible;
+}
+.tbl > caption.tbl-caption {
+	text-align: left;
+	padding: 0 var(--tbl-edge) var(--gap-label);
+}
+/* cell atom — a long unbroken name wraps inside its cell instead of widening the table past its wrapper */
+.tbl :is(.tbl-cell--primary, .tbl-cell--row-header, .tbl-cell--span) {
+	overflow-wrap: anywhere;
+}
+/* a group-header cell is a heading (role="heading") → 600; 12 above and 4 below set its group apart — one kind, one look (§12.3) */
+.tbl .tbl-cell--group-header {
+	font-weight: 600;
+	padding-block: var(--space-3) var(--space-1);
+}
+/* a body row header reads as the row's primary text, not as a column-header face */
+.tbl :is(tbody, tfoot) > tr > .tbl-cell--row-header {
+	color: rgb(var(--ink));
+	background: none;
+	font-size: var(--fs-control);
+}
+.tbl td:has(> .row-actions) {
+	text-align: right;
+}
+.row-actions {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	gap: var(--gap-control);
+}
+/* the overflow menu opens inward from the row's end → it never crosses the wrapper's clip edge */
+.row-actions > .menu {
+	left: auto;
+	right: 0;
+}
+
+/* stacked mode — each row a two-line item on the card-pad column: line one the row header or primary cell (15 ink),
+   line two the meta facts (13 dim) behind their aria-hidden label. Table roles are restated in markup */
+.tbl--stacked,
+.tbl--stacked > :is(caption, thead, tbody, tfoot) {
+	display: block;
+}
+/* 7.5 + 20 + 20 + 7.5 + 1 = 56 → --row-h-2; the 16 fact gap is the cluster break between groups */
+.tbl--stacked tr {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	column-gap: var(--gap-control-group);
+	min-height: var(--row-h-2);
+	padding: calc((var(--row-h-2) - 2 * var(--lh-row) - var(--tbl-rule)) / 2) var(--tbl-edge);
+	border-bottom: var(--tbl-rule) solid rgb(var(--line));
+}
+/* the row owns padding and rule → cells drop the wide-mode box; specificity sits above the edge and control-cell rules */
+.tbl.tbl--stacked :is(th, td) {
+	display: block;
+	min-width: 0;
+	height: auto;
+	padding: 0;
+	border: none;
+	background: none;
+	text-align: left;
+}
+/* .tbl doubled → above the wide row-header face */
+.tbl.tbl--stacked :is(.tbl-cell--primary, .tbl-cell--row-header, .tbl-cell--span, .tbl-cell--group-header) {
+	order: -1;
+	flex: 1 0 100%;
+	font-size: var(--fs-body);
+	color: rgb(var(--ink));
+}
+.tbl--stacked :is(.tbl-cell--meta, .tbl-cell--label) {
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+}
+.tbl-cell-label {
+	margin-inline-end: var(--gap-label-inline);
+	font-weight: 500;
+}
+.tbl--stacked td:has(> .row-actions) {
+	margin-inline-start: auto;
+}
+/* head row on the 32 compact step: 5.5 + 20 + 5.5 + 1; elev like the sticky th's own fill → one face whether or not it sticks */
+.tbl--stacked > thead > tr {
+	min-height: var(--row-h-compact);
+	padding-block: var(--tbl-head-pad-block);
+	background: rgb(var(--elev));
+}
+/* a th cannot stick past its flex row → the stacked head sticks as one block */
+.tbl--stacked > thead.is-sticky {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+}
+.tbl--stacked > :is(tbody, tfoot) > tr:last-child {
+	border-bottom: none;
+}
+.tbl--stacked > :is(tbody + tbody, tfoot) > tr:first-child {
+	border-top: var(--tbl-rule) solid rgb(var(--line));
+}
+
+/* sunken track, no outer edge → the selected option is the one boxed thing: a raised thumb + the control edge, drawn inset so no state resizes it */
 .seg {
 	display: inline-flex;
-	box-shadow: 0 0 0 1px rgb(var(--control-edge));
 	border-radius: var(--radius-control);
 	overflow: hidden;
-	background: rgb(var(--elev));
+	background: rgb(var(--sunken));
 }
 .seg button {
 	padding: var(--space-1_5) var(--space-2);
 	min-height: var(--ctl-min-h);
-	font-size: var(--fs-meta);
+	font-size: var(--fs-control);
 	line-height: var(--lh-ctl);
 	font-weight: 500; /* the weight of every state, as .btn and .pill--interactive → selecting an option never widens it */
 	background: none;
 	border: none;
+	border-radius: var(--radius-control);
 	color: rgb(var(--dim));
-	border-right: 1px solid rgb(var(--line));
 	cursor: pointer;
 }
-.seg button:last-child {
-	border-right: none;
-}
-.btn[aria-pressed="true"],
-.btn[aria-pressed="true"]:hover,
 .seg button.active,
 .seg button[aria-pressed="true"],
-.pill--interactive[aria-pressed="true"] {
-	background: rgb(var(--selected-fill));
-	color: rgb(var(--selected-ink));
-	border-color: rgb(var(--selected-fill));
+.seg button[aria-checked="true"] {
+	background: rgb(var(--surface-raised-2));
+	box-shadow: inset 0 0 0 1px rgb(var(--control-edge));
+	color: rgb(var(--ink));
+}
+/* a pressed toggle keeps its resting fill → an ink edge + a leading ✓ mark it, never the --selected-fill inversion */
+.btn[aria-pressed="true"],
+.btn[aria-pressed="true"]:hover {
+	border-color: rgb(var(--ink));
+	color: rgb(var(--ink));
+}
+/* the quiet toggle has no edge to mark → ink text + ✓ alone */
+.btn.ghost[aria-pressed="true"],
+.btn.ghost[aria-pressed="true"]:hover {
+	border-color: transparent;
+}
+/* slot held at rest → pressing never widens the box; empty alt text → the name stays the label */
+.btn[aria-pressed]::before {
+	content: "✓" / "";
+	visibility: hidden;
+}
+.btn[aria-pressed="true"]::before {
+	visibility: visible;
 }
 /* inset ring — .seg clips its children (overflow: hidden) */
 .seg button:focus-visible {
 	outline-offset: calc(var(--focus-ring-width) * -1);
 }
 
-.kpi {
-	background: rgb(var(--elev));
-	border: 1px solid rgb(var(--line));
-	border-radius: var(--radius-card);
-	padding: var(--card-pad);
-	position: relative;
-	transition: border-color 0.12s;
-	min-height: 110px;
-	width: 100%;
-	text-align: left;
+/* tab — label only, no inline padding → the first label sits on the column; selected = ink + a 2px underline drawn inset, so no state resizes it */
+.tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--gap-control-group);
 }
-/* only a clickable tile reads as one — a labelled group keeps the default cursor and a still border */
-button.kpi {
+.tabs [role="tab"] {
+	min-width: var(--space-6); /* a 24px+ target even for a two-letter label */
+	min-height: var(--ctl-min-h);
+	padding: 0;
+	font-size: var(--fs-control);
+	line-height: var(--lh-ctl);
+	font-weight: 500;
+	background: none;
+	border: none;
+	color: rgb(var(--dim));
 	cursor: pointer;
 }
-button.kpi:hover {
-	border-color: rgb(var(--faint));
+.tabs [role="tab"]:hover {
+	color: rgb(var(--ink));
+}
+.tabs [role="tab"][aria-selected="true"] {
+	color: rgb(var(--ink));
+	box-shadow: inset 0 -2px 0 rgb(var(--ink));
 }
 
-/* UI.KPI anatomy — label row · value row · delta · hint · foot */
-.kpi-tile {
-	display: flex;
-	flex-direction: column;
-	min-width: 0;
-}
-/* 1 label row — one --lh-row line box; the label ellipsizes, the aside window tag never does */
-.kpi-head {
-	display: flex;
-	align-items: baseline;
-	gap: var(--space-1);
-	min-width: 0;
-	height: var(--lh-row);
-	line-height: var(--lh-row); /* an h2 label row takes preflight's inherited size and zero margin */
-}
-.kpi--info .kpi-head {
-	/* room for the ⓘ (its 32px box ends at the edge offset below) + the 4px meta gap before it */
-	padding-right: calc(var(--ctl-min-h) - var(--space-2) + var(--space-1));
-}
-.kpi-label-text {
-	flex: 0 1 auto;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	line-height: var(--lh-row);
-}
-.kpi-aside {
-	flex-shrink: 0;
-	white-space: nowrap;
-	line-height: var(--lh-row);
-}
-/* the ⓘ is placed on the label row's centre line, so a tile with one keeps its value on the band's baseline */
-/* offset, never a transform: a transform would trap the fixed drawer this slot renders into a 32px box */
-.kpi-info {
-	position: absolute;
-	top: calc(var(--card-pad) + (var(--lh-row) - var(--ctl-min-h)) / 2);
-	right: calc(var(--card-pad) - var(--space-2));
-	display: flex;
-}
-/* 2 value row — figure, unit and badge on one baseline; a badge that does not fit wraps below, whole */
-.kpi-main {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	column-gap: var(--space-2);
-	row-gap: var(--space-1);
-	margin-top: var(--space-2);
-	min-width: 0;
-}
-.kpi-main--loading {
-	align-items: center;
-}
-.kpi-main .kpi-value {
-	margin-top: 0;
-}
-/* word value: the block keeps the figure's mono strut → one baseline (half-leading differs by font size) */
-/* the word span's own line box (line-height 1) stays inside that strut */
-.kpi-value--word > .kpi-value-word {
-	font-size: var(--fs-stat);
-	font-family: "Pretendard Variable", sans-serif;
-	font-weight: 600;
-	letter-spacing: normal;
-	line-height: 1;
-}
-/* 3 delta · 4 hint — each 4 below the row above it */
-.kpi-delta-row {
-	margin-top: var(--space-1);
-}
-.kpi-delta-row .kpi-delta {
-	margin-top: 0;
-}
-/* two-line clamp — a KPI tile's plain hint and the Dashboard tile detail and hint */
-.clamp-2 {
-	display: -webkit-box;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 2;
-	overflow: hidden;
-}
-/* a fact-list tile has no value row → its facts take the value row's place, 8 below the label row */
-.kpi--facts > .kpi-hint {
-	margin-top: var(--space-2);
-}
-.kpi--spark .kpi-hint {
-	padding-right: calc(var(--kpi-spark-w) + var(--space-2)); /* the spark's width, set on the tile by KPI (ui.jsx KPI_SPARK.w), + 8 */
-}
-/* split tile — the value column carries the row's top margin; the detail column starts level with it */
-.kpi-split {
-	margin-top: var(--space-2);
-}
-.kpi-split .kpi-main,
-.kpi-split .tile-split-detail > .kpi-hint:first-child {
-	margin-top: 0;
-}
-/* 5 foot — drill link / Retry pinned to the bottom, at least 8 below the last fact */
-.kpi-foot {
-	margin-top: auto;
-	padding-top: var(--space-2);
+/* filter bar — one trigger per axis, wrapping instead of folding axes away; reset on the right column, its slot held while hidden */
+.filter-bar {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
-	gap: var(--space-2);
+	gap: var(--gap-control);
 }
-.kpi-hint {
-	line-height: 1.45;
-	margin-top: var(--space-1);
+.filter-bar-reset {
+	margin-inline-start: auto;
 }
-.kpi-value {
-	font-size: var(--fs-kpi);
-	line-height: 1.15;
-	font-weight: 600;
-	letter-spacing: -0.025em;
-	margin-top: var(--space-2);
-	font-family: "JetBrains Mono", monospace;
+.filter-trigger-root {
+	position: relative;
+	display: inline-flex;
 }
-.kpi-value .unit {
-	font-size: var(--fs-title); /* half of --fs-kpi → 2:1 figure-to-unit */
-	color: rgb(var(--dim));
-	font-weight: 500;
-	margin-left: var(--space-1);
-	font-family: "Pretendard Variable", sans-serif;
-}
-.kpi-delta {
-	font-size: var(--fs-meta);
-	font-family: "JetBrains Mono", monospace;
+/* quiet trigger — dim axis + ink value + chevron, no colon, no edge; sunken on hover and while its menu is open */
+.filter-trigger {
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
-	margin-top: 4px;
-	color: rgb(var(--dim)); /* tone rides on the arrow (Delta), never the numeral */
+	gap: var(--gap-label-inline);
+	min-height: var(--ctl-min-h);
+	padding: 0 var(--space-2);
+	font-size: var(--fs-control);
+	line-height: var(--lh-ctl);
+	font-weight: 500;
+	background: none;
+	border: none;
+	border-radius: var(--radius-control);
+	cursor: pointer;
 }
-.kpi-spark {
+.filter-trigger:hover,
+.filter-trigger[aria-expanded="true"] {
+	background: rgb(var(--sunken));
+}
+.filter-trigger-axis {
+	color: rgb(var(--dim));
+}
+.filter-trigger-value {
+	color: rgb(var(--ink));
+}
+/* value ↔ chevron = the 6 glyph gap of 14px text, over the 4 inline-label gap */
+.filter-trigger > .filter-trigger-chevron {
+	margin-inline-start: calc(var(--space-1_5) - var(--gap-label-inline));
+}
+
+/* menu — the one menu surface (filter trigger, row-action overflow): label-only items on the card inset and the list gap; overlay surface shared with .popover-panel */
+.menu {
+	--menu-check-w: 1em;
 	position: absolute;
-	right: var(--card-pad);
-	bottom: var(--card-pad);
-	opacity: 0.85;
-	pointer-events: none;
+	top: calc(100% + var(--space-1));
+	left: 0;
+	min-width: 100%;
+	width: max-content;
+}
+/* every checkable item holds the ✓ slot → checked and unchecked labels start on one column */
+.menu-item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	min-height: var(--ctl-min-h);
+	padding: 0 var(--space-2);
+	font-size: var(--fs-control);
+	line-height: var(--lh-ctl);
+	font-weight: 500;
+	text-align: start;
+	color: rgb(var(--ink));
+	background: none;
+	border: none;
+	border-radius: var(--radius-control);
+	cursor: pointer;
+}
+.menu-item:hover {
+	background: rgb(var(--sunken));
+}
+.menu-item[aria-checked] {
+	padding-inline-start: calc(var(--space-2) + var(--menu-check-w) + var(--space-1_5));
+}
+.menu-item-check {
+	position: absolute;
+	left: var(--space-2);
+	width: var(--menu-check-w);
+	text-align: center;
+}
+
+/* bar search — sunken fill + leading icon, no border; the fill carries the focus ring, so the field inside draws none */
+.bar-search {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1_5);
+	min-height: var(--ctl-min-h);
+	padding: 0 var(--space-2);
+	background: rgb(var(--sunken));
+	border-radius: var(--radius-control);
+	color: rgb(var(--faint));
+}
+.bar-search:has(> .bar-search-field:focus-visible) {
+	outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	outline-offset: var(--focus-ring-offset);
+}
+.bar-search-field {
+	flex: 1;
+	align-self: stretch; /* the field fills the 32px fill → the operable target is the whole height */
+	min-width: 0;
+	padding: 0;
+	font-size: var(--fs-control);
+	line-height: var(--lh-ctl);
+	color: rgb(var(--ink));
+	background: none;
+	border: none;
+}
+.bar-search-field:focus-visible {
+	outline: none;
+}
+.bar-search-field::placeholder {
+	color: rgb(var(--faint));
+}
+
+/* link — navigation: ink text + trailing arrow (the non-colour cue), no box, inline height; underline on hover */
+.link {
+	color: rgb(var(--ink));
+	text-decoration: none;
+}
+.link:hover {
+	text-decoration: underline;
+	text-underline-offset: 0.2em;
+}
+.link-arrow {
+	margin-inline-start: var(--space-1_5);
+}
+
+.field-label {
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	color: rgb(var(--dim));
+}
+
+/* layout primitives — a screen names a spacing role, never a value */
+.stack {
+	display: flex;
+	flex-direction: column;
+}
+.stack--block { gap: var(--gap-block); }
+.stack--label { gap: var(--gap-label); }
+.stack--stack { gap: var(--gap-stack); }
+.stack--list { gap: var(--gap-list); }
+.cluster {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+}
+.cluster--control { gap: var(--gap-control); }
+.cluster--control-group { gap: var(--gap-control-group); }
+
+/* machine string — ids, hashes, paths, config keys: the one mono use, unboxed, breaking anywhere so a long path never scrolls */
+.machine {
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	overflow-wrap: anywhere;
+}
+
+/* body text (ProseText) — agent-written plain text on the prose line; sets its own line height → its element never takes .fs-body,
+   whose 1.45 in TypeScaleStyle's later <style> would win at the same specificity */
+.prose-text {
+	max-width: var(--measure-prose);
+	font-size: var(--fs-body);
+	font-weight: 400;
+	line-height: 24px;
+	color: rgb(var(--ink));
+	word-break: keep-all; /* Korean breaks at spaces, never inside a word */
+	overflow-wrap: anywhere;
+}
+.prose-text--compact {
+	font-size: var(--fs-control);
+	line-height: 22px;
+}
+/* a text as sent (a relay's): one text node, nothing parsed → its line breaks are the only structure it keeps */
+.prose-text--as-sent {
+	white-space: pre-wrap;
+}
+.prose-text > * + * {
+	margin-top: var(--space-3);
+}
+/* two heading steps, never the sheet's own 13 / dim label face; the space below a heading is its own margin → the next block adds none */
+.prose-text h4,
+.prose-text h5 {
+	font-weight: 600;
+	line-height: 24px;
+}
+.prose-text h4 {
+	font-size: var(--fs-title);
+	margin-bottom: var(--space-2);
+}
+.prose-text h5 {
+	font-size: var(--fs-body);
+	margin-bottom: var(--space-1);
+}
+.prose-text > h4 + *,
+.prose-text > h5 + * {
+	margin-top: 0;
+}
+.prose-text > * + h4 {
+	margin-top: var(--space-6);
+}
+.prose-text > * + h5 {
+	margin-top: var(--space-4);
+}
+/* a bubble's heading never outgrows the bubble's text */
+.prose-text--compact h4,
+.prose-text--compact h5 {
+	font-size: var(--fs-control);
+	line-height: 22px;
+}
+.prose-text--compact > * + h4,
+.prose-text--compact > * + h5 {
+	margin-top: var(--space-3);
+}
+/* the preflight strips list markers → restored here, the shape stepping by level across both list kinds */
+.prose-text ul {
+	list-style: disc;
+	padding-inline-start: var(--space-4);
+}
+.prose-text :is(ul, ol) ul {
+	list-style: circle;
+}
+.prose-text :is(ul, ol) :is(ul, ol) ul {
+	list-style: square;
+}
+.prose-text ol {
+	list-style: decimal;
+	padding-inline-start: var(--space-4);
+}
+/* no stripe and no fill → a quote never reads as a callout the page draws */
+.prose-text blockquote {
+	padding-inline-start: var(--space-4);
+	color: rgb(var(--dim));
+}
+.prose-text > hr {
+	margin-block: var(--space-4);
+	border-top: 1px solid rgb(var(--line));
+}
+/* the fold's disclosure belongs to the fence above it */
+.prose-text > .prose-fold {
+	margin-top: 0;
+}
+.prose-text li + li,
+.prose-text li > ul,
+.prose-text li > ol {
+	margin-top: var(--space-1);
+}
+.prose-text li::marker {
+	color: rgb(var(--faint));
+}
+.prose-text strong {
+	font-weight: 600;
+}
+.prose-text .machine {
+	font-size: var(--fs-meta);
+}
+/* one face for ProseText's fence and the block machine string; the fence is set in like a list item → it stands apart from the text without a box */
+.prose-pre,
+.machine--block {
+	padding-inline-start: var(--space-4);
+	font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+	font-size: var(--fs-meta);
+	line-height: 1.5;
+	white-space: pre-wrap;
+}
+/* a patch or payload stands alone, with no list to sit in → a sunken plate instead of the fence's inset */
+.machine--block {
+	padding: var(--space-2) var(--space-3);
+	background: rgb(var(--sunken));
+	border-radius: var(--radius-control);
+}
+/* only the frame scrolls sideways, marked by its own scrollbar; the table is as wide as its content, at most the column */
+.prose-table-frame {
+	max-width: 100%;
+	overflow-x: auto;
+}
+/* §7.5 .tbl geometry with its own face: no fill, no vertical rule, the first and last columns on the text's edges */
+.prose-table {
+	border-collapse: collapse;
+	font-size: var(--fs-control);
+	line-height: var(--lh-row);
+}
+.prose-table th,
+.prose-table td {
+	padding: var(--space-2) var(--space-3);
+	text-align: start;
+	overflow-wrap: break-word; /* the inherited anywhere would let a column narrow below its longest word → the frame never scrolls */
+}
+.prose-table th {
+	font-weight: 600;
+	border-bottom: 1px solid rgb(var(--line));
+}
+.prose-table tr + tr td {
+	border-top: 1px solid rgb(var(--line));
+}
+.prose-table :is(th, td):first-child {
+	padding-inline-start: 0;
+}
+.prose-table :is(th, td):last-child {
+	padding-inline-end: 0;
+}
+.prose-table .prose-cell--center {
+	text-align: center;
+}
+.prose-table .prose-cell--end {
+	text-align: end;
+	font-variant-numeric: tabular-nums;
+}
+.prose-text--compact .prose-table {
+	font-size: var(--fs-meta);
+}
+
+/* inline document link — no arrow, so an underline at rest is its non-colour cue (WCAG 1.4.1); .link underlines only on hover */
+a.prose-link {
+	color: rgb(var(--ink));
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.2em;
+}
+a.prose-link:hover {
+	text-decoration-thickness: 2px;
+}
+
+/* drawer fact — one label · value row (spec §6): label 13/500 dim left, value 15 ink right, 32 row; long value wraps, never scrolls */
+.detail-fact {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--gap-control-group);
+	min-height: var(--row-h-compact);
+	margin: 0;
+	padding-block: var(--space-1_5);
+	box-sizing: border-box;
+}
+.detail-fact-label {
+	flex: none;
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	color: rgb(var(--dim));
+}
+.detail-fact-value {
+	min-width: 0;
+	margin: 0;
+	font-size: var(--fs-body);
+	color: rgb(var(--ink));
+	text-align: right;
+	overflow-wrap: anywhere;
+}
+.detail-fact-value .machine { font-size: var(--fs-meta); }
+/* stacked fact — label above value, both on the start edge: a prose value wraps flush-left instead of ragged on the right */
+.detail-fact--stacked {
+	flex-direction: column;
+	align-items: flex-start;
+	justify-content: flex-start;
+	gap: var(--gap-stack);
+}
+.detail-fact--stacked > .detail-fact-value {
+	text-align: left;
+}
+
+/* pagination — range on the left column, quiet Previous · current · Next on the right */
+.pagination {
+	flex: 1 1 auto;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--gap-control) var(--gap-control-group);
+}
+.pagination-range {
+	font-size: var(--fs-meta);
+	color: rgb(var(--dim));
+	font-variant-numeric: tabular-nums;
+}
+.pagination-steps {
+	display: flex;
+	align-items: center;
+	gap: var(--gap-control);
+}
+/* O3 current page — sunken square, ink at 500, no border; the weight step is the cue, the fill alone is under 3:1 */
+.pagination-current {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: var(--ctl-min-h);
+	height: var(--ctl-min-h);
+	padding-inline: var(--space-2);
+	border-radius: var(--radius-control);
+	background: rgb(var(--sunken));
+	color: rgb(var(--ink));
+	font-size: var(--fs-control);
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+}
+
+/* stat row — one card's top-line numbers: a hairline between stats, no tile per stat; stacked on a hairline at 640px or narrower */
+/* label · value · context rows shared by every stat (subgrid) → a wrapped label lowers the whole value line, never its own value */
+.stat-row {
+	display: grid;
+	grid-auto-flow: column;
+	grid-auto-columns: minmax(0, 1fr);
+	grid-template-rows: repeat(3, auto);
+	margin: 0;
+}
+.stat {
+	grid-row: span 3;
+	min-width: 0;
+	display: grid;
+	grid-template-rows: subgrid;
+	row-gap: 0;
+	padding-inline: var(--space-4);
+	border-inline-start: 1px solid rgb(var(--line));
+}
+.stat:first-child {
+	padding-inline-start: 0;
+	border-inline-start: 0;
+}
+.stat:last-child { padding-inline-end: 0; }
+.stat-label {
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	line-height: 1.4;
+	color: rgb(var(--dim));
+}
+/* an ⓘ trigger in a label: a box one label line tall → the label's text keeps the plain labels' top; the 24 hit area reaches past the line, adding no height */
+.stat-label > .btn.icon {
+	position: relative;
+	height: 1lh;
+	min-height: 0;
+	line-height: inherit;
+	vertical-align: top;
+}
+.stat-label > .btn.icon::after {
+	content: "";
+	position: absolute;
+	inset: calc((100% - 24px) / 2) 0;
+}
+/* margin, not row-gap → a row with no context line keeps no empty gap below its values */
+.stat-value {
+	margin: var(--gap-stack) 0 0;
+	font-size: var(--fs-stat);
+	font-weight: 600;
+	line-height: 1.3;
+	font-variant-numeric: tabular-nums;
+	color: rgb(var(--ink));
+}
+.stat-value.text-faint { color: rgb(var(--faint)); }
+.stat-value .unit {
+	margin-left: var(--space-1);
+	font-size: var(--fs-meta);
+	font-weight: 500;
+	color: rgb(var(--dim));
+}
+/* a box one text line tall → its content centres on that line, not on the Icon's text nudge: a tone glyph, a stat's Retry */
+.one-line-box {
+	display: inline-flex;
+	align-items: center;
+	height: 1lh;
+	vertical-align: top;
+}
+/* a head Status spaces its glyph with its own flex gap → only the stat value line adds this one */
+.stat-value .tone-glyph {
+	margin-inline-end: var(--gap-label-inline);
+}
+.stat-context {
+	margin: var(--gap-stack) 0 0;
+	font-size: var(--fs-meta);
+	line-height: 1.4;
+	color: rgb(var(--dim));
+}
+/* a Bar on a stat's context line → that line's height, track centred: level with a BulletBar beside it; a table cell keeps its 8-high bar band */
+.stat-context > .bar-line {
+	min-height: 1lh;
+}
+@media (max-width: 640px) {
+	.stat-row { display: flex; flex-direction: column; }
+	.stat,
+	.stat:first-child,
+	.stat:last-child {
+		padding: var(--space-2) 0 0;
+		border-inline-start: 0;
+		border-block-start: 1px solid rgb(var(--line));
+	}
+	.stat:first-child {
+		padding-block-start: 0;
+		border-block-start: 0;
+	}
 }
 
 /* skip link — off-canvas until keyboard focus lands on it (first Tab stop) */
@@ -781,7 +3060,7 @@ button.kpi:hover {
 		justify-content: center;
 	}
 	.shell-sidebar .rail-hide,
-	.shell-sidebar .nav-badge ~ .nav-badge {
+	.shell-sidebar .nav-count ~ .nav-count {
 		position: absolute;
 		width: 1px;
 		height: 1px;
@@ -789,15 +3068,15 @@ button.kpi:hover {
 		clip: rect(0 0 0 0);
 		white-space: nowrap;
 	}
+	/* the count stacks under the icon → the icon stays whole, so two counted rows still differ by their icon */
 	.shell-sidebar .nav-item {
 		position: relative;
+		flex-direction: column;
 		justify-content: center;
+		gap: var(--space-0_5);
 		padding: 8px 0;
 	}
-	.shell-sidebar .nav-badge {
-		position: absolute;
-		top: 0;
-		right: 0;
+	.shell-sidebar .nav-count {
 		margin-left: 0;
 	}
 }
@@ -821,105 +3100,90 @@ button.kpi:hover {
 	background: rgb(var(--sunken));
 	color: rgb(var(--ink));
 }
+/* --surface-raised-2 is 1.08:1 on the sidebar → the select tint; weight 500 + aria-current carry it beyond the fill */
 .nav-item.active {
-	background: rgb(var(--sunken));
+	background: var(--tint-select);
 	color: rgb(var(--ink));
 	font-weight: 500;
 }
-.nav-badge {
+/* every nav numeral: the tag count chip, at the row end */
+.nav-count {
 	margin-left: auto;
-	font-family: "JetBrains Mono", monospace;
-	font-size: var(--fs-meta);
-	background: rgb(var(--sunken));
-	border: 1px solid rgb(var(--line));
-	padding: 0 var(--space-1_5);
-	border-radius: 999px;
-	color: rgb(var(--dim));
+	flex: none;
 }
 
-/* flat hairline alarm row — tone rides on the leading glyph, never a stripe or tinted fill */
-.alarm-row {
+/* one alarm-row geometry (§7.9) — glyph · content · actions on a 32 first line between 8 paddings: a one-line row is 48.
+   Tone rides on the bare leading glyph, never a stripe, a tinted fill or a tile */
+.alarm-row,
+.alert-card-grid {
 	display: grid;
-	grid-template-columns: auto 1fr auto;
-	gap: 12px;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	column-gap: var(--space-3);
 	align-items: start;
-	padding: 12px 16px;
+	padding: var(--space-2) var(--card-pad);
+}
+/* the row is its own container → its actions drop at the row's content width, wherever a screen puts the row */
+.alarm-row {
+	container-type: inline-size;
 	border-bottom: 1px solid rgb(var(--line));
 }
 .alarm-row:last-child {
 	border-bottom: none;
 }
-.alarm-row-glyph {
+/* a 32 slot → the glyph centres on the first line */
+.alarm-row-glyph,
+.alert-card-glyph {
 	display: inline-flex;
-	padding-top: 2px;
-	line-height: 1;
+	align-items: center;
+	height: var(--ctl-min-h);
+}
+/* half the 32 first line less the 20 title line → the title centres on the glyph slot */
+.alarm-row > .alarm-row-glyph + *,
+.alert-card-content {
+	padding-block: calc((var(--ctl-min-h) - var(--lh-row)) / 2);
+}
+/* two classes → outrank a same-element .fs-body (15 × 1.45 = 21.75), so the title line stays the 20 the row adds up to */
+.alarm-row > .alarm-row-glyph + *,
+.alert-card-title.alert-card-title {
+	line-height: var(--lh-row);
 }
 .alarm-row[data-tone="crit"] .alarm-row-glyph { color: rgb(var(--crit)); }
 .alarm-row[data-tone="warn"] .alarm-row-glyph { color: rgb(var(--warn)); }
 .alarm-row[data-tone="info"] .alarm-row-glyph { color: rgb(var(--info)); }
 .alarm-row[data-tone="ok"] .alarm-row-glyph { color: rgb(var(--ok)); }
+.alarm-row[data-tone="neutral"] .alarm-row-glyph { color: rgb(var(--dim)); }
+.alarm-row-detail,
+.alert-card-body {
+	max-width: 72ch;
+	line-height: 1.4;
+}
+.alarm-row-detail {
+	display: block;
+	margin-top: 4px;
+}
 
-/* alert card — tone rides on the glyph well; never a stripe, a tinted card fill or a tone border.
-   light: solid well + knock-out glyph (a tinted light well leaves --warn at 2.81:1) · dark: tinted well + tone glyph */
+/* alert card — the alarm row on a card shell: the grid holds the padding, the shell stays neutral (no stripe, tinted fill or
+   tone border) and the bare glyph takes the tone — ≥ 3.15:1 on --elev and --sunken */
 .alert-card {
 	--alert-tone: var(--crit);
-	--alert-well-fill: rgb(var(--alert-tone));
-	--alert-glyph: rgb(var(--elev));
 	container-type: inline-size;
-	padding: 12px 16px;
+	padding: 0;
 	/* motion: effects-fast — an opacity-only entry, stopped under reduced motion */
 	animation: detailFade 150ms cubic-bezier(0.2, 0, 0, 1);
-}
-[data-theme="dark"] .alert-card {
-	--alert-well-fill: rgb(var(--alert-tone) / 0.12);
-	--alert-glyph: rgb(var(--alert-tone));
 }
 .alert-card[data-tone="crit"] { --alert-tone: var(--crit); }
 .alert-card[data-tone="warn"] { --alert-tone: var(--warn); }
 .alert-card[data-tone="info"] { --alert-tone: var(--info); }
 .alert-card[data-tone="ok"] { --alert-tone: var(--ok); }
 .alert-card[data-tone="neutral"] { --alert-tone: var(--dim); }
-.alert-card.is-inset {
-	padding: 12px;
+.alert-card-glyph {
+	color: rgb(var(--alert-tone));
 }
-.alert-card-grid {
-	display: grid;
-	grid-template-columns: auto minmax(0, 1fr) auto;
-	column-gap: 12px;
-	align-items: start;
-}
-.alert-card-well {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: var(--ctl-min-h);
-	height: var(--ctl-min-h);
-	border-radius: var(--radius-tile);
-	background: var(--alert-well-fill);
-	color: var(--alert-glyph);
-}
-.alert-card.is-inset .alert-card-well {
-	width: 24px;
-	height: 24px;
-	border-radius: var(--radius-control);
-}
-/* 6px → the 20px title line centres on the 32px well (2px on the 24px inset well) */
 .alert-card-content {
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
 	min-width: 0;
-	padding-top: 6px;
-}
-.alert-card.is-inset .alert-card-content {
-	padding-top: 2px;
-}
-.alert-card-title {
-	line-height: 20px;
-}
-.alert-card-body {
-	max-width: 72ch;
-	line-height: 1.4;
 }
 .alert-card-subjects {
 	display: flex;
@@ -927,11 +3191,48 @@ button.kpi:hover {
 	gap: 4px;
 	margin-top: 4px;
 }
+.alarm-row-actions,
 .alert-card-actions {
 	display: flex;
 	gap: 8px;
 }
+/* bare — the alarm row with no shell, fill or radius: glyph · title · actions on one line, the actions at the row end */
+.alert-card--bare .alert-card-grid {
+	align-items: center;
+	padding: 0;
+}
+.alert-card--bare .alert-card-glyph {
+	height: auto;
+}
+.alert-card--bare .alert-card-content {
+	padding-block: 0;
+}
+/* one line at any width → the narrow drop of the actions under the title never applies */
 @container (max-width: 36rem) {
+	.alert-card--bare .alert-card-actions {
+		grid-column: auto;
+		margin-top: 0;
+	}
+}
+/* inline Retry — a quiet text action at context-line height: no border or box, the 24 hit area from .inline-target */
+.retry-inline {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: rgb(var(--dim));
+	font-size: var(--fs-meta);
+	cursor: pointer;
+}
+.retry-inline:hover {
+	color: rgb(var(--ink));
+}
+/* a Link action is one 20 text line → the slot holds the 32 first line, so it centres on the glyph and title */
+.alarm-row-actions {
+	min-height: var(--ctl-min-h);
+	align-items: center;
+}
+@container (max-width: 36rem) {
+	.alarm-row-actions,
 	.alert-card-actions {
 		grid-column: 2;
 		margin-top: 8px;
@@ -950,74 +3251,14 @@ button.kpi:hover {
 	background: rgb(var(--ink));
 }
 
-.modal-backdrop {
-	position: fixed;
-	inset: 0;
-	background: rgba(0, 0, 0, 0.42); /* 솔리드 scrim 기본 (§9.3 fallback-first) */
-	z-index: var(--z-overlay);
-	display: grid;
-	place-items: center;
-}
-/* "smoke" glass — transient backdrop 1장만 합성 (§6.3 ALLOW · §9.2 ≤2 예산).
-   reduce 사용자/미지원 브라우저는 위 솔리드 0.42 유지. */
-@supports (backdrop-filter: blur(1px)) {
-	@media (prefers-reduced-transparency: no-preference) {
-		.modal-backdrop {
-			background: rgb(0 0 0 / 0.35);
-			backdrop-filter: blur(8px);
-			-webkit-backdrop-filter: blur(8px);
-		}
-	}
-}
-.modal {
-	background: rgb(var(--surface-overlay)); /* 오버레이 불투명 면 (텍스트 4.5:1 보장, §7.8) */
-	border-radius: var(--radius-card);
-	width: min(560px, 92vw);
-	max-height: 86vh;
-	box-shadow: var(--shadow-overlay);
-	overflow: hidden;
-	display: flex;
-	flex-direction: column;
-}
-.modal-head {
-	min-height: var(--card-head-h);
-	padding: var(--space-1) var(--space-6);
-	border-bottom: 1px solid rgb(var(--line));
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-}
-.modal-body {
-	padding: var(--space-4) var(--space-6);
-	overflow-y: auto;
-}
-.modal-foot {
-	padding: var(--space-3) var(--space-6);
-	border-top: 1px solid rgb(var(--line));
-	display: flex;
-	justify-content: flex-end;
-	gap: 8px;
-	background: rgb(var(--sunken));
-}
-
 /* ── DetailSurface — 공용 오버레이 (variant: drawer/fullscreen/confirm) ──────
-   backdrop 는 .modal-backdrop 재사용 (별도 색 미발명). overlay 는 fixed 전면
-   스크림 + variant 별 배치/모션. 면 색상·그림자·라인은 tokens.css 재참조. */
+   overlay 는 fixed 전면 스크림 + variant 별 배치/모션. 면 색상·그림자·라인은 tokens.css 재참조. */
 .detail-overlay {
 	position: fixed;
 	inset: 0;
-	background: rgba(0, 0, 0, 0.42); /* .modal-backdrop 와 동일 scrim (단일 색) */
+	background: rgba(0, 0, 0, 0.42); /* 솔리드 scrim (§9.3 fallback-first) */
 	z-index: var(--z-overlay);
 	display: flex;
-}
-@supports (backdrop-filter: blur(1px)) {
-	@media (prefers-reduced-transparency: no-preference) {
-		.detail-overlay {
-			background: rgb(0 0 0 / 0.35);
-			backdrop-filter: blur(8px);
-			-webkit-backdrop-filter: blur(8px);
-		}
-	}
 }
 /* drawer = 우측 정렬 슬라이드인 · fullscreen = 중앙 충만 · confirm = 중앙 소형 */
 .detail-drawer { justify-content: flex-end; }
@@ -1026,41 +3267,8 @@ button.kpi:hover {
 /* confirm 은 열린 drawer/fullscreen 위로 재차 스택 — 더 높은 z 로 위 레이어 확보. */
 .detail-overlay.detail-confirm { z-index: var(--z-confirm); }
 
-/* Page verdict (PageVerdict) — glyph carries the tone colour, the word and sentence stay ink for contrast */
-.page-verdict {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	gap: 4px 12px;
-}
-.page-verdict-tone {
-	display: inline-flex;
-	align-items: baseline;
-	gap: 6px;
-	font-weight: 600;
-	white-space: nowrap;
-}
-.page-verdict--ok .page-verdict-glyph { color: rgb(var(--ok)); }
-.page-verdict--warn .page-verdict-glyph { color: rgb(var(--warn)); }
-.page-verdict--crit .page-verdict-glyph { color: rgb(var(--crit)); }
-.page-verdict--info .page-verdict-glyph { color: rgb(var(--info)); }
-.page-verdict--neutral .page-verdict-glyph { color: rgb(var(--faint)); }
-.page-verdict-chips {
-	display: inline-flex;
-	flex-wrap: wrap;
-	gap: 8px;
-}
-/* A chip is an action beside the sentence → resting button chrome, never bare text */
-.page-verdict-chips .btn.ghost {
-	border-color: rgb(var(--line));
-	background: rgb(var(--elev));
-	color: rgb(var(--ink));
-}
-.page-verdict-chips .btn.ghost:hover { background: rgb(var(--sunken)); }
-
-/* Low-sample marker (LowSampleMark) — muted italic n beside a small-sample rate */
+/* Low-sample marker (LowSampleMark) — muted n beside a small-sample rate */
 .low-sample {
-	font-style: italic;
 	color: rgb(var(--faint));
 }
 
@@ -1069,24 +3277,32 @@ button.kpi:hover {
 	position: relative;
 	display: inline-flex;
 }
-/* .card clips (overflow: hidden) → lifted only while a panel is open, so a short card never cuts it off */
-.card:has(.popover-panel) {
+/* .card clips (overflow: clip) → lifted only while a panel is open, so a short card never cuts it off */
+.card:has(.popover-panel),
+.card:has(.menu) {
 	overflow: visible;
+}
+/* one overlay surface for the popover and the menu → the two cannot drift */
+.popover-panel,
+.menu {
+	z-index: calc(var(--z-overlay) - 1);
+	max-width: min(360px, calc(100vw - 32px));
+	max-height: 60vh;
+	overflow: auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--gap-list);
+	padding: var(--card-pad);
+	background: rgb(var(--overlay-surface));
+	border: 1px solid rgb(var(--line));
+	border-radius: var(--radius-card);
+	box-shadow: var(--shadow-overlay);
 }
 .popover-panel {
 	position: absolute;
 	top: calc(100% + 4px);
 	right: 0;
-	z-index: calc(var(--z-overlay) - 1);
 	min-width: 240px;
-	max-width: min(360px, calc(100vw - 32px));
-	max-height: 60vh;
-	overflow: auto;
-	padding: 12px;
-	background: rgb(var(--overlay-surface));
-	border: 1px solid rgb(var(--line));
-	border-radius: var(--radius-card);
-	box-shadow: var(--shadow-overlay);
 }
 
 .detail-panel {
@@ -1115,6 +3331,12 @@ button.kpi:hover {
 	border: none;
 	border-radius: 0;
 	animation: detailFade 180ms ease-out;
+}
+/* panel over a scrim → ring inset on the panel's own fill: an outer ring lands on the scrim or off the viewport edge */
+.detail-drawer .detail-panel:focus-visible,
+.detail-fullscreen .detail-panel:focus-visible,
+.detail-confirm .detail-panel:focus-visible {
+	outline-offset: calc(var(--focus-ring-width) * -1);
 }
 .detail-confirm .detail-panel {
 	width: min(560px, 92vw);
@@ -1175,34 +3397,46 @@ button.kpi:hover {
 	.detail-confirm .detail-panel { animation-duration: 0.01ms !important; }
 }
 
-/* the one empty-state form — padding 24, left-aligned, sans meta size, dim */
+/* TODO(mon-ui/43942): direct className="placeholder" use in screens deprecated for EmptyState — move each screen caller; .placeholder + .placeholder-hint stay as EmptyState's own styling */
+/* the one empty-state form — borderless, left-aligned, message in ink at the control size, hint 13 dim under it.
+   Its host already sits on the card column (a padded card body, a fold body) → no inline padding of its own */
 .placeholder {
-	padding: var(--space-6);
-	border: 1px dashed rgb(var(--faint) / 0.5);
-	border-radius: var(--radius-tile);
-	color: rgb(var(--dim));
+	padding-block: var(--card-pad);
+	color: rgb(var(--ink));
 	text-align: left;
+	font-size: var(--fs-control);
+}
+/* a failed region sits on its host's card column like any card content → the alarm row's inline padding goes */
+.alarm-row.region-unavailable {
+	padding-inline: 0;
+}
+/* a flush card's direct body (a flush .card-body, or a card box holding its content bare) has no column of its own → an empty or failed region takes the card inset */
+.card-body.flush > .placeholder,
+.card-body.flush > .region-unavailable,
+.card > .placeholder,
+.card > .region-unavailable {
+	padding-inline: var(--card-pad);
+}
+.placeholder-hint {
+	margin-top: var(--space-1);
 	font-size: var(--fs-meta);
+	line-height: 1.4;
+	color: rgb(var(--dim));
 }
 
 /* prefers-reduced-motion 계약 (§8.4) — 모든 신규/기존 모션 게이트.
    브라우저/OS 가 자동 반영. transform 기반 enter/reorder 는 transition 제거로 즉시 적용. */
 @media (prefers-reduced-motion: reduce) {
-	.live-dot {
-		animation: none;
-		opacity: 0.8;
-	}
 	.alert-card {
 		animation: none;
 	}
-	.btn,
-	.kpi {
+	.btn {
 		transition: none;
 	}
 }
 
 /* ── Shared form controls (R1 subtle polish) ─────────────────────────────────
-   Chrome 정합: .btn(radius 6px·elev fill·0.12s transition·disabled opacity 0.5) + .seg/.kpi(elev resting fill) 미러 ·
+   Chrome 정합: .btn(radius 6px·elev fill·0.12s transition·disabled opacity 0.5) + .seg(elev resting fill) 미러 ·
    테두리 = 1px --control-edge(토글 resting edge — plain .btn 의 --line 아님) · focus = accent border + 전역 :focus-visible ring.
    신규 토큰 없음 — 전부 tokens.css 재참조.
    높이 = padding 6px+6px + --lh-ctl line box + 1px×2 border = --ctl-min-h(32px) 정확히. */
@@ -1227,7 +3461,7 @@ button.kpi:hover {
 	font-size: var(--ctl-font);        /* .btn 본문과 동일 — fs-body 계열 */
 	line-height: var(--ctl-line);
 	color: rgb(var(--ink));
-	background: rgb(var(--elev));       /* .btn/.seg/.kpi resting fill 정합 */
+	background: rgb(var(--elev));       /* .btn/.seg resting fill 정합 */
 	border: 1px solid rgb(var(--control-edge)); /* the control edge → the box reads at rest on every surface, one step under the --faint hover */
 	border-radius: var(--ctl-radius);  /* .btn radius 정합 */
 	transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
@@ -1248,8 +3482,7 @@ button.kpi:hover {
 }
 
 /* focus — accent border only; the ring is the global :focus-visible outline. */
-.field:focus-visible,
-.field:focus {
+.field:focus-visible {
 	border-color: rgb(var(--accent));
 }
 
@@ -1264,34 +3497,28 @@ button.kpi:hover {
 .field.is-error {
 	border-color: rgb(var(--crit));
 }
-.field.is-error:focus-visible,
-.field.is-error:focus {
+.field.is-error:focus-visible {
 	border-color: rgb(var(--crit));
 }
 
 /* ── select — native <select> 유지 + 토큰 색 chevron ─────────────────────────
    appearance:none 으로 OS 기본 화살표 제거 후, currentColor 대신 --faint 고정색
-   인라인 SVG data-uri 를 우측에 배치 → 다크/라이트 양쪽 동일 톤. 우측 padding 으로
+   인라인 SVG data-uri (--faint 160 154 150 톤) 를 우측에 배치. 우측 padding 으로
    chevron 자리 확보. background 는 fill(elev) + chevron 2겹 합성. */
 .field-select {
 	--select-chevron: 12px;  /* the chevron's size (a size, outside the ladder) */
 	/* the chevron gutter = inset + chevron + the same gap before the value text (28 today) */
 	padding-right: calc(2 * var(--space-2) + var(--select-chevron));
-	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23706a65' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23a09a96' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
 	background-repeat: no-repeat;
 	background-position: right var(--space-2) center;
 	background-size: var(--select-chevron) var(--select-chevron);
 	cursor: pointer;
 }
-/* 다크 테마 chevron — --faint(dark)=160 154 150 톤으로 교체해 어두운 면에서 가시화 */
-[data-theme="dark"] .field-select {
-	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23a09a96' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
-}
-.field-select:focus-visible,
-.field-select:focus {
+.field-select:focus-visible {
 	background-position: right var(--space-2) center; /* focus 시 ring 추가돼도 chevron 고정 */
 }
-/* 옵션 목록은 OS 네이티브 렌더 — 다크 일관성은 [data-theme] 무관(브라우저 소관) */
+/* 옵션 목록은 OS 네이티브 렌더 — tokens.css 의 color-scheme: dark 가 다크로 그림 */
 
 /* ── inline-affix wrapper — 예산 "$" 등 ($ 가 input 높이 안에서 정렬, 높이 불변) ──
    wrapper 가 border/radius/fill/focus-ring 을 소유, 내부 input 은 borderless 투명.
@@ -1306,6 +3533,7 @@ button.kpi:hover {
 	transition: border-color 0.12s, box-shadow 0.12s;
 	min-height: var(--ctl-h);          /* the wrapper owns the border → it, not the inner field, holds the 32px control height */
 	padding-left: var(--ctl-pad-x);    /* affix 좌측 gutter = a field's own inline padding — input 자체 좌패딩은 제거 */
+	width: 100%;                       /* the wrapper is the field's box → it fills its column as a bare .field does */
 }
 .field-affix:hover:not(:focus-within):not(.is-error) { border-color: rgb(var(--faint)); }
 .field-affix:focus-within {
@@ -1329,7 +3557,8 @@ button.kpi:hover {
 	box-shadow: none;
 	padding-left: 4px;                 /* sym 과 값 사이 간격 */
 	min-height: 0;                     /* borderless inside the wrapper → 6 + line + 6, the wrapper borders make it 32 */
-	width: 100%;
+	flex: 1 1 auto;                    /* the rest of the wrapper after the affix */
+	min-width: 0;                      /* an input's intrinsic width never pushes past the wrapper */
 }
 .field-affix .field:focus-visible,
 .field-affix .field:focus { box-shadow: none; border: none; outline: none; }
@@ -1342,6 +3571,105 @@ button.kpi:hover {
 /* reduced-motion — transition 제거 (base.css §8.4 계약 정합). 색 변화는 즉시 적용. */
 @media (prefers-reduced-motion: reduce) {
 	.field, .field-affix { transition: none; }
+}
+
+/* agent selection bar (model-config) — its own inline size picks its form, never the viewport (drawer sheet, narrow rail) */
+.agent-bar {
+	container: agent-bar / inline-size;
+}
+/* one 32 line in the card's bar slot, which pads 8 → 48 idle or ticked; groups 12 apart */
+.agent-bar-line {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2) var(--space-3);
+	min-height: var(--ctl-min-h);
+}
+/* break = the widest one-line content: count cell 134 + 12 + select 189 + 8 + `Apply to 99 agents` 131 + 12 + Clear selection 122 ≈ 608.
+   Under it: line 1 count (or the idle line) + Clear end-aligned, line 2 select + Apply; both lines held in every state → no row moves */
+@container agent-bar (width < 608px) {
+	.agent-bar-line {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-rows: repeat(2, minmax(var(--ctl-min-h), auto));
+		grid-template-areas: "count clear" "controls controls";
+	}
+	.agent-bar-line > :nth-child(2) {
+		grid-area: controls;
+	}
+	.agent-bar-line > :nth-child(3) {
+		grid-area: clear;
+		justify-self: end;
+	}
+}
+
+/* agent card head (model-config): title + sub share a line while they fit, then the sub wraps under the title — never cut;
+   the head's controls keep their own line */
+.agent-card > .card-head > .card-head-text {
+	flex: 1 1 0;
+	flex-wrap: wrap;
+	row-gap: 0;
+}
+.agent-card > .card-head > .card-head-text > .card-sub {
+	flex: 0 1 auto;
+	contain: none;
+	white-space: normal;
+	overflow: visible;
+}
+
+/* agent table, wide: a refused agent's reason row is its agent row's second line — the agent row drops its bottom pad and the
+   40 step, the reason row pads 0 above and 8 below → the reason sits one meta line under the main line */
+.tbl.agent-table:not(.tbl--stacked) > tbody > tr.is-grouped > td {
+	height: auto;
+	padding-block-end: 0;
+}
+.tbl.agent-table:not(.tbl--stacked) > tbody > tr.agent-row-detail > td {
+	height: auto;
+	padding-block: 0 var(--space-2);
+}
+
+/* agent table, stacked — each row its own grid. The box column is the box's width in every row (an unreadable row has no box),
+   so the name and each second line (role, file reason, failure reason) share one x. The model column is only as wide as this
+   row's model, capped at half → the name takes the rest and is cut only where the two meet */
+.tbl.tbl--stacked.agent-table > tbody > tr.agent-row {
+	display: grid;
+	grid-template-columns: var(--ctl-checkbox-size) minmax(0, 1fr) fit-content(50%);
+	grid-template-rows: auto 1fr;
+	align-items: start;
+}
+/* the box cell is one name line tall → the 16 box centres on that line, its 24 hit area overhanging */
+.tbl.tbl--stacked.agent-table > tbody > tr.agent-row > td:first-child {
+	display: flex;
+	align-items: center;
+	height: var(--lh-row);
+}
+/* third cell = the model (or Not loaded), end-aligned; line two (the role, None, the file's reason, a failure reason) runs from
+   the name's x to the row end */
+.tbl.tbl--stacked.agent-table > tbody > tr.agent-row > td:nth-child(3) {
+	grid-area: 1 / 3;
+	justify-self: end;
+	text-align: end;
+}
+.tbl.tbl--stacked.agent-table .agent-row-sub {
+	grid-column: 2 / -1;
+}
+/* a model with a price note is both lines tall → the note wraps under the id and line two keeps the name column, never pushed
+   below the note (the 1fr second row takes the model's extra height, so the first row stays the name's height) */
+.tbl.tbl--stacked.agent-table > tbody > tr.agent-row > td:nth-child(3):has(> :nth-child(2)) {
+	grid-row: 1 / span 2;
+}
+.tbl.tbl--stacked.agent-table > tbody > tr.agent-row:has(> td:nth-child(3) > :nth-child(2)) > td:nth-child(4) {
+	grid-column: 2;
+}
+/* head: master box · Agent over the name · Model over the model; the role has no column when it is line two */
+.tbl.tbl--stacked.agent-table > thead > tr {
+	display: grid;
+	grid-template-columns: var(--ctl-checkbox-size) minmax(0, 1fr) auto;
+}
+.tbl.tbl--stacked.agent-table > thead th:has(> .agent-head-role) {
+	display: none;
+}
+.tbl.tbl--stacked.agent-table > thead th:last-child {
+	justify-self: end;
 }
 
 /* ── Save banner (model-config S9) — sticky 하단 dirty-state 바.

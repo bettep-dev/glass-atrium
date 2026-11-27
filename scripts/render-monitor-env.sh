@@ -2,12 +2,13 @@
 # render-monitor-env.sh — render config.toml values into monitor/.env
 # Usage: render-monitor-env.sh
 #
-# Renders five gitignored keys from config.toml (upper SoT — see config.toml header):
+# Renders eight gitignored keys from config.toml (upper SoT — see config.toml header):
 #   ATRIUM_MONITOR_PORT     ← [ports].monitor          (bindable integer 1-65535)
 #   CLAUDED_DOCS_HTML_ROOT  ← [paths].monitor_docs_html_root  (absolute dir path)
 #   ATRIUM_TIMEZONE         ← [meta].timezone RESOLVED  ('auto'→host IANA; explicit verbatim)
 #   ATRIUM_SCHEDULE_AUTOAGENT     ← [daemon.autoagent-cycle].time      ("HH:MM" 24h)
 #   ATRIUM_SCHEDULE_WIKI          ← [daemon.wiki-compile].time         ("HH:MM" 24h)
+#   ATRIUM_REMOTE_ACCESS / _PORT / _TRUSTED_NETWORKS ← [remote_access] (absent → off)
 #
 # The two ATRIUM_SCHEDULE_* keys mirror the ATRIUM_TIMEZONE render-then-consume
 # path: config.toml [daemon.*].time is SoT, the monitor reads env only, and
@@ -26,6 +27,8 @@
 # Idempotency: safe to re-run — upsert replaces the same key in place; env is read
 # at process start, so only a monitor restart picks up new values.
 set -euo pipefail
+# .env holds the database URL and the remote settings → owner-only from the first byte
+umask 077
 
 readonly GA_ROOT="${GA_ROOT:-${HOME}/.glass-atrium}"
 readonly ENV_FILE="${GA_ROOT}/monitor/.env"
@@ -38,6 +41,8 @@ readonly SCRIPT_DIR
 source "${SCRIPT_DIR}/lib/atrium-config.sh"
 # shellcheck source-path=SCRIPTDIR source=lib/path-guard.sh
 source "${SCRIPT_DIR}/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=../lib/ga-remote.sh
+source "${SCRIPT_DIR}/../lib/ga-remote.sh"
 CONFIG_TOML="$(atrium_config_file)"
 readonly CONFIG_TOML
 
@@ -50,7 +55,6 @@ readonly CONFIG_TOML
 # Args: $1 = key · $2 = value.
 upsert_env() {
   local env_key="$1" env_val="$2"
-  touch "${ENV_FILE}"
   if grep -qE "^${env_key}=" "${ENV_FILE}"; then
     # Rewrite the matching line via awk, passing the value through ENVIRON (process
     # environment) not sed's replacement string. WHY: sed's replacement interprets
@@ -163,9 +167,34 @@ SCHED_AUTOAGENT="${SCHEDULE_TIME}"
 require_schedule_time "[daemon.wiki-compile]" 13 14
 SCHED_WIKI="${SCHEDULE_TIME}"
 
-# render all keys
+# 5. ATRIUM_REMOTE_* ← [remote_access] — every key rendered on every run, so a removed table or key
+# renders off (upsert never deletes a stale key); on only for `enabled = true` with a valid port
+REMOTE_ENABLED="$(atrium_toml_get "[remote_access]" "enabled")"
+REMOTE_PORT="$(atrium_toml_get "[remote_access]" "port")"
+REMOTE_TRUSTED_RAW="$(atrium_toml_get "[remote_access]" "trusted_networks")"
+# shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+if [[ -n "${REMOTE_PORT}" ]] && ! ga_remote_is_port "${REMOTE_PORT}" "${PORT}"; then
+  echo "render-monitor-env: invalid [remote_access].port='${REMOTE_PORT}' — must be 1024-65535 and not the monitor port" >&2
+  exit 17
+fi
+# shellcheck disable=SC2310  # its status is the validation verdict, branched on here
+if ! REMOTE_TRUSTED="$(ga_remote_get_trusted_list "${REMOTE_TRUSTED_RAW}")"; then
+  echo "render-monitor-env: invalid [remote_access].trusted_networks — each entry must be <private gateway IPv4>@<6 two-digit hex octets>" >&2
+  exit 18
+fi
+REMOTE_ACCESS="off"
+if [[ "${REMOTE_ENABLED}" == "true" && -n "${REMOTE_PORT}" ]]; then
+  REMOTE_ACCESS="on"
+fi
+
+# umask covers only a new file → an existing wider .env is narrowed before its first key lands
+touch "${ENV_FILE}"
+chmod 600 "${ENV_FILE}"
 upsert_env "ATRIUM_MONITOR_PORT" "${PORT}"
 upsert_env "CLAUDED_DOCS_HTML_ROOT" "${DOCS_HTML_ROOT}"
 upsert_env "ATRIUM_TIMEZONE" "${TZ_VALUE}"
 upsert_env "ATRIUM_SCHEDULE_AUTOAGENT" "${SCHED_AUTOAGENT}"
 upsert_env "ATRIUM_SCHEDULE_WIKI" "${SCHED_WIKI}"
+upsert_env "ATRIUM_REMOTE_ACCESS" "${REMOTE_ACCESS}"
+upsert_env "ATRIUM_REMOTE_PORT" "${REMOTE_PORT}"
+upsert_env "ATRIUM_REMOTE_TRUSTED_NETWORKS" "${REMOTE_TRUSTED}"

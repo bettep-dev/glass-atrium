@@ -1,12 +1,13 @@
 #!/usr/bin/env bats
 # skill-registry-retired.bats — pins the retired-map row for skills/skill-registry.json (G-12).
 #
-# Bare `generate-manifest.sh --check` cannot see an eroded retired map: build_retired_json
-# carries entries forward FROM the same manifest --check compares against, so a deleted
-# retired row is self-consistent and passes green. A row lost that way leaves the updater
-# with no removal instruction and the retired file installed on every consumer.
+# A retired row deleted together with its commit is self-consistent: build_retired_json
+# carries entries forward FROM the same manifest --check compares against, and HEAD's
+# committed map has lost the row too. A row lost that way leaves the updater with no
+# removal instruction and the retired file installed on every consumer.
 # `--check --reference <manifest>` catches the drop against a supplied manifest (CI passes
-# the PR target's tip); this pin still guards the one row with no reference at hand.
+# the PR target's tip, the release gate the last release); this pin still guards the one
+# row with no reference at hand.
 #
 # TRACKED-CONTENT SCAN: this file ships to the live install, where the scan root is not a
 # git work tree. The test goes inert off a checkout root rather than failing for the wrong

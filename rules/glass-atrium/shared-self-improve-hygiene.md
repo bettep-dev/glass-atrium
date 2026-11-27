@@ -55,11 +55,10 @@ Applies to two audiences, both loaded on a Read whose path matches the `paths:` 
 - **Never drive the site count down as a goal**: a grep count of the absorption idioms is a population, not a defect set — most hits are load-bearing idioms or handled failure paths, so a falling count can mean a broken script as easily as a fixed one.
 - **Classify before judging, and classify block-scoped — never line-local**: the evidence separating the three categories lives in the surrounding block, not on the matched line.
 - **Category 1 — benign idiom**: the non-zero status is a normal outcome, and removing the suppression breaks the script under `set -Eeuo pipefail`. Worked shapes:
-  - a NUL-delimited heredoc read reaching EOF without a NUL terminator (`hooks/enforce-harness-critical.sh` loads its own classifier source this way);
+  - a NUL-delimited heredoc read reaching EOF without a NUL terminator;
   - a pattern search exiting 1 because nothing matched (`grep`/`find` — zero hits is data);
   - trap or teardown cleanup of a file that may already be gone.
 - **Category 2 — explicitly handled**: the suppression covers only the stderr stream or a redundant channel, while the status is captured, branched on, or defaulted. Worked shapes:
-  - `hooks/enforce-harness-critical.sh`'s classifier invocation, whose captured status routes a failure to the named `classifier-failure` fail-closed branch — untouchable;
   - `scripts/wiki-daily-compile.sh`'s FATAL-echo: its suppressed log append is redundant, because the next line emits the same notice unsuppressed to stderr, a status row records the error, and the block ends in a non-zero exit.
 - **Category 3 — genuine silent absorption**: no branch, no captured status, no loud channel anywhere in the block — the only category the principle forbids, and it is converted, never annotated.
   - Worked shape: a reporting channel that swallows its own failure, leaving the remedy triad's third leg unfilled.

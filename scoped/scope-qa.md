@@ -152,11 +152,12 @@ On every code review, tag the change with a regression-risk label and carry it o
 
 | Label | Triggers |
 |---|---|
-| **High** | core business logic changed AND no test added · a test removed without a named reason · the added test cannot fail |
+| **High** | core business logic changed AND no test added · a test removed or weakened, no named reason · the added test cannot fail |
 | **Med** | non-core change covered by existing tests |
 | **Low** | config / docs / non-executable artifact only |
 
 - What a test that cannot fail looks like: `scoped/shared-testing.md` → `### Meaningless-Test Prohibitions`.
 - A named reason is a **Deletion duty** subsumption or a **Coupled-test check** removal, stated in the change's `concerns`; judge whether it holds.
+  - A weakened test is one loosened or re-pinned: its named reason is the rule change, with its source, that `scoped/shared-testing.md` → **Coupled-test check** requires.
 - State in one line the relationship the added test asserts. Unable to state it → treat it as no test added.
 - **High** → list the affected test paths in the review output, so the orchestrator can route the next-step verification correctly.

@@ -69,7 +69,11 @@ DAEMON_CYCLE_PY="/nonexistent/daemon_cycle.py"
 ts_now_json() { printf '0'; }
 json_escape() { printf '"stub"'; }
 emit_log() { :; }
-python3() { printf 'ok\t0\t1\ndeclared removal line\n'; }
+# drains stdin first, as the real --removal-evidence reader does → no SIGPIPE on the diff printf
+python3() {
+  cat >/dev/null
+  printf 'ok\t0\t1\ndeclared removal line\n'
+}
 source "${SNIP}"
 assert_removal_evidence "/nonexistent/target.md" "diff body" "probe-label" "probe-target.md"
 printf 'verdict=%s\n' "${REMOVAL_VERDICT}"

@@ -41,7 +41,7 @@ const rowsOf = (rows: Record<string, string>): ReadonlyMap<string, string> =>
 // The exact state an updated-but-un-migrated install is in: the init_squashed seed's two
 // pre-rename rows, and nothing under the post-rename names the server now queries.
 const UN_MIGRATED = {
-  "model.dev": "inherit",
+  "tier.worker_effort": "inherit",
   "model.daemon_cycle_haiku": "claude-haiku-4-5",
   "budget.haiku_max_usd": "0.75",
   "budget.pre_verify_max_usd": "10.00",
@@ -49,7 +49,7 @@ const UN_MIGRATED = {
 
 // The same install after `prisma migrate deploy`: post-rename rows, legacy rows deleted.
 const MIGRATED = {
-  "model.dev": "inherit",
+  "tier.worker_effort": "inherit",
   "model.daemon_cycle_worker": "claude-sonnet-5",
   "budget.worker_max_usd": "0.75",
   "budget.pre_verify_max_usd": "10.00",
@@ -70,7 +70,7 @@ test("un-migrated DB: both renamed domains resolve from their pre-rename rows", 
     "both domains are marked legacy-sourced",
   );
   // Untouched rows pass through unchanged.
-  assert.strictEqual(desired.get("model.dev"), "inherit");
+  assert.strictEqual(desired.get("tier.worker_effort"), "inherit");
   assert.strictEqual(desired.get("budget.pre_verify_max_usd"), "10.00");
 });
 
@@ -128,7 +128,7 @@ test("a partial Save leaves only the un-Saved domain legacy-sourced", () => {
 });
 
 test("hand-pruned DB: neither row present → nothing is invented", () => {
-  const { desired, legacySourced } = resolveDesiredWithLegacy(rowsOf({ "model.dev": "inherit" }));
+  const { desired, legacySourced } = resolveDesiredWithLegacy(rowsOf({ "tier.worker_effort": "inherit" }));
 
   assert.ok(!desired.has("model.daemon_cycle_worker"), "no value is fabricated");
   assert.ok(!desired.has("budget.worker_max_usd"));

@@ -23,69 +23,67 @@ const PAYLOAD_SLOT_ID_I = Object.freeze({
 	proposalMeasurements: "improvement-proposal-measurements",
 });
 
+// one head per card in every state → its loading, data, empty and error forms read the same title, sub, ⓘ and head link
+const CARD_HEAD_I = Object.freeze({
+	flaggedResults: {
+		title: "Flagged results (7 days)",
+		sub: "Quarantined rows excluded",
+		link: { href: "#outcomes", label: "Task results" },
+	},
+	corpusGrowth: { title: "Corpus growth", sub: "Per-cycle audit" },
+	correctionSignals: {
+		title: "Detection agreement",
+		sub: "Correction signals",
+		info: "Agreement = both + neither (the two stages concur) ÷ all signals.",
+	},
+	proposalMeasurements: { title: "Proposal measurements" },
+});
+
+function getCardHeadPropsI({ title, sub, info, link }) {
+	const { Link } = window.UI;
+	return { title, sub, info, right: link && <Link href={link.href}>{link.label}</Link> };
+}
+
 // One banner per failed payload, in place of the group that payload owns.
 // `source` = the page's region name, so a shared outage banner naming it quiets this card
-function PayloadErrorCardI({ title, source, state, onRetry, failures, focusTargetId }) {
-	const { CardHead, RegionFailure } = window.UI;
+function PayloadErrorCardI({ head, source, state, onRetry, failures, focusTargetId }) {
+	const { Card, RegionFailure } = window.UI;
 	return (
-		<div className="card">
-			<CardHead title={title} />
-			<div className="px-4 py-4">
-				<RegionFailure
-					source={source}
-					error={state.error}
-					isBusy={state.busy}
-					failures={failures}
-					focusTargetId={focusTargetId}
-					onRetry={onRetry}
-				/>
-			</div>
-		</div>
+		<Card {...getCardHeadPropsI(head)}>
+			<RegionFailure
+				source={source}
+				error={state.error}
+				isBusy={state.busy}
+				failures={failures}
+				focusTargetId={focusTargetId}
+				onRetry={onRetry}
+			/>
+		</Card>
 	);
 }
 
 // 플래그된 결과 — 운영 밴드가 아니라 계기판에 산다. 이 수는 루프가 무엇을 내놓았는지가
 // 아니라 판정기가 무엇을 걸렀는지를 말하고, 걸린 행 자체는 Task results 가 소유한다.
-function FlaggedResultsCardI({ state, reviewReasons, onNav }) {
-	const { CardHead, Icon, LoadingPlaceholder } = window.UI;
-	const title = "Flagged results (7 days)";
+function FlaggedResultsCardI({ state, reviewReasons }) {
+	const { Card, LoadingPlaceholder, Stack, StatRow } = window.UI;
+	const head = getCardHeadPropsI(CARD_HEAD_I.flaggedResults);
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
-			<div className="card">
-				<CardHead title={title} />
-				<div className="px-4 py-4">
-					<LoadingPlaceholder label="flagged results" minHeight={60} />
-				</div>
-			</div>
+			<Card {...head}>
+				<LoadingPlaceholder label="flagged results" minHeight={60} />
+			</Card>
 		);
 	}
 
 	return (
-		<div className="card">
-			<CardHead
-				title={title}
-				sub="Quarantined rows excluded"
-				right={
-					<button
-						className="btn ghost sm"
-						onClick={() => {
-							if (typeof onNav === "function") onNav("outcomes");
-						}}
-						aria-label="Open the flagged rows on the Task results screen"
-					>
-						Task results <Icon name="arrow-right" size={14} />
-					</button>
-				}
-			/>
-			<div className="px-4 pb-4">
-				<div className="fs-display font-mono text-ink tnum">
-					{formatIntI(Number(state.data.review_flag_last_7d ?? 0))}
-				</div>
+		<Card {...head}>
+			<Stack gap="block">
+				<StatRow stats={[{ key: "flagged", label: "Flagged rows", value: formatIntI(Number(state.data.review_flag_last_7d ?? 0)) }]} />
 				<FlaggedReasonBarsI segments={reviewReasons} />
-			</div>
-		</div>
+			</Stack>
+		</Card>
 	);
 }
 
@@ -94,34 +92,23 @@ function FlaggedReasonBarsI({ segments }) {
 	const { Bar } = window.UI;
 	const ranked = getRankedReasonsI(segments);
 
-	if (ranked.length === 0) {
-		return (
-			<div className="card-sub fs-meta mt-1">
-				Outcomes flagged in the last 7 days
-			</div>
-		);
-	}
+	if (ranked.length === 0) return null;
 
 	return (
+		// subgrid → one label column as wide as the longest label (cap 14rem), each count right after it, the bar takes the rest
 		<ul
-			className="mt-3 space-y-1.5"
+			className="grid grid-cols-[fit-content(14rem)_auto_1fr] gap-x-control gap-y-list fs-meta"
 			aria-label={`Why results were flagged — ${segments.classifiedTotal} rows classified`}
 		>
 			{ranked.map((s) => (
-				<li
-					key={s.key}
-					className="grid grid-cols-[minmax(0,14rem)_1fr_3.5rem] items-center gap-3 fs-meta"
-					title={s.title}
-				>
+				<li key={s.key} className="col-span-full grid grid-cols-subgrid items-center" title={s.title}>
 					<span className="truncate">{s.label}</span>
+					<span className="tnum text-right">{formatIntI(s.count)}</span>
 					<Bar
 						value={s.count}
 						max={ranked[0].count}
 						ariaLabel={`${s.label} ${formatIntI(s.count)}`}
 					/>
-					<span className="font-mono tnum text-right">
-						{formatIntI(s.count)}
-					</span>
 				</li>
 			))}
 		</ul>
@@ -145,19 +132,29 @@ function ImprovementInstrumentationViewI({
 	tierBreakdown,
 	confidenceDist,
 	reviewReasons,
-	onNav,
 	onRetry,
 	failures,
 }) {
 	const { SplitRow, SplitColumn, getRegionView } = window.UI;
+	const rowLayout = {
+		signal: getRowLayoutI([
+			isCorpusGrowthEmptyI(corpusAuditState.data),
+			isCorrectionSignalsEmptyI(correctionState.data),
+		]),
+		measurement: getRowLayoutI([
+			isProseOnlyAddEmptyI(proseOnlyAdd),
+			isTierBreakdownEmptyI(tierBreakdown),
+			isConfidenceDistEmptyI(confidenceDist),
+		]),
+	};
 
 	return (
-		<div className="space-sections">
+		<div className="flex flex-col gap-section">
 			<div id={PAYLOAD_SLOT_ID_I.flaggedResults}>
 				{getRegionView(statsState) === "error" ? (
 					<PayloadErrorCardI
 						focusTargetId={PAYLOAD_SLOT_ID_I.flaggedResults}
-						title="Flagged results"
+						head={CARD_HEAD_I.flaggedResults}
 						source="loop stats"
 						failures={failures}
 						state={statsState}
@@ -167,16 +164,15 @@ function ImprovementInstrumentationViewI({
 					<FlaggedResultsCardI
 						state={statsState}
 						reviewReasons={reviewReasons}
-						onNav={onNav}
 					/>
 				)}
 			</div>
-			<SplitRow ratio="1:1" layout="equal">
+			<SplitRow ratio="1:1" layout={rowLayout.signal}>
 				<div id={PAYLOAD_SLOT_ID_I.corpusGrowth}>
 					{getRegionView(corpusAuditState) === "error" ? (
 						<PayloadErrorCardI
 							focusTargetId={PAYLOAD_SLOT_ID_I.corpusGrowth}
-							title="Corpus growth"
+							head={CARD_HEAD_I.corpusGrowth}
 							source="corpus audits"
 							failures={failures}
 							state={corpusAuditState}
@@ -190,7 +186,7 @@ function ImprovementInstrumentationViewI({
 					{getRegionView(correctionState) === "error" ? (
 						<PayloadErrorCardI
 							focusTargetId={PAYLOAD_SLOT_ID_I.correctionSignals}
-							title="Correction signals"
+							head={CARD_HEAD_I.correctionSignals}
 							source="correction signals"
 							failures={failures}
 							state={correctionState}
@@ -201,11 +197,11 @@ function ImprovementInstrumentationViewI({
 					)}
 				</div>
 			</SplitRow>
-			<div id={PAYLOAD_SLOT_ID_I.proposalMeasurements} className="space-sections">
+			<div id={PAYLOAD_SLOT_ID_I.proposalMeasurements} className="flex flex-col gap-section">
 				{getRegionView(listState) === "error" ? (
 					<PayloadErrorCardI
 						focusTargetId={PAYLOAD_SLOT_ID_I.proposalMeasurements}
-						title="Proposal measurements"
+						head={CARD_HEAD_I.proposalMeasurements}
 						source="suggestions"
 						failures={failures}
 						state={listState}
@@ -215,7 +211,7 @@ function ImprovementInstrumentationViewI({
 					<>
 						<StyleRefCardI state={listState} styleRef={styleRef} />
 						{/* two short gauges stack → the pair fills Confidence's height instead of stretching one half-empty */}
-						<SplitRow ratio="1:1" layout="equal">
+						<SplitRow ratio="1:1" layout={rowLayout.measurement}>
 							<SplitColumn>
 								<ProseOnlyAddCardI state={listState} summary={proseOnlyAdd} />
 								<TierBreakdownCardI state={listState} tierBreakdown={tierBreakdown} />
@@ -232,157 +228,126 @@ function ImprovementInstrumentationViewI({
 	);
 }
 
+// a row stretches only while every card in it holds data → an empty card keeps its one-line height
+function getRowLayoutI(emptyFlags) {
+	return emptyFlags.some(Boolean) ? "content" : "equal";
+}
+
+// spec 44084 §2.2 Empty: head + one line · flush body → the line's own inset meets the title's
+function EmptyCardI({ title, sub, info, message }) {
+	const { Card, EmptyState } = window.UI;
+	return (
+		<Card title={title} sub={sub} info={info} isFlush>
+			<EmptyState message={message} />
+		</Card>
+	);
+}
+
 // ----- TierBreakdown card ------------------
 //
 // 3-Tier Eval Grader rollout baseline cohort split. Fixed 30d window.
-// 4-tile KPI grid (≤5-col safe):
+// one stat row, a hairline between stats:
 //   - Code-Based PASS  (metric_pass=TRUE  AND baseline IS NULL)
 //   - Code-Based FAIL  (metric_pass=FALSE AND baseline IS NULL)
 //   - Pre-3Tier baseline (baseline_pre_3tier=TRUE)
 //   - Total cohort = sum
 //
 // 데이터 부재 분기:
-//   - 모든 카운트 0 → "데이터 부재" 회색 indicator (migration 미적용 OR 30d 빈 cohort)
+//   - 모든 카운트 0 → 빈 카드 한 줄 (migration 미적용 OR 30d 빈 cohort)
 //   - error 상태 → 뷰가 카드 대신 목록 payload 오류 배너 1개를 렌더
 
 const TIER_BREAKDOWN_SUB_I = "30 days · self-reported";
+const TIER_BREAKDOWN_INFO_I =
+	"Pass and Fail are each task's self-reported result, recorded since automatic checking began; the pass rate uses these two only. Legacy counts tasks recorded before automatic checking.";
 
 function TierBreakdownCardI({ state, tierBreakdown }) {
-	const { CardHead, LoadingPlaceholder } = window.UI;
+	const { Card, LoadingPlaceholder, StatRow } = window.UI;
+	const title = "Results by check status";
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !tierBreakdown) {
 		return (
-			<div className="card">
-				<CardHead title="Results by check status" sub={TIER_BREAKDOWN_SUB_I} />
-				<div className="px-4 py-4">
-					<LoadingPlaceholder label="check-status results" minHeight={68} />
-				</div>
-			</div>
+			<Card title={title} sub={TIER_BREAKDOWN_SUB_I}>
+				<LoadingPlaceholder label="check-status results" minHeight={68} />
+			</Card>
 		);
 	}
 
-	const passCnt = Number(tierBreakdown.code_based_pass_30d ?? 0);
-	const failCnt = Number(tierBreakdown.code_based_fail_30d ?? 0);
-	const baselineCnt = Number(tierBreakdown.pre_3tier_baseline_count ?? 0);
-	const totalCnt = passCnt + failCnt + baselineCnt;
-	const windowDays = Number(tierBreakdown.window_days ?? 30);
-
-	// 데이터 부재 — migration 미적용 OR 30d 빈 cohort → 안내 indicator.
-	if (totalCnt === 0) {
-		return (
-			<div className="card">
-				<CardHead title="Results by check status" sub={TIER_BREAKDOWN_SUB_I} />
-				<div className="px-4 pb-4">
-					<div
-						className="placeholder"
-					>
-						No tasks in the last <window.UI.NoWrap>{windowDays} days</window.UI.NoWrap>
-					</div>
-				</div>
-			</div>
-		);
+	if (isTierBreakdownEmptyI(tierBreakdown)) {
+		return <EmptyCardI title={title} sub={TIER_BREAKDOWN_SUB_I} info={TIER_BREAKDOWN_INFO_I} message="No task results in this window" />;
 	}
+	const { passCnt, failCnt, baselineCnt, totalCnt } = getTierCountsI(tierBreakdown);
 
 	// Pass-rate denominator는 baseline 제외 (code-based 만 의미 있는 비율).
 	const codeBasedTotal = passCnt + failCnt;
 	const passRatePct =
 		codeBasedTotal === 0 ? null : (passCnt / codeBasedTotal) * 100;
 
-	const cards = [
-		[
-			"✓",
-			"text-ok",
-			"Pass",
-			formatIntI(passCnt),
-			passRatePct === null
-				? "nothing checked"
-				: `pass rate ${passRatePct.toFixed(1)}%`,
-		],
-		[
-			"✕",
-			"text-crit",
-			"Fail",
-			formatIntI(failCnt),
-			`${formatIntI(codeBasedTotal)} checked`,
-		],
-		[
-			"ℹ",
-			"text-info",
-			"Legacy",
-			formatIntI(baselineCnt),
-			"",
-		],
-		["ℹ", "text-info", "Total", formatIntI(totalCnt), ""],
+	const stats = [
+		{
+			key: "pass",
+			label: <><SymI s="✓" className="text-ok" size={12} /> Pass</>,
+			value: formatIntI(passCnt),
+			context: passRatePct === null ? "nothing checked" : `pass rate ${passRatePct.toFixed(1)}%`,
+		},
+		{
+			key: "fail",
+			label: <><SymI s="✕" className="text-crit" size={12} /> Fail</>,
+			value: formatIntI(failCnt),
+			context: `${formatIntI(codeBasedTotal)} checked`,
+		},
+		{ key: "legacy", label: "Legacy", value: formatIntI(baselineCnt) },
+		{ key: "total", label: "Total", value: formatIntI(totalCnt) },
 	];
 
 	return (
-		<div className="card">
-			<CardHead
-				title="Results by check status"
-				sub={TIER_BREAKDOWN_SUB_I}
-				info="Pass and Fail are each task's self-reported result, recorded since automatic checking began; the pass rate uses these two only. Legacy counts tasks recorded before automatic checking."
-			/>
-			<div className="grid grid-cols-4 gap-2 px-4 py-4">
-				{cards.map(([sym, tone, label, value, hint]) => (
-					<div
-						key={label}
-						className="sub-card bg-elev p-3 min-w-0"
-					>
-						<div className="flex items-center gap-1.5 fs-meta font-mono">
-							<SymI s={sym} className={tone} size={12} />
-							<span className="text-dim">{label}</span>
-						</div>
-						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
-							{value}
-						</div>
-						<div
-							className="card-sub fs-meta mt-1"
-							title={window.UI.titleOf(hint)}
-						>
-							{hint}
-						</div>
-					</div>
-				))}
-			</div>
-		</div>
+		<Card
+			title={title}
+			sub={TIER_BREAKDOWN_SUB_I}
+			info={TIER_BREAKDOWN_INFO_I}
+		>
+			<StatRow stats={stats} />
+		</Card>
 	);
+}
+
+function isTierBreakdownEmptyI(tierBreakdown) {
+	return tierBreakdown != null && getTierCountsI(tierBreakdown).totalCnt === 0;
+}
+
+function getTierCountsI(tierBreakdown) {
+	const passCnt = Number(tierBreakdown.code_based_pass_30d ?? 0);
+	const failCnt = Number(tierBreakdown.code_based_fail_30d ?? 0);
+	const baselineCnt = Number(tierBreakdown.pre_3tier_baseline_count ?? 0);
+	return { passCnt, failCnt, baselineCnt, totalCnt: passCnt + failCnt + baselineCnt };
 }
 
 // ----- ConfidenceDist card -------------------
 //
-// confidence_observed × promotion_tier 분포. 사용자 선택 window (proposal-side).
-// 3-tile headline KPI (≤5-col safe):
-//   - Overall confidence_observed (전체 가중 평균 · NULL → "미산정")
-//   - Lane 수 (promotion_tier 구분 수 · 'unassigned' 포함)
-//   - 총 proposal 수 (window 내)
-// + per-lane 분포 표 (행=lane / 열=3: lane · proposal_count · confidence_avg).
-//
-// 데이터 부재 분기:
-//   - buckets 비어있음 → "데이터 부재" 회색 indicator (daemon-wiring 미적용 OR window 0건)
-//   - error 상태 → 뷰가 카드 대신 목록 payload 오류 배너 1개를 렌더
+// confidence_observed × promotion_tier distribution, 30-day window (proposal-side)
+// headline stat + scale bar: overall confidence_observed (weighted mean of the measured lanes) + per-lane table (lane · proposal_count · confidence_avg)
+// no buckets or no proposals in the window → empty state · error → the view renders one list-payload error banner instead of the card
 
 function ConfidenceDistCardI({ state, confidenceDist }) {
-	const { CardHead, BulletBar, LoadingPlaceholder } = window.UI;
+	const { Card, BulletBar, LoadingPlaceholder, StatRow } = window.UI;
+	const title = "Suggestion confidence";
+	const sub = "Measured · 30 days";
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !confidenceDist) {
 		return (
-			<div className="card">
-				<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
-				<div className="px-4 py-4">
-					<LoadingPlaceholder label="suggestion confidence" minHeight={68} />
-				</div>
-			</div>
+			<Card title={title} sub={sub}>
+				<LoadingPlaceholder label="suggestion confidence" minHeight={68} />
+			</Card>
 		);
 	}
 
-	const buckets = Array.isArray(confidenceDist.buckets)
-		? confidenceDist.buckets
-		: [];
+	// window 내 proposal 0건 → 카드 숨김 대신 빈 카드 한 줄 (proposal 발생 시 자동 데이터 표시)
+	if (isConfidenceDistEmptyI(confidenceDist)) {
+		return <EmptyCardI title={title} sub={sub} message="No suggestions in this window" />;
+	}
+
+	const buckets = getConfidenceBucketsI(confidenceDist);
 	const overallAvg = confidenceDist.overall_confidence_observed_avg;
-	const totalProposals = buckets.reduce(
-		(sum, b) => sum + Number(b.proposal_count ?? 0),
-		0,
-	);
+	const totalProposals = getProposalCountI(buckets);
 	// 측정분 분모 — overall avg 는 confidence_observed_avg 가 non-null 인 lane 만 가중
 	// (NULL-avg lane 제외). 측정분 = 해당 lane proposal_count 합 → 라벨에 측정분/전체 병기.
 	const measuredProposals = buckets.reduce(
@@ -395,23 +360,6 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 		0,
 	);
 
-	// 데이터 부재 — window 내 proposal 0건 (실측 신뢰도 산정은 활성 상태).
-	// 카드 숨김 대신 "데이터 없음" 명시 (proposal 발생 시 자동 데이터 표시).
-	if (buckets.length === 0 || totalProposals === 0) {
-		return (
-			<div className="card">
-				<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
-				<div className="px-4 pb-4">
-					<div
-						className="placeholder"
-					>
-						No suggestions in the last <window.UI.NoWrap>30 days</window.UI.NoWrap>
-					</div>
-				</div>
-			</div>
-		);
-	}
-
 	const overallBadge = confidenceBadgeMetaI(overallAvg);
 	// C5: 실측 신뢰도(0-1 empirical posterior)를 척도상 위치(BulletBar)로 표시 — 숫자는 유지.
 	// zone 밴드 = confidenceBadgeMetaI 의 0.4/0.7 cut-point 와 동일(low/medium/high).
@@ -419,57 +367,59 @@ function ConfidenceDistCardI({ state, confidenceDist }) {
 		overallAvg !== null &&
 		overallAvg !== undefined &&
 		!Number.isNaN(Number(overallAvg));
-	const overallBar = hasOverall ? (
-		<BulletBar
-			value={Number(overallAvg)}
-			showValue
-			zones={[
-				{ upTo: 0.4, tone: "crit" },
-				{ upTo: 0.7, tone: "warn" },
-				{ upTo: 1, tone: "ok" },
-			]}
-			ariaLabel={`Average measured confidence ${(Number(overallAvg) * 100).toFixed(0)}%`}
-		/>
-	) : null;
-	const cards = [
-		[
-			overallBadge.symbol,
-			overallBadge.tone,
-			"Avg confidence (measured)",
-			formatRateI(overallAvg),
-			`Measured ${formatIntI(measuredProposals)}/${formatIntI(totalProposals)}`,
-			overallBar,
-		],
+	const stats = [
+		{
+			key: "overall",
+			label: <><SymI s={overallBadge.symbol} className={overallBadge.tone} size={12} /> Avg confidence (measured)</>,
+			value: hasOverall ? formatRateI(overallAvg) : null,
+			context: `Measured ${formatIntI(measuredProposals)}/${formatIntI(totalProposals)}`,
+		},
 	];
 
 	return (
-		<div className="card">
-			<CardHead title="Suggestion confidence" sub="Measured · 30 days" />
-			<div className="grid grid-cols-1 gap-2 px-4 py-4">
-				{cards.map(([sym, tone, label, value, hint, bar]) => (
-					<div
-						key={label}
-						className="sub-card bg-elev p-3 min-w-0"
-					>
-						<div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.4em]">
-							<SymI s={sym} className={tone} size={12} />
-							<span className="text-dim">{label}</span>
-						</div>
-						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
-							{value}
-						</div>
-						{bar && <div className="mt-1.5">{bar}</div>}
-						<div
-							className="card-sub fs-meta mt-1"
-							title={window.UI.titleOf(hint)}
-						>
-							{hint}
-						</div>
-					</div>
-				))}
-			</div>
-			<ConfidenceLaneTableI buckets={buckets} />
-		</div>
+		<Card title={title} sub={sub} isFlush>
+			<TableBodyI
+				lead={<>
+					<StatRow stats={stats} />
+					{hasOverall && (
+						<BulletBar
+							value={Number(overallAvg)}
+							zones={[
+								{ upTo: 0.4, tone: "crit" },
+								{ upTo: 0.7, tone: "warn" },
+								{ upTo: 1, tone: "ok" },
+							]}
+							ariaLabel={`Average measured confidence ${(Number(overallAvg) * 100).toFixed(0)}%`}
+						/>
+					)}
+				</>}
+			>
+				<ConfidenceLaneTableI buckets={buckets} />
+			</TableBodyI>
+		</Card>
+	);
+}
+
+function isConfidenceDistEmptyI(confidenceDist) {
+	return confidenceDist != null && getProposalCountI(getConfidenceBucketsI(confidenceDist)) === 0;
+}
+
+function getConfidenceBucketsI(confidenceDist) {
+	return Array.isArray(confidenceDist.buckets) ? confidenceDist.buckets : [];
+}
+
+function getProposalCountI(buckets) {
+	return buckets.reduce((sum, b) => sum + Number(b.proposal_count ?? 0), 0);
+}
+
+// flush body for a table under lead blocks — the leads take the card-pad inset, the table's edge cells already carry it
+function TableBodyI({ lead, children }) {
+	const { Stack } = window.UI;
+	return (
+		<Stack gap="block" className="pt-card-pad">
+			<Stack gap="block" className="px-card-pad">{lead}</Stack>
+			{children}
+		</Stack>
 	);
 }
 
@@ -481,60 +431,68 @@ function laneLabelI(promotionTier) {
 }
 
 // per-lane 분포 표 — 행=lane (가변) / 열=3 (lane · proposal_count · confidence_avg).
-// confidence_avg NULL → "—" (formatRateI null-safe).
+const LANE_COLUMNS_I = Object.freeze([
+	{ key: "group", label: "Group" },
+	{ key: "suggestions", label: "Suggestions", isNumeric: true },
+	{ key: "avg", label: "Avg confidence", isNumeric: true },
+]);
+
 function ConfidenceLaneTableI({ buckets }) {
+	const { AbsentValue, Table, TableRow, TableCell } = window.UI;
 	return (
-		<div className="px-4 pb-4">
-			<table className="w-full fs-meta font-mono">
-				<thead className="tbl-head">
-					<tr className="text-faint uppercase tracking-wider">
-						<th className="text-left pl-1.5">Group</th>
-						<th className="text-right">Suggestions</th>
-						<th className="text-right pr-1.5">Avg confidence</th>
-					</tr>
-				</thead>
-				<tbody className="tbl-compact">
-					{buckets.map((b) => {
-						const avg = b.confidence_observed_avg;
-						const badge = confidenceBadgeMetaI(avg);
-						return (
-							<tr key={b.promotion_tier} className="border-t border-line/50">
-								<td className="text-left pl-1.5 text-ink">
-									{laneLabelI(b.promotion_tier)}
-								</td>
-								<td className="text-right text-dim">
-									{formatIntI(Number(b.proposal_count ?? 0))}
-								</td>
-								{/* a table cell, never a flex box → the row step and the rule reach it; the mark + rate sit inline at its right edge */}
-								<td className="text-right pr-1.5 text-ink">
-									<span className="inline-flex items-center justify-end gap-1.5">
-										<SymI
-											s={avg === null || avg === undefined ? "ℹ" : badge.symbol}
-											className={badge.tone}
-											size={11}
-										/>{" "}
-										{formatRateI(avg)}
-									</span>
-								</td>
-							</tr>
-						);
-					})}
-				</tbody>
-			</table>
-		</div>
+		<Table caption="Suggestion confidence by group" columns={LANE_COLUMNS_I}>
+			{(view) => buckets.map((b) => {
+				const avg = b.confidence_observed_avg;
+				const isMeasured = avg !== null && avg !== undefined;
+				const badge = confidenceBadgeMetaI(avg);
+				return (
+					<TableRow key={b.promotion_tier} view={view}>
+						<TableCell view={view}>{laneLabelI(b.promotion_tier)}</TableCell>
+						<TableCell view={view} textRole="meta" label="Suggestions" isNumeric>
+							{formatIntI(Number(b.proposal_count ?? 0))}
+						</TableCell>
+						<TableCell view={view} textRole="meta" label="Avg confidence" isNumeric>
+							{isMeasured ? (
+								<><SymI s={badge.symbol} className={badge.tone} size={11} /> {formatRateI(avg)}</>
+							) : (
+								<AbsentValue kind="none" />
+							)}
+						</TableCell>
+					</TableRow>
+				);
+			})}
+		</Table>
 	);
 }
 
 // Add-only patches stacks with Results by check status beside Suggestion confidence → a short S slot keeps that pair level
 const PROSE_ONLY_ADD_CARD_SIZE_I = "S";
+const ADD_ONLY_TITLE_I = "Add-only patches";
 
 // prose-only-add per-agent rolling count. 카드가 항상 존재해야 하는 이유: 0 건은
 // "추가만 하는 패치가 없었다"는 판독이고, 카드 부재는 "측정하지 않는다"이다 — 다른 뜻이다.
+const ADD_ONLY_COLUMNS_I = Object.freeze([
+	{ key: "agent", label: "Agent" },
+	{ key: "count", label: "Add-only", isNumeric: true },
+]);
+
 function ProseOnlyAddCardI({ state, summary }) {
-	const { CardHead, CARD_SLOTS, getSlotRows } = window.UI;
+	const { AgentName, Card, CARD_SLOTS, LoadingPlaceholder, QuietButton, Table, TableRow, TableCell, getSlotRows } = window.UI;
 	const [isShowingAll, setShowingAll] = React.useState(false);
 	if (state.status === "error") return null;
-	if (state.status === "loading" || !summary) return null;
+	if (state.status === "loading" || !summary) {
+		// no sub → the window comes from the read · 68 = the check-status card below it in the column
+		return (
+			<Card size={PROSE_ONLY_ADD_CARD_SIZE_I} title={ADD_ONLY_TITLE_I}>
+				<LoadingPlaceholder label="add-only patches" minHeight={68} />
+			</Card>
+		);
+	}
+	const sub = `${formatIntI(Number(summary.window_days ?? 0))} days`;
+	const info = summary.truncation_caveat || null;
+	if (isProseOnlyAddEmptyI(summary)) {
+		return <EmptyCardI title={ADD_ONLY_TITLE_I} sub={sub} info={info} message="No add-only patches in this window" />;
+	}
 	// server orders by agent name → rank by count before the slot cut, so the collapsed rows are the top ones
 	const agents = (Array.isArray(summary.agents) ? [...summary.agents] : []).sort(
 		(a, b) =>
@@ -545,63 +503,50 @@ function ProseOnlyAddCardI({ state, summary }) {
 	// S slot → the stacked column stays bounded whatever the roster length
 	const { rows: slotRows, hiddenCount } = getSlotRows(agents, PROSE_ONLY_ADD_CARD_SIZE_I);
 	const rows = isShowingAll ? agents : slotRows;
+	const foot = (hiddenCount > 0 || isShowingAll) ? (
+		<QuietButton className="ml-auto shrink-0" aria-expanded={isShowingAll} onClick={() => setShowingAll((v) => !v)}>
+			{isShowingAll ? `Show top ${CARD_SLOTS[PROSE_ONLY_ADD_CARD_SIZE_I].rowCount}` : `Show all ${agents.length}`}
+		</QuietButton>
+	) : null;
 	return (
-		<div className={`card card--${PROSE_ONLY_ADD_CARD_SIZE_I.toLowerCase()}`}>
-			<CardHead
-				title="Add-only patches"
-				sub={`${formatIntI(Number(summary.window_days ?? 0))} days`}
-				info={summary.truncation_caveat || null}
-			/>
-			{rows.length === 0 ? (
-				<div className="px-4 pb-4">
-					<div className="placeholder">
-						No add-only patches in this window
-					</div>
-				</div>
-			) : (
-				<div className="px-4 pb-4">
-					<table className="w-full fs-meta font-mono">
-						<thead className="tbl-head">
-							<tr className="text-faint uppercase tracking-wider">
-								<th className="text-left pl-1.5">Agent</th>
-								<th className="text-right pr-1.5">Add-only</th>
-							</tr>
-						</thead>
-						<tbody className="tbl-compact">
-							{rows.map((r) => (
-								<tr key={r.agent} className="border-t border-line/50">
-									<td className="text-left pl-1.5 text-ink">
-										{r.agent}
-									</td>
-									<td className="text-right pr-1.5 text-ink">
-										{formatIntI(Number(r.count ?? 0))}
-									</td>
-								</tr>
-							))}
-							<tr className="border-t border-line">
-								<td className="text-left pl-1.5 text-dim">Total</td>
-								<td className="text-right pr-1.5 text-ink">
-									{formatIntI(total)}
-								</td>
-							</tr>
-						</tbody>
-					</table>
-				</div>
-			)}
-			{(hiddenCount > 0 || isShowingAll) && (
-				<div className="card-foot">
-					<button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={() => setShowingAll((v) => !v)}>
-						{isShowingAll ? `Show top ${CARD_SLOTS[PROSE_ONLY_ADD_CARD_SIZE_I].rowCount}` : `Show all ${agents.length}`}
-					</button>
-				</div>
-			)}
-		</div>
+		<Card
+			size={PROSE_ONLY_ADD_CARD_SIZE_I}
+			title={ADD_ONLY_TITLE_I}
+			sub={sub}
+			info={info}
+			foot={foot}
+			isFlush
+		>
+			<Table
+				caption="Add-only patches by agent"
+				columns={ADD_ONLY_COLUMNS_I}
+				foot={(view) => (
+					<TableRow view={view}>
+						<TableCell view={view} kind="row-header">Total</TableCell>
+						<TableCell view={view} textRole="meta" label="Add-only" isNumeric>{formatIntI(total)}</TableCell>
+					</TableRow>
+				)}
+			>
+				{(view) => rows.map((r) => (
+					<TableRow key={r.agent} view={view}>
+						<TableCell view={view}><AgentName name={r.agent} /></TableCell>
+						<TableCell view={view} textRole="meta" label="Add-only" isNumeric>
+							{formatIntI(Number(r.count ?? 0))}
+						</TableCell>
+					</TableRow>
+				))}
+			</Table>
+		</Card>
 	);
 }
 
+function isProseOnlyAddEmptyI(summary) {
+	return summary != null && !(Array.isArray(summary.agents) && summary.agents.length > 0);
+}
+
 // OPTIONAL 단계 — 모든 row NULL 가능:
-//   - 전체 NULL 시 "데이터 누적 중" 안내 → NaN%/0/0 렌더 차단
-//   - per-agent rate null 시 "—" 표시 (denominator = 0)
+//   - overall emission rate NULL 시 빈 카드 한 줄 → NaN%/0/0 렌더 차단
+//   - per-agent rate null 시 None 표시 (denominator = 0)
 //
 // graduation gate: overall_emission_rate ≥ 0.50 AND
 //   overall_uncorroborated_rate < 0.10 — the uncorroborated share of the rows the
@@ -621,30 +566,25 @@ function ProseOnlyAddCardI({ state, summary }) {
 // 측정상 가장 드물다(비율은 routes/improvement.ts 헤더). 그 하나를 "루프가 멈췄다"로 쓰면
 // 나머지 넷이 조용히 억제되는 동안 배너는 이미 경고 상태라 아무도 다시 보지 않는다. 전체
 
+const STYLE_REF_INFO_I =
+	"Uncorroborated share = uncorroborated ÷ (corroborated + uncorroborated) — adjudicated rows only, unverifiable excluded (graduation gate under 10%).";
+
 function StyleRefCardI({ state, styleRef }) {
-	const { CardHead, BulletBar, LoadingPlaceholder } = window.UI;
+	const { Card, BulletBar, LoadingPlaceholder, StatRow } = window.UI;
+	const title = "Style-check rate";
+	const sub = "7 days · checked before coding";
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !styleRef) {
 		return (
-			<div className="card">
-				<CardHead
-					title="Style-check rate"
-					sub="7 days · checked before coding"
-				/>
-				<div className="px-4 py-4">
-					<LoadingPlaceholder label="style-check rates" minHeight={68} />
-				</div>
-			</div>
+			<Card title={title} sub={sub}>
+				<LoadingPlaceholder label="style-check rates" minHeight={68} />
+			</Card>
 		);
 	}
 
 	const overallEmission = styleRef.overall_emission_rate;
 	const overallUncorroborated = styleRef.overall_uncorroborated_rate;
 	const agentRows = Array.isArray(styleRef.agents) ? styleRef.agents : [];
-	const hasData = agentRows.some((r) => Number(r.emission_count ?? 0) > 0);
-
-	// 격상 게이트 — null-safe (데이터 부재 → 회색 pending indicator).
-	const gradeBadge = styleRefGradeBadgeI(overallEmission, overallUncorroborated);
 
 	// C3: 격상 임계치 대비 rate 를 BulletBar(척도상 위치 + target 마커)로 — % 텍스트는 유지.
 	//   - emission: target=0.5 (격상 게이트 ≥50%) · ≥0.5 구간을 ok 밴드로.
@@ -654,27 +594,30 @@ function StyleRefCardI({ state, styleRef }) {
 		overallEmission !== null &&
 		overallEmission !== undefined &&
 		!Number.isNaN(Number(overallEmission));
+	// no rate = no task result in the window (the gate's own No outcomes case) · a known 0 keeps the data form
+	if (!hasEmission) {
+		return <EmptyCardI title={title} sub={sub} info={STYLE_REF_INFO_I} message="No task results in this window" />;
+	}
+	const gradeBadge = styleRefGradeBadgeI(overallEmission, overallUncorroborated);
 	const hasUncorroborated =
 		overallUncorroborated !== null &&
 		overallUncorroborated !== undefined &&
 		!Number.isNaN(Number(overallUncorroborated));
-	const emissionBar = hasEmission ? (
+	const emissionBar = (
 		<BulletBar
 			value={Number(overallEmission)}
 			target={0.5}
-			showValue
 			zones={[
 				{ upTo: 0.5, tone: "crit" },
 				{ upTo: 1, tone: "ok" },
 			]}
 			ariaLabel={`Reported rate ${(Number(overallEmission) * 100).toFixed(0)}% (graduation target 50%)`}
 		/>
-	) : null;
+	);
 	const uncorroboratedBar = hasUncorroborated ? (
 		<BulletBar
 			value={Number(overallUncorroborated)}
 			target={0.1}
-			showValue
 			zones={[
 				{ upTo: 0.1, tone: "ok" },
 				{ upTo: 1, tone: "warn" },
@@ -683,149 +626,100 @@ function StyleRefCardI({ state, styleRef }) {
 		/>
 	) : null;
 
-	const headlineCards = [
-		[
-			gradeBadge.symbol,
-			gradeBadge.tone,
-			"Graduation gate",
-			gradeBadge.label,
-			gradeBadge.hint,
-			null,
-		],
-		[
-			"ℹ",
-			"text-info",
-			"Reported rate (overall)",
-			formatRateI(overallEmission),
-			"",
-			emissionBar,
-		],
-		[
-			"ℹ",
-			"text-info",
-			"Uncorroborated share",
-			formatRateI(overallUncorroborated),
-			"of adjudicated rows only",
-			uncorroboratedBar,
-		],
+	const stats = [
+		{
+			key: "gate",
+			label: "Graduation gate",
+			value: <><SymI s={gradeBadge.symbol} className={gradeBadge.tone} size={12} /> {gradeBadge.label}</>,
+			context: gradeBadge.hint,
+		},
+		{ key: "reported", label: "Reported rate (overall)", value: formatRateI(overallEmission), context: emissionBar },
+		{
+			key: "uncorroborated",
+			label: "Uncorroborated share",
+			value: hasUncorroborated ? formatRateI(overallUncorroborated) : null,
+			context: <>{uncorroboratedBar}<div>of adjudicated rows only</div></>,
+		},
 	];
 
 	return (
-		<div className="card">
-			<CardHead
-				title="Style-check rate"
-				sub="7 days · checked before coding"
-			/>
-			<div className="grid grid-cols-3 gap-2 px-4 py-4">
-				{headlineCards.map(([sym, tone, label, value, hint, bar]) => (
-					<div
-						key={label}
-						className="sub-card bg-elev p-3 min-w-0"
-					>
-						<div className="flex items-start gap-1.5 fs-meta font-mono min-h-[2.4em]">
-							<SymI s={sym} className={tone} size={12} />
-							<span className="text-dim">{label}</span>
-						</div>
-						<div className="fs-stat font-semibold text-ink mt-1 font-mono">
-							{value}
-						</div>
-						{bar && <div className="mt-1.5">{bar}</div>}
-						<div
-							className="card-sub fs-meta mt-1"
-							title={window.UI.titleOf(hint)}
-						>
-							{hint}
-						</div>
-					</div>
-				))}
-			</div>
-			{/* 3-count partition + greenfield (P13) — 데이터 부재 시 미렌더(placeholder 로 위임). */}
-			{hasData && (
-				<StyleRefSplitI
-					corroborated={styleRef.overall_corroborated_count}
-					uncorroborated={styleRef.overall_uncorroborated_count}
-					unverifiable={styleRef.overall_unverifiable_count}
-					greenfield={styleRef.overall_greenfield_count}
-					uncorroboratedRate={styleRef.overall_uncorroborated_rate}
-				/>
-			)}
-			{/* per-agent breakdown — 데이터 부재 시 "누적 중" 안내. */}
-			{hasData ? (
+		<Card
+			title={title}
+			sub={sub}
+			info={STYLE_REF_INFO_I}
+			isFlush
+		>
+			<TableBodyI
+				lead={<>
+					<StatRow stats={stats} />
+					<StyleRefSplitI
+						corroborated={styleRef.overall_corroborated_count}
+						uncorroborated={styleRef.overall_uncorroborated_count}
+						unverifiable={styleRef.overall_unverifiable_count}
+						greenfield={styleRef.overall_greenfield_count}
+					/>
+				</>}
+			>
 				<StyleRefAgentTableI rows={agentRows} />
-			) : (
-				<div className="px-4 pb-4">
-					<div
-						className="placeholder"
-					>
-						Collecting data
-					</div>
-				</div>
-			)}
-		</div>
+			</TableBodyI>
+		</Card>
 	);
 }
+
+const STYLE_REF_COLUMNS_I = Object.freeze([
+	{ key: "agent", label: "Agent" },
+	{ key: "reported", label: "Reported", isNumeric: true },
+	{ key: "rate", label: "Rate", isNumeric: true },
+	{ key: "corroborated", label: "Corroborated", isNumeric: true },
+	{ key: "uncorroborated", label: "Uncorroborated", isNumeric: true },
+	{ key: "unverifiable", label: "Unverifiable", isNumeric: true },
+]);
+// fixed numeric columns → a column holds still whatever its cells read · 140 = "Uncorroborated" on one line after 12 + 12 interior padding
+const STYLE_REF_COL_WIDTHS_I = ["auto", ...Array(STYLE_REF_COLUMNS_I.length - 1).fill("calc(4 * var(--space-8) + var(--space-3))")];
 
 function StyleRefAgentTableI({ rows }) {
 	// 행=agent (가변) / 열=6 (agent · reported · rate · corroborated · uncorroborated · unverifiable)
 	// per-agent rate 열은 없다 — 세 bucket 을 하나의 비율로 접으면 adjudicated 여부가 사라진다.
-	// 헤더는 dim text + uppercase tracking · 본문은 mono.
+	const { AbsentValue, AgentName, Table, TableRow, TableCell } = window.UI;
 	return (
-		<div className="px-4 pb-4">
-			<table className="w-full fs-meta font-mono">
-				<thead className="tbl-head">
-					<tr className="text-faint uppercase tracking-wider">
-						<th className="text-left pl-1.5">Agent</th>
-						<th className="text-right">Reported</th>
-						<th className="text-right">Rate</th>
-						<th className="text-right">Corrob.</th>
-						<th className="text-right">Uncorrob.</th>
-						<th className="text-right pr-1.5">Unverifiable</th>
-					</tr>
-				</thead>
-				<tbody className="tbl-compact">
-					{rows.map((r) => {
-						const emCount = Number(r.emission_count ?? 0);
-						const emTotal = Number(r.emission_total ?? 0);
-						const corroborated = Number(r.corroborated_count ?? 0);
-						const uncorroborated = Number(r.uncorroborated_count ?? 0);
-						const unverifiable = Number(r.unverifiable_count ?? 0);
-						const eligible = Number(r.eligible_count ?? 0);
-						return (
-							<tr key={r.agent} className="border-t border-line/50">
-								<td className="text-left pl-1.5 text-ink">{r.agent}</td>
-								<td className="text-right text-dim">
-									{formatIntI(emCount)} / {formatIntI(emTotal)}
-								</td>
-								<td className="text-right text-ink">
-									{formatRateI(r.emission_rate)}
-								</td>
-								<td className="text-right text-ink">
-									{formatIntI(corroborated)} / {formatIntI(eligible)}
-								</td>
-								<td className="text-right text-ink">
-									{formatIntI(uncorroborated)}
-								</td>
-								<td className="text-right pr-1.5 text-faint">
-									{formatIntI(unverifiable)}
-								</td>
-							</tr>
-						);
-					})}
-				</tbody>
-			</table>
-		</div>
+		<Table caption="Style-check rate by agent" columns={STYLE_REF_COLUMNS_I} widths={STYLE_REF_COL_WIDTHS_I} className="table-fixed">
+			{(view) => rows.map((r) => {
+				const emCount = Number(r.emission_count ?? 0);
+				const emTotal = Number(r.emission_total ?? 0);
+				const corroborated = Number(r.corroborated_count ?? 0);
+				const uncorroborated = Number(r.uncorroborated_count ?? 0);
+				const unverifiable = Number(r.unverifiable_count ?? 0);
+				const eligible = Number(r.eligible_count ?? 0);
+				const hasRate = r.emission_rate !== null && r.emission_rate !== undefined;
+				return (
+					<TableRow key={r.agent} view={view}>
+						<TableCell view={view}><AgentName name={r.agent} /></TableCell>
+						<TableCell view={view} textRole="meta" label="Reported" isNumeric>
+							{formatIntI(emCount)} / {formatIntI(emTotal)}
+						</TableCell>
+						<TableCell view={view} textRole="meta" label="Rate" isNumeric>
+							{hasRate ? formatRateI(r.emission_rate) : <AbsentValue kind="none" />}
+						</TableCell>
+						<TableCell view={view} textRole="meta" label="Corroborated" isNumeric>
+							{formatIntI(corroborated)} / {formatIntI(eligible)}
+						</TableCell>
+						<TableCell view={view} textRole="meta" label="Uncorroborated" isNumeric>
+							{formatIntI(uncorroborated)}
+						</TableCell>
+						<TableCell view={view} textRole="meta" label="Unverifiable" isNumeric>
+							{formatIntI(unverifiable)}
+						</TableCell>
+					</TableRow>
+				);
+			})}
+		</Table>
 	);
 }
 
-// corroborated/uncorroborated/unverifiable 3-count + greenfield 도표 (P13).
-// 비율 하나로 접지 않는다 — 판정 가능했던 row 와 아예 보지 못한 row 가 한 숫자에 섞인다.
-function StyleRefSplitI({
-	corroborated,
-	uncorroborated,
-	unverifiable,
-	greenfield,
-	uncorroboratedRate,
-}) {
+// corroborated / uncorroborated / unverifiable counts + greenfield
+// never folded into one rate → judged rows and never-seen rows would mix in one number; the rate shows once, on the headline stat
+function StyleRefSplitI({ corroborated, uncorroborated, unverifiable, greenfield }) {
+	const { Cluster } = window.UI;
 	const cells = [
 		["Corroborated", corroborated, "✓", "text-ok"],
 		["Uncorroborated", uncorroborated, "⚠", "text-warn"],
@@ -833,29 +727,15 @@ function StyleRefSplitI({
 		["Greenfield", greenfield, "ℹ", "text-info"],
 	];
 	return (
-		<div className="px-4 pb-1">
-			<div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 fs-meta font-mono">
-				{cells.map(([label, count, symbol, tone]) => (
-					<span key={label} className="inline-flex items-baseline gap-1">
-						<SymI s={symbol} className={tone} size={11} />
-						<span className="text-dim">{label}</span>
-						<span className="text-ink font-semibold">
-							{formatIntI(Number(count ?? 0))}
-						</span>
-					</span>
-				))}
-				<span className="inline-flex items-baseline gap-1 ml-auto">
-					<span
-						className="text-faint uppercase tracking-wider"
-						title="Uncorroborated / (corroborated + uncorroborated) — adjudicated rows only, unverifiable excluded (graduation gate < 10%)">
-						Uncorroborated share
-					</span>
-					<span className="text-ink font-semibold">
-						{formatRateI(uncorroboratedRate)}
-					</span>
+		<Cluster gap="control-group" className="items-baseline fs-meta">
+			{cells.map(([label, count, symbol, tone]) => (
+				<span key={label}>
+					<SymI s={symbol} className={tone} size={11} />{" "}
+					<span className="text-dim">{label}</span>{" "}
+					<span className="text-ink tnum">{formatIntI(Number(count ?? 0))}</span>
 				</span>
-			</div>
-		</div>
+			))}
+		</Cluster>
 	);
 }
 
@@ -869,7 +749,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "ℹ",
 			tone: "text-info",
-			label: "pending",
+			label: "Pending",
 			hint: "Collecting data (7 d window)",
 		};
 	}
@@ -877,7 +757,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "ℹ",
 			tone: "text-info",
-			label: "pending",
+			label: "Pending",
 			hint: "No outcomes in 7 d",
 		};
 	}
@@ -885,7 +765,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "✕",
 			tone: "text-crit",
-			label: "block",
+			label: "Block",
 			hint: `emission ${formatRateI(emissionRate)} < 50%`,
 		};
 	}
@@ -896,7 +776,7 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "ℹ",
 			tone: "text-info",
-			label: "pending",
+			label: "Pending",
 			hint: "Adjudicated: 0 (greenfield or unverifiable)",
 		};
 	}
@@ -904,22 +784,20 @@ function styleRefGradeBadgeI(emissionRate, uncorroboratedRate) {
 		return {
 			symbol: "✓",
 			tone: "text-ok",
-			label: "pass",
+			label: "Pass",
 			hint: `emission ${formatRateI(emissionRate)} · uncorroborated ${formatRateI(uncorroboratedRate)}`,
 		};
 	}
 	return {
 		symbol: "⚠",
 		tone: "text-warn",
-		label: "warn",
+		label: "Warn",
 		hint: `uncorroborated ${formatRateI(uncorroboratedRate)} ≥ 10%`,
 	};
 }
 
-// Null-safe rate render — null → "—" (NaN% / 0/0 차단).
+// a known rate only — callers branch on null first (spec 44084 §2.2), so a 0 is a measured zero
 function formatRateI(rate) {
-	if (rate === null || rate === undefined || Number.isNaN(Number(rate)))
-		return "—";
 	return `${(Number(rate) * 100).toFixed(1)}%`;
 }
 
@@ -927,56 +805,43 @@ function formatRateI(rate) {
 // + revision_count delta. orphan 테이블(미배포/빈 데이터)은 정직한 빈 상태로 노출 —
 // 가짜 0 금지. error(503/테이블 부재) → 뷰가 카드 대신 재시도 가능한 오류 배너를 렌더.
 function CorrectionSignalsCardI({ state }) {
-	const { CardHead, formatKstDate, LoadingPlaceholder } = window.UI;
-	const title = "Detection agreement";
+	const { Card, Cluster, formatKstDay, LoadingPlaceholder, Stack, StatRow } = window.UI;
+	const head = CARD_HEAD_I.correctionSignals;
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
-			<div className="card">
-				<CardHead title={title} sub="Correction signals" />
-				<div className="px-4 py-4">
-					<LoadingPlaceholder label="correction signals" minHeight={60} />
-				</div>
-			</div>
+			<Card {...getCardHeadPropsI(head)}>
+				<LoadingPlaceholder label="correction signals" minHeight={60} />
+			</Card>
 		);
 	}
 
 	const d = state.data;
-	// 빈 테이블 → 정직한 빈 상태 (다음 단계 힌트 동반). 가짜 0% 미표기.
-	if (!d.total_signals) {
-		return (
-			<div className="card">
-				<CardHead title={title} sub="Correction signals" />
-				<div className="px-4 pb-4">
-					<div className="placeholder">
-						No correction signals recorded yet — appears once a run logs a
-						stage1/stage2 detection.
-					</div>
-				</div>
-			</div>
-		);
+	// 빈 테이블 → 정직한 빈 카드 한 줄 (채워지는 조건 동반). 가짜 0% 미표기.
+	if (isCorrectionSignalsEmptyI(d)) {
+		return <EmptyCardI {...head} message="No correction signals yet — each detection logs one" />;
 	}
 
 	const agr = d.agreement;
 	const total = agr.total || 0;
 	// stage1·stage2 가 concur 한 비율(both OR neither) — 검출기 합의도.
 	const agreePct = total > 0 ? ((agr.agreement_count / total) * 100).toFixed(1) : "0.0";
-	const latest = d.latest_event_ts ? formatKstDate(d.latest_event_ts) : null;
+	const latest = d.latest_event_ts ? formatKstDay(d.latest_event_ts) : null;
 
 	return (
-		<div className="card">
-			<CardHead
-				title={title}
-				sub={`${formatIntI(total)} signals${latest ? ` · latest ${latest}` : ""}`}
-			/>
-			<div className="px-4 pb-4 space-y-2">
-				<div className="fs-body">
-					<span className="font-mono text-ink">{agreePct}%</span>{" "}
-					<span className="text-faint">stage1/stage2 agreement</span>
-				</div>
+		<Card {...getCardHeadPropsI(head)}>
+			<Stack gap="label">
+				<StatRow
+					stats={[{
+						key: "agreement",
+						label: "Stage1/stage2 agreement",
+						value: `${agreePct}%`,
+						context: `${formatIntI(total)} signals${latest ? ` · latest ${latest}` : ""}`,
+					}]}
+				/>
 				{/* 4-way disjoint 분해 — both / stage1-only / stage2-only / neither. */}
-				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
+				<Cluster gap="control-group" className="fs-meta text-faint tnum">
 					<span>
 						<SymI s="✓" className="text-ok" size={11} /> <span className="text-dim">both</span>{" "}
 						{formatIntI(agr.both_matched)}
@@ -993,51 +858,40 @@ function CorrectionSignalsCardI({ state }) {
 						<span className="text-faint">neither</span>{" "}
 						{formatIntI(agr.neither_matched)}
 					</span>
-				</div>
-				<div className="card-sub is-wrap fs-meta">
-					Agreement = both + neither (the two stages concur) ÷ all signals.
-				</div>
-				<div className="fs-meta font-mono text-faint">
+				</Cluster>
+				<div className="fs-meta text-faint tnum">
 					revision delta Σ {formatIntI(d.revision_delta_sum)} · peak{" "}
 					{formatIntI(d.revision_delta_max)}
 				</div>
-			</div>
-		</div>
+			</Stack>
+		</Card>
 	);
+}
+
+function isCorrectionSignalsEmptyI(data) {
+	return data != null && !data.total_signals;
 }
 
 // 코퍼스 성장 카드 — core.autoagent_corpus_audits 시리즈(cycle_date 당 1행).
 // null 은 "판독 불가", 0 은 "측정된 0" 으로 서로 다른 판독 → null 을 0 으로 접지 않는다.
 function CorpusGrowthCardI({ state }) {
-	const { CardHead, Sparkline, LoadingPlaceholder } = window.UI;
-	const title = "Corpus growth";
+	const { Card, Cluster, formatKstDay, Sparkline, LoadingPlaceholder, Stack, StatRow } = window.UI;
+	const head = CARD_HEAD_I.corpusGrowth;
 
 	if (state.status === "error") return null;
 	if (state.status === "loading" || !state.data) {
 		return (
-			<div className="card">
-				<CardHead title={title} sub="Per-cycle audit" />
-				<div className="px-4 py-4">
-					<LoadingPlaceholder label="corpus audits" minHeight={60} />
-				</div>
-			</div>
+			<Card {...getCardHeadPropsI(head)}>
+				<LoadingPlaceholder label="corpus audits" minHeight={60} />
+			</Card>
 		);
 	}
 
-	const rows = Array.isArray(state.data.audits) ? state.data.audits : [];
-	const latest = rows[0];
-	if (!latest) {
-		return (
-			<div className="card" data-testid="corpus-growth-card">
-				<CardHead title={title} sub="Per-cycle audit" />
-				<div className="px-4 pb-4">
-					<div className="placeholder">
-						No corpus readings yet — appears once a daemon cycle writes one.
-					</div>
-				</div>
-			</div>
-		);
+	if (isCorpusGrowthEmptyI(state.data)) {
+		return <EmptyCardI {...head} message="No corpus readings yet — each daemon cycle writes one" />;
 	}
+	const rows = state.data.audits;
+	const latest = rows[0];
 
 	// 응답은 cycle_date DESC → 스파크는 시간순으로 뒤집는다.
 	const wordSeries = rows.map((r) => Number(r.word_count ?? 0)).reverse();
@@ -1054,75 +908,92 @@ function CorpusGrowthCardI({ state }) {
 	const deltaLabel = hasDelta
 		? `${delta > 0 ? "+" : ""}${formatIntI(delta)} words vs previous`
 		: "no baseline yet";
-	const compliance = formatRateI(latest.compliance_rate);
-	const override = formatRateI(latest.override_rate);
-	const verdict = getCorpusGrowthVerdictI(latest);
+	const threshold = latest.seeded_threshold;
+	const auditCount = Number(state.data.total_audits ?? 0);
+	const stats = [
+		{
+			key: "words",
+			label: "Corpus size",
+			value: formatIntI(Number(latest.word_count ?? 0)),
+			unit: threshold == null ? "words" : `of ${formatIntI(Number(threshold))} words`,
+			context: <><SymI s={deltaSymbol} className={deltaTone} /> {deltaLabel}</>,
+		},
+	];
 
 	return (
-		<div className="card" data-testid="corpus-growth-card">
-			<CardHead
-				title={title}
-				sub={`${formatIntI(Number(state.data.total_audits ?? 0))} audits · latest ${latest.cycle_date}`}
-			/>
-			<div className="px-4 pb-4 space-y-2">
-				{/* figure 24 ↔ meta 13 → one baseline, not one centre line; figure + unit = one group (gap 4), groups 12 apart */}
-				<div className="flex items-baseline gap-3 flex-wrap">
-					<span className="flex items-baseline gap-1">
-						<span className="fs-display font-mono text-ink">
-							{formatIntI(Number(latest.word_count ?? 0))}
-						</span>
-						<span className="fs-meta text-faint">words</span>
-					</span>
-					<span className="fs-meta font-mono text-dim">
-						<SymI s={deltaSymbol} className={deltaTone} /> {deltaLabel}
-					</span>
+		<Card {...getCardHeadPropsI(head)}>
+			<Stack gap="label">
+				<Cluster gap="control-group" className="items-end justify-between">
+					<StatRow stats={stats} />
 					{/* 스파크는 텍스트 수치의 중복 표현 → 스크린리더에서 제외. */}
 					{wordSeries.length > 1 && (
-						<span className="ml-auto self-center" aria-hidden="true">
+						<span aria-hidden="true">
 							<Sparkline
 								data={wordSeries}
 								w={90}
 								h={26}
-								color="rgb(var(--accent))"
+								color="rgb(var(--dim))"
 							/>
 						</span>
 					)}
+				</Cluster>
+				<CorpusFactsI latest={latest} />
+				{/* cycle_date is already a display-zone day key in the YYYY-MM-DD form formatKstDate prints → no zone shift */}
+				<div className="fs-meta text-faint tnum">
+					{formatIntI(auditCount)} {auditCount === 1 ? "audit" : "audits"} · latest {formatKstDay(latest.cycle_date)}
 				</div>
-				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
-					<span>{formatIntI(Number(latest.file_count ?? 0))} files</span>
-					<span>~{formatIntI(Number(latest.token_estimate ?? 0))} tokens</span>
-					<span>
-						threshold {formatIntI(Number(latest.seeded_threshold ?? 0))}
-					</span>
-					{verdict.tone === "text-warn" && (
-						<span className="text-dim">
-							<SymI s={verdict.symbol} className={verdict.tone} size={11} /> {verdict.label}
-						</span>
-					)}
-				</div>
-				<div className="flex items-center gap-4 fs-meta font-mono text-faint flex-wrap">
-					<span>
-						gate{" "}
-						<span className="text-ink">
-							{formatIntI(Number(latest.gate_pass_count ?? 0))}
-						</span>{" "}
-						pass ·{" "}
-						<span className="text-ink">
-							{formatIntI(Number(latest.gate_trip_count ?? 0))}
-						</span>{" "}
-						trip / {formatIntI(Number(latest.gate_total_count ?? 0))}
-					</span>
-					<span>compliance {compliance}</span>
-					<span>override {override}</span>
-				</div>
-				{(latest.compliance_rate === null || latest.override_rate === null) && (
-					<div className="card-sub fs-meta">
-						— = insufficient data, never a measured zero.
-					</div>
-				)}
-			</div>
-		</div>
+			</Stack>
+		</Card>
 	);
+}
+
+// one fact list, one meaning per line: size, then gate
+function CorpusFactsI({ latest }) {
+	return (
+		// three term-value pairs per line → two lines, the paired card's row keeps its 75% fill floor
+		<dl className="grid grid-cols-[repeat(3,auto_minmax(max-content,1fr))] gap-x-label gap-y-list fs-meta tnum">
+			{getCorpusFactLinesI(latest).map((line) => line.map(([term, value], index) => (
+				<React.Fragment key={term}>
+					{/* col-start-1 → each line opens on the first column, so a missing Alert never pulls the gate line up */}
+					<dt className={index === 0 ? "col-start-1 text-dim" : "text-dim"}>{term}</dt>
+					<dd className="text-ink">{value}</dd>
+				</React.Fragment>
+			)))}
+		</dl>
+	);
+}
+
+// [size facts + a raised alert, gate facts]
+function getCorpusFactLinesI(latest) {
+	const verdict = getCorpusGrowthVerdictI(latest);
+	const trip = Number(latest.gate_trip_count ?? 0);
+	const facts = {
+		size: [
+			["Files", formatIntI(Number(latest.file_count ?? 0))],
+			["Tokens", `~${formatIntI(Number(latest.token_estimate ?? 0))}`],
+		],
+		gate: [
+			// the pass count already reads as Compliance (pass ÷ total)
+			["Gate checks", `${formatIntI(trip)} ${trip === 1 ? "trip" : "trips"} in ${formatIntI(Number(latest.gate_total_count ?? 0))}`],
+			["Compliance", getCorpusRateI(latest.compliance_rate)],
+			["Override", getCorpusRateI(latest.override_rate)],
+		],
+	};
+	if (verdict.tone === "text-warn") {
+		// the Alert term already says alert → the value names the kinds only
+		facts.size.push(["Alert", <><SymI s={verdict.symbol} className={verdict.tone} size={11} /> {verdict.kinds}</>]);
+	}
+	return [facts.size, facts.gate];
+}
+
+function isCorpusGrowthEmptyI(data) {
+	return data != null && !(Array.isArray(data.audits) && data.audits.length > 0);
+}
+
+// null = insufficient data, never a measured zero → None, not 0.0%
+function getCorpusRateI(rate) {
+	const { AbsentValue } = window.UI;
+	return rate == null ? <AbsentValue kind="none" /> : formatRateI(rate);
 }
 
 // Same shape as styleRefGradeBadgeI → the Operator view renders every gauge chip alike.
@@ -1141,10 +1012,12 @@ function getCorpusGrowthVerdictI(latest) {
 		latest.absolute_alert ? "absolute" : null,
 	].filter(Boolean);
 	if (alerts.length > 0) {
+		const kinds = alerts.join(" + ");
 		return {
 			symbol: "⚠",
 			tone: "text-warn",
-			label: `${alerts.join(" + ")} alert`,
+			label: `${kinds} alert`,
+			kinds,
 			hint,
 		};
 	}

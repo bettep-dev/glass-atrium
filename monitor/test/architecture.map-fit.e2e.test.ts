@@ -9,17 +9,17 @@
 // the trade that a wider graph does not move.
 //
 // The default view is an overview: the drawing at 90% of the contain fit, centred, with every label
-// at the 13px meta floor or more. Readings asserted together:
+// between the 13px meta floor and the 16px ceiling. Readings asserted together:
 //   1. containment — every `.node` / `.cluster` client rect within the canvas rect.
 //   2. overview share — the drawing spans ~90% of its frame on the binding axis, centred on both axes.
-//   3. legibility — every label at >= MIN_RENDERED_LABEL_PX in the default view, and still within the zoom-in press budget.
+//   3. legibility — every label within [MIN_RENDERED_LABEL_PX, MAX_RENDERED_LABEL_PX] in the default view, and >= the floor within the zoom-in press budget.
 //   4. reset — the Reset control returns a zoomed-in map to the same default view.
 //   5. shape — a sources column (Inputs above Daemons) beside the pipeline spine (Orchestrator → Agents → Safety → Store → Documents),
 //      the bus into Orchestrator and the bypass right of the spine; every screen-drawn label clear of frames, other labels and the zoom controls.
 //
 // Viewport table: 1024 and 1440 are the widths the evaluators scored; 1396 is the width the user
 // actually runs; 1512 and 1920 are the two the fit was first reasoned about. Heights are the window heights
-// those widths plausibly come with. The pane shares the viewport with the Part health block under
+// those widths plausibly come with. The pane shares the viewport with the System parts card under
 // the map: `.arch-main` keeps a 62vh floor and the block takes the rest, so the pane height is no
 // longer a fixed subtraction. The fill reading takes whichever axis binds, so the exact height is not
 // load-bearing.
@@ -50,12 +50,16 @@ import {
 	PART_NODE_BINDINGS,
 } from "../src/server/architecture/diagrams-source.js";
 import type { ArchitectureLiveResponse } from "../src/server/types/architecture.js";
+import { compositeOver, contrastRatio, parseColor, type Rgba } from "./lib/wcag-contrast.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
 
 // the 13px meta floor every drawn label must reach — owned here, never read from the screen
 const MIN_RENDERED_LABEL_PX = 13;
+
+// the default view's label ceiling — a fitted overview never draws a label larger than body text, so the list under the map stays on the first screen
+const MAX_RENDERED_LABEL_PX = 16;
 
 // the default view's share of the contain fit
 const DEFAULT_VIEW_SHARE = 0.9;
@@ -118,6 +122,8 @@ interface FitReading {
 	drawableWidth: number;
 	scale: number;
 	labelPx: number;
+	// largest drawn label — the default view's ceiling reads it
+	maxLabelPx: number;
 	boxCount: number;
 	drawnWidthPx: number;
 	drawnHeightPx: number;
@@ -254,9 +260,9 @@ async function measureFit(page: Page, canvasSelector: string): Promise<FitReadin
 			const labels = Array.from(canvas.querySelectorAll("svg .nodeLabel, svg .edgeLabel")).filter(
 				(el) => (el.textContent || "").trim() !== "",
 			);
-			const declared = labels.length
-				? Math.min(...labels.map((el) => Number.parseFloat(getComputedStyle(el).fontSize)))
-				: 0;
+			const sizes = labels.map((el) => Number.parseFloat(getComputedStyle(el).fontSize));
+			const declared = sizes.length ? Math.min(...sizes) : 0;
+			const largest = sizes.length ? Math.max(...sizes) : 0;
 
 			// 노드와 존 상자 전부 — 존이 잘리면 그 안의 제목이 잘림.
 			const boxes = Array.from(canvas.querySelectorAll("svg g.node, svg g.cluster"));
@@ -311,6 +317,7 @@ async function measureFit(page: Page, canvasSelector: string): Promise<FitReadin
 				drawableWidth: drawableRight - pane.left,
 				scale,
 				labelPx: declared * scale,
+				maxLabelPx: largest * scale,
 				boxCount: boxes.length,
 				drawnWidthPx: drawn.right - drawn.left,
 				drawnHeightPx: drawn.bottom - drawn.top,
@@ -930,6 +937,15 @@ for (const { width, height } of VIEWPORTS) {
 		);
 	});
 
+	test(`no label in the default view is drawn above ${MAX_RENDERED_LABEL_PX}px at ${width}x${height}`, async () => {
+		const r = await readFit(width, height);
+		assert.ok(r.maxLabelPx > 0, "no drawn label was measured");
+		assert.ok(
+			r.maxLabelPx <= MAX_RENDERED_LABEL_PX + CTM_FLOAT_TOLERANCE,
+			`the largest label is ${r.maxLabelPx.toFixed(2)}px at scale ${r.scale.toFixed(4)} (pane ${r.paneWidth.toFixed(0)}x${r.paneHeight.toFixed(0)})`,
+		);
+	});
+
 	test(`the default view spans 90% of its frame on the binding axis at ${width}x${height}`, async () => {
 		const r = await readFit(width, height);
 		const fill = Math.max(r.drawnWidthPx / r.drawableWidth, r.drawnHeightPx / r.paneHeight);
@@ -978,7 +994,7 @@ test("a zone whose title repeats its lone member hides the title and keeps no ba
 	assert.deepEqual(r.titleBands, [], `a zone with a hidden title keeps its title band: ${r.titleBands.join("; ")}`);
 });
 
-// at any width the map keeps a pane floor that wins over the part health peek band — owned here, never read from the screen
+// at any width the map keeps a pane floor that wins over the System parts peek band — owned here, never read from the screen
 const PANE_FLOOR = { PX: 500 };
 
 // windows narrow or short enough that the first-screen band alone would leave the map under the pane floor — 1366x768 is a common laptop window
@@ -1023,12 +1039,12 @@ function isHeightBound(fit: FitReading): boolean {
 }
 
 for (const { width, height } of [...VIEWPORTS, ...FLOOR_VIEWPORTS.slice(1)]) {
-	test(`the part health block starts under the map, never over it, at ${width}x${height}`, async () => {
+	test(`the System parts card starts under the map, never over it, at ${width}x${height}`, async () => {
 		const r = await readPartHealthPlacement(width, height);
 		assert.ok(r.blockTop >= r.canvasBottom - EPS_PX, `the block (top ${r.blockTop.toFixed(0)}) overlaps the map (bottom ${r.canvasBottom.toFixed(0)})`);
 	});
 
-	test(`the part health block leaves the first screen only when the map pane sits at its ${PANE_FLOOR.PX}px floor at ${width}x${height}`, async () => {
+	test(`the System parts card leaves the first screen only when the map pane sits at its ${PANE_FLOOR.PX}px floor at ${width}x${height}`, async () => {
 		const r = await readPartHealthPlacement(width, height);
 		assert.ok(
 			r.blockTop < r.viewportHeight || r.fit.paneHeight <= PANE_FLOOR.PX + EPS_PX,
@@ -1037,7 +1053,7 @@ for (const { width, height } of [...VIEWPORTS, ...FLOOR_VIEWPORTS.slice(1)]) {
 	});
 }
 
-test(`at any width the map keeps its ${PANE_FLOOR.PX}px pane floor on either binding axis, even when the part health block leaves the first screen`, async (t) => {
+test(`at any width the map keeps its ${PANE_FLOOR.PX}px pane floor on either binding axis, even when the System parts card leaves the first screen`, async (t) => {
 	const readings = [];
 	for (const viewport of FLOOR_VIEWPORTS) readings.push({ ...viewport, ...(await readPartHealthPlacement(viewport.width, viewport.height)) });
 
@@ -1051,5 +1067,81 @@ test(`at any width the map keeps its ${PANE_FLOOR.PX}px pane floor on either bin
 			r.fit.paneHeight >= PANE_FLOOR.PX - EPS_PX,
 			`${r.width}x${r.height}: the map pane is ${r.fit.paneHeight.toFixed(0)}px — under the ${PANE_FLOOR.PX}px floor`,
 		);
+	}
+});
+
+// spec 44084 §4.2 — each role border paints its legend token
+const ROLE_BORDER_TOKENS = [
+	{ className: "security", token: "--cat-1" },
+	{ className: "focal", token: "--cat-2" },
+];
+
+function getClassDefStroke(className: string): Rgba {
+	const hex = new RegExp(`^\\s*classDef\\s+${className}\\s+.*?stroke:#([0-9a-fA-F]{6})([0-9a-fA-F]{2})?`, "m").exec(CANONICAL_MAP.mermaid_drawn);
+	assert.ok(hex, `the drawn map must define class '${className}' with a stroke`);
+	const [r, g, b] = [0, 2, 4].map((at) => Number.parseInt(hex[1].slice(at, at + 2), 16));
+	return { r, g, b, a: hex[2] ? Number.parseInt(hex[2], 16) / 255 : 1 };
+}
+
+async function readRoleBorders() {
+	const { page, canvasSelector } = await openFittedPage(1440, 900);
+	try {
+		return await page.evaluate(
+			({ sel, roles }) =>
+				roles.map(({ className, token }) => {
+					const shape = document.querySelector(`${sel} g.node.${className} > :is(rect, path, polygon, circle, ellipse):not(.arch-ring):not(.arch-ring-glyph-pill)`);
+					const probe = document.createElement("span");
+					probe.style.color = `rgb(var(${token}))`;
+					document.body.append(probe);
+					const tokenColor = getComputedStyle(probe).color;
+					probe.remove();
+					const style = shape ? getComputedStyle(shape) : null;
+					return { className, token, tokenColor, stroke: style?.stroke ?? "", fill: style?.fill ?? "" };
+				}),
+			{ sel: canvasSelector, roles: ROLE_BORDER_TOKENS },
+		);
+	} finally {
+		await page.close();
+	}
+}
+
+test("each role node border paints its legend token at full strength", async () => {
+	for (const role of await readRoleBorders()) {
+		assert.ok(role.stroke, `no drawn shape for class '${role.className}'`);
+		assert.strictEqual(role.stroke, role.tokenColor, `class '${role.className}' strokes ${role.stroke}, its token ${role.token} is ${role.tokenColor}`);
+	}
+});
+
+test("no role node border measures lower on its node fill than the drawn stroke", async () => {
+	for (const role of await readRoleBorders()) {
+		const fill = parseColor(role.fill);
+		const now = contrastRatio(compositeOver(parseColor(role.stroke), fill), fill);
+		const drawn = contrastRatio(compositeOver(getClassDefStroke(role.className), fill), fill);
+		assert.ok(now >= drawn - 0.01, `'${role.className}': ${now.toFixed(2)} on its fill, the drawn stroke gave ${drawn.toFixed(2)}`);
+	}
+});
+
+// the canvas is the card's body: no inner band, no second rounded frame inside the card's hairline
+test("the map canvas sits flush against its card's hairline on the left, right and bottom", async () => {
+	const { page, canvasSelector } = await openFittedPage(1440, 900);
+	try {
+		const r = await page.evaluate((sel) => {
+			const canvas = document.querySelector(sel) as HTMLElement;
+			const card = canvas.closest(".arch-col-card") as HTMLElement;
+			// one inline body — tsx wraps a named inner function in __name, which the browser lacks
+			const [c, k, style] = [canvas.getBoundingClientRect(), card.getBoundingClientRect(), getComputedStyle(card)];
+			const [bl, br, bb] = [style.borderLeftWidth, style.borderRightWidth, style.borderBottomWidth].map(Number.parseFloat);
+			return {
+				left: c.left - (k.left + bl),
+				right: k.right - br - c.right,
+				bottom: k.bottom - bb - c.bottom,
+				canvasRadius: getComputedStyle(canvas).borderTopLeftRadius,
+			};
+		}, canvasSelector);
+		for (const side of ["left", "right", "bottom"] as const)
+			assert.ok(Math.abs(r[side]) <= 0.5, `the canvas sits ${r[side].toFixed(1)}px inside the card's ${side} hairline`);
+		assert.equal(r.canvasRadius, "0px", "the canvas draws no rounded frame of its own inside the card");
+	} finally {
+		await page.close();
 	}
 });

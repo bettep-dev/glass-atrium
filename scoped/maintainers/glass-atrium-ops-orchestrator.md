@@ -18,6 +18,14 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 - This H2 stays over the 8 KB H2 cap because it contains the held `### Architecture Patterns [ORCHESTRATOR]`, itself over 8 KB.
 - Every other H3 under it is held to the 3 KB H3 cap, read as 3,000 B (UTF-8, heading to the next H3); re-measure the H2 once that H3's pins retire.
 
+### `### Quality Gates [ORCHESTRATOR]` — Deep-review override linkage
+
+- The H3 has no held cap: byte-measure it before any addition, and move editor detail into this note rather than over 3,000 B.
+- **Orchestrator-forced Deep-review override** single-sites the path-count threshold and the sensitive-path prefix list: other prose files carry a pointer, never a copy.
+- `hooks/enforce-verification-gate.sh` mirrors both as named constants (`DEEP_REVIEW_FILE_THRESHOLD` and the prefix list) and reports counts + matched prefix only.
+  - Its advisory message names `skills/glass-atrium-ops-orchestrator.md → Quality Gates` as the threshold site, so the bullet stays under this H3 unless that hook message moves in the same pass.
+- Machine-checked: `hooks/test/enforce-verification-gate-scope.bats` greps the first `lists ≥ N paths` in the skill and compares it with the hook constant, so the two move together or that suite fails.
+
 ### Held cap exception — `### Architecture Patterns [ORCHESTRATOR]`
 
 - This H3 stays over the 3 KB H3 cap.
@@ -30,7 +38,7 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 | `##### Absolute schema-cap rules` | the rule phrases `orchestrator-skill-schema-example.bats` greps in this file |
 | `##### Copyable helper (robustAgent)` | its `js` fence, replayed by `workflow-gate-completion-channel.bats` |
 | `##### Stage gates` | revision caps cited by `references/review-rounds.md` · `scoped/maintainers/orchestrator-role.md` |
-| `###### Copyable skeletons — 2-phase (verify → implement) and its 3-phase variant` | `###### Machine-checked skeletons` suites · the gate hook header's promotion condition |
+| `###### Copyable skeletons — 2-phase (verify → implement) and its 3-phase variant` | `###### Machine-checked skeletons` suites |
 | `##### Entry-class token placement (ultracode — DEV workflow)` | its declaration fence, read by the same suites |
 
 #### Relocated — `#### Analysis-Track Right-Sizing (input-side) [ORCHESTRATOR]`
@@ -42,7 +50,6 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 - Citers of the moved section:
   - `references/delegation-prompt.md` → `## Resource Budget` (the floor bullet) · `## Read-Extent Discipline` → **Scope of this duty**.
   - the skill's **Print-block-then-emit** bullet (via the kept heading).
-  - `hooks/enforce-workflow-verify-stage.sh` → `PROMOTION CONDITION` — both sentences name the reference beside the skill; verbatim pin: `enforce-workflow-verify-stage.bats` → `schema-cap(promotion)`.
 
 ### Relocated — Agent selection and delegation-prompt detail
 
@@ -55,7 +62,7 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
 ## `## Orchestrator On-Demand Mechanisms` — linkage and held cap
 
 - The group is split across these H2s so each H2 without a held H3 stays within the 8 KB cap:
-  - `## Orchestrator On-Demand Mechanisms` — the ceremony and `### Reply Form Contract (main-session user-facing replies)`.
+  - `## Orchestrator On-Demand Mechanisms` — the ceremony, `### Reply Form Contract (main-session user-facing replies)` and `### Low-Context Reader Rules`.
   - `## Workflow-Tool Execution (On-Demand)` — `### Ultracode / Workflow-tool Mode` alone.
   - `## Approval Protocols (On-Demand)` — `### Scope-Expansion Approval Protocol` and `### Self-Improvement User-Approval Trigger`.
   - Every citer names an H3, never one of these H2s; the first H2's lead names each of them and the two `## Managed Document …` sections.
@@ -63,6 +70,11 @@ Maintainer-facing material for that skill reference. Nothing here binds the orch
   - `autoagent/daemon_cycle.py` also cites that heading by name (frozen; keep it byte-identical).
 - `### Reply Form Contract (main-session user-facing replies)` is the canonical; `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition holds its one pointer.
   - Single-siting is checked only at PR review (diff inspection).
+- `### Low-Context Reader Rules` is the canonical for the low-context-reader and standalone-recap rules on main-session replies; its pointers are the contract's **Composes with** bullet and `GLASS_ATRIUM_GLOBAL_RULES.md` → AI-Generated Anti-Pattern Prohibition.
+  - The skill reaches no subagent, so the report author's side lives where it reaches that author instead of pointing here.
+  - The mirror: `agents/glass-atrium-intel-reporter.md` → `## Absolute Rules` → **Low-context reader**, adapted to a report body; a wording change on either side is checked against the other.
+  - The report-side recap: `scoped/scope-report.md` → `## Report Structure [REPORT]` → **Skim layer** holds the found / done / next triad, and the reporter body's **Standalone recap** bullet points at it; a change to the skill's triad is checked against the **Skim layer** bullet.
+  - No pin holds it: byte-measure it, the contract and their H2 against the caps after any edit.
 
 ### Held cap exception — `### Ultracode / Workflow-tool Mode`
 

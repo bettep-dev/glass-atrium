@@ -18,10 +18,14 @@ import { getHtmlBodyRoot, resetDocsRootCache } from "../src/server/clauded-docs/
 const SERVER_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "server");
 const LEGACY_ROOT = ".claude";
 
-// The only read that legitimately stays on ~/.claude: settings.json, the file the Claude Code CLI itself owns.
+// The only ~/.claude references that legitimately stay: paths the Claude Code CLI itself owns.
+// - health-detail.ts → settings.json read
+// - queue/registry.ts → a session's CLAUDE_CONFIG_DIR checked against the CLI's $HOME/.claude* profile dirs (validation, no GA state)
+//   + the CLI's default $HOME/.claude when a register names no config dir (transcript path check)
 // Values = matching source lines.
 const LEGACY_ALLOWLIST: ReadonlyMap<string, number> = new Map([
   [path.join("routes", "health-detail.ts"), 1],
+  [path.join("queue", "registry.ts"), 3],
 ]);
 
 // undefined restores the "unset" state so a saved-absent seam is cleared, not blanked to "".

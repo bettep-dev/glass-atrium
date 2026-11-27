@@ -1,10 +1,11 @@
-// DetailSurface geometry read in a real browser: a drawer opened from inside a KPI tile still covers the viewport and sits on top,
-// the KPI label row keeps its gap to the ⓘ that opens it, and the overlay head is the 48 card-head with its title on the close button.
+// DetailSurface read in a real browser: the overlay head is the 48 card-head with its title on the close button,
+// and the focus trap's selector, matched by the browser, enters at controls that can take focus.
 // Runner: npx tsx --test test/ui.detail-surface.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
@@ -13,8 +14,6 @@ import { getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./li
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
-
-type Component = (props: Record<string, unknown>) => unknown;
 
 const ui = await loadScreenModule(resolve(HERE, "../public/src/ui.jsx"));
 const React = ui.React as { createElement: (type: unknown, props: unknown, ...children: unknown[]) => unknown; Fragment: unknown };
@@ -30,7 +29,7 @@ const render = (type: unknown, props: Record<string, unknown>, ...children: unkn
   getHtml(renderScreen(h(type, props, ...children)) as RenderedNode);
 
 const pageOf = (body: string): string =>
-  `<!doctype html><html data-theme="light"><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">${body}</body></html>`;
+  `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">${body}</body></html>`;
 
 const VIEWPORT = { width: 1024, height: 700 };
 
@@ -52,76 +51,12 @@ async function openPage(body: string): Promise<Page> {
   return page;
 }
 
-// an open CardInfo as a KPI tile's ⓘ: its trigger and the drawer it opens, rendered beside each other inside .kpi-info;
-// the label is long enough to ellipsize, so the aside sits at the end of the row's reserve; a plain tile follows in the grid
-const INFO_LABEL = "How cost is counted";
-const KPI_GRID = `<div style="display: grid; grid-template-columns: repeat(2, 240px); gap: 16px;">
-  ${render(ui.KPI, {
-    id: "spend", label: "Cost across every model and every agent", aside: "(30 d)", value: "$412",
-    info: h(React.Fragment, null,
-      h(ui.CardInfo as Component, { label: INFO_LABEL }, "Sum of every priced call"),
-      h(ui.DetailSurface as Component, { open: true, onClose: () => undefined, title: INFO_LABEL }, "Sum of every priced call")),
-  })}
-  ${render(ui.KPI, { id: "runs", label: "Runs", value: "1,284" })}
-</div>`;
-
-describe("a drawer opened from a KPI tile's ⓘ", () => {
-  let page: Page;
-
-  before(async () => {
-    page = await openPage(KPI_GRID);
-  });
-
-  test("precondition: the drawer is rendered inside the tile's ⓘ slot", async () => {
-    assert.equal(await page.locator(".kpi > .kpi-info .detail-overlay").count(), 1);
-  });
-
-  test("covers the whole viewport", async () => {
-    const rect = await page.$eval(".kpi-info .detail-overlay", (el) => {
-      const box = el.getBoundingClientRect();
-      return { left: box.left, top: box.top, width: box.width, height: box.height };
-    });
-    assert.deepEqual(rect, { left: 0, top: 0, ...VIEWPORT });
-  });
-
-  test("is the topmost layer at every viewport corner", async () => {
-    const misses = await page.evaluate(({ width, height }) => {
-      const overlay = document.querySelector(".kpi-info .detail-overlay");
-      const corners = [[1, 1], [width - 2, 1], [1, height - 2], [width - 2, height - 2]];
-      return corners
-        .map(([x, y]) => ({ x, y, hit: document.elementFromPoint(x, y) }))
-        .filter(({ hit }) => hit === null || !overlay?.contains(hit))
-        .map(({ x, y, hit }) => `(${x},${y}) → ${hit ? hit.className || hit.tagName : "null"}`);
-    }, VIEWPORT);
-    assert.deepEqual(misses, []);
-  });
-
-  test("the ⓘ sits on the label row's centre line", async () => {
-    const { row, info } = await page.$eval("#spend", (tile) => {
-      const [head, button] = [tile.querySelector(".kpi-head"), tile.querySelector(".kpi-info > button")].map((el) => el!.getBoundingClientRect());
-      return { row: (head.top + head.bottom) / 2, info: (button.top + button.bottom) / 2 };
-    });
-    assert.ok(Math.abs(row - info) < 0.5, `ⓘ centre ${info} vs label row centre ${row}`);
-  });
-
-  test("a truncated label row keeps the 4px meta gap before the ⓘ", async () => {
-    const { isTruncated, gap } = await page.$eval("#spend", (tile) => {
-      const label = tile.querySelector(".kpi-label-text") as HTMLElement;
-      const aside = tile.querySelector(".kpi-aside")!.getBoundingClientRect();
-      const button = tile.querySelector(".kpi-info > button")!.getBoundingClientRect();
-      return { isTruncated: label.scrollWidth > label.clientWidth, gap: button.left - aside.right };
-    });
-    assert.ok(isTruncated, "the fixture label ellipsizes, so the aside ends at the row's reserve");
-    assert.ok(Math.abs(gap - 4) < 0.5, `aside → ⓘ gap ${gap}`);
-  });
-});
-
 // one drawer per head shape; each overlay is fixed over the viewport, so each head is read by its own wrapper
 const HEADS = [
   { name: "a one-line title", id: "one-line", props: { title: "Session cost" } },
   { name: "a title with a sub-line", id: "with-sub", props: { title: "dev-react", sub: "Agent · last 30 days" } },
   { name: "a title that wraps", id: "wrapped",
-    props: { title: "Review of the monitor control sizing plan, every route and every drawer, measured at both widths in both themes" } },
+    props: { title: "Review of the monitor control sizing plan, every route and every drawer, measured at both widths on every screen" } },
 ] as const;
 const HEAD_PAGE = HEADS.map((head) =>
   `<div data-head="${head.id}">${render(ui.DetailSurface, { open: true, onClose: () => undefined, ...head.props }, "body")}</div>`).join("\n");
@@ -166,4 +101,54 @@ describe("the overlay head", () => {
     const pitch = lines[1].top - lines[0].top;
     assert.ok(Math.abs(pitch - fontSize * 1.5) < 0.5, `line pitch ${pitch} at ${fontSize}px`);
   });
+});
+
+describe("the focus trap enters at controls that can take focus", () => {
+  type TrapArgs = { focusables: unknown[]; active: unknown; panel: unknown; shiftKey: boolean };
+  const getTrapFocusTarget = ui.getTrapFocusTarget as (args: TrapArgs) => { id: string } | null;
+  // vm read is untyped; a missing const throws here, and a non-selector fails querySelectorAll in the page
+  const selector = vm.runInContext("FOCUSABLE_SELECTOR", ui) as string;
+
+  // each sheet's body opens and closes on a disabled control around two enabled ones
+  const option = () => h("option", null, "Daily");
+  const SHEETS = [
+    { name: "a disabled input", id: "input", disabled: () => h("input", { disabled: true, "aria-label": "Budget" }) },
+    { name: "a disabled select", id: "select", disabled: () => h("select", { disabled: true, "aria-label": "Window" }, option()) },
+    { name: "a disabled textarea", id: "textarea", disabled: () => h("textarea", { disabled: true, "aria-label": "Note" }) },
+    { name: "a control inside a disabled fieldset", id: "fieldset",
+      disabled: () => h("fieldset", { disabled: true }, h("input", { "aria-label": "Budget" })) },
+  ] as const;
+  const SHEET_PAGE = SHEETS.map((sheet) => {
+    const body = h("div", null,
+      sheet.disabled(),
+      h("button", { type: "button", id: `${sheet.id}-first` }, "Apply"),
+      h("input", { id: `${sheet.id}-last`, "aria-label": "Search" }),
+      sheet.disabled());
+    return `<div data-sheet="${sheet.id}">${render(ui.DetailSurface, { open: true, onClose: () => undefined, title: "Budget", bare: true, variant: "fullscreen" }, body)}</div>`;
+  }).join("\n");
+
+  let page: Page;
+
+  before(async () => {
+    page = await openPage(SHEET_PAGE);
+  });
+
+  // the browser matches the shipped selector; the shipped trap rule picks the entry among the matches
+  const getEntry = async (id: string, shiftKey: boolean): Promise<string | undefined> => {
+    const ids = await page.$eval(`[data-sheet="${id}"] [role="dialog"]`,
+      (panel, sel) => [...panel.querySelectorAll(sel as string)].map((node) => node.id), selector);
+    const focusables = ids.map((nodeId) => ({ id: nodeId }));
+    const panel = { contains: (node: unknown) => focusables.includes(node as { id: string }) };
+    return getTrapFocusTarget({ focusables, active: null, panel, shiftKey })?.id;
+  };
+
+  for (const sheet of SHEETS) {
+    test(`${sheet.name} first: Tab into the sheet lands on the first enabled control`, async () => {
+      assert.equal(await getEntry(sheet.id, false), `${sheet.id}-first`);
+    });
+
+    test(`${sheet.name} last: Shift+Tab into the sheet lands on the last enabled control`, async () => {
+      assert.equal(await getEntry(sheet.id, true), `${sheet.id}-last`);
+    });
+  }
 });

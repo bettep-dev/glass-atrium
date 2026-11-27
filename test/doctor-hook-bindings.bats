@@ -13,6 +13,9 @@
 # <target>/settings.json) at a throwaway temp dir, so the test drives the REAL
 # run_doctor against a synthetic settings.json without touching ~/.claude. We
 # assert ONLY on the §6 binding lines; §1-5 verdicts are out of scope here.
+# Every doctor run reads the remote listener through the ga_remote_run shadow
+# (test/lib/remote-run-stub.bash) — none open unless a row sets LISTEN_NAME — never
+# this host's sockets, where a live monitor's remote listener would FAIL the verdict.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 REAL_GA="${GA}/glass-atrium"
@@ -24,6 +27,7 @@ source "${GA}/scripts/lib/path-guard.sh"
 setup() {
   load 'lib/bats-db-seal'
   ga_bats_db_seal
+  load 'lib/remote-run-stub'
   # the doctor reads its drop log, rewire marker and auth reports under GA_DATA_ROOT → this test's own root
   export GA_DATA_ROOT="${BATS_TEST_TMPDIR:?}/ga-data-root"
   mkdir -p "${GA_DATA_ROOT}/logs" "${GA_DATA_ROOT}/data"
@@ -65,15 +69,8 @@ write_full_settings() {
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-subagent-budget.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-worktree-writer-lock.sh" } ] },
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/block-dangerous-commands.sh" } ] },
-      { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/block-doc-routing-leak.sh" } ] },
-      { "matcher": "Write", "hooks": [ { "type": "command", "command": "~/.claude/hooks/block-md-creation.sh" } ] },
-      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/block-no-verify.sh" } ] },
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-commit-guard.sh" } ] },
-      { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-config-protection.sh" } ] },
       { "matcher": "Write|Edit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-delegation.sh" } ] },
-      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-foreground-harness.sh" } ] },
-      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-harness-critical.sh" } ] },
-      { "matcher": "Write|Edit|MultiEdit", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-harness-critical.sh" } ] },
       { "matcher": "Agent", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-verification-gate.sh" } ] },
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/enforce-workflow-verify-stage.sh" } ] },
       { "matcher": "Workflow", "hooks": [ { "type": "command", "command": "~/.claude/hooks/lint-workflow-template-literal.sh" } ] },
@@ -99,6 +96,8 @@ write_full_settings() {
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/inject-session-context.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-security-warnings-state.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/prune-session-spawns.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/queue-listener.sh", "asyncRewake": true, "timeout": 86400 } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/queue-session-register.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/validate-compliance-matrix.sh" } ] }
     ],
     "UserPromptSubmit": [
@@ -107,7 +106,9 @@ write_full_settings() {
     "Stop": [
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/advisory-preedit-facts.sh" } ] },
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/cost-tracker.sh" } ] },
-      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/post-edit-typecheck.sh" } ] }
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/post-edit-typecheck.sh" } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/queue-listener.sh", "asyncRewake": true, "timeout": 86400 } ] },
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/queue-turn-end-check.sh" } ] }
     ],
     "SubagentStart": [
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/agent-tracker.sh" } ] },
@@ -133,6 +134,9 @@ write_full_settings() {
     ],
     "PreCompact": [
       { "hooks": [ { "type": "command", "command": "~/.claude/hooks/pre-compact.sh" } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "~/.claude/hooks/queue-session-deregister.sh" } ] }
     ]
   }
 }
@@ -143,7 +147,8 @@ JSON
 # with dormant-binding warnings, so `run` (which records exit in $status) tolerates
 # a §1-5 FAIL too — we assert on stdout lines, not the exit code.
 run_doctor_sandbox() {
-  GA_TARGET_HOME="${TARGET}" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" run "${REAL_GA}" doctor
+  make_ga_sandbox
+  run_doctor_ga_sandbox
 }
 
 # --- executability of WIRED hooks (§6 second dormant class) -------------------
@@ -151,8 +156,9 @@ run_doctor_sandbox() {
 # A hook can be wired in settings.json AND present on disk yet mode-644: Claude Code
 # spawns each binding as a COMMAND, so the protection never runs. Covering that class
 # needs a GA root whose hooks/ dir the test OWNS — the real repo hooks dir is mode-755
-# and a test must never chmod it. lib/ + scripts/ are symlinked so the code under test
-# is the REAL doctor; only the entry point is COPIED, because resolve_self walks a
+# and a test must never chmod it. scripts/ and each lib file are symlinked so the code
+# under test is the REAL doctor; lib/ga-remote.sh alone also sources the listener shadow
+# (make_remote_stub_lib). Only the entry point is COPIED, because resolve_self walks a
 # symlink chain back to its origin (a symlinked entry would re-resolve to the repo).
 # The hook files are stubs: the check stats the mode, never the content.
 make_ga_sandbox() {
@@ -160,7 +166,7 @@ make_ga_sandbox() {
   mkdir -p "${GA_SANDBOX}/hooks"
   cp "${REAL_GA}" "${GA_SANDBOX}/glass-atrium"
   chmod 755 "${GA_SANDBOX}/glass-atrium"
-  ln -s "${GA}/lib" "${GA_SANDBOX}/lib"
+  make_remote_stub_lib "${GA_SANDBOX}" "${GA}"
   # hooks/lib carries the chunker core the split-channel rows below ask for its slot constant.
   # COPIED from the producer rather than stubbed — the constant and the audit grammar are the
   # producer's, and a stub would let a rename here pass while the live reader went blind. A
@@ -186,7 +192,7 @@ make_ga_sandbox() {
 # bypasses the executable bit, which is the very defect class these rows exist to catch.
 run_doctor_ga_sandbox() {
   GA_TARGET_HOME="${TARGET}" GA_MANIFEST="${GA_SANDBOX}/manifest.json" \
-    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
+    ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" LISTEN_NAME="${LISTEN_NAME:-}" \
     run "${GA_SANDBOX}/glass-atrium" doctor
 }
 
@@ -265,7 +271,7 @@ drop_group() {
 
 @test "DX3 facet-only miss -> aggregate line is facet-scoped, no whole-gate dormant claim" {
   write_full_settings
-  drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
+  drop_group 'Write|Edit' validate-secret-scan.sh
   run_doctor_sandbox
   [[ "${output}" == *"unwired matcher facet(s) on hooks that ARE wired and firing"* ]] \
     && [[ "${output}" != *"dormant hook binding(s)"* ]]
@@ -275,7 +281,7 @@ drop_group() {
   # the redeploy path is hazardous until the reconcile fix lands, and it is not the
   # remedy for a facet miss anyway — the fix is a hand edit of one matcher list.
   write_full_settings
-  drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
+  drop_group 'Write|Edit' validate-secret-scan.sh
   run_doctor_sandbox
   # scoped to the §6 facet lines: an unrelated section may legitimately mention the installer,
   # so a whole-output grep would be a false positive. Line count asserted first — an empty
@@ -300,11 +306,11 @@ drop_group() {
   # wrong-remedy class DX3/DX4 exist to prevent. The settings-ABSENT row cannot host this pin:
   # that branch reports the aggregate only and emits no per-tuple line at all.
   write_full_settings
-  drop_group 'Write|Edit|MultiEdit' enforce-harness-critical.sh
+  drop_group 'Write|Edit' validate-secret-scan.sh
   drop_group Agent advisory-spawn-budget.sh
   drop_group '' cost-tracker.sh Stop
   run_doctor_sandbox
-  [[ "${output}" == *"warn : hook matcher facet NOT wired — PreToolUse -> enforce-harness-critical.sh (matcher=Write|Edit|MultiEdit) (PARTIAL"* ]] \
+  [[ "${output}" == *"warn : hook matcher facet NOT wired — PreToolUse -> validate-secret-scan.sh (matcher=Write|Edit) (PARTIAL"* ]] \
     && [[ "${output}" == *"warn : hook NOT bound — PreToolUse -> advisory-spawn-budget.sh (matcher=Agent) (DORMANT: deployed but never fires)"* ]] \
     && [[ "${output}" == *"warn : hook NOT bound — Stop -> cost-tracker.sh (matcher=<none>) (DORMANT: deployed but never fires)"* ]] \
     && [[ "${output}" == *"unwired matcher facet(s) on hooks that ARE wired and firing"* ]] \
@@ -318,11 +324,10 @@ drop_group() {
   run_doctor_sandbox
   [[ "${output}" == *"settings.json absent"* ]]
   [[ "${output}" == *"ALL hook event-bindings are unwired"* ]]
-  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE binding set across all 8 events, and the total
+  # EXPECTED_HOOK_BINDINGS enumerates the COMPLETE binding set across all 9 events, and the total
   # asserted below is read from the populated array (set_binding_figures), never restated here.
   # The total is counted per FLATTENED matcher-leaf, NOT per unique hook basename:
-  # validate-secret-scan.sh AND enforce-harness-critical.sh
-  # each bind under TWO matchers (Write|Edit AND Bash), two hooks share the Workflow
+  # validate-secret-scan.sh binds under TWO matchers (Write|Edit AND Bash), two hooks share the Workflow
   # matcher (enforce-workflow-verify-stage.sh AND lint-workflow-template-literal.sh),
   # enforce-verification-gate.sh binds under BOTH PreToolUse and PostToolUse (Agent
   # matcher), and several hooks recur across events (agent-tracker.sh,
@@ -378,9 +383,9 @@ drop_group() {
 @test "wired hook without the executable bit -> FAIL line naming it + non-zero verdict" {
   make_ga_sandbox
   write_full_settings
-  chmod 644 "${GA_SANDBOX}/hooks/block-no-verify.sh"
+  chmod 644 "${GA_SANDBOX}/hooks/enforce-commit-guard.sh"
   run_doctor_ga_sandbox
-  [[ "${output}" == *"FAIL : hook wired but NOT executable — ${GA_SANDBOX}/hooks/block-no-verify.sh"* ]]
+  [[ "${output}" == *"FAIL : hook wired but NOT executable — ${GA_SANDBOX}/hooks/enforce-commit-guard.sh"* ]]
   [[ "${output}" == *"1 wired hook(s) missing the executable bit"* ]]
   [[ "${output}" == *"doctor: FAIL"* ]]
   [[ "${status}" -ne 0 ]]
@@ -398,12 +403,25 @@ drop_group() {
   [[ "${status}" -eq 0 ]]
 }
 
+@test "the doctor reads the sandbox's listener, never the host's: the one a row opens is the one it reports" {
+  # access off with a listener open must still FAIL — the remote rows' own home is
+  # test/remote-access-lifecycle.bats; this row proves the shadow reaches the doctor child.
+  make_ga_sandbox
+  write_full_settings
+  LISTEN_NAME="192.168.0.10:16146" run_doctor_ga_sandbox
+  [[ "${output}" == *"FAIL : remote access off but a listener is open on 192.168.0.10:16146 — restart the monitor"* ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "${status}" -ne 0 ]]
+}
+
 @test "one hook wired under two matchers -> ONE executability FAIL line (per-file, not per-tuple)" {
-  # enforce-harness-critical.sh binds under Bash AND Write|Edit|MultiEdit. The binding verdict is
+  # validate-secret-scan.sh binds under Bash AND Write|Edit. The binding verdict is
   # per-tuple, but the mode is a property of the single FILE — so it must not double-report.
   make_ga_sandbox
   write_full_settings
-  chmod 644 "${GA_SANDBOX}/hooks/enforce-harness-critical.sh"
+  chmod 644 "${GA_SANDBOX}/hooks/validate-secret-scan.sh"
   run_doctor_ga_sandbox
   local lines
   lines="$(printf '%s\n' "${output}" | grep -c 'NOT executable' || true)"

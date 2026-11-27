@@ -135,6 +135,7 @@ The columns the rule file's template marks "writer does not fill": `grader_verdi
 |---|---|---|
 | rule file → `## Completion Report Output Obligation` → Multi-line form | pointer to `### Recorder parse outcomes` | that heading |
 | rule file → `## Automatic Verification Criteria` → Grader disagreement fires narrowly | pointer to `### Grader verdict` | that heading |
+| rule file → `### result values` → the bullet that opens `Before selecting` | pointer to the charter's `## Obstacles and Blockers [ALL]` | that heading, in `agents/GLASS_ATRIUM_GLOBAL_RULES.md` |
 | `hooks/test/emit-discipline-doc-consistency.bats` → its two `EMITTER` tests | this file's emitter-marker count and both names, against the grader source | the emitter bullet under `### Grader verdict` |
 | `hooks/lib/code-based-grader.sh` → header comments | pointers to `### Grader verdict` (Outputs stanza, Input-surface invariant) | the Input-surface invariant bullet |
 | `hooks/test/code-based-grader.bats` → header comment | pointer to `### Grader verdict` | that heading |

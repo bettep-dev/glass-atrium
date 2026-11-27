@@ -16,6 +16,10 @@
 - **SLAP**: one abstraction level per function ("And-Then test")
 - **CQS**: Commands → void · Queries → T · no mixing
 - **High cohesion + low coupling** — split on violation
+- **One owner per derived fact** — a derived domain fact copied into a second place is semantic duplication: it takes its one owner at the second copy, not the third.
+  - A comment keeping two derivations in step marks a missing owner and is forbidden in new code.
+  - An allow-list, enum list or guard written by hand from a generated or DB source (schema, migration, CHECK) is such a copy — derive it from that source, or bind the two with a test that fails when they differ.
+  - A limit enforced in more than one layer (request validation, model, DB column or CHECK) is one fact, counted in one unit across every layer (characters vs bytes, seconds vs milliseconds).
 - Import direction: Controller → Service → Repository · reverse forbidden
 - Barrels: library entry points only · app-internal forbidden
 - DI:

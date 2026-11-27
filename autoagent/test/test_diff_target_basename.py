@@ -92,6 +92,17 @@ class TestGateRejectsWrongFileDiff(unittest.TestCase):
         wrong = "--- a/other.md\n+++ b/other.md\n@@ -1 +1,2 @@\n x\n+y\n"
         self.assertEqual(dc._gate_validated_diff(wrong, target), "")
 
+    def test_when_a_later_header_names_another_file_then_stored_empty_as_a_wrong_file_diff(self) -> None:
+        target = Path("/tmp/does-not-matter/intended-agent.md")
+        two_files = (
+            "--- a/intended-agent.md\n+++ b/intended-agent.md\n@@ -1 +1,2 @@\n x\n+y\n"
+            "--- a/other.md\n+++ b/other.md\n@@ -1 +1,2 @@\n x\n+y\n"
+        )
+        err = StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(dc._gate_validated_diff(two_files, target), "")
+        self.assertIn("targets 'other.md'", err.getvalue())
+
     def test_when_new_path_is_dev_null_then_stored_empty_as_a_file_delete(self) -> None:
         target = Path("/tmp/does-not-matter/intended-agent.md")
         delete = "--- a/intended-agent.md\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-x\n-y\n"

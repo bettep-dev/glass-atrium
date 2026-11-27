@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# SC2034: worktree_lock_state / _other / _root_out / _dir_out / _holder_id_out are RESULT globals
-# consumed by the sourcing hooks (advisory-worktree-writer-lock.sh acquire arm + agent-tracker.sh
-# release arm), not by this lib — the same structural false positive apply-lock.sh documents for
-# apply_lock_acquired.
+# SC2034: worktree_lock_state / _other / _root_out / _dir_out / _holder_id_out / _released_roots and
+# worktree_processes_out are RESULT globals consumed by the sourcing hooks (advisory-worktree-writer-lock.sh
+# acquire arm + agent-tracker.sh release arm) and scripts/prune-worktrees.sh, not by this lib — the same
+# structural false positive apply-lock.sh documents for apply_lock_acquired.
 # The waiver names EXACTLY the externally-read globals and no more: the previous blanket list also
 # covered two globals with no reader anywhere, which is precisely how they survived. _key_out and
 # _holder_out are deliberately ABSENT — both are read inside this file, so they need no waiver, and
@@ -10,7 +10,8 @@
 # shellcheck disable=SC2034
 #
 # worktree-lock.sh — per-worktree writer lock, shared by the PreToolUse acquire arm
-# (advisory-worktree-writer-lock.sh) and the SubagentStop release arm (agent-tracker.sh).
+# (advisory-worktree-writer-lock.sh) and the SubagentStop release arm (agent-tracker.sh), plus the
+# processes-inside listing both agent-tracker.sh and scripts/prune-worktrees.sh read.
 #
 # Sourced, not executable; the sourcing hook owns strict mode + its own fail-open ERR trap, and
 # sources hook-utils.sh first — ga_guard_path, which gates both removals here, arrives with it.
@@ -49,7 +50,7 @@ readonly _WORKTREE_LOCK_LOADED=1
 readonly WORKTREE_LOCK_ROOT="${WORKTREE_LOCK_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/worktree-locks}"
 
 # 360 min — the staleness convention already in force for the live-child markers
-# (enforce-commit-guard.sh LIVE_CHILD_TTL_MIN). Deliberately NOT apply-lock's 1800s default:
+# (hook-utils.sh LIVE_CHILD_TTL_MIN). Deliberately NOT apply-lock's 1800s default:
 # manual-agent hold times can run well past 1800s, so a 1800s TTL would reclaim locks out from under
 # live holders. WORKTREE_LOCK_TTL_SECS overrides.
 readonly WORKTREE_LOCK_TTL_DEFAULT=21600
@@ -63,6 +64,8 @@ worktree_lock_holder_out=""
 worktree_lock_state=""
 worktree_lock_other=""
 worktree_lock_holder_id_out=""
+worktree_lock_released_roots=()
+worktree_processes_out=()
 
 # Canonicalize a RAW envelope agent_id into the holder identity. BOTH arms MUST route through this:
 # ownership is decided by string EQUALITY, so a holder stored under one spelling and looked up under
@@ -168,6 +171,15 @@ worktree_lock_dir_for() {
   worktree_lock_dir_out="${WORKTREE_LOCK_ROOT}/${worktree_lock_key_out}/.apply-lock"
 }
 
+# Inverse of worktree_lock_key: `__` first, so a `_s` token is never read across an escape (every `_`
+# opens a two-character token, so a left-to-right `__` match always starts on a token boundary).
+# Args: $1=key · result: worktree_lock_root_out.
+worktree_lock_key_decode() {
+  local p="${1//__/$'\x1f'}"
+  p="${p//_s//}"
+  worktree_lock_root_out="${p//$'\x1f'/_}"
+}
+
 # Args: $1=lock dir · result: worktree_lock_holder_out · rc 1 = no readable holder id.
 worktree_lock_read_holder() {
   local record="${1}/holder" holder=""
@@ -211,13 +223,14 @@ _worktree_lock_load_applylock() {
   _WORKTREE_LOCK_APPLYLOCK=1
 }
 
-# Reclaim a lock whose holder is presumed gone: age-gated only (see the TTL-IS-DOMINANT note in the
-# header), then apply-lock's single-winner mv-aside takeover so two racing reclaimers can never both
-# win. rc 0 = the stale dir is gone and the caller may mkdir fresh.
-# Args: $1=lock dir.
-_worktree_lock_reclaim() {
+# Whether a lock dir still holds its worktree: present and not aged past the TTL (see the
+# TTL-IS-DOMINANT note in the header). A lock that cannot be dated counts as held — a missing
+# primitive or a failed stat must never read as a released worktree.
+# Args: $1=lock dir · rc 0 = held · rc 1 = absent or aged past the TTL.
+worktree_lock_is_live() {
   local lock_dir="${1}" ttl age
-  _worktree_lock_load_applylock || return 1
+  [[ -d "${lock_dir}" ]] || return 1
+  _worktree_lock_load_applylock || return 0
   ttl="${WORKTREE_LOCK_TTL_SECS:-${WORKTREE_LOCK_TTL_DEFAULT}}"
   case "${ttl}" in
     '' | *[!0-9]*) ttl="${WORKTREE_LOCK_TTL_DEFAULT}" ;;
@@ -226,8 +239,20 @@ _worktree_lock_reclaim() {
   # _apply_lock_reclaim re-verifies staleness with apply_lock_ttl_secs; aligning that env var keeps
   # both gates on ONE number. Process-local: this hook never acquires the shared apply lock itself.
   ATRIUM_APPLY_LOCK_TTL_SECS="${ttl}"
-  age="$(apply_lock_age_secs "${lock_dir}")" || return 1
-  [[ "${age}" -gt "${ttl}" ]] || return 1
+  age="$(apply_lock_age_secs "${lock_dir}")" || return 0
+  [[ "${age}" -le "${ttl}" ]]
+}
+
+# Reclaim a lock whose holder is presumed gone, then apply-lock's single-winner mv-aside takeover so
+# two racing reclaimers can never both win. rc 0 = the stale dir is gone and the caller may mkdir fresh.
+# Args: $1=lock dir.
+_worktree_lock_reclaim() {
+  local lock_dir="${1}"
+  [[ -d "${lock_dir}" ]] || return 1
+  # shellcheck disable=SC2310  # liveness verdict branched on — a held lock is never reclaimed
+  if worktree_lock_is_live "${lock_dir}"; then
+    return 1
+  fi
   _apply_lock_reclaim "${lock_dir}" || return 1
 }
 
@@ -286,16 +311,21 @@ worktree_lock_acquire() {
 # match: agent-tracker.bats pins that hook to exactly 2 python3 subprocesses per fire, so nothing
 # here may reach for the interpreter (which is also why the TTL is checked at ACQUIRE, not here).
 # Args: $1=holder id · rc 1 = a removal failed or was refused (caller reports it loudly; a stale lock would
-# otherwise over-warn silently until its TTL). Deliberately reports NO released count: the only
-# caller branches on rc alone, and the previous count global was read by nothing anywhere.
+# otherwise over-warn silently until its TTL).
+# Result: worktree_lock_released_roots = the worktree root of every lock the holder held, decoded from its
+# key dir — the tracker's only record of where a stopped agent worked.
 worktree_lock_release_by_holder() {
-  local holder="${1}" lock_dir rc=0
+  local holder="${1}" lock_dir key rc=0
+  worktree_lock_released_roots=()
   [[ -n "${holder}" ]] || return 0             # GA-ABSORB[benign]: no holder id = nothing this agent can own
   [[ -d "${WORKTREE_LOCK_ROOT}" ]] || return 0 # GA-ABSORB[benign]: no lock store yet = nothing to release
   for lock_dir in "${WORKTREE_LOCK_ROOT}"/*/.apply-lock; do
     [[ -d "${lock_dir}" ]] || continue # unmatched glob expands literally on bash 3.2 (no nullglob)
     worktree_lock_read_holder "${lock_dir}" || continue
     [[ "${worktree_lock_holder_out}" == "${holder}" ]] || continue
+    key="${lock_dir%/.apply-lock}"
+    worktree_lock_key_decode "${key##*/}"
+    worktree_lock_released_roots+=("${worktree_lock_root_out}")
     # SECURITY: the rm -rf escape guard, twin of apply-lock's _apply_lock_path_guard — a mis-derived
     # dir must never let the removal walk onto an unrelated path.
     case "${lock_dir}" in
@@ -314,4 +344,34 @@ worktree_lock_release_by_holder() {
     rmdir -- "${lock_dir%/*}" 2>/dev/null || true # GA-ABSORB[benign]: prune the now-empty key dir; a non-empty one legitimately stays
   done
   return "${rc}"
+}
+
+# Every process whose cwd is one of the given worktree roots or below it — ONE lsof call for all roots,
+# command name from the same listing, so no per-process subprocess. Roots must be canonical (the
+# spelling lsof reports). The listing runs from / so neither it nor its subshell counts as inside.
+# Args: $@=canonical worktree roots · result: worktree_processes_out entries "pid<US>cwd<US>command"
+# (US = \x1f) · rc 1 = the cwd listing is unavailable, so no verdict on processes is possible.
+worktree_get_processes() {
+  local listing="" line pid="" cmd="" cwd root
+  worktree_processes_out=()
+  command -v lsof >/dev/null 2>&1 || return 1
+  # lsof exits 1 when some process cannot be read; a non-empty listing is still usable.
+  # -b: no kernel call that can block (a dead mount cannot hang a hook) · -w: no warning for what it skipped.
+  listing="$(cd / && lsof -b -w +c 0 -d cwd -Fpcn 2>/dev/null)" || [[ -n "${listing}" ]] || return 1
+  while IFS= read -r line; do
+    case "${line}" in
+      p*) pid="${line#p}" ;;
+      c*) cmd="${line#c}" ;;
+      n*)
+        cwd="${line#n}"
+        for root in "$@"; do
+          if [[ "${cwd}" == "${root}" || "${cwd}" == "${root}/"* ]]; then
+            worktree_processes_out+=("${pid}"$'\x1f'"${cwd}"$'\x1f'"${cmd}")
+            break
+          fi
+        done
+        ;;
+      *) ;;
+    esac
+  done <<<"${listing}"
 }

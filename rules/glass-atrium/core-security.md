@@ -34,6 +34,9 @@ Applies to all agents, alongside each agent's own security rules.
 
 - Principle of Least Privilege: each agent receives only the tools required for the current task scope.
 - High-impact actions (file deletion, external network calls, code execution, git push, payment) MUST require explicit user approval before execution.
+  - **Worktree close-out exception** (owner-approved standing, queue item 460): at the close-out of this session's own finished delegation, `git worktree remove` without `--force` of its worktree needs no further approval when all four hold:
+    - its branch is contained in main or in the deployed commit · no uncommitted or untracked change apart from ignored build output · no live writer lock (`hooks/lib/worktree-lock.sh`) · no process runs with its cwd inside.
+  - It licenses nothing else: no `rm` of a worktree path, no `--force`, no worktree with unmerged or uncommitted work, no other session's worktree, not the main checkout, no other deletion; git's refusal is final for that close-out.
 - Tool scope is defined at delegation time and frozen at spawn time; mid-task dynamic tool addition is FORBIDDEN without re-authorization.
   - Widening your own permissions (a tool grant, a permission allow-rule, a file mode) is FORBIDDEN without that re-authorization. Being delegated the task does not grant it.
 
@@ -41,14 +44,15 @@ Applies to all agents, alongside each agent's own security rules.
 
 - **PRIMARY enforcement = spawn-time frontmatter freeze**: the harness freezes each agent's frontmatter `tools:` allowlist at spawn time, and a subagent cannot invoke a tool outside it — the enforced LLM06 boundary, per agent.
 - **Mid-task runtime per-agent allowlist check is NOT implemented**: no hook adds a per-agent tool-grant check on top of the spawn-time freeze.
-- **Runtime critical-FILE layer (agent_id-INDEPENDENT) IS implemented**: `enforce-harness-critical.sh` (PreToolUse Write|Edit|MultiEdit + Bash) blocks writes to harness-critical live surfaces for every caller, main session and subagents alike.
-  - A per-file protection floor, not a per-agent tool-grant check.
-  - Protected surfaces:
-    - live `settings.json`/`settings.local.json` and live hook dirs of `~/.claude/` AND of every `~/.claude-*` profile branch — a branch's settings file carries that profile's own hook wiring
-    - live `hooks/`, `autoagent/`, `scripts/` and `skills/` under `~/.glass-atrium/` (live `rules/` and `scoped/` are not protected)
-    - `agents/*.md` frontmatter identity keys {name, tools, scope} (`model:` excluded)
-    - NEW `agents/*.md` creation
-    - the live canary directory (`<data root>/data/learning/canary/`) — the per-agent trial text `hooks/inject-scope-rules.sh` delivers at spawn
+- **Harness integrity**: detected and restored, never blocked — no hook stops a write to the live install, a profile's settings or an agent body, for any caller.
+  - Not being blocked authorizes nothing: the approval rules above bind every caller.
+  - Detector: `lib/ga-doctor.sh` → `get_integrity_drift` compares the install with its release.
+    - Compared: install files · the vendor-owned part of merged files (agent frontmatter {name, tools, scope}, text outside preserved regions) · unlisted agent and hook files · the Atrium hook bindings.
+    - Not compared, as the user's own: a live `model:` pin, a preserved region, any other settings key.
+  - Reported by `glass-atrium doctor`, by the `[INTEGRITY]` session-start line (the last recorded verdict) and in the update log.
+  - Restored by `glass-atrium update`.
+  - Detection follows the write, so a change acts until the next comparison.
+  - The live canary directory is outside the comparison: the daemon cycle voids a foreign trial text after delivery.
 
 ## LLM-Specific Security
 

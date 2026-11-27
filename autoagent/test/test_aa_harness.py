@@ -1,14 +1,15 @@
-"""A/A harness: the --aa-start mode, the restart rows its fingerprint drives, and the result.
+"""A/A harness: the start, the restart rows its fingerprint drives, and the result.
 
-An A/A opens only through --aa-start, its fingerprint the installed manifest's scoped
-hashes; while it is open each writing cycle compares the fingerprint and writes an
+An install's first A/A opens at a writing cycle on a ledger holding no aa-start row, any later
+one through --aa-start; its fingerprint is the installed manifest's scoped hashes. While it is
+open each writing cycle compares the fingerprint and writes an
 aa-restart row when it moved or cannot be read. Once its window's duration ends, a cycle
-writes one arm-difference design-effect row per agent and metric key, the instrument verdict
+writes one arm-difference design-effect row per agent and row key, the instrument verdict
 row and the aa-result row. Every row outside the live class is
 database-free under ``seal_pg_reach``; the ledger is an in-memory append-only fake behind the
 writer and connection seams. The live classes run the open-state, join-coverage and spool-close
-reads' SQL, and the close-count writer, on the cluster ``autoagent/test/live-pg-ephemeral.bats``
-provisions and skip elsewhere.
+reads' SQL, the close-count writer and the live fixture's own connect, on the cluster
+``autoagent/test/live-pg-ephemeral.bats`` provisions and skip elsewhere.
 
 Run with either runner:
     uv run --with pytest pytest autoagent/test/test_aa_harness.py -v
@@ -34,7 +35,7 @@ import sys
 import tempfile
 import unittest
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -58,7 +59,12 @@ import _pg_stub_backend as stub
 import daemon_cycle as dc
 import trial_design
 from _outcome_signal import SpawnFacts, is_floor_half
-from _pg_seal import get_ephemeral_connection, put_install_config, seal_pg_reach
+from _pg_seal import (
+    get_connection,
+    get_ephemeral_connection,
+    put_install_config,
+    seal_pg_reach,
+)
 
 _NOW = datetime(2026, 10, 7, 4, 30, tzinfo=timezone.utc)
 _CYCLE_DATE = "2026-10-07"
@@ -137,6 +143,7 @@ class _Ledger:
         self.manifest_agent_ids: set[str] = set()
         self.closes: list[_SpoolClose] = []
         self.is_count_absent = False  # a schema without lines_read / lines_without_row
+        self.is_open_trial_read_faulted = False
         # read only by a writing cycle's regression gate and discharge
         self.answered_empty = frozenset(
             {
@@ -186,6 +193,17 @@ class _Ledger:
 
     def get_rows(self, event: str) -> list[_LedgerRow]:
         return [row for row in self.rows if row.event == event]
+
+    def read_open_trials(self) -> dict[str, list[int]]:
+        """Agent → proposal ids of its live pre-registrations with no :decision row."""
+        if self.is_open_trial_read_faulted:
+            raise ConnectionError("PG unreachable")
+        keys = {row.dedupe_key for row in self.rows}
+        open_trials: dict[str, list[int]] = {}
+        for row in self.get_rows(stub.get_trial_ledger().EVENT.LIVE_PREREGISTRATION):
+            if f"{row.trial_key}:decision" not in keys:
+                open_trials.setdefault(row.agent, []).append(row.payload["proposal_id"])
+        return open_trials
 
 
 class _LedgerCursor:
@@ -337,6 +355,9 @@ class _AaFixture(unittest.TestCase):
             ("HAS_PG_LOOP_WRITE", True),
             ("_pg_connect", lambda: self.ledger.connect()),
             ("_pg_write_trial_ledger_row", lambda *a, **k: self.ledger.write(*a, **k)),
+            ("_pg_read_open_trials", lambda: self.ledger.read_open_trials()),
+            # no won trial is stored here → the held trials are the open ones
+            ("_pg_read_held_trials", lambda: self.ledger.read_open_trials()),
             ("_get_utc_now", lambda: _NOW),
             ("_INSTALL_ROOT", self.root),
             ("DEFAULT_AGENTS_DIR", self.agents_dir),
@@ -344,6 +365,12 @@ class _AaFixture(unittest.TestCase):
             self._patch(name, value)
         self._patch(
             "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
+        )
+        # armed loop flag → the trial decision step reads the fragment, unbound without psycopg
+        self._patch(
+            "_PG_PROPOSAL_STATUS_SQL",
+            stub.get_proposal_status_sql(),
+            create=not hasattr(dc, "_PG_PROPOSAL_STATUS_SQL"),
         )
 
     def _put_reference(self, body: str | dict[str, float]) -> None:
@@ -376,6 +403,27 @@ class _AaFixture(unittest.TestCase):
             (self.root / path).write_text(text, encoding="utf-8")
         put_install_config(self.root, self.root)
         self._write_manifest({**_SCOPED, **_UNSCOPED})
+
+    def _install_fresh(self, roster: tuple[str, ...] | None = None) -> None:
+        """A fresh install on an empty ledger, with a data root and an agents dir of its own;
+        the fixture roster unless one is given."""
+        self._install()
+        base = Path(tempfile.mkdtemp(dir=self.scratch))
+        self.canary_dir = base / "data" / "learning" / "canary"
+        env = mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(base)})
+        env.start()
+        self.addCleanup(env.stop)
+        self.agents_dir = base / "agents"
+        self.agents_dir.mkdir()
+        for stem in roster or _ROSTER:
+            (self.agents_dir / f"{stem}.md").write_text("# body\n", encoding="utf-8")
+        self._patch("DEFAULT_AGENTS_DIR", self.agents_dir)
+
+    def _get_canaries(self) -> dict[str, dict]:
+        return {
+            path.stem: json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(self.canary_dir.glob("*.json"))
+        }
 
     def _write_manifest(
         self, hashes: dict[str, str], *, version: str = "1.4.0"
@@ -664,7 +712,6 @@ class AaRestartTest(_AaFixture):
                 (f"spawn- or evidence-path file {path} changes", path, True)
                 for path in (
                     "hooks/hook-utils.sh",
-                    "hooks/enforce-harness-critical.sh",
                     "hooks/track-outcome.sh",
                     "hooks/_outcome_signal.py",
                     "hooks/_pg_learning_dualwrite.py",
@@ -783,23 +830,137 @@ class AaRestartTest(_AaFixture):
         )
 
 
+class AaCycleStartTest(_AaFixture):
+    """A writing cycle on a ledger holding no aa-start row opens the install's A/A on the
+    explicit start's path; a start it cannot write WARNs by name and writes nothing."""
+
+    def _get_opened(
+        self, open_aa: Callable[[], object], roster: tuple[str, ...]
+    ) -> tuple[list[_LedgerRow], dict[str, dict]]:
+        self._install_fresh(roster)
+        open_aa()
+        return list(self.ledger.rows), self._get_canaries()
+
+    def test_a_first_writing_cycle_opens_the_aa_an_explicit_start_opens_on_any_roster(
+        self,
+    ) -> None:
+        self._put_reference(_REFERENCE_BREAK_EVENS)
+        reference = set(dc._read_reference_break_evens() or {})
+        rows = (
+            ("the fixture roster", _ROSTER, True),
+            (
+                "a roster sharing no name with the instrument reference",
+                ("acme-drafter", "acme-checker"),
+                False,
+            ),
+        )
+        for name, roster, is_referenced in rows:
+            with self.subTest(name):
+                self.assertEqual(bool(reference & set(roster)), is_referenced)
+                explicit = self._get_opened(self._start, roster)
+
+                cycled = self._get_opened(self._cycle, roster)
+
+                self.assertEqual(cycled, explicit)
+                (start,), canaries = cycled
+                self.assertEqual(
+                    (start.event, start.actor, start.dedupe_key),
+                    ("aa-start", "daemon-cycle-aa", "aa-start:after:0"),
+                )
+                self.assertEqual(
+                    {stem: (canary["salt"], canary["text"]) for stem, canary in canaries.items()},
+                    {stem: (start.id, "") for stem in roster},
+                )
+
+    def test_of_two_racing_cycles_one_writes_the_aa_start_row_and_the_loser_keeps_the_winners_canaries(self) -> None:
+        self._install_fresh()
+        winner_canaries: dict[str, dict] = {}
+
+        @contextlib.contextmanager
+        def _read_then_the_other_start_lands() -> Iterator[_LedgerCursor]:
+            with self.ledger.connect() as conn:
+                yield conn
+            # the other cycle's start and its canaries land right after this cycle's state read
+            if not winner_canaries:
+                self._open()
+                (start,) = self._get_starts()
+                for stem in _ROSTER:
+                    dc.put_canary_file(stem, start.id, "", _NOW)
+                winner_canaries.update(self._get_canaries())
+
+        self._patch("_pg_connect", _read_then_the_other_start_lands)
+
+        stderr_text = self._cycle()
+
+        self.assertEqual([row.dedupe_key for row in self.ledger.rows], ["aa-start:after:0"])
+        self.assertEqual(set(winner_canaries), set(_ROSTER))
+        self.assertEqual(self._get_canaries(), winner_canaries)
+        self.assertIn(
+            "WARN: A/A harness — A/A not started: already-open — start key aa-start:after:0 "
+            "taken by a concurrent start",
+            stderr_text,
+        )
+
+    def test_a_start_that_cannot_be_written_warns_by_name_and_a_later_cycle_opens_it(
+        self,
+    ) -> None:
+        rows = (
+            (
+                "the manifest unreadable",
+                lambda: self._write_manifest(dict(_UNSCOPED)),
+                lambda: self._write_manifest({**_SCOPED, **_UNSCOPED}),
+                "manifest-unreadable",
+            ),
+            (
+                "the ledger write faults",
+                lambda: setattr(self.ledger, "write_fault", ConnectionError("PG unreachable")),
+                lambda: setattr(self.ledger, "write_fault", None),
+                "ledger-unwritable",
+            ),
+        )
+        for name, arrange, repair, reason in rows:
+            with self.subTest(name):
+                self._install_fresh()
+                arrange()
+
+                stderr_text = self._cycle()
+
+                self.assertEqual((self.ledger.rows, self._get_canaries()), ([], {}))
+                self.assertEqual(stderr_text.count("WARN:"), 1, stderr_text)
+                self.assertIn(
+                    f"WARN: A/A harness — A/A not started: {reason} — ", stderr_text
+                )
+                repair()
+                self._cycle()
+                self.assertEqual(
+                    [row.dedupe_key for row in self.ledger.rows], ["aa-start:after:0"]
+                )
+
+
 class NoOpenAaTest(_AaFixture):
-    def test_no_aa_row_is_written_unless_an_aa_start_is_open(self) -> None:
-        def _close() -> None:
+    def test_an_install_holding_an_aa_row_opens_none_whatever_its_state(self) -> None:
+        ledger = stub.get_trial_ledger()
+
+        def _close(payload: dict) -> None:
             self._open()
             self.ledger.write(
-                stub.get_trial_ledger().EVENT.AA_RESULT,
-                stub.get_trial_ledger().ACTOR.AA,
-                {"overall": "pass"},
-                dedupe_key="aa-result:1",
+                ledger.EVENT.AA_RESULT, ledger.ACTOR.AA, payload, dedupe_key="aa-result:1"
             )
 
-        for name, arrange in (
-            ("no aa-start ever", lambda: None),
-            ("the A/A has its aa-result", _close),
-        ):
+        void = {
+            "overall": "void",
+            "void": {"reason": "foreign-canary-hash", "agent": _ROSTER[0], "text_sha256": None},
+        }
+        rows = (
+            # open → advanced as an open A/A is: the unreadable fingerprint restarts its window
+            ("open", self._open, [ledger.EVENT.AA_RESTART], False),
+            ("passed", functools.partial(_close, {"overall": "pass"}), [], True),
+            ("failed", functools.partial(_close, {"overall": "fail"}), [], True),
+            ("void", functools.partial(_close, void), [], True),
+        )
+        for name, arrange, written, is_silent in rows:
             with self.subTest(name):
-                self._install()
+                self._install_fresh()
                 arrange()
                 rows_before = list(self.ledger.rows)
                 self._write_manifest(
@@ -808,8 +969,12 @@ class NoOpenAaTest(_AaFixture):
 
                 stderr_text = self._cycle()
 
-                self.assertEqual(self.ledger.rows, rows_before)
-                self.assertEqual(stderr_text, "")
+                self.assertEqual(self.ledger.rows[: len(rows_before)], rows_before)
+                self.assertEqual(
+                    [row.event for row in self.ledger.rows[len(rows_before) :]], written
+                )
+                self.assertEqual(len(self._get_starts()), 1)
+                self.assertEqual(stderr_text == "", is_silent, stderr_text)
 
 
 class AaLedgerFaultTest(_AaFixture):
@@ -919,15 +1084,17 @@ def _put_code_tree(root: Path) -> Path:
 
 
 class AaUnsealedRunTest(unittest.TestCase):
-    """The three install-guarded entries — a writing run_cycle through the CLI, run_aa_stage and
-    ingest_manifest_log, each refusing first, with or without the PG layer — unsealed, in a child
-    running a code tree this test copies, so the tree's install identity is the test's, never that
-    of the tree the suite runs from. The child's "live" is a decoy: a temp HOME holding the default data root with its canary files and
-    a live MANIFEST log, PGHOST and PGPORT on an empty temp socket dir, and neither GA_DATA_ROOT
-    nor EPH_SOCKDIR."""
+    """The four install-guarded entries — a writing run_cycle through the CLI, run_aa_stage,
+    run_trial_stage and ingest_manifest_log, each refusing first, with or without the PG layer —
+    unsealed, in a child running a code tree this test copies, so the tree's install identity is
+    the test's, never that of the tree the suite runs from. The child's "live" is a decoy: a temp
+    HOME holding the default data root with its canary files and a live MANIFEST log, PGHOST and
+    PGPORT on an empty temp socket dir, and neither GA_DATA_ROOT, EPH_SOCKDIR nor the PG-sandbox
+    recorder's variables — the decoy reach is libpq's own, never recorded."""
 
     _INHERITED = (
-        "GA_DATA_ROOT", "EPH_SOCKDIR", "EPH_PORT", "PGHOSTADDR", "PGSERVICE", "PGDATABASE"
+        "GA_DATA_ROOT", "EPH_SOCKDIR", "EPH_PORT", "PGHOSTADDR", "PGSERVICE", "PGDATABASE",
+        "GA_BATS_PG_SANDBOX", "GA_BATS_PG_RECORD",
     )
 
     def setUp(self) -> None:
@@ -946,16 +1113,7 @@ class AaUnsealedRunTest(unittest.TestCase):
         self.sockdir.mkdir()
         self.code_root = Path(tmp.name).resolve() / "code"
         self.probe = _put_code_tree(self.code_root)
-        self.env = {k: v for k, v in os.environ.items() if k not in self._INHERITED}
-        self.env.update(
-            HOME=str(self.home),
-            PGHOST=str(self.sockdir),
-            PGPORT="5432",
-            PYTHONDONTWRITEBYTECODE="1",
-            # the decoy HOME hides the user site-packages: keep this interpreter's own
-            PYTHONUSERBASE=site.getuserbase(),
-            AA_PROBE_CODE_ROOT=str(self.code_root),
-        )
+        self.env = self._get_env()
 
     def test_an_unsealed_run_from_a_non_install_tree_reaches_no_socket_under_any_runner(
         self,
@@ -967,9 +1125,19 @@ class AaUnsealedRunTest(unittest.TestCase):
                     self.skipTest("pytest not installed for this interpreter")
                 run = self._run_probe(args)
                 self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-                self.assertEqual(run.stderr.count(_REFUSAL), 3, run.stderr)  # one per entry
+                self.assertEqual(run.stderr.count(_REFUSAL), 4, run.stderr)  # one per entry
                 self.assertNotIn(str(self.sockdir), run.stderr)
                 self.assertEqual(self._get_data_listing(), before)
+
+    def test_the_child_env_drops_the_pg_sandbox_recorder_variables(self) -> None:
+        # a recorder variable reaching the child records the decoy reach as a sandbox refusal
+        recorder = {
+            "GA_BATS_PG_SANDBOX": str(self.sockdir),
+            "GA_BATS_PG_RECORD": str(self.home / "rec.log"),
+        }
+        with mock.patch.dict(os.environ, recorder):
+            env = self._get_env()
+        self.assertEqual([key for key in env if key.startswith("GA_BATS_PG_")], [])
 
     def test_the_decoy_names_a_reach_from_each_entry_once_the_code_tree_is_the_install(
         self,
@@ -980,6 +1148,7 @@ class AaUnsealedRunTest(unittest.TestCase):
         put_install_config(self.code_root, self.code_root)
         for method in (
             "test_run_aa_stage_unsealed",
+            "test_run_trial_stage_unsealed",
             "test_ingest_manifest_log_unsealed",
             "test_writing_run_cycle_unsealed",
         ):
@@ -987,6 +1156,19 @@ class AaUnsealedRunTest(unittest.TestCase):
                 run = self._run_probe((str(self.probe), f"AaUnsealedProbe.{method}"))
                 self.assertIn(str(self.sockdir), run.stderr)
                 self.assertNotIn(_REFUSAL, run.stderr)
+
+    def _get_env(self) -> dict[str, str]:
+        env = {k: v for k, v in os.environ.items() if k not in self._INHERITED}
+        env.update(
+            HOME=str(self.home),
+            PGHOST=str(self.sockdir),
+            PGPORT="5432",
+            PYTHONDONTWRITEBYTECODE="1",
+            # the decoy HOME hides the user site-packages: keep this interpreter's own
+            PYTHONUSERBASE=site.getuserbase(),
+            AA_PROBE_CODE_ROOT=str(self.code_root),
+        )
+        return env
 
     def _get_runners(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
         return (
@@ -1344,6 +1526,18 @@ class AaResultTest(_AaResultFixture):
             },
         )
         self.assertLess(row.id, self._get_results()[0].id)
+
+    def test_the_instrument_verdict_reads_its_metric_under_whatever_row_key_names_it(
+        self,
+    ) -> None:
+        row_keys = dict(dc.DESIGN_EFFECT_ROW_KEYS, budget_overage="budget_overage_per_spawn")
+        self._patch("DESIGN_EFFECT_ROW_KEYS", row_keys)
+
+        self._evaluate("2026-10-07")
+        self._evaluate("2026-10-08")
+
+        (row,) = self._get_instrument_verdicts()
+        self.assertEqual(set(row.payload["agents"]), {"glass-atrium-dev-python"})
 
     def test_the_evidence_reads_cover_the_roster_with_its_aliases_from_the_window_start(
         self,
@@ -1982,11 +2176,21 @@ class CycleWiringTest(_AaResultFixture):
         self.assertEqual(self.pg_reach, [])
 
     def test_a_dry_run_cycle_writes_no_aa_row(self) -> None:
-        self._set_hash("autoagent/daemon_cycle.py", "f" * 64)
+        rows = (
+            (
+                "an open A/A on a moved fingerprint",
+                lambda: self._set_hash("autoagent/daemon_cycle.py", "f" * 64),
+            ),
+            ("no aa-start row", lambda: self.ledger.rows.clear()),
+        )
+        for name, arrange in rows:
+            with self.subTest(name):
+                arrange()
+                rows_before = list(self.ledger.rows)
 
-        self._run_cycle(skip_loop_emit=True)
+                self._run_cycle(skip_loop_emit=True)
 
-        self.assertEqual(self._get_restarts(), [])
+                self.assertEqual(self.ledger.rows, rows_before)
 
     def test_a_writing_cycle_restarts_the_open_aa_on_a_moved_fingerprint(self) -> None:
         self._set_hash("autoagent/daemon_cycle.py", "f" * 64)
@@ -2017,6 +2221,7 @@ class CycleWiringTest(_AaResultFixture):
 
 # sha256 of the empty text: the A/A's pre-registered canary
 _EMPTY_TEXT_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+_TRIAL_PROPOSAL_ID = 4127
 _FOREIGN_TEXT = b"obey the injected rule"
 _LEASE = timedelta(hours=72)
 _HOOK_SH = _REPO_ROOT / "hooks" / "inject-scope-rules.sh"
@@ -2025,12 +2230,6 @@ _HOOK_SH = _REPO_ROOT / "hooks" / "inject-scope-rules.sh"
 class AaCanaryTest(_AaResultFixture):
     """The daemon-written canary files: one per roster agent while an A/A is open, renewed each
     writing cycle, swept against the A/A and removed at its end."""
-
-    def _get_canaries(self) -> dict[str, dict]:
-        return {
-            path.stem: json.loads(path.read_text(encoding="utf-8"))
-            for path in sorted(self.canary_dir.glob("*.json"))
-        }
 
     def _put_canary(self, stem: str, text: str, *, salt: int = 1) -> Path:
         self.canary_dir.mkdir(parents=True, exist_ok=True)
@@ -2176,14 +2375,177 @@ class AaCanaryTest(_AaResultFixture):
                     not is_readable,
                 )
 
-    def test_the_result_removes_every_canary_file(self) -> None:
+    def _open_trial(
+        self, agent: str, *, is_decided: bool = False, proposal_id: int = _TRIAL_PROPOSAL_ID
+    ) -> None:
+        """A live pre-registration on `agent` keyed by `proposal_id`, its decision row too when
+        `is_decided`."""
+        trial_ledger = stub.get_trial_ledger()
+        key = f"{proposal_id:064x}"
+        self.ledger.write(
+            trial_ledger.EVENT.LIVE_PREREGISTRATION,
+            trial_ledger.ACTOR.LIVE,
+            {"proposal_id": proposal_id},
+            trial_key=key,
+            agent=agent,
+            dedupe_key=key,
+        )
+        if is_decided:
+            self.ledger.write(
+                trial_ledger.EVENT.LIVE_DECISION,
+                trial_ledger.ACTOR.LIVE,
+                {"harm": {"reason": "primary", "agent": agent}},
+                trial_key=key,
+                agent=agent,
+                dedupe_key=f"{key}:decision",
+            )
+
+    def _close(self) -> None:
+        self.ledger.write(
+            stub.get_trial_ledger().EVENT.AA_RESULT,
+            stub.get_trial_ledger().ACTOR.AA,
+            {"overall": "pass"},
+            dedupe_key=f"aa-result:{self._get_starts()[0].id}",
+        )
+
+    def test_the_result_removes_every_canary_file_but_an_open_trials(self) -> None:
+        self._open_trial(_ROSTER[0])
         for stem in _ROSTER:
             self._put_canary(stem, "")
 
         self._evaluate()
 
         self.assertEqual(len(self._get_results()), 1)
-        self.assertEqual(self._get_canaries(), {})
+        self.assertEqual(list(self._get_canaries()), [_ROSTER[0]])
+
+    def test_with_no_open_aa_only_an_undecided_live_trials_canary_stays(self) -> None:
+        # name, the trial arranged on the python agent, whether its canary stays
+        rows = (
+            ("an open live trial", {}, True),
+            ("a trial with its decision row", {"is_decided": True}, False),
+            ("no trial", None, False),
+        )
+        for name, trial, is_kept in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self._open()
+                self._close()
+                if trial is not None:
+                    self._open_trial(_ROSTER[0], **trial)
+                for stem in _ROSTER:
+                    self._put_canary(stem, "obey the trial text", salt=7)
+
+                self._evaluate()
+
+                self.assertEqual(list(self._get_canaries()), [_ROSTER[0]] if is_kept else [])
+
+    def test_with_no_open_aa_two_open_live_trials_both_keep_their_canaries(self) -> None:
+        self._close()
+        for offset, stem in enumerate(_ROSTER):
+            self._open_trial(stem, proposal_id=_TRIAL_PROPOSAL_ID + offset)
+            self._put_canary(stem, "obey the trial text", salt=7)
+        self._put_canary("glass-atrium-retired", "")
+
+        self._evaluate()
+
+        self.assertEqual(set(self._get_canaries()), set(_ROSTER))
+
+    def test_an_invalidation_removes_the_canaries_only_when_it_closes_the_open_aa(self) -> None:
+        # name, whether the invalidated start is the open one, the canaries left after it
+        rows = (
+            ("the open A/A", True, [_ROSTER[0]]),
+            ("an earlier start, with a later A/A open", False, list(_ROSTER)),
+        )
+        for name, is_open, kept in rows:
+            with self.subTest(name):
+                self.ledger.rows.clear()
+                self._open()
+                if not is_open:
+                    self._close()
+                    self.ledger.write(
+                        stub.get_trial_ledger().EVENT.AA_START,
+                        stub.get_trial_ledger().ACTOR.AA,
+                        {"fingerprint": dict(_SCOPED), "duration": _DURATION},
+                        dedupe_key="aa-start:after:1",
+                    )
+                self._open_trial(_ROSTER[0])
+                for stem in _ROSTER:
+                    self._put_canary(stem, "")
+
+                with contextlib.redirect_stderr(io.StringIO()):
+                    code = dc.invalidate_aa(1, "a canary fault", is_confirmed=True)
+
+                self.assertEqual(code, 0)
+                self.assertEqual(list(self._get_canaries()), kept)
+
+    def test_an_invalidation_that_cannot_remove_the_canaries_lands_and_names_no_running_cycle(
+        self,
+    ) -> None:
+        # an --aa-invalidate run is no cycle → its WARN never claims one
+        def _fault_trials() -> str:
+            self.ledger.is_open_trial_read_faulted = True
+            return (
+                "open live trials unreadable: ConnectionError: PG unreachable; no canary file "
+                "is removed; the next writing cycle retries"
+            )
+
+        def _plant_link() -> str:
+            outside = Path(tempfile.mkdtemp(dir=self.scratch))
+            self.canary_dir.rename(outside / "canary")
+            self.canary_dir.symlink_to(outside / "canary", target_is_directory=True)
+            return (
+                f"canary directory not a real directory: {self.canary_dir} is a symlink or not "
+                "a directory; no canary file is swept or removed"
+            )
+
+        def _lock_dir() -> str:
+            self.canary_dir.chmod(0)
+            self.addCleanup(self.canary_dir.chmod, 0o755)
+            return (
+                "canary directory not listed: PermissionError: [Errno 13] Permission denied: "
+                "'canary'; no canary file is swept or removed; the next writing cycle retries"
+            )
+
+        # name, the fault arranged → the WARN it names
+        rows = (
+            ("open live trials unreadable", _fault_trials),
+            ("canary directory a symlink", _plant_link),
+            ("canary directory not listable", _lock_dir),
+        )
+        for index, (name, arrange) in enumerate(rows):
+            data_root = self.scratch / f"data-root-{index}"
+            with self.subTest(name), mock.patch.dict(os.environ, {"GA_DATA_ROOT": str(data_root)}):
+                self.canary_dir = data_root / "data" / "learning" / "canary"
+                self.ledger.rows.clear()
+                self.ledger.is_open_trial_read_faulted = False
+                self._open()
+                paths = [self._put_canary(stem, "") for stem in _ROSTER]
+                before = [path.read_bytes() for path in paths]
+                warn = arrange()
+                stderr = io.StringIO()
+
+                with contextlib.redirect_stderr(stderr):
+                    code = dc.invalidate_aa(1, "a canary fault", is_confirmed=True)
+
+                self.canary_dir.chmod(0o755)
+                self.assertEqual(code, 0)
+                self.assertEqual([path.read_bytes() for path in paths], before)
+                self.assertIn(f"[daemon-cycle] WARN: A/A harness — {warn}\n", stderr.getvalue())
+
+    def test_unreadable_open_trials_leave_every_canary_in_place_with_a_named_warn(self) -> None:
+        self._close()
+        paths = [self._put_canary(stem, "") for stem in _ROSTER]
+        before = [path.read_bytes() for path in paths]
+        self.ledger.is_open_trial_read_faulted = True
+
+        stderr_text = self._evaluate()
+
+        self.assertEqual([path.read_bytes() for path in paths], before)
+        self.assertIn(
+            "WARN: A/A harness — open live trials unreadable: ConnectionError: PG unreachable; "
+            "no canary file is removed; the next writing cycle retries",
+            stderr_text,
+        )
 
     def test_a_restart_rewrites_every_canary_with_the_restart_row_as_its_salt(
         self,
@@ -2203,21 +2565,13 @@ class AaCanaryTest(_AaResultFixture):
     def test_a_canary_file_for_an_agent_with_no_open_aa_is_removed_and_logged(
         self,
     ) -> None:
-        def _close() -> None:
-            self.ledger.write(
-                stub.get_trial_ledger().EVENT.AA_RESULT,
-                stub.get_trial_ledger().ACTOR.AA,
-                {"overall": "pass"},
-                dedupe_key=f"aa-result:{self._get_starts()[0].id}",
-            )
-
         rows = (
             (
                 "an agent outside the roster, A/A open",
                 "glass-atrium-retired",
                 lambda: None,
             ),
-            ("a roster agent, A/A closed", "glass-atrium-dev-python", _close),
+            ("a roster agent, A/A closed", "glass-atrium-dev-python", self._close),
         )
         for name, stem, arrange in rows:
             with self.subTest(name):
@@ -2878,6 +3232,25 @@ class AaCriterionTest(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(dc.get_aa_engine_criterion(looks).verdict, verdict)
 
+    def test_a_look_wins_exactly_when_its_pooled_z_reaches_its_boundary(self) -> None:
+        # control 30/100, treatment 10/100: pooled 0.2 → se √(0.2·0.8·(1/100 + 1/100)) = √0.0032
+        #   z = (0.3 - 0.1) / 0.0565685 = 3.5355339 (a reduction counts positive)
+        reduction = _arms((30, 100), (10, 100))
+        quiet = {"emit_failure": _arms((10, 1000), (11, 1000))}
+        rows = (
+            ("a boundary just under the reduction's z", reduction, 3.5355338, [1]),
+            ("a boundary just over it", reduction, 3.5355340, []),
+            ("no event in either arm: no variance, no z", _arms((0, 50), (0, 50)), -math.inf, []),
+        )
+        for name, arms, boundary, win_looks in rows:
+            # the criterion states a z only as a win → the boundary sits either side of the value
+            with (
+                self.subTest(name),
+                mock.patch.object(trial_design, "get_boundaries", return_value=(boundary,)),
+            ):
+                criterion = dc.get_aa_engine_criterion([dc.AaLook(arms, quiet)])
+                self.assertEqual(criterion.detail["win_looks"], win_looks)
+
     def test_the_overall_verdict_passes_only_when_every_criterion_passes(self) -> None:
         rows = (
             ("every criterion passes", ("pass", "pass"), "pass"),
@@ -3121,13 +3494,11 @@ class _AaLivePgFixture(_AaFixture):
         self._patch("_pg_connect", self._connect)
 
     def _run_admin(self, statement: str) -> None:
-        with self.psycopg.connect(
-            dbname="eph_bootstrap", connect_timeout=2, autocommit=True
-        ) as admin:
+        with get_connection("eph_bootstrap", autocommit=True) as admin:
             admin.execute(statement)
 
     def _connect(self):
-        return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
+        return get_connection(self.dbname)
 
     def _insert(
         self, event: str, payload: dict, dedupe_key: str | None, agent: str | None = None
@@ -3147,6 +3518,33 @@ class _AaLivePgFixture(_AaFixture):
             "duration": _DURATION,
         }
         return self._insert("aa-start", payload, f"aa-start:after:{previous}")
+
+
+class AaLivePgFixtureConnectTest(_AaLivePgFixture):
+    """The fixture's own connect, via ``get_connection``: a stalled attempt opens on the retry."""
+
+    @contextlib.contextmanager
+    def _patch_connect(self, failures: list[Exception]) -> Iterator[list[str]]:
+        """Connect raises ``failures`` in turn, then opens; yields each attempt's dbname."""
+        real_connect, pending, attempts = self.psycopg.connect, list(failures), []
+
+        def connect(*args, **kwargs):
+            attempts.append(kwargs["dbname"])
+            if pending:
+                raise pending.pop(0)
+            return real_connect(*args, **kwargs)
+
+        with mock.patch.object(self.psycopg, "connect", connect):
+            yield attempts
+
+    def test_a_connect_attempt_that_times_out_once_opens_on_the_retry(self) -> None:
+        self._use_database(self._TEMPLATE.FULL)
+        timeout = self.psycopg.errors.ConnectionTimeout("connection timeout expired")
+
+        with self._patch_connect([timeout]), self._connect() as conn:
+            (dbname,) = conn.execute("SELECT current_database()").fetchone()
+
+        self.assertEqual(dbname, self.dbname)
 
 
 class AaOpenReadLivePgTest(_AaLivePgFixture):
@@ -3404,9 +3802,7 @@ class AaSpawnUnitReadLivePgTest(_AaLivePgFixture):
         import _pg_learning_dualwrite as pgdw
 
         self._patch("_pg_read_spawn_facts", pgdw._read_spawn_facts)
-        connect = functools.partial(
-            self.psycopg.connect, dbname=self.dbname, connect_timeout=2, autocommit=True
-        )
+        connect = functools.partial(get_connection, self.dbname, autocommit=True)
         patcher = mock.patch.object(
             pgdw, "psycopg", SimpleNamespace(connect=lambda *a, **k: connect())
         )

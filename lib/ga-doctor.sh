@@ -124,11 +124,14 @@ run_doctor() {
   #    knowable inside the per-tuple loop at the moment it logs (a LATER tuple may be bound), so a
   #    PRE-PASS collects bound basenames first and the loop branches on it.
   local unbound=0 facet_unbound=0 nonexec=0 nonexec_seen="" bound_seen=""
+  # 1 when §6 or §8 could not compare → §30 records the verdict `unread`, never a clean count
+  local integrity_unread=0
   if [[ ! -f "${SETTINGS_JSON}" ]]; then
     log "  warn : settings.json absent (${SETTINGS_JSON}) — ALL hook event-bindings are unwired; deployed hooks are DORMANT"
     unbound=${#EXPECTED_HOOK_BINDINGS[@]}
   elif ! command -v jq >/dev/null 2>&1; then
     log "  warn : jq absent — cannot read hook bindings from settings.json (skipping binding check)"
+    integrity_unread=1
   else
     # PRE-PASS: bound-basename set (bash-3.2-safe substring set, same idiom as nonexec_seen —
     # no assoc arrays). Basename-keyed, NOT per-tuple: the question it answers is "does this hook
@@ -281,10 +284,9 @@ run_doctor() {
   #    a git-INDEPENDENT hash reconciliation (sha256 each manifest.hashes entry vs its on-disk file),
   #    which catches real content drift + a listed-but-missing file without needing git. Still a
   #    WARNING either way (doctor PASSes on §1-7); a skip (missing tool/generator) stays loud.
-  #    The consumer reconciliation additionally SKIPS the content comparison for every row the merge
-  #    claims, so designed local evolution — daemon-learned EDITABLE-region bullets, an operator
-  #    `model:` pin, a roster file's live rows — stops reading as drift. Presence and readability are
-  #    still checked on a skipped row; the tamper signal on its content is what the skip gives up.
+  #    A merge-claimed row whose whole-file hash moved is compared on its vendor-owned part only, so
+  #    designed local evolution — daemon-learned EDITABLE-region bullets, an operator `model:` pin, a
+  #    roster file's live rows — stays clean while an identity-key or vendor-text edit reads as drift.
   #    See manifest_hash_drift. The source-dev --check branch stays STRICT on purpose: there the
   #    whole-file hash IS the regeneration trigger.
   local drift=0
@@ -299,9 +301,11 @@ run_doctor() {
       fi
     else
       log "  warn : manifest drift gate skipped (generator not executable: ${GENERATE_MANIFEST})"
+      integrity_unread=1
     fi
   elif ! command -v jq >/dev/null 2>&1 || [[ ! -f "${MANIFEST}" ]]; then
     log "  warn : manifest drift gate skipped (consumer install — manifest unreadable or jq absent)"
+    integrity_unread=1
   else
     # consumer install (no .git): resolve the sha256 tool as generate-manifest.sh does (shasum →
     # sha256sum), then run the git-independent reconciliation. An absent tool is a loud skip, never
@@ -315,22 +319,22 @@ run_doctor() {
     IFS=$' \t' read -ra drift_sha < <(_resolve_sha256_cmd) || true
     if [[ "${#drift_sha[@]}" -eq 0 ]]; then
       log "  warn : manifest drift gate skipped (consumer install — no shasum/sha256sum for hash reconciliation)"
+      integrity_unread=1
     else
       # manifest_hash_drift logs each drift to stderr + echoes the drift count (stdout verdict).
-      # shellcheck disable=SC2311,SC2312
-      drift="$(manifest_hash_drift "${drift_sha[@]}")"
-      if [[ "${drift}" -eq 0 ]]; then
+      # shellcheck disable=SC2310,SC2311,SC2312
+      drift="$(manifest_hash_drift "${drift_sha[@]}")" || drift=""
+      if [[ -z "${drift}" ]]; then
+        log "  warn : manifest drift gate skipped (consumer install — the sha256 tool failed over the manifest rows)"
+        drift=0
+        integrity_unread=1
+      elif [[ "${drift}" -eq 0 ]]; then
         log "  ok   : manifest matches on-disk hashes (git-independent consumer-install reconciliation)"
       else
-        # Remedy names an action that CLEARS the reported condition. Every surviving drift is now
-        # either a missing/unreadable file or altered content in a row the merge does NOT claim —
-        # both are restored by re-running the updater, which re-lays the vendor structure from the
-        # release while preserving the EDITABLE regions and the live-only `model:` pins.
-        # The former "regenerate on the source tree, then re-release" could not clear it:
-        # the source tree has no drift, and
-        # forcing live to match the whole-file hash would overwrite exactly those pins.
-        # The updater no longer partitions a row out of its apply set by path pattern, so no
-        # drifted row is unreachable by the remedy for what the file is named.
+        # Remedy names an action that CLEARS the reported condition: a missing/unreadable file, changed
+        # content in an unclaimed row and a changed vendor-owned part of a claimed row are all re-laid
+        # from the release by the updater, which preserves the EDITABLE regions and the live-only
+        # `model:` pins. "Regenerate on the source tree" could not clear it — the source tree has no drift.
         log "  ---- ${drift} manifest hash drift(s) on this consumer install ----"
         log "         remedy: run 'glass-atrium update' to restore the listed file(s) from the release (EDITABLE regions + model: pins are preserved)"
       fi
@@ -704,7 +708,7 @@ run_doctor() {
         if [[ "${launchd_drift}" -eq 0 ]]; then
           log "  ok   : ${deployed_count} deployed launchd plist(s) match the current renderer output"
         else
-          log "  ---- ${launchd_drift} stale-deployed launchd plist(s) — re-render + --load-launchd to redeploy ----"
+          log "  ---- ${launchd_drift} stale-deployed launchd plist(s) — run 'glass-atrium reload-launchd' to redeploy ----"
         fi
       else
         log "  warn : launchd deploy-drift check skipped — reference re-render failed (config missing/invalid? run 'glass-atrium render-plists')"
@@ -719,6 +723,11 @@ run_doctor() {
   # shellcheck disable=SC2311
   launchd_retired="$(launchd_retired_deployed)"
   launchd_drift=$((launchd_drift + launchd_retired))
+  local launchd_node_missing
+  # launchd_node_bin_probe logs a missing node_bin to stderr + echoes the count (stdout verdict).
+  # shellcheck disable=SC2311
+  launchd_node_missing="$(launchd_node_bin_probe)"
+  launchd_drift=$((launchd_drift + launchd_node_missing))
   local launchd_unloaded=0
   if [[ "${deployed_count}" -gt 0 ]]; then
     # shellcheck disable=SC2311
@@ -1611,6 +1620,40 @@ run_doctor() {
     fi
   fi
 
+  # 30. harness integrity — the tamper detector beside §6 (missing bindings) and §8 (file content):
+  #     surplus agent/hook files, the manifest vs the applied-release record (consumer install only:
+  #     a source tree's manifest names the NEXT release), altered or surplus Atrium bindings, and
+  #     profile settings.json files not linked to the target one. Registration kind A, never FAIL —
+  #     detection, not a gate. Also records the whole verdict (§8 drift + these findings + every
+  #     binding kind, or `unread`) for the session-start line (hooks/inject-session-context.sh).
+  local integrity_drift=0
+  # shellcheck disable=SC2311
+  integrity_drift="$(_doctor_report_integrity "${drift}" "${integrity_unread}")"
+
+  # 31. remote access — off: one ok row. On: key file modes and missing keys FAIL; the Time Machine
+  #     exclusion, the leaf's host name and its expiry ahead are registration kind A. Read-only.
+  local remote_warns=0 remote_rows remote_row
+  remote_rows="$(ga_remote_get_doctor_rows)" || remote_rows=""
+  while IFS= read -r remote_row; do
+    case "${remote_row%%|*}" in
+      ok) log "  ok   : ${remote_row#*|}" ;;
+      warn)
+        log "  warn : ${remote_row#*|}"
+        remote_warns=$((remote_warns + 1))
+        ;;
+      FAIL)
+        log "  FAIL : ${remote_row#*|}"
+        fail=1
+        ;;
+      *) ;;
+    esac
+  done <<<"${remote_rows}"
+
+  # 32. owner queue MCP registration — registration kind B (report-only): each profile's entry runs this
+  #     install's adapter, the tools' allow lines are present, and no shared switch starts a project server
+  #     that would shadow the name. Reads one mcpServers key per profile file; never writes.
+  _doctor_report_queue_mcp
+
   if [[ "${fail}" -eq 0 ]]; then
     # Warning-summary registration contract — a new doctor row declares ONE kind.
     # A (counted warning, user-actionable): counter + this total + the PASS breakdown below, all
@@ -1618,7 +1661,7 @@ run_doctor() {
     # B (report-only): its log line ONLY — no counter, no total, no breakdown term, exit code
     #   unchanged. C (wording): the existing row's log line only.
     # Parity of the two expressions below is machine-checked by test/doctor-summary-contract.bats.
-    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + launchd_unloaded + token_leak + canary_warns + missed_cycle))
+    local warns=$((unbound + drift + undeployed_fresh + inject_drop_warns + launchd_drift + snapshot_stale + snapshot_path_anomaly + data_sep_stale + channel_silent + channel_blind + registry_warns + arbiter_warns + retired_residue + retired_refused + mig_pending + inject_slot_warns + launchd_unloaded + token_leak + canary_warns + missed_cycle + integrity_drift + remote_warns))
     if [[ "${warns}" -eq 0 ]]; then
       log "== doctor: PASS =="
     else
@@ -1626,7 +1669,7 @@ run_doctor() {
       # term happened to be last, so every downstream glob written against that term broke the next
       # time a category was appended (adding channel-silent did exactly that to
       # doctor-launchd-deploy-drift.bats). Leading, every term is `<n> <name>` and none is special.
-      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${launchd_unloaded} launchd-unloaded + ${token_leak} token-leak + ${canary_warns} canary-trial + ${missed_cycle} missed-cycle — see above) =="
+      log "== doctor: PASS (with ${warns} warning(s): ${unbound} dormant-hook + ${drift} manifest-drift + ${undeployed_fresh} fresh-undeployed + ${inject_drop_warns} inject-drop + ${launchd_drift} launchd-drift + ${snapshot_stale} snapshot-stale + ${snapshot_path_anomaly} snapshot-path-anomaly + ${data_sep_stale} data-sep-leftover + ${channel_silent} channel-silent + ${channel_blind} channel-blind + ${registry_warns} registry-reconcile + ${arbiter_warns} arbiter-gap + ${retired_residue} retired-residue + ${retired_refused} retired-refused-key + ${mig_pending} pending-migration + ${inject_slot_warns} inject-slot + ${launchd_unloaded} launchd-unloaded + ${token_leak} token-leak + ${canary_warns} canary-trial + ${missed_cycle} missed-cycle + ${integrity_drift} harness-integrity + ${remote_warns} remote-access — see above) =="
     fi
     return 0
   fi
@@ -1666,18 +1709,31 @@ SQL
 # so a test can pin either side of the boundary.
 CANARY_TRIAL_WINDOW_DAYS="${CANARY_TRIAL_WINDOW_DAYS:-14}"
 
-# Canary trial rows of the last $2 days in database $1, one unit-separator line: void count for a
-# foreign canary hash, unbound-delivery count, then each population's agents. The literals are the
-# daemon's (CANARY.VOID_REASON, TRIAL_LEDGER.EVENT.CANARY_UNBOUND_DELIVERY). $2 rides as a quoted
-# psql literal cast to int, so a malformed window fails the read instead of entering the statement.
+# Canary trial rows of the last $2 days in database $1, one unit-separator line: the void counts for
+# a foreign canary hash and for a trial that never started, the unbound-delivery count, then each
+# population's agents in that order (the unstarted ones sorted), then the arm-imbalance and
+# low-delivery void counts and their sorted agents. The literals are the daemon's
+# (CANARY.VOID_REASON, LIVE_TRIAL.UNSTARTED_REASON, TRIAL_LEDGER.EVENT.CANARY_UNBOUND_DELIVERY,
+# _get_validity_void's two reasons).
+# $2 rides as a quoted psql literal cast to int, so a malformed window fails the read instead of
+# entering the statement.
 _pg_canary_ledger_probe() {
   # GA-ABSORB[handled@the read-failed unread branch of _doctor_report_canary_ledger]: stderr only — the rc is captured and branched on there
   psql -h "${PG_SOCKET}" -d "$1" -v ON_ERROR_STOP=1 -v days="$2" -tA -F $'\x1f' 2>/dev/null <<'SQL'
 SELECT count(*) FILTER (WHERE payload->'void'->>'reason' = 'foreign-canary-hash'),
+       count(*) FILTER (WHERE payload->'void'->>'reason' = 'unstarted'),
        count(*) FILTER (WHERE event = 'canary-unbound-delivery'),
        coalesce(string_agg(DISTINCT payload->'void'->>'agent', ',')
          FILTER (WHERE payload->'void'->>'reason' = 'foreign-canary-hash'), ''),
-       coalesce(string_agg(DISTINCT agent, ',') FILTER (WHERE event = 'canary-unbound-delivery'), '')
+       coalesce(string_agg(DISTINCT payload->'void'->>'agent', ',' ORDER BY payload->'void'->>'agent')
+         FILTER (WHERE payload->'void'->>'reason' = 'unstarted'), ''),
+       coalesce(string_agg(DISTINCT agent, ',') FILTER (WHERE event = 'canary-unbound-delivery'), ''),
+       count(*) FILTER (WHERE payload->'void'->>'reason' = 'arm-imbalance'),
+       count(*) FILTER (WHERE payload->'void'->>'reason' = 'low-delivery'),
+       coalesce(string_agg(DISTINCT payload->'void'->>'agent', ',' ORDER BY payload->'void'->>'agent')
+         FILTER (WHERE payload->'void'->>'reason' = 'arm-imbalance'), ''),
+       coalesce(string_agg(DISTINCT payload->'void'->>'agent', ',' ORDER BY payload->'void'->>'agent')
+         FILTER (WHERE payload->'void'->>'reason' = 'low-delivery'), '')
 FROM core.autoagent_trial_ledger
 WHERE recorded_at >= now() - make_interval(days => :'days'::int)
 SQL
@@ -1700,8 +1756,7 @@ _doctor_report_canary_digest() {
 
 # §28 ledger leg: logs its verdict, stdout = the warning count it adds (0 on every unread branch).
 _doctor_report_canary_ledger() {
-  local probe="" answer="" voids="" unbound="" void_agents="" unbound_agents=""
-  local days="${CANARY_TRIAL_WINDOW_DAYS}"
+  local probe="" answer="" days="${CANARY_TRIAL_WINDOW_DAYS}"
   # shellcheck disable=SC2310,SC2311  # rc-capturing probe calls: an unreachable server must stay distinguishable
   if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
     log "  note : canary trial ledger check skipped (GA_SKIP_DB_SETUP set)"
@@ -1713,30 +1768,40 @@ _doctor_report_canary_ledger() {
     log "  note : database '${DB_NAME}' absent — no canary trial rows to check"
   elif ! answer="$(_pg_canary_ledger_probe "${DB_NAME}" "${days}")"; then
     log "  note : canary trial ledger unread — the read against '${DB_NAME}' failed"
-  else
-    # Unit separator, never whitespace: an empty agent list is a field the split must keep.
-    IFS=$'\x1f' read -r voids unbound void_agents unbound_agents <<<"${answer}"
-    if ! [[ "${voids}" =~ ^[0-9]+$ ]] || ! [[ "${unbound}" =~ ^[0-9]+$ ]]; then
-      log "  note : canary trial ledger unread — the read against '${DB_NAME}' answered something other than two counts"
-    else
-      _log_canary_ledger_verdict "${voids}" "${unbound}" "${void_agents}" "${unbound_agents}" "${days}"
-      printf '%s' "$((voids + unbound))"
-      return 0
-    fi
+  elif _log_canary_ledger_verdict "${answer}" "${days}"; then
+    return 0
   fi
   printf '0'
 }
 
-# Args: $1=void count $2=unbound count $3=void agents $4=unbound agents $5=window days.
+# Args: $1 = the ledger probe's answer, $2 = window days. Logs each count's warning; stdout = the
+# warning count. rc 1, nothing printed = the answer is not five counts.
 _log_canary_ledger_verdict() {
+  local voids unstarted unbound void_agents unstarted_agents unbound_agents
+  local imbalance low_delivery imbalance_agents low_delivery_agents days="$2"
+  # Unit separator, never whitespace: an empty agent list is a field the split must keep.
+  IFS=$'\x1f' read -r voids unstarted unbound void_agents unstarted_agents unbound_agents \
+    imbalance low_delivery imbalance_agents low_delivery_agents <<<"$1"
+  if ! [[ "${voids},${unstarted},${unbound},${imbalance},${low_delivery}" =~ ^[0-9]+(,[0-9]+){4}$ ]]; then
+    log "  note : canary trial ledger unread — the read against '${DB_NAME}' answered something other than five counts"
+    return 1
+  fi
+  _log_canary_count_warn "${voids}" "canary trial void(s) for a foreign canary hash in the last ${days}d (agents: ${void_agents}) — a delivered canary text was not the open trial's, so the daemon voided the trial and removed its canary files"
+  _log_canary_count_warn "${unstarted}" "canary trial void(s) for a trial that never started in the last ${days}d (agents: ${unstarted_agents}) — no canary was first written by the trial's pre-registered horizon, so the daemon voided it; a failed canary write is named by a 'trial stage' WARN line in the daemon log"
+  _log_canary_count_warn "${unbound}" "canary delivery(ies) bound to no open trial in the last ${days}d (agents: ${unbound_agents}) — a spawn delivered canary text while no trial was open; the daemon removed those canary files"
+  _log_canary_count_warn "${imbalance}" "canary trial void(s) for arm imbalance in the last ${days}d (agents: ${imbalance_agents}) — the trial's counted spawns split unevenly between its arms, so the daemon voided it ahead of a win, a harm stop or a retire"
+  _log_canary_count_warn "${low_delivery}" "canary trial void(s) for low delivery in the last ${days}d (agents: ${low_delivery_agents}) — the canary reached too few of the trial's treatment spawns, or reached a control spawn, so the daemon voided it ahead of a win, a harm stop or a retire"
+  local total="$((voids + unstarted + unbound + imbalance + low_delivery))"
+  if [[ "${total}" -eq 0 ]]; then
+    log "  ok   : no canary void or unbound canary delivery in the last ${days}d"
+  fi
+  printf '%s' "${total}"
+}
+
+# Args: $1 = a count, $2 = the warning after it; logs nothing at a zero count.
+_log_canary_count_warn() {
   if [[ "$1" -gt 0 ]]; then
-    log "  warn : $1 canary trial void(s) for a foreign canary hash in the last $5d (agents: $3) — a delivered canary text was not the open trial's, so the daemon voided the trial and removed its canary files"
-  fi
-  if [[ "$2" -gt 0 ]]; then
-    log "  warn : $2 canary delivery(ies) bound to no open trial in the last $5d (agents: $4) — a spawn delivered canary text while no trial was open; the daemon removed those canary files"
-  fi
-  if [[ "$1" -eq 0 && "$2" -eq 0 ]]; then
-    log "  ok   : no canary void or unbound canary delivery in the last $5d"
+    log "  warn : $1 $2"
   fi
 }
 
@@ -1828,7 +1893,7 @@ _doctor_report_profile_links() {
     return 0
   fi
   # shellcheck disable=SC2311  # the -r guard above keeps its grammar source from failing; the rest is a glob loop
-  branches="$(_get_profile_link_branches "${grammar}")"
+  branches="$(get_profile_branches "${grammar}")"
   [[ -n "${branches}" ]] || return 0 # GA-ABSORB[benign]: no profile branch is the nothing-to-report state
   if ! command -v jq >/dev/null 2>&1 || ! jq -e '.files | type == "array"' -- "${MANIFEST}" >/dev/null 2>&1; then
     log "  note : profile branch link check skipped — needs jq and a readable manifest (${MANIFEST})"
@@ -1841,20 +1906,49 @@ _doctor_report_profile_links() {
   done <<<"${branches}"
 }
 
-# Branches: target-home siblings matching the shared config-root grammar.
-# Only dirs holding a .claude.json → never-launched and backup dirs skipped.
-# The target home matches the same grammar → excluded by identity.
-# $1 = the grammar file (hooks/lib/claude-config-dirs.sh).
-_get_profile_link_branches() {
-  # shellcheck source=SCRIPTDIR/../hooks/lib/claude-config-dirs.sh
-  source "${1}"
-  local candidate
-  for candidate in "${TARGET_HOME%/*}"/.claude*; do
-    [[ "${candidate##*/}/" =~ ^${CLAUDE_CONFIG_ROOT_RE}$ ]] || continue
-    [[ -d "${candidate}" && -f "${candidate}/.claude.json" ]] || continue
-    [[ ! "${candidate}" -ef "${TARGET_HOME}" ]] || continue
-    printf '%s\n' "${candidate}"
-  done
+# §32 — one note per gap, then one fix line; else one ok row.
+_doctor_report_queue_mcp() {
+  local identity profiles name lines gaps=0 count=0 file dir state line
+  # shellcheck disable=SC2310,SC2311  # each failed read is the skip note
+  if ! identity="$(get_queue_mcp_identity)" || ! profiles="$(_get_command_output get_profile_config_files)" \
+    || ! lines="$(_get_command_output get_queue_mcp_allow_writes add "${identity}")"; then
+    log "  note : queue MCP: check skipped — needs ${QUEUE_MCP_ADAPTER} answering its name and tools, the config-root grammar and a JSON ${SETTINGS_JSON}"
+    return 0
+  fi
+  name="${identity%%$'\n'*}"
+  while IFS=$'\x1f' read -r file dir; do
+    [[ -n "${file}" ]] || continue
+    count=$((count + 1))
+    state="$(get_queue_mcp_entry_state "${file}" "${name}")"
+    case "${state}" in
+      ok) continue ;;
+      missing) log "  note : queue MCP: ${file} has no ${name} entry" ;;
+      elsewhere) log "  note : queue MCP: ${file}: ${name} points elsewhere, not at ${QUEUE_MCP_ADAPTER}" ;;
+      *) log "  note : queue MCP: ${file} is not valid JSON — its ${name} entry is unread" ;;
+    esac
+    gaps=$((gaps + 1))
+  done <<<"${profiles}"
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    log "  note : queue MCP: ${SETTINGS_JSON} is missing ${line} in permissions.allow"
+    gaps=$((gaps + 1))
+  done <<<"${lines}"
+  _doctor_report_queue_mcp_switch "${name}"
+  if [[ "${gaps}" -gt 0 ]]; then
+    print_queue_mcp_remedy "  note : "
+  else
+    gaps=0
+    while IFS= read -r line; do gaps=$((gaps + 1)); done <<<"${identity#*$'\n'}"
+    log "  ok   : queue MCP ${name} registered in ${count} profile(s), its ${gaps} allow line(s) present"
+  fi
+}
+
+# a shared switch that starts every project's .mcp.json server unasked lets a project server take the name
+_doctor_report_queue_mcp_switch() {
+  [[ -f "${SETTINGS_JSON}" ]] || return 0 # GA-ABSORB[benign]: no settings file holds no switch
+  if jq -e '.enableAllProjectMcpServers == true' -- "${SETTINGS_JSON}" >/dev/null; then
+    log "  note : queue MCP: ${SETTINGS_JSON} sets enableAllProjectMcpServers — every project's .mcp.json server starts unasked, so a project server named $1 shadows this one and that session must use the queue CLI"
+  fi
 }
 
 # Required items: every top-level manifest component the farm deploys into the target home.
@@ -2221,7 +2315,7 @@ _resolve_sha256_cmd() {
   fi
 }
 
-# sha256 hex-digest extract (manifest_hash_drift / launchd_deploy_drift shared) — runs the passed
+# sha256 hex-digest extract (launchd_deploy_drift, the §9 baseline row) — runs the passed
 # sha command and echoes ONLY its first whitespace field (the hex digest, dropping the trailing
 # filename). `|| return` propagates a sha failure to the caller, matching the abort semantics of the
 # inline form it replaces. Usage: _sha_hex "${sha[@]}" -- "${file}".
@@ -2231,65 +2325,502 @@ _sha_hex() {
   printf '%s\n' "${out%% *}"
 }
 
-# consumer-install manifest hash reconciliation (git-independent) — run_doctor §8 helper.
-# generate-manifest.sh --check is git-backed (git ls-files) and hard-exits 3 on a non-git root; this
-# reconciles the manifest WITHOUT git so a deployed consumer install (no .git) still gets a real
-# integrity gate instead of a false DRIFT warn. $@ = the sha256 command (e.g. `shasum -a 256` /
-# `sha256sum`). For every manifest.hashes entry a DRIFT is flagged when the listed path is
-# missing/unreadable on disk OR its content hash differs from the recorded one; each drift is logged
-# to stderr (log → fd2) and the total is the stdout verdict (mirrors is_hook_bound). Detects real
-# content drift + a dropped file; it CANNOT see a NEW untracked file (needs git ls-files) — an
-# accepted gap off a dev tree. Callers pre-verify jq + MANIFEST presence.
-#
-# MERGE-CLAIMED EXCLUSION. A whole-file hash cannot tell SANCTIONED local evolution from tampering
-# on a row the update system merges rather than byte-swaps: the daemon writes learned bullets inside
-# an agent body's EDITABLE regions, the operator pins `model:` in its frontmatter (live-only by rule,
-# 0 in the repo), and each roster file's live content is a union of vendor rows and live rows by
-# design. Every such row read as drift under a remedy that could not clear it, so the content
-# comparison is SKIPPED for exactly the paths the merge claims. The claim comes from
-# spine_is_merge_claimed_path — the SAME predicate both merge loops iterate through, so a family
-# added there is excluded here without a second edit, and no path list is restated in this file.
-# Presence and readability are still checked on an excluded row: what the exclusion gives up is the
-# tamper signal on vendor-owned content, not the deploy-gap signal.
+# §30 body: logs the surplus-file, manifest-anchor, altered/surplus-binding and profile-settings
+# findings (stdout = their count, the doctor's harness-integrity warning term) and records the whole
+# verdict for the session-start line. The recorded binding term comes from get_hook_binding_drift all,
+# the term get_integrity_drift records, so the doctor and the update preflight record one number for
+# one state. $1 = the §8 file drift · $2 = 1 when §6 or §8 could not compare (verdict `unread`).
+_doctor_report_integrity() {
+  local other binding_extra found
+  # shellcheck disable=SC2311,SC2312
+  other=$(($(get_surplus_file_drift) + $(get_profile_settings_drift)))
+  if [[ ! -e "${GA_ROOT}/.git" ]]; then
+    # shellcheck disable=SC2311,SC2312
+    other=$((other + $(get_manifest_anchor_drift)))
+  fi
+  # shellcheck disable=SC2311,SC2312
+  binding_extra="$(get_hook_binding_drift extra)"
+  found=$((other + binding_extra))
+  if [[ "${found}" -eq 0 ]]; then
+    log "  ok   : harness integrity — no surplus agent/hook file, manifest anchor intact, no altered or surplus Atrium binding, every profile settings.json linked to the target one"
+  else
+    log "  ---- ${found} harness integrity finding(s) ----"
+    log "         remedy: run 'glass-atrium update' to restore files and bindings; a surplus file or binding is not the release's — remove it, or 'glass-atrium retire-hook-bindings <basename>'; a profile's own settings.json takes the §27 fix"
+  fi
+  _set_doctor_integrity_verdict "$1" "$2" "${other}"
+  printf '%d\n' "${found}"
+}
+
+# Record the doctor's verdict: `unread` when $2 = 1, else the §8 drift ($1) + the non-binding findings
+# ($3) + every binding kind. The §6 rows already logged each missing binding → the recount is silent.
+_set_doctor_integrity_verdict() {
+  local binding_all
+  if [[ "$2" -eq 1 ]]; then
+    set_integrity_verdict unread
+    return 0
+  fi
+  # shellcheck disable=SC2311,SC2312
+  binding_all="$(get_hook_binding_drift all 2>/dev/null)"
+  set_integrity_verdict "$(($1 + $3 + binding_all))"
+}
+
+# consumer-install manifest hash reconciliation (git-independent) — run_doctor §8 helper and the file
+# half of get_integrity_drift. generate-manifest.sh --check is git-backed (git ls-files) and hard-exits
+# 3 on a non-git root, so a deployed consumer install (no .git) is reconciled here instead.
+# $@ = the sha256 command (e.g. `shasum -a 256` / `sha256sum`). A row is DRIFT when its file is
+# missing/unreadable or its content differs from the recorded hash; for a merge-claimed row
+# (spine_is_merge_claimed_path), when its VENDOR-OWNED part differs (_get_vendor_part_drift). Each
+# drift is logged to stderr; the count is the stdout verdict. A NEW untracked file is
+# get_surplus_file_drift's. Callers pre-verify jq + MANIFEST presence.
 manifest_hash_drift() {
-  local sha_path sha_hash actual abs drift=0 excluded=0
-  # The claim predicate's home lib — sourced lazily + source-path agnostic via BASH_SOURCE (mirrors
-  # the recovery-repos.sh idiom in snapshot_staleness_scan), so a bats-sourced doctor lib resolves it
-  # without the launcher's ga_init_env having run.
+  local rows present total kept content
   # shellcheck source-path=SCRIPTDIR
   # shellcheck source=../scripts/lib/apply-spine.sh
   source "${BASH_SOURCE[0]%/*}/../scripts/lib/apply-spine.sh"
-  # jq streams `path\thash`; process substitution keeps the counter in this shell (mirrors §7).
-  # shellcheck disable=SC2312
+  # Captured, never read through <( ): an un-waited child's SIGCHLD can fail the verdict printf with EINTR.
+  rows="$(jq -r '(.hashes // {}) | to_entries[] | "\(.key)\t\(.value)"' -- "${MANIFEST}")" || rows=""
+  # shellcheck disable=SC2311
+  present="$(_get_present_manifest_rows "${rows}")"
+  total="$(grep -c . <<<"${rows}" || true)"
+  kept="$(grep -c . <<<"${present}" || true)"
+  # _get_content_drift propagates a sha failure via || return; SC2311 masking is moot.
+  # shellcheck disable=SC2310,SC2311
+  content="$(_get_content_drift "$@" <<<"${present}")" || return
+  printf '%d\n' "$((${total:-0} - ${kept:-0} + content))"
+}
+
+# Present + readable manifest rows (`path<TAB>hash`) on stdout; each missing or unreadable one logged.
+_get_present_manifest_rows() {
+  local sha_path sha_hash
   while IFS=$'\t' read -r sha_path sha_hash; do
     [[ -n "${sha_path}" ]] || continue
-    abs="${GA_ROOT}/${sha_path}"
-    if [[ ! -e "${abs}" ]]; then
+    if [[ ! -e "${GA_ROOT}/${sha_path}" ]]; then
       log "  warn : manifest DRIFT — listed file missing on disk: ${sha_path}"
-      drift=$((drift + 1))
-      continue
-    fi
-    if [[ ! -r "${abs}" ]]; then
+    elif [[ ! -r "${GA_ROOT}/${sha_path}" ]]; then
       log "  warn : manifest DRIFT — listed file not readable: ${sha_path}"
-      drift=$((drift + 1))
-      continue
+    else
+      printf '%s\t%s\n' "${sha_path}" "${sha_hash}"
     fi
+  done <<<"$1"
+}
+
+# Content comparison over the stdin rows (`path<TAB>hash`): one batched hash over every path, each row
+# joined to its live digest in argument order. $@ = the sha256 command; stdout = the drift count.
+_get_content_drift() {
+  local rows digests sha_path sha_hash digest
+  local -a paths=()
+  rows="$(grep . || true)"
+  while IFS=$'\t' read -r sha_path sha_hash; do
+    [[ -z "${sha_path}" ]] || paths+=("${sha_path}")
+  done <<<"${rows}"
+  if [[ "${#paths[@]}" -eq 0 ]]; then
+    printf '0\n'
+    return 0
+  fi
+  # shellcheck disable=SC2310,SC2311
+  digests="$(_get_batched_hex "$@" -- "${paths[@]}")" || return
+  # shellcheck disable=SC2312  # a read hitting EOF ends the loop, which is its job
+  while IFS=$'\t' read -r sha_path sha_hash && IFS= read -r digest <&3; do
+    printf '%s\x1f%s\x1f%s\n' "${sha_path}" "${sha_hash}" "${digest}"
+  done <<<"${rows}" 3<<<"${digests}" | _get_moved_row_drift
+}
+
+# Stdin rows `path<US>recorded<US>live`: a moved row is drift, or — when the merge claims it — handed
+# to the vendor-part comparison. stdout = the drift count.
+_get_moved_row_drift() {
+  local sha_path sha_hash digest drift=0 vendor
+  local -a claimed=()
+  while IFS=$'\x1f' read -r sha_path sha_hash digest; do
+    [[ "${digest}" != "${sha_hash}" ]] || continue
     # shellcheck disable=SC2310  # predicate in a condition: disabling set -e there is the point
     if spine_is_merge_claimed_path "${sha_path}"; then
-      excluded=$((excluded + 1))
-      continue
+      claimed+=("${sha_path}")
+    else
+      log "  warn : manifest DRIFT — content hash mismatch: ${sha_path}"
+      drift=$((drift + 1))
     fi
-    # _sha_hex propagates a sha failure via || return (the assignment rc still trips set -e); SC2311 masking is moot.
+  done
+  if [[ "${#claimed[@]}" -gt 0 ]]; then
     # shellcheck disable=SC2311
-    actual="$(_sha_hex "$@" -- "${abs}")"
-    [[ "${actual}" != "${sha_hash}" ]] || continue
-    log "  warn : manifest DRIFT — content hash mismatch: ${sha_path}"
-    drift=$((drift + 1))
-  done < <(jq -r '(.hashes // {}) | to_entries[] | "\(.key)\t\(.value)"' -- "${MANIFEST}")
-  if [[ "${excluded}" -gt 0 ]]; then
-    log "  info : ${excluded} merge-claimed file(s) excluded from the content comparison (designed local evolution, not drift)"
+    vendor="$(_get_vendor_part_drift "${claimed[@]}")"
+    drift=$((drift + vendor))
   fi
   printf '%d\n' "${drift}"
+}
+
+# One sha process over every listed path, run from GA_ROOT → hex digests, one per line in argument
+# order. A per-row fork costs ~20 s over a ~1000-row manifest; one batch costs ~0.2 s. rc 1 when the
+# tool fails or its line count disagrees with the path count. Usage: _get_batched_hex <sha words> -- <rel>...
+_get_batched_hex() {
+  local -a sha=()
+  local out count
+  while [[ "$#" -gt 0 && "$1" != "--" ]]; do
+    sha+=("$1")
+    shift
+  done
+  shift
+  out="$(cd -- "${GA_ROOT}" && "${sha[@]}" -- "$@")" || return 1
+  count="$(grep -c . <<<"${out}" || true)"
+  [[ "${count}" -eq "$#" ]] || return 1
+  awk '{ print $1 }' <<<"${out}"
+}
+
+# Vendor-owned-part comparison for merge-claimed rows whose whole-file hash moved. A whole-file hash
+# cannot tell sanctioned local evolution (EDITABLE-region bullets, a live `model:` pin, a roster's
+# live-added members) from tamper, so each row is compared with those parts removed against its
+# base@install anchor (the release body the updater stores under spine_baseline_dir):
+#   agent body  → the text outside the EDITABLE regions, frontmatter identity keys included
+#   roster file → the skeleton outside the member slots + every vendor member's value
+# The anchor counts only at the release hash, so a stale or hand-edited anchor reads as unverified,
+# never as clean. Logs each finding; stdout = the finding count. Args: the claimed rel paths.
+_get_vendor_part_drift() {
+  local py_src findings rel lib="${BASH_SOURCE[0]%/*}/../autoagent/lib"
+  local -a roster=()
+  # shellcheck disable=SC2311,SC2312
+  while IFS= read -r rel; do roster+=("${rel}"); done <<<"$(spine_get_roster_paths)"
+  # shellcheck disable=SC2311
+  py_src="$(_get_vendor_part_py)"
+  # stderr dropped, never parsed: a stray warning line would read as a finding row; the program
+  # prints its own failure reason on stdout
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if ! findings="$(python3 -I -W ignore -c "${py_src}" "${MANIFEST}" "$(spine_baseline_dir)" "${lib}" "${GA_ROOT}" \
+    "${roster[@]}" <<<"$(printf '%s\n' "$@")" 2>/dev/null)"; then
+    findings="${findings##*$'\n'}"
+    log "  warn : manifest DRIFT — vendor-part comparison failed (${findings:-python3 gave no reason}); $# merge-claimed row(s) unverified"
+    printf '%d\n' "$#"
+    return 0
+  fi
+  _report_vendor_part_findings <<<"${findings}"
+}
+
+# Stdin rows `changed|unverified<TAB>rel<TAB>why`: logs each finding; stdout = the finding count.
+_report_vendor_part_findings() {
+  local kind rel detail count=0
+  while IFS=$'\t' read -r kind rel detail; do
+    [[ -n "${kind}" ]] || continue
+    if [[ "${kind}" == "changed" ]]; then
+      log "  warn : manifest DRIFT — vendor-owned part changed: ${rel} (${detail})"
+    else
+      log "  warn : manifest DRIFT — vendor-owned part unverified: ${rel} (${detail}; 'glass-atrium update' re-seeds the anchor)"
+    fi
+    count=$((count + 1))
+  done
+  printf '%d\n' "${count}"
+}
+
+# The comparison program _get_vendor_part_drift runs: argv = manifest, update-state dir, merge lib
+# dir, GA_ROOT, roster paths; stdin = claimed rel paths; stdout = `changed|unverified<TAB>rel<TAB>why`
+# rows (a clean row prints nothing); a failure prints its reason as the last stdout line, rc 1. Region
+# pairing, the sanctioned frontmatter keys and the roster slot shapes come from the merge modules
+# themselves, so this comparison moves with the merge.
+_get_vendor_part_py() {
+  cat <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+manifest_path, state_dir, lib_dir, root = sys.argv[1:5]
+roster_paths = set(sys.argv[5:])
+sys.path.insert(0, lib_dir)
+IDENTITY_KEYS = ("name", "tools", "scope")
+try:
+    import editable_merge as em
+    import roster_merge as rm
+
+    hashes = json.loads(Path(manifest_path).read_text(encoding="utf-8")).get("hashes") or {}
+except Exception as exc:  # stderr is dropped by the caller → the reason goes to stdout
+    print(f"cannot start: {type(exc).__name__}: {exc}")
+    sys.exit(1)
+
+
+def get_anchor(rel):
+    if rel in roster_paths:
+        entry = Path(state_dir) / "base-roster" / rel
+    else:
+        entry = Path(state_dir) / "base-agents" / Path(rel).name
+    if not entry.is_file():
+        return None, f"no base@install entry at {entry}"
+    data = entry.read_bytes()
+    if hashlib.sha256(data).hexdigest() != hashes.get(rel):
+        return None, f"base@install entry {entry} is not the release body"
+    return data.decode("utf-8"), ""
+
+
+def get_vendor_text(text):
+    lines, regions = em._region_contents(text)
+    drop = {i for begin, end, _ in regions for i in range(begin, end - 1)}
+    return "".join(line for i, line in enumerate(lines) if i not in drop)
+
+
+def get_identity_line(text, key):
+    lines = em._split_lines(text)
+    span = em._frontmatter_span(lines)
+    return None if span is None else em._find_frontmatter_line(lines, span, f"{key}:")
+
+
+def get_agent_change(live, base):
+    if em.is_at_base_anchor(get_vendor_text(live), get_vendor_text(base)):
+        return ""
+    keys = [k for k in IDENTITY_KEYS if get_identity_line(live, k) != get_identity_line(base, k)]
+    if keys:
+        return "frontmatter identity key(s) changed: " + ", ".join(keys)
+    return "vendor text outside the EDITABLE regions changed"
+
+
+def get_roster_change(rel, live, base):
+    shape = rm.get_shape(rel)
+    live_slots = rm.get_slot_members(live, shape)
+    base_slots = rm.get_slot_members(base, shape)
+    empty = {slot: {} for slot in (*live_slots, *base_slots)}
+    if rm.set_slot_members(live, empty, shape) != rm.set_slot_members(base, empty, shape):
+        return "vendor text outside the roster member slots changed"
+    altered = [
+        f"{slot}:{name}"
+        for slot, members in base_slots.items()
+        for name, value in members.items()
+        if live_slots.get(slot, {}).get(name, None) != value
+    ]
+    if altered:
+        return "vendor roster member(s) removed or altered: " + ", ".join(altered[:5])
+    return ""
+
+
+def get_row_change(rel):
+    base, reason = get_anchor(rel)
+    if base is None:
+        return "unverified", reason
+    try:
+        live = (Path(root) / rel).read_text(encoding="utf-8")
+        if rel in roster_paths:
+            return "changed", get_roster_change(rel, live, base)
+        return "changed", get_agent_change(live, base)
+    except (OSError, UnicodeDecodeError, ValueError, rm.RosterMergeError) as exc:
+        return "changed", f"no longer parses in its release shape: {exc}"
+
+
+try:
+    for rel in filter(None, sys.stdin.read().splitlines()):
+        kind, detail = get_row_change(rel)
+        if detail:
+            print(f"{kind}\t{rel}\t{detail}")
+except Exception as exc:  # stderr is dropped by the caller → the reason goes to stdout
+    print(f"cannot finish: {type(exc).__name__}: {exc}")
+    sys.exit(1)
+PY
+}
+
+# Agent bodies (agents/*.md) and top-level hooks (hooks/*.sh) on disk that the manifest does not list —
+# the NEW-file half manifest_hash_drift cannot see. Logs each; stdout = the count.
+get_surplus_file_drift() {
+  local listed path rel count=0
+  listed=$'\n'"$(jq -r '(.files // [])[]' -- "${MANIFEST}" 2>/dev/null)"$'\n' || listed=$'\n'
+  for path in "${GA_ROOT}"/agents/*.md "${GA_ROOT}"/hooks/*.sh; do
+    [[ -f "${path}" ]] || continue
+    rel="${path#"${GA_ROOT}/"}"
+    [[ "${listed}" == *$'\n'"${rel}"$'\n'* ]] && continue
+    log "  warn : manifest DRIFT — surplus file: ${rel} (on disk, not in the manifest)"
+    count=$((count + 1))
+  done
+  printf '%d\n' "${count}"
+}
+
+# The live manifest.json hash table vs the applied-release record the updater keeps
+# (spine_baseline_path): a writer who rewrote a hash row together with its file clears
+# manifest_hash_drift, not this. No record yet (before the first update) → a note. stdout = 0/1.
+get_manifest_anchor_drift() {
+  local baseline
+  # shellcheck source-path=SCRIPTDIR
+  # shellcheck source=../scripts/lib/apply-spine.sh
+  source "${BASH_SOURCE[0]%/*}/../scripts/lib/apply-spine.sh"
+  # shellcheck disable=SC2311
+  baseline="$(spine_baseline_path)"
+  # The default record belongs to the live install, so a sandbox target compares only an explicit state dir.
+  # shellcheck disable=SC2310,SC2311,SC2312
+  if [[ "$(is_sandbox_target)" == "yes" && -z "${ATRIUM_UPDATE_STATE_DIR:-}" ]]; then
+    log "  note : manifest anchor check skipped — sandbox target with no ATRIUM_UPDATE_STATE_DIR (the default record is the live install's)"
+    printf '0\n'
+    return 0
+  fi
+  if [[ ! -f "${baseline}" ]]; then
+    log "  note : no applied-release record yet (${baseline}) — the manifest anchor check starts after the first update"
+    printf '0\n'
+    return 0
+  fi
+  if jq -e -n --slurpfile live "${MANIFEST}" --slurpfile applied "${baseline}" \
+    '($live[0].hashes // {}) == ($applied[0].hashes // {})' >/dev/null 2>&1; then
+    printf '0\n'
+    return 0
+  fi
+  log "  warn : manifest DRIFT — manifest.json hash table differs from the applied-release record (${baseline})"
+  printf '1\n'
+}
+
+# Atrium hook bindings in SETTINGS_JSON vs EXPECTED_HOOK_BINDINGS + EXPECTED_HOOK_BINDING_OPTIONS. options = a
+# declared option key whose live value differs (both modes: run_doctor §6 never reads options). altered = an expected hook bound
+# under a matcher the table does not list for it; surplus = an Atrium hook the table does not bind
+# under that event; missing = an expected binding absent (mode `all` only — run_doctor §6 counts
+# those itself). Foreign user hooks are never read (get_live_hook_bindings). Profile branches reach
+# this file through links, which get_profile_settings_drift checks. Logs each; stdout = the count.
+get_hook_binding_drift() {
+  local mode="${1:-all}" expected live count
+  if ! command -v jq >/dev/null 2>&1 || [[ ! -f "${SETTINGS_JSON}" ]]; then
+    # mode `extra` runs beside run_doctor §6, which already reports an unreadable settings.json
+    [[ "${mode}" == "all" ]] || {
+      printf '0\n'
+      return 0
+    }
+    log "  warn : binding DRIFT — hook bindings unread (${SETTINGS_JSON} absent or jq missing)"
+    printf '1\n'
+    return 0
+  fi
+  # shellcheck disable=SC2311,SC2312
+  expected="$(_get_expected_binding_keys)"
+  live="$(get_live_hook_bindings)"
+  # shellcheck disable=SC2311
+  count="$(_get_extra_binding_count "${expected}" "${live}")"
+  # shellcheck disable=SC2311
+  count=$((count + $(_get_binding_option_drift_count)))
+  if [[ "${mode}" == "all" ]]; then
+    # shellcheck disable=SC2311
+    count=$((count + $(_get_missing_binding_count "${expected}" "${live}")))
+  fi
+  printf '%d\n' "${count}"
+}
+
+# EXPECTED_HOOK_BINDINGS as `event<US>hook<US>matcher` keys, the get_live_hook_bindings key form.
+_get_expected_binding_keys() {
+  local binding event hook matcher
+  for binding in "${EXPECTED_HOOK_BINDINGS[@]}"; do
+    IFS=$'\t' read -r event hook matcher <<<"${binding}"
+    printf '%s\x1f%s\x1f%s\n' "${event}" "${hook}" "${matcher}"
+  done
+}
+
+# Live keys ($2) the expected keys ($1) do not list: altered when the table binds that hook under that
+# event with another matcher, else surplus. Logs each; stdout = the count.
+_get_extra_binding_count() {
+  local key event hook matcher count=0
+  while IFS= read -r key; do
+    [[ -n "${key}" ]] || continue
+    grep -Fxq -- "${key}" <<<"$1" && continue
+    IFS=$'\x1f' read -r event hook matcher <<<"${key}"
+    if [[ $'\n'"$1" == *$'\n'"${event}"$'\x1f'"${hook}"$'\x1f'* ]]; then
+      log "  warn : binding DRIFT — binding altered: ${event} ${hook} bound under matcher '${matcher}', which EXPECTED_HOOK_BINDINGS does not list for it"
+    else
+      log "  warn : binding DRIFT — binding surplus: ${event} ${hook} (matcher '${matcher}') is not in EXPECTED_HOOK_BINDINGS"
+    fi
+    count=$((count + 1))
+  done <<<"$2"
+  printf '%d\n' "${count}"
+}
+
+# Declared option keys (EXPECTED_HOOK_BINDING_OPTIONS) whose live value differs on an Atrium command; a key no row
+# declares is the user's own and never read. Logs each; stdout = the count.
+_get_binding_option_drift_count() {
+  local rows event hook options drift matcher key live declared effect count=0
+  rows="$(get_expected_binding_option_rows)"
+  while IFS=$'\t' read -r event hook options; do
+    [[ -n "${event}" ]] || continue
+    drift="$(get_binding_option_drift "${SETTINGS_JSON}" "${event}" "${hook}" "${options}")"
+    while IFS=$'\x1f' read -r matcher key live; do
+      [[ -n "${key}" ]] || continue
+      declared="$(jq -c --arg k "${key}" '.[$k]' <<<"${options}")"
+      effect=""
+      [[ "${key}" != "asyncRewake" ]] || effect=" — without it the hook runs synchronously and holds the session for its lifetime"
+      # shellcheck disable=SC2016  # the quotes are literal text in the log line
+      log "  warn : binding DRIFT — binding options: ${event} ${hook}${matcher:+ (matcher '${matcher}')} has ${key}=${live}, declared ${declared}${effect}"
+      count=$((count + 1))
+    done <<<"${drift}"
+  done <<<"${rows}"
+  printf '%d\n' "${count}"
+}
+
+# Expected binding keys ($1) absent from the live keys ($2) — a hook moved to another matcher counts
+# here and as altered, as run_doctor §6 + §30 count it. Logs each; stdout = the count.
+_get_missing_binding_count() {
+  local key event hook matcher count=0
+  while IFS= read -r key; do
+    [[ -n "${key}" ]] || continue
+    grep -Fxq -- "${key}" <<<"$2" && continue
+    IFS=$'\x1f' read -r event hook matcher <<<"${key}"
+    # shellcheck disable=SC2016  # the quotes are literal text in the log line
+    log "  warn : binding DRIFT — binding missing: ${event} ${hook}${matcher:+ (matcher '${matcher}')}"
+    count=$((count + 1))
+  done <<<"$1"
+  printf '%d\n' "${count}"
+}
+
+# Profile branches (§27's set) whose settings.json is not a link to SETTINGS_JSON: such a branch carries
+# its own hook wiring, which get_hook_binding_drift never reads. Logs each; stdout = the count.
+get_profile_settings_drift() {
+  local grammar="${BASH_SOURCE[0]%/*}/../hooks/lib/claude-config-dirs.sh" branches branch class count=0
+  if [[ ! -r "${grammar}" ]]; then
+    log "  warn : binding DRIFT — profile branch settings unread (needs the config-root grammar ${grammar})"
+    printf '1\n'
+    return 0
+  fi
+  # shellcheck disable=SC2311
+  branches="$(get_profile_branches "${grammar}")"
+  while IFS= read -r branch; do
+    [[ -n "${branch}" ]] || continue
+    # shellcheck disable=SC2311
+    class="$(_get_profile_link_defect "${branch}/settings.json" "${SETTINGS_JSON}")"
+    [[ "${class}" != "ok" && "${class}" != "no-target" ]] || continue
+    log "  warn : binding DRIFT — profile branch ${branch}: settings.json is ${class}, not a link to ${SETTINGS_JSON} — its hook wiring is outside this comparison; doctor §27 prints the fix"
+    count=$((count + 1))
+  done <<<"${branches}"
+  printf '%d\n' "${count}"
+}
+
+# Whole harness integrity verdict — the update preflight's report: install files, surplus files, the
+# manifest anchor and every binding kind. Detection only: logs findings, records the verdict for the
+# session-start line, stdout = the finding count, rc 0. A comparison that cannot run counts as one.
+get_integrity_drift() {
+  local part total
+  local -a sha=()
+  # shellcheck disable=SC2310,SC2311,SC2312
+  IFS=$' \t' read -ra sha <<<"$(_resolve_sha256_cmd)" || true
+  if ! command -v jq >/dev/null 2>&1 || [[ ! -f "${MANIFEST}" || "${#sha[@]}" -eq 0 ]]; then
+    log "  warn : integrity check could not run — jq, ${MANIFEST} or a sha256 tool is missing"
+    set_integrity_verdict unread
+    printf '1\n'
+    return 0
+  fi
+  # shellcheck disable=SC2310,SC2311
+  part="$(manifest_hash_drift "${sha[@]}")" || {
+    log "  warn : manifest DRIFT — the file comparison failed (sha256 tool error)"
+    part=1
+  }
+  # shellcheck disable=SC2311,SC2312
+  total=$((part + $(get_surplus_file_drift) + $(get_manifest_anchor_drift) + $(get_hook_binding_drift all) + $(get_profile_settings_drift)))
+  set_integrity_verdict "${total}"
+  printf '%d\n' "${total}"
+}
+
+# Record the latest integrity verdict for hooks/inject-session-context.sh: one line
+# `epoch<TAB>count<TAB>GA_ROOT<TAB>SETTINGS_JSON` at INTEGRITY_VERDICT, replaced atomically (the temp
+# file sits beside it so the rename never crosses a filesystem). A sandbox target or a non-default
+# install root (a source tree, a test root) writing to the default data root skips, so only the live
+# install ever records the live verdict. A write miss is a note.
+set_integrity_verdict() {
+  local tmp="" now dir="${INTEGRITY_VERDICT%/*}"
+  # shellcheck disable=SC2310,SC2312
+  if [[ "${GA_DATA_ROOT}" == "${HOME}/.glass-atrium" ]] \
+    && [[ "${GA_ROOT}" != "${HOME}/.glass-atrium" || "$(is_sandbox_target)" == "yes" ]]; then
+    return 0
+  fi
+  now="$(date +%s)"
+  # owner-only by design (600): the line names the install root and the settings path
+  if mkdir -p -- "${dir}" 2>/dev/null && tmp="$(mktemp "${dir}/.last-verdict.XXXXXX" 2>/dev/null)" \
+    && printf '%s\t%s\t%s\t%s\n' "${now}" "$1" "${GA_ROOT}" "${SETTINGS_JSON}" >"${tmp}" \
+    && chmod 600 "${tmp}" && mv -f -- "${tmp}" "${INTEGRITY_VERDICT}"; then
+    return 0
+  fi
+  log "  note : integrity verdict not recorded (${INTEGRITY_VERDICT} unwritable) — the session-start line will read it as not yet checked"
+  # shellcheck disable=SC2310
+  if ga_guard_path "${tmp}"; then rm -f -- "${tmp:?}"; fi
+  return 0
 }
 
 # launchd deploy-drift comparison — run_doctor §11 helper. For each com.glass-atrium.* job whose plist
@@ -2320,7 +2851,7 @@ launchd_deploy_drift() {
     # shellcheck disable=SC2311
     twin_hash="$(_sha_hex "$@" -- "${twin}")"
     if [[ "${dep_hash}" != "${twin_hash}" ]]; then
-      log "  warn : stale-deployed launchd plist drift: ${label} — re-render + --load-launchd to redeploy"
+      log "  warn : stale-deployed launchd plist drift: ${label} — run 'glass-atrium reload-launchd' to redeploy"
       drift=$((drift + 1))
     fi
   done
@@ -2329,16 +2860,30 @@ launchd_deploy_drift() {
 
 # deployed retired-label scan — run_doctor §11 helper. Each LAUNCHD_RETIRED_JOBS label whose plist is still
 # deployed under ${LAUNCH_AGENTS} is residue the retirement has not reached: logged as a warn (stderr) with the
-# --load-launchd remedy, and the total is the stdout verdict. Read-only — no launchctl, no file change.
+# reload-launchd remedy, and the total is the stdout verdict. Read-only — no launchctl, no file change.
 launchd_retired_deployed() {
   local ld_job label retired=0
   for ld_job in "${LAUNCHD_RETIRED_JOBS[@]}"; do
     label="${LAUNCHD_LABEL_PREFIX}.${ld_job}"
     [[ -f "${LAUNCH_AGENTS}/${label}.plist" ]] || continue
-    log "  warn : retired launchd job still deployed: ${label} — run --load-launchd to retire it"
+    log "  warn : retired launchd job still deployed: ${label} — run 'glass-atrium reload-launchd' to retire it"
     retired=$((retired + 1))
   done
   printf '%d\n' "${retired}"
+}
+
+# [paths].node_bin probe — run_doctor §11 helper. Every rendered job runs node_bin, so a value naming no executable
+# file (a Homebrew upgrade deletes a versioned Cellar folder) stops them all: logged as a warn naming the path and the
+# remedy, and the count is the stdout verdict. An absent key is the renderer's own loud failure, not this row.
+launchd_node_bin_probe() {
+  local node_bin
+  node_bin="$(ATRIUM_CONFIG_TOML="${CONFIG_TOML}" atrium_toml_get '[paths]' 'node_bin')"
+  if [[ -z "${node_bin}" || (-f "${node_bin}" && -x "${node_bin}") ]]; then
+    printf '0\n'
+    return 0
+  fi
+  log "  warn : [paths].node_bin ${node_bin} does not exist — the launchd jobs cannot start; run 'glass-atrium repair-config-binaries' (resolves node from PATH), then 'glass-atrium reload-launchd'"
+  printf '1\n'
 }
 
 # launchd loaded-state probe — run_doctor §11 helper. Asks launchd about each DEPLOYED com.glass-atrium
@@ -2357,7 +2902,7 @@ launchd_unloaded_probe() {
       label="${LAUNCHD_LABEL_PREFIX}.${ld_job}"
       [[ -f "${LAUNCH_AGENTS}/${label}.plist" ]] || continue
       if ! launchctl print "gui/${UID}/${label}" >/dev/null 2>&1; then
-        log "  warn : ${label} deployed but not loaded — run --load-launchd"
+        log "  warn : ${label} deployed but not loaded — run 'glass-atrium reload-launchd'"
         unloaded=$((unloaded + 1))
       fi
     done

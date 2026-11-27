@@ -170,6 +170,8 @@ export CLAUDE_CODE_ENABLE_TELEMETRY=0
 WIKI_ROOT="${WIKI_ROOT:-${HOME}/.glass-atrium/wiki}"
 RAW_DIR="$WIKI_ROOT/raw"
 NOTES_DIR="$WIKI_ROOT/notes"
+# Batch skip record — outside master-index.md, which wiki-sync regenerates from wiki.sqlite alone.
+SKIP_RECORD="$WIKI_ROOT/index/compile-skips.tsv"
 # Claude-Code project-dir cwd encoding: $HOME with '/' -> '-' (leading '-').
 PROJ_DIR="-${HOME#/}"
 PROJ_DIR="${PROJ_DIR//\//-}"
@@ -358,26 +360,55 @@ _has_line() {
   [[ $'\n'"$1"$'\n' == *$'\n'"$2"$'\n'* ]]
 }
 
-# Classify a raw as processed/unprocessed. Args: raw file, note-url set, collision set,
-# note-source_raw set. Primary match = the raw's basename as some note's source_raw: raw
-# basenames are unique (1 URL = 1 file), so it needs NO collision guard and is the only
-# path surviving a slug-rename + source_url drop. The basename match (notes/<basename>.md)
-# and guarded source_url match are fallbacks for legacy notes lacking source_raw.
-_classify_raw() {
-  local _file="$1"
-  local _note_urls="$2"
-  local _collisions="$3"
-  local _note_raws="$4"
-  local _slug _base _url
+# Collect the skip record's raw basenames (first tab field of each `<basename>\t<UTC date>` line)
+# as a newline-separated set; an absent record is the empty set.
+_collect_skipped_raws() {
+  local _record="$1"
+  if [[ -f "${_record}" ]]; then
+    awk -F '\t' '$1 != "" { print $1 }' "${_record}"
+  fi
+}
+
+# Append a raw to the skip record unless already listed (idempotent).
+_record_skip() {
+  local _record="$1" _base="$2"
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if _has_line "$(_collect_skipped_raws "${_record}")" "${_base}"; then
+    return 0
+  fi
+  mkdir -p -- "$(dirname -- "${_record}")" || return 1
+  printf '%s\t%s\n' "${_base}" "$(date -u +%Y-%m-%d)" >>"${_record}"
+}
+
+# Kind of a staged pair body: skip = exactly this run's skip sentinel (one line, optional CR), the
+# model's one way to decline a raw · garbled-skip = the sentinel amid other text, neither a clean
+# decline nor a note · note = anything else. The per-run nonce keeps raw text from forging it.
+_get_body_kind() {
+  local _content _sentinel="-----GA-WIKI-NOTE-SKIP nonce=${2}-----"
+  _content="$(<"$1")"
+  if [[ "${_content%$'\r'}" == "${_sentinel}" ]]; then
+    printf 'skip\n'
+  elif [[ "${_content}" == *"${_sentinel}"* ]]; then
+    printf 'garbled-skip\n'
+  else
+    printf 'note\n'
+  fi
+}
+
+# True when any processed test holds. Args: raw file, note-url set, collision set, note-source_raw
+# set. Primary match = the raw's basename as some note's source_raw: raw basenames are unique
+# (1 URL = 1 file), so it needs NO collision guard and is the only path surviving a slug-rename +
+# source_url drop. The basename match (notes/<basename>) and guarded source_url match are
+# fallbacks for legacy notes lacking source_raw.
+_is_processed_raw() {
+  local _file="$1" _note_urls="$2" _collisions="$3" _note_raws="$4"
+  local _base _url
   _base=$(basename "${_file}")
   # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
   if _has_line "${_note_raws}" "${_base}"; then
-    printf 'processed'
     return 0
   fi
-  _slug=$(basename "${_file}" .md)
-  if [[ -f "${NOTES_DIR}/${_slug}.md" ]]; then
-    printf 'processed'
+  if [[ -f "${NOTES_DIR}/${_base}" ]]; then
     return 0
   fi
   _url=$(_extract_source_url "${_file}")
@@ -385,10 +416,22 @@ _classify_raw() {
   if [[ -n "${_url}" ]] \
     && ! _has_line "${_collisions}" "${_url}" \
     && _has_line "${_note_urls}" "${_url}"; then
-    printf 'processed'
     return 0
   fi
-  printf 'unprocessed'
+  return 1
+}
+
+# Classify a raw as processed / skipped / unprocessed. Args: those of _is_processed_raw, then the
+# skip-record set (may be empty). A raw with a note is processed even when also listed as skipped.
+_classify_raw() {
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if _is_processed_raw "$1" "$2" "$3" "$4"; then
+    printf 'processed'
+  elif _has_line "${5-}" "$(basename "$1")"; then
+    printf 'skipped'
+  else
+    printf 'unprocessed'
+  fi
 }
 
 # Stamp a note's frontmatter with the script-authoritative source_raw (+ source_url
@@ -512,6 +555,7 @@ NOTE_URLS=$(_collect_note_source_urls "${NOTES_DIR}")
 # is processed regardless of any source_url collision.
 NOTE_RAWS=$(_collect_note_source_raws "${NOTES_DIR}")
 COLLISION_URLS=$(_collect_collision_source_urls "${RAW_DIR}")
+SKIPPED_RAWS=$(_collect_skipped_raws "${SKIP_RECORD}")
 # A non-empty collision set means several raws claim one source_url — those raws
 # are basename-matched only, so the shared url cannot mask an uncompiled twin.
 # Surface it loudly (Precondition Loud-Fail / observability).
@@ -521,7 +565,7 @@ if [ -n "$COLLISION_URLS" ]; then
 fi
 UNPROCESSED=()
 while IFS= read -r -d '' file; do
-  if [ "$(_classify_raw "$file" "$NOTE_URLS" "$COLLISION_URLS" "$NOTE_RAWS")" = "unprocessed" ]; then
+  if [ "$(_classify_raw "$file" "$NOTE_URLS" "$COLLISION_URLS" "$NOTE_RAWS" "$SKIPPED_RAWS")" = "unprocessed" ]; then
     UNPROCESSED+=("$file")
   fi
 done < <(find "$RAW_DIR" -maxdepth 1 -type f -name '*.md' -print0 2>>/tmp/wiki-compile.log)
@@ -777,6 +821,9 @@ nonce copied verbatim, <K> = the index of the input file):
 -----GA-WIKI-NOTE-BEGIN nonce=${NONCE} idx=<K>-----
 <the complete note markdown for input K, frontmatter first>
 -----GA-WIKI-NOTE-END nonce=${NONCE} idx=<K>-----
+To decline an input under the Exclusion Criteria, its pair holds exactly this one line instead
+of a note (the caller records the skip):
+-----GA-WIKI-NOTE-SKIP nonce=${NONCE}-----
 Emit one BEGIN/END pair per input, each index at most once and only from the list below, then
 finish with exactly one terminator line:
 -----GA-WIKI-ENVELOPE-DONE nonce=${NONCE} count=<M>-----
@@ -917,6 +964,23 @@ for file in "${UNPROCESSED[@]}"; do
     echo "[wiki-daily-compile] WARN: no compiled note returned for ${w_base}" >&2
     continue
   fi
+  w_kind=$(_get_body_kind "${w_body}" "${NONCE}")
+  if [[ "${w_kind}" == "garbled-skip" ]]; then
+    # promote → sentinel indexed as a note · record → an unclean decline dropped → left unprocessed
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARN: garbled skip returned for idx=${w_idx} basename=${w_base} — the skip sentinel must be the pair's only line; left unprocessed for the next run" >>"${LOG_FILE}"
+    echo "[wiki-daily-compile] WARN: garbled skip returned for ${w_base}" >&2
+    continue
+  fi
+  if [[ "${w_kind}" == "skip" ]]; then
+    # shellcheck disable=SC2310  # status branched on below — a failed record write is a WARN, not an abort
+    if _record_skip "$SKIP_RECORD" "$w_base"; then
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] skip recorded for idx=${w_idx} basename=${w_base} in ${SKIP_RECORD} — delete its line to return it to the backlog" >>"$LOG_FILE"
+    else
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARN: skip record write failed for ${w_base} — left unprocessed for the next run" >>"$LOG_FILE"
+      echo "[wiki-daily-compile] WARN: skip record write failed for ${w_base}" >&2
+    fi
+    continue
+  fi
   # Sibling temp + atomic same-FS rename (mirrors _inject_source_raw): wiki-sync never observes
   # a half-written note.
   if ! w_tmp=$(mktemp "${NOTES_DIR}/.${w_base}.XXXXXX"); then
@@ -971,35 +1035,36 @@ bash "$SYNC_SCRIPT" >>"$LOG_FILE" 2>&1 || SYNC_EXIT=$?
 # COLLISION_URLS is unchanged (same raw/*.md set).
 NOTE_URLS=$(_collect_note_source_urls "${NOTES_DIR}")
 NOTE_RAWS=$(_collect_note_source_raws "${NOTES_DIR}")
+SKIPPED_RAWS=$(_collect_skipped_raws "${SKIP_RECORD}")
 SUCCESS=0
+SKIPPED=0
 FAILED=()
 for file in "${UNPROCESSED[@]}"; do
-  slug=$(basename "$file" .md)
-  if [ "$(_classify_raw "$file" "$NOTE_URLS" "$COLLISION_URLS" "$NOTE_RAWS")" = "processed" ]; then
-    SUCCESS=$((SUCCESS + 1))
-    continue
-  fi
-  FAILED+=("${slug}.md")
+  case "$(_classify_raw "$file" "$NOTE_URLS" "$COLLISION_URLS" "$NOTE_RAWS" "$SKIPPED_RAWS")" in
+    processed) SUCCESS=$((SUCCESS + 1)) ;;
+    skipped) SKIPPED=$((SKIPPED + 1)) ;;
+    *) FAILED+=("$(basename "$file")") ;;
+  esac
 done
 FAIL_COUNT=${#FAILED[@]}
 if [ "$SYNC_EXIT" -ne 0 ]; then
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] wiki-daily-compile finished success=${SUCCESS}/${TOTAL} failed=${#FAILED[@]} sync_exit=${SYNC_EXIT}" >>"$LOG_FILE"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] wiki-daily-compile finished success=${SUCCESS}/${TOTAL} skipped=${SKIPPED} failed=${#FAILED[@]} sync_exit=${SYNC_EXIT}" >>"$LOG_FILE"
 
 # Write the aggregate core.daemon_runs row for the wiki cycle — the monitor wiki screen
 # reads its compiled counts (wiki-sync writes per-step).
-# status: sync-fail or SUCCESS=0 → error / some fail → partial / all ok → ok (no 'fail' in
+# status: sync-fail or nothing compiled or skipped → error / some fail → partial / all ok → ok (no 'fail' in
 # the DaemonStatus enum). Best-effort: a PG failure MUST NOT block the script.
 WIKI_AGG_STATUS="ok"
-if [ "$SYNC_EXIT" -ne 0 ] || [ "$SUCCESS" -eq 0 ]; then
+if [ "$SYNC_EXIT" -ne 0 ] || [ $((SUCCESS + SKIPPED)) -eq 0 ]; then
   WIKI_AGG_STATUS="error"
 elif [ "$FAIL_COUNT" -gt 0 ]; then
   WIKI_AGG_STATUS="partial"
 fi
 if [ -x "$PG_HELPER" ]; then
-  WIKI_AGG_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"%s","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile via cron, wiki-sync exit=%d"}}' \
-    "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$WIKI_AGG_STATUS" "$SUCCESS" "$TOTAL" "$SYNC_EXIT")
+  WIKI_AGG_ENVELOPE=$(printf '{"op":"write_daemon_run","args":{"daemon_name":"wiki","run_date":"%s","started_at":"%s","ended_at":"%s","status":"%s","compiled_count":%d,"compiled_total":%d,"notes":"wiki-daily-compile via cron, wiki-sync exit=%d, skipped=%d"}}' \
+    "$WIKI_RUN_DATE" "$WIKI_STARTED_AT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$WIKI_AGG_STATUS" "$SUCCESS" "$TOTAL" "$SYNC_EXIT" "$SKIPPED")
   pg_write_report "wiki-agg" "$WIKI_AGG_ENVELOPE"
 fi

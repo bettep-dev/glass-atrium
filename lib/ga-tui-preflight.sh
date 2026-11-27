@@ -1438,7 +1438,7 @@ preflight_count_and_gate() {
   # Leave STEP_INDEX empty until the first framed step increments it (no 0/N pre-flash).
   STEP_TOTAL=$((g1 + g2))
   STEP_INDEX=""
-  # frozen unified step counter: freeze the ONE grand total = the (g1+g2) preflight steps + the fixed 14-step install plan,
+  # frozen unified step counter: freeze the ONE grand total = the (g1+g2) preflight steps + the fixed-length install plan,
   # so preflight AND install render the SAME denominator (no 6->19 jump). GLOBAL (no `local`) so it
   # propagates through run_gate_quiet's brace group into dispatch's install run_action_panel.
   GRAND_TOTAL=$((g1 + g2 + INSTALL_PLAN_LEN))

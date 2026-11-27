@@ -1,6 +1,5 @@
 // Unit tests for the client-side pure logic in public/src/screens/model-config.jsx
-// (validateFormMC / diffFormMC / modelOptionsMC / buildFormMC / sortDomainsMC /
-// sortBudgetsMC). The server PUT contract is covered by model-config.route.test.ts;
+// (validateFormMC / diffFormMC / buildFormMC / sortDomainsMC / sortBudgetsMC). The server PUT contract is covered by model-config.route.test.ts;
 // this brings the BROWSER half under regression coverage — a drift in the client
 // mirror constants (BUDGET_RE_MC / bounds / free-text regex) or a regression in
 // the partial-PUT payload builder would otherwise ship undetected. The known-model
@@ -35,6 +34,7 @@ import {
   BUDGET_SEED_DEFAULT_USD,
   EFFORT_LEVELS,
   INHERIT_VALUE,
+  BUDGET_DOMAINS,
   MODEL_DOMAINS,
   TIER_DOMAINS,
   validateTierValue,
@@ -51,7 +51,6 @@ interface McForm {
 interface McHelpers {
   validateFormMC: (form: McForm, knownModels: string[]) => Record<string, string>;
   diffFormMC: (baseline: McForm, form: McForm) => unknown;
-  modelOptionsMC: (domain: string, knownModels: string[]) => string[];
   buildFormMC: (data: unknown) => McForm;
   sortDomainsMC: (domains: { domain: string }[]) => { domain: string }[];
   sortBudgetsMC: (budgets: { domain: string }[]) => { domain: string }[];
@@ -120,7 +119,6 @@ async function loadMc(): Promise<McHelpers> {
   const h = ctx as unknown as McHelpers;
   assert.strictEqual(typeof h.validateFormMC, "function", "validateFormMC must be reachable");
   assert.strictEqual(typeof h.diffFormMC, "function");
-  assert.strictEqual(typeof h.modelOptionsMC, "function");
   assert.strictEqual(typeof h.budgetPlaceholderMC, "function");
   return h;
 }
@@ -150,13 +148,21 @@ test("client model-format regex mirror matches server FREE_TEXT_MODEL_PATTERN (v
   // The client validate path uses FREE_TEXT_MODEL_RE_MC for free-text ids; assert the client
   // verdict agrees with the server FREE_TEXT_MODEL_PATTERN on a discriminating sample set.
   // (None of the samples sits in the injected roster → the free-text branch decides.)
-  const cases = ["claude-fable-5[1m]", "valid-custom.id", "Bad-Upper", "white space", "ok123"];
-  for (const value of cases) {
+  const rows = [
+    { name: "a bracketed variant suffix", value: "claude-fable-5[1m]" },
+    { name: "a dotted custom id", value: "valid-custom.id" },
+    { name: "an upper-case letter", value: "Bad-Upper" },
+    { name: "a space", value: "white space" },
+    { name: "letters and digits only", value: "ok123" },
+    { name: "a leading hyphen", value: "-x" },
+    { name: "a leading bracket", value: "[1m]" },
+  ];
+  for (const row of rows) {
     const clientErr = !!sameRealm(
-      mc.validateFormMC({ models: { "model.dev": value }, budgets: {} }, KNOWN_MODELS_FIXTURE),
-    )["model.dev"];
-    const serverOk = FREE_TEXT_MODEL_PATTERN.test(value);
-    assert.strictEqual(clientErr, !serverOk, `client/server agree on '${value}'`);
+      mc.validateFormMC({ models: { "model.daemon_cycle_worker": row.value }, budgets: {} }, KNOWN_MODELS_FIXTURE),
+    )["model.daemon_cycle_worker"];
+    const serverOk = FREE_TEXT_MODEL_PATTERN.test(row.value);
+    assert.strictEqual(clientErr, !serverOk, `client/server agree on ${row.name} '${row.value}'`);
   }
 });
 
@@ -208,68 +214,6 @@ test("budget input placeholder advertises the shipped default cap, not a stale l
   assert.ok(parsed >= BUDGET_MIN_USD && parsed <= BUDGET_MAX_USD, "inside the accepted band");
 });
 
-// Inherit roster SoT — DOMAIN_META_MC[*].inherit in the shipped model-config.jsx.
-// The literal table is the independent oracle the shipped roster is compared against.
-const INHERIT_ROSTER_MC: Readonly<Record<string, boolean>> = {
-  "model.dev": true,
-  "model.research": true,
-  "model.meta": true,
-  "model.wiki": true,
-  "model.review": true,
-  "model.docs": true,
-  "model.daemon_cycle_worker": false,
-};
-
-function getShippedInheritRosterOrFailMc(): Record<string, boolean> {
-  // loadMc returns the contextified sandbox itself; a top-level const is reachable only by evaluation in it.
-  const domainMeta: unknown = vm.runInContext("DOMAIN_META_MC", mc as unknown as vm.Context);
-  assert.ok(domainMeta && typeof domainMeta === "object", "DOMAIN_META_MC is an object in the shipped model-config.jsx");
-  const roster: Record<string, boolean> = {};
-  for (const [domain, meta] of Object.entries(domainMeta)) {
-    roster[domain] = meta?.inherit === true;
-  }
-  return roster;
-}
-
-// --- modelOptionsMC: API-driven option assembly per domain (P7 AC: exactly the GET
-// known_models + inherit where the domain allows; no bare alias option) ---
-
-test("modelOptionsMC: unknown domain (fallback meta) lists exactly the injected known_models (no inherit)", () => {
-  const opts = sameRealm(mc.modelOptionsMC("model.future_unknown", KNOWN_MODELS_FIXTURE));
-  assert.deepStrictEqual(opts, KNOWN_MODELS_FIXTURE);
-});
-
-test("modelOptionsMC: the inherit roster decides the inherit option, domain by domain", () => {
-  // Data-driven over the whole roster, not a hand-written case per domain.
-  // A domain added to DOMAIN_META_MC is therefore covered the moment it ships.
-  // Self-reference guard — an expectation read from the shipped table would shrink with it and pass vacuously.
-  const roster = getShippedInheritRosterOrFailMc();
-  assert.deepStrictEqual(roster, INHERIT_ROSTER_MC, "shipped DOMAIN_META_MC inherit flags");
-  for (const [domain, inherits] of Object.entries(INHERIT_ROSTER_MC)) {
-    const opts = sameRealm(mc.modelOptionsMC(domain, KNOWN_MODELS_FIXTURE));
-    assert.deepStrictEqual(
-      opts,
-      inherits ? ["inherit", ...KNOWN_MODELS_FIXTURE] : KNOWN_MODELS_FIXTURE,
-      `${domain}: ${inherits ? "inherit + " : ""}known_models verbatim`,
-    );
-    assert.strictEqual(opts.includes("inherit"), inherits, `${domain}: inherit option offered?`);
-    for (const alias of ["opus", "sonnet", "haiku"]) {
-      assert.ok(!opts.includes(alias), `${domain} has no bare alias '${alias}'`);
-    }
-  }
-});
-
-test("modelOptionsMC: options track the injected roster, not a baked-in mirror", () => {
-  const altRoster = ["some-brand-new-model", "another-id"];
-  const opts = sameRealm(mc.modelOptionsMC("model.daemon_cycle_worker", altRoster));
-  assert.deepStrictEqual(opts, altRoster, "a different roster yields different options");
-});
-
-test("modelOptionsMC: empty known_models (SoT fail-open, D3) → inherit-only where allowed", () => {
-  assert.deepStrictEqual(sameRealm(mc.modelOptionsMC("model.dev", [])), ["inherit"]);
-  assert.deepStrictEqual(sameRealm(mc.modelOptionsMC("model.daemon_cycle_worker", [])), []);
-});
-
 // --- validateFormMC: client mirror of the server PUT contract ---
 // NOTE: no client-side bare-alias reject mirror — the server is the validation
 // authority for the alias 400 (plan Non-Goals); covered by model-config.route.test.ts.
@@ -278,7 +222,7 @@ test("validateFormMC: a valid known id + valid 2-decimal budget → no errors", 
   const errors = sameRealm(
     mc.validateFormMC(
       {
-        models: { "model.dev": "claude-opus-4-8" },
+        models: { "model.daemon_cycle_worker": "claude-opus-4-8" },
         budgets: { "budget.worker_max_usd": "0.50" },
       },
       KNOWN_MODELS_FIXTURE,
@@ -289,16 +233,16 @@ test("validateFormMC: a valid known id + valid 2-decimal budget → no errors", 
 
 test("validateFormMC: empty model value → 'Enter a model id'", () => {
   const errors = sameRealm(
-    mc.validateFormMC({ models: { "model.dev": "" }, budgets: {} }, KNOWN_MODELS_FIXTURE),
+    mc.validateFormMC({ models: { "model.daemon_cycle_worker": "" }, budgets: {} }, KNOWN_MODELS_FIXTURE),
   );
-  assert.ok(errors["model.dev"], "empty model flagged");
+  assert.ok(errors["model.daemon_cycle_worker"], "empty model flagged");
 });
 
 test("validateFormMC: uppercase free-text model → format error (mirrors FREE_TEXT regex)", () => {
   const errors = sameRealm(
-    mc.validateFormMC({ models: { "model.dev": "Claude-Custom" }, budgets: {} }, KNOWN_MODELS_FIXTURE),
+    mc.validateFormMC({ models: { "model.daemon_cycle_worker": "Claude-Custom" }, budgets: {} }, KNOWN_MODELS_FIXTURE),
   );
-  assert.ok(errors["model.dev"], "uppercase rejected by client regex");
+  assert.ok(errors["model.daemon_cycle_worker"], "uppercase rejected by client regex");
   // server agrees (drift guard): the same value fails the server pattern too.
   assert.ok(!FREE_TEXT_MODEL_PATTERN.test("Claude-Custom"));
 });
@@ -334,27 +278,51 @@ test("validateFormMC: budget out of [0.05, 50.00] bounds → error; in-bounds �
   assert.deepStrictEqual(edge, {}, "exact bounds accepted");
 });
 
+describe("validateFormMC: a field alert fits the 160 control slot", () => {
+  const rows: Array<{ name: string; form: McForm; key: string }> = [
+    { name: "empty model", form: { models: { "model.daemon_cycle_worker": "" }, budgets: {} }, key: "model.daemon_cycle_worker" },
+    { name: "free-text model off the id pattern", form: { models: { "model.daemon_cycle_worker": "Claude-Custom" }, budgets: {} }, key: "model.daemon_cycle_worker" },
+    { name: "cap off the two-decimal form", form: { models: {}, budgets: { "budget.worker_max_usd": "1.234" } }, key: "budget.worker_max_usd" },
+    { name: "cap outside the bounds", form: { models: {}, budgets: { "budget.worker_max_usd": "50.01" } }, key: "budget.worker_max_usd" },
+    { name: "effort off the level list", form: { models: {}, budgets: {}, tiers: { "tier.worker_effort": "ultra" } }, key: "tier.worker_effort" },
+    { name: "output tokens off the whole-number form", form: { models: {}, budgets: {}, tiers: { "tier.worker_max_output_tokens": "0" } }, key: "tier.worker_max_output_tokens" },
+  ];
+  for (const row of rows) {
+    test(`${row.name}: the alert holds the 12-word bar`, () => {
+      const message = sameRealm(mc.validateFormMC(row.form, KNOWN_MODELS_FIXTURE))[row.key];
+      assert.ok(message, "the field is flagged");
+      assert.ok(message.split(/\s+/).length <= 12, `'${message}'`);
+    });
+  }
+
+  test("the format alerts read as the short range forms", () => {
+    const cap = sameRealm(mc.validateFormMC(rows[2].form, []))[rows[2].key];
+    const tokens = sameRealm(mc.validateFormMC(rows[5].form, []))[rows[5].key];
+    assert.deepStrictEqual([cap, tokens], ["Two decimals, $0.05 to $50.00", "Whole number, 1 to 999999, or blank"]);
+  });
+});
+
 // --- diffFormMC: partial-PUT payload builder (only changed fields, null when none) ---
 
 test("diffFormMC: no change → null (clean state — save-banner hidden, Save dormant not error-disabled)", () => {
-  const baseline = { models: { "model.dev": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "0.50" } };
+  const baseline = { models: { "model.daemon_cycle_worker": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "0.50" } };
   const result = mc.diffFormMC(baseline, { models: { ...baseline.models }, budgets: { ...baseline.budgets } });
   assert.strictEqual(result, null);
 });
 
 test("diffFormMC: only the changed model field is sent (partial contract)", () => {
-  const baseline = { models: { "model.dev": "claude-opus-4-8", "model.research": "claude-sonnet-4-6" }, budgets: {} };
-  const form = { models: { "model.dev": "claude-fable-5", "model.research": "claude-sonnet-4-6" }, budgets: {} };
+  const baseline = { models: { "model.daemon_cycle_worker": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "0.50" } };
+  const form = { models: { "model.daemon_cycle_worker": "claude-fable-5" }, budgets: { "budget.worker_max_usd": "0.50" } };
   const result = sameRealm(mc.diffFormMC(baseline, form)) as { models?: Record<string, string>; budgets?: unknown };
-  assert.deepStrictEqual(result.models, { "model.dev": "claude-fable-5" });
+  assert.deepStrictEqual(result.models, { "model.daemon_cycle_worker": "claude-fable-5" });
   assert.ok(!("budgets" in result), "unchanged budgets omitted");
 });
 
 test("diffFormMC: model + budget both changed → both keys present", () => {
-  const baseline = { models: { "model.dev": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "0.50" } };
-  const form = { models: { "model.dev": "claude-fable-5" }, budgets: { "budget.worker_max_usd": "0.75" } };
+  const baseline = { models: { "model.daemon_cycle_worker": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "0.50" } };
+  const form = { models: { "model.daemon_cycle_worker": "claude-fable-5" }, budgets: { "budget.worker_max_usd": "0.75" } };
   const result = sameRealm(mc.diffFormMC(baseline, form)) as { models?: unknown; budgets?: unknown };
-  assert.deepStrictEqual(result.models, { "model.dev": "claude-fable-5" });
+  assert.deepStrictEqual(result.models, { "model.daemon_cycle_worker": "claude-fable-5" });
   assert.deepStrictEqual(result.budgets, { "budget.worker_max_usd": "0.75" });
 });
 
@@ -362,17 +330,20 @@ test("diffFormMC: model + budget both changed → both keys present", () => {
 
 test("buildFormMC: maps domains/budgets/tiers desired into the form buffer", () => {
   const data = {
-    domains: [{ domain: "model.dev", desired: "claude-opus-4-8" }, { domain: "model.research", desired: null }],
-    budgets: [{ domain: "budget.worker_max_usd", desired: "0.50" }],
+    domains: [{ domain: "model.daemon_cycle_worker", desired: "claude-opus-4-8" }],
+    budgets: [
+      { domain: "budget.worker_max_usd", desired: "0.50" },
+      { domain: "budget.pre_verify_max_usd", desired: null },
+    ],
     tiers: [
       { domain: "tier.worker_effort", desired: "high" },
       { domain: "tier.pre_verify_max_output_tokens", desired: null },
     ],
   };
   const form = sameRealm(mc.buildFormMC(data));
-  assert.strictEqual(form.models["model.dev"], "claude-opus-4-8");
-  assert.strictEqual(form.models["model.research"], "", "null desired → empty string buffer");
+  assert.strictEqual(form.models["model.daemon_cycle_worker"], "claude-opus-4-8");
   assert.strictEqual(form.budgets["budget.worker_max_usd"], "0.50");
+  assert.strictEqual(form.budgets["budget.pre_verify_max_usd"], "", "null desired → empty string buffer");
   assert.strictEqual(form.tiers?.["tier.worker_effort"], "high");
   assert.strictEqual(form.tiers?.["tier.pre_verify_max_output_tokens"], INHERIT_VALUE, "an unset knob is the CLI default");
 });
@@ -380,30 +351,13 @@ test("buildFormMC: maps domains/budgets/tiers desired into the form buffer", () 
 // --- sortDomainsMC / sortBudgetsMC: known order first, unknown appended (no silent drop) ---
 
 test("sortDomainsMC: canonical order applied, an unknown domain is appended (never dropped)", () => {
-  const input = [
-    { domain: "model.research" },
-    { domain: "model.future_unknown" },
-    { domain: "model.dev" },
-  ];
+  const input = [{ domain: "model.future_unknown" }, { domain: "model.daemon_cycle_worker" }];
   const sorted = sameRealm(mc.sortDomainsMC(input)).map((d) => d.domain);
   assert.deepStrictEqual(
     sorted,
-    ["model.dev", "model.research", "model.future_unknown"],
-    "reduced DOMAIN_ORDER_MC order applied, unknown appended last (never dropped)",
+    ["model.daemon_cycle_worker", "model.future_unknown"],
+    "DOMAIN_ORDER_MC order applied, unknown appended last (never dropped)",
   );
-});
-
-test("every server model domain has a client slot, in the server's order, with a matching inherit flag", () => {
-  // Server SoT is the oracle — a domain the API adds without a client entry would sort last under a raw key.
-  const serverKeys = MODEL_DOMAINS.map((d) => d.key);
-  const shuffled = serverKeys.slice().reverse().map((domain) => ({ domain }));
-  const sorted = sameRealm(mc.sortDomainsMC(shuffled)).map((d) => d.domain);
-  assert.deepStrictEqual(sorted, serverKeys, "DOMAIN_ORDER_MC covers every server domain in order");
-
-  const roster = getShippedInheritRosterOrFailMc();
-  for (const def of MODEL_DOMAINS) {
-    assert.strictEqual(roster[def.key], def.allowInherit, `${def.key}: client inherit flag = server allowInherit`);
-  }
 });
 
 test("sortBudgetsMC: known order first, unknown budget appended (never dropped)", () => {
@@ -546,6 +500,36 @@ async function loadMcScreens(
     Icon: (p: Record<string, unknown>) => hMc("i", { "data-icon": p.name, className: p.className }),
     DisclosureChevron: () => hMc("i", { "data-icon": "chevR", className: "disclosure-chevron" }),
     TypeScaleStyle: () => null,
+    MachineString: (p: Record<string, unknown>) => hMc("code", { "data-atom": "MachineString" }, p.children),
+    Link: (p: Record<string, unknown>) => {
+      const { children, ...rest } = p;
+      return hMc("a", { ...rest, "data-atom": "Link" }, children);
+    },
+    // the atom's shape: label (sr-only when hidden) · select with rest props, error edge and per-option titles · entry slot
+    Select: (p: Record<string, unknown>) => {
+      const { id, label, value, options, onChange, isLabelHidden, isError, className, children, ...rest } = p;
+      const onSelect = onChange as (value: string) => void;
+      return hMc(
+        "div",
+        { "data-atom": "Select", className },
+        hMc("label", { htmlFor: id, className: isLabelHidden ? "sr-only" : "field-label" }, label),
+        hMc(
+          "select",
+          {
+            ...rest,
+            id,
+            value,
+            className: `field field-select${isError ? " is-error" : ""}`,
+            "aria-invalid": isError ? "true" : undefined,
+            onChange: (event: { target: { value: string } }) => onSelect(event.target.value),
+          },
+          ...(options as Array<{ key: string; label: string; title?: string }>).map((o) =>
+            hMc("option", { key: o.key, value: o.key, title: o.title }, o.label),
+          ),
+        ),
+        children,
+      );
+    },
     Badge: (p: Record<string, unknown>) =>
       hMc("span", { className: `badge ${p.className ?? ""}`.trim(), "data-tone": p.tone ?? "neutral" }, p.children),
     CardHead: cardHeadStubMc,
@@ -569,20 +553,36 @@ async function loadMcScreens(
     SkeletonRows: (p: Record<string, unknown>) =>
       Array.from({ length: Number(p.rows) }, () => hMc("tr", { "aria-hidden": "true" })),
     TableHead: (p: Record<string, unknown>) => hMc("th", { "data-atom": "TableHead" }, p.children),
-    // freshness resolves through the real shared rule, as in the atom
-    PageVerdict: (p: Record<string, unknown>) => {
-      const verdict = p.freshness
-        ? getFreshnessVerdictMc({ ...(p.freshness as object), tone: p.tone, label: p.label })
-        : { tone: p.tone, label: p.label };
+    // the atom's wide mode: caption · colgroup from widths · thead of TableHeads from columns · one tbody per body,
+    // a `(view) => rows` body called with the wide view
+    Table: (p: Record<string, unknown>) => {
+      const columns = (p.columns ?? []) as Array<{ key: string; label: unknown }>;
+      const bodies = (p.bodies ?? []) as Array<{ key: string; rows: unknown; isBusy?: boolean }>;
+      const view = { isStacked: false, columnCount: columns.length || ((p.widths ?? []) as string[]).length };
       return hMc(
-        "div",
-        { "data-atom": "PageVerdict", "data-verdict-tone": verdict.tone, "data-verdict-label": verdict.label, chips: p.chips },
-        p.children,
+        "table",
+        { className: `tbl ${p.className ?? ""}`.trim(), "data-atom": "Table" },
+        hMc("caption", { className: "sr-only" }, p.caption),
+        p.widths ? hMc("colgroup", null, ...(p.widths as string[]).map((width) => hMc("col", { style: { width } }))) : null,
+        // the atom renders no thead when columns are omitted
+        p.columns ? hMc("thead", null, hMc("tr", null, ...columns.map((c) => hMc("th", { "data-atom": "TableHead" }, c.label)))) : null,
+        ...bodies.map((b) =>
+          hMc("tbody", { "aria-busy": b.isBusy ? "true" : undefined }, typeof b.rows === "function" ? (b.rows as (v: unknown) => unknown)(view) : b.rows),
+        ),
       );
     },
+    TableRow: ({ view: _view, children, ...rest }: Record<string, unknown>) => hMc("tr", rest, children),
+    // a span cell covers the row from its start column, as the atom's colSpan does
+    TableCell: ({ view, kind, start = 0, children, className }: Record<string, unknown>) =>
+      hMc(
+        "td",
+        { className, colSpan: kind === "span" ? Math.max(1, Number((view as { columnCount?: number })?.columnCount ?? 0) - Number(start)) : undefined },
+        children,
+      ),
     AgentName: (p: Record<string, unknown>) =>
       hMc("span", { "data-atom": "AgentName", title: p.name }, getAgentDisplayNameMc(p.name)),
     formatKstTime: realUiMc.formatKstTime,
+    getDisplayName: realUiMc.getDisplayName,
     SplitRow: (p: Record<string, unknown>) =>
       hMc("div", { "data-atom": "SplitRow", "data-ratio": p.ratio, "data-layout": p.layout }, p.children),
     SplitColumn: (p: Record<string, unknown>) => hMc("div", { "data-atom": "SplitColumn" }, p.children),
@@ -633,18 +633,18 @@ const screens = await loadMcScreens();
 
 const DOMAIN_ROW_FIXTURE_MC = [
   {
-    domain: "model.dev",
+    domain: "model.daemon_cycle_worker",
     desired: "claude-opus-4-8",
     actual: "claude-opus-4-8",
     drift: false,
-    apply_mode: "next-spawn",
+    apply_mode: "next-cycle",
     editable: true,
     pricing_known: true,
   },
 ];
 
 function domainsPropsMc(domains: unknown[] = DOMAIN_ROW_FIXTURE_MC): Record<string, unknown> {
-  const form = { models: { "model.dev": "claude-opus-4-8" }, budgets: {} };
+  const form = { models: { "model.daemon_cycle_worker": "claude-opus-4-8" }, budgets: {} };
   return {
     state: "ready",
     domains,
@@ -661,17 +661,17 @@ test("render harness: a screen component's emitted tree is readable as tags and 
 
   // Structure: the harness expands nested function components, so the row's controls are reachable.
   assert.ok(tagsMc(tree, "table").length === 1, "one ledger table emitted");
-  assert.ok(textsMc(tagsMc(tree, "th")).length > 0, "column headers readable");
+  assert.ok(textsMc(tagsMc(tree, "caption")).length > 0, "the table caption readable");
   assert.strictEqual(tagsMc(tree, "select").length, 1, "the editable row's select is reachable");
   // Text: row content from the fixture, not from a copy of the component.
-  assert.ok(textMc(tree).includes("Dev agents"), "row label rendered from DOMAIN_META_MC");
-  assert.ok(textMc(tree).includes("claude-opus-4-8"), "the fixture value reaches the tree");
+  assert.ok(textMc(tree).includes("Self-improve and wiki compile"), "row label rendered from DOMAIN_META_MC");
+  assert.strictEqual(tagsMc(tree, "select")[0].props.value, "claude-opus-4-8", "the fixture value reaches the select");
 });
 
 test("render harness: the tree tracks the props it was given, not a fixed snapshot", async () => {
   const empty = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc([]));
   assert.strictEqual(tagsMc(empty, "select").length, 0, "no rows → no controls");
-  assert.ok(!textMc(empty).includes("Dev agents"), "no rows → no row label");
+  assert.ok(!textMc(empty).includes("Self-improve and wiki compile"), "no rows → no row label");
 });
 
 test("DomainsSectionMC loading skeleton reserves one placeholder row per server model domain", async () => {
@@ -679,6 +679,12 @@ test("DomainsSectionMC loading skeleton reserves one placeholder row per server 
   const [busy] = findAllMc(loading, (n) => n.props["aria-busy"] === "true");
   assert.ok(busy, "loading placeholder rendered");
   assert.strictEqual(busy.children.length, MODEL_DOMAINS.length);
+});
+
+test("every server model domain has a client slot: its row reads as a label, never the raw key", () => {
+  const rows = MODEL_DOMAINS.map((d) => ({ ...DOMAIN_ROW_FIXTURE_MC[0], domain: d.key }));
+  const text = textMc(renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(rows)));
+  for (const def of MODEL_DOMAINS) assert.ok(!text.includes(def.key), `${def.key}: labelled by DOMAIN_META_MC`);
 });
 
 // ---------------------------------------------------------------------------
@@ -769,78 +775,85 @@ test("clearing a cap field records the knob as unset ('inherit'), never as an em
   assert.deepStrictEqual(changes, [["tier.worker_max_output_tokens", INHERIT_VALUE]]);
 });
 
-describe("a knob with no key in the file reads as the CLI default in effect only when the file was read", () => {
+// a daemon row's line slot under its control — what is in effect, rejected or unread lands here, nowhere else in the row
+const lineSlotMc = (tree: McNode[], rowText: string): string => {
+  const row = tagsMc(tree, "tr").find((tr) => textMc(tr.children).includes(rowText));
+  assert.ok(row, `the '${rowText}' row is rendered`);
+  const [slot] = findAllMc(row.children, (n) => n.props["data-slot"] === "line-slot");
+  assert.ok(slot, `the '${rowText}' row has its line slot`);
+  return textMc(slot.children);
+};
+
+describe("a knob with no key in the file stays silent when the file was read and says no value was read otherwise", () => {
   const rows = [
-    { name: "a read file: the CLI default, never an unread value", isFileRead: true, isCliDefault: true },
+    { name: "a read file: silence, never an unread value", isFileRead: true, isCliDefault: true },
     { name: "a missing file: an unread value, never the CLI default", isFileRead: false, isCliDefault: false },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const tree = renderComponentMc(screens.TiersSectionMC, { ...tiersPropsMc(), isFileRead: row.isFileRead });
-      const effortRow = tagsMc(tree, "tr").find((tr) => textMc(tr.children).includes("generation effort"));
-      assert.ok(effortRow, "the generation effort row is rendered");
-
-      const cell = tagsMc(effortRow.children, "td")[2];
-      const live = textMc(cell.children);
-      const titles = findAllMc(cell.children, (n) => typeof n.props.title === "string").map((n) => String(n.props.title));
-      assert.strictEqual([live, ...titles].some((s) => s.includes("CLI default")), row.isCliDefault, `${live} | ${titles.join(" | ")}`);
+      const live = lineSlotMc(tree, "Generation effort");
+      assert.strictEqual(live === "", row.isCliDefault, live);
       assert.strictEqual(live.includes("No value read"), !row.isCliDefault, live);
     });
   }
 });
 
-test("a knob whose file value the daemon rejects shows the rejection in its row, never a match or the CLI default", () => {
+test("a knob whose file value the daemon rejects says so under its control with the reason, never a match or the CLI default", () => {
   const rejected = { ...TIER_ROW_FIXTURE_MC[0], file_error: '"ultra" is not a valid tier (allowed: low, medium, high, xhigh, max)' };
   const tree = renderComponentMc(screens.TiersSectionMC, { ...tiersPropsMc(), tiers: [rejected, ...TIER_ROW_FIXTURE_MC.slice(1)] });
-  const effortRow = tagsMc(tree, "tr").find((tr) => textMc(tr.children).includes("generation effort"));
-  assert.ok(effortRow, "the generation effort row is rendered");
-
-  const cell = tagsMc(effortRow.children, "td")[2];
-  const live = textMc(cell.children);
-  const titles = findAllMc(cell.children, (n) => typeof n.props.title === "string").map((n) => String(n.props.title));
+  const live = lineSlotMc(tree, "Generation effort");
+  assert.ok(live.includes("File value rejected"), `the rejection is worded: ${live}`);
   assert.ok(live.includes('"ultra"'), `the rejected value is named: ${live}`);
-  assert.ok(![live, ...titles].some((s) => s.includes("Matches saved") || s.includes("CLI default")), `${live} | ${titles.join(" | ")}`);
+  assert.ok(!live.includes("In effect") && !live.includes("CLI default"), live);
 });
 
 const tonedMc = (nodes: McNode[], tone: string): McTag[] =>
   findAllMc(nodes, (n) => n.props["data-tone"] === tone);
 
-test("both ledgers carry the same three columns — timing is stated once per section, not per row", () => {
+test("the three daemon tables are label and control only — no head row, no In effect column", () => {
   for (const [name, props] of [
     ["DomainsSectionMC", domainsPropsMc()],
     ["BudgetsSectionMC", budgetsPropsMc()],
+    ["TiersSectionMC", tiersPropsMc()],
   ] as const) {
-    const headers = textsMc(tagsMc(renderComponentMc(screens[name], props), "th"));
-    assert.strictEqual(headers.length, 3, `${name}: three columns`);
-    assert.deepStrictEqual(headers.slice(2), ["In effect"], `${name}: in-effect last`);
-    for (const gone of ["Sync", "Enforcement", "Actual", "Takes effect", "Live"]) {
-      assert.ok(!headers.includes(gone), `${name}: '${gone}' column removed`);
-    }
+    const tree = renderComponentMc(screens[name], props);
+    assert.strictEqual(tagsMc(tree, "th").length, 0, `${name}: no head row`);
+    const rows = tagsMc(tree, "tr");
+    assert.ok(rows.length > 0, `${name}: rows render`);
+    for (const tr of rows) assert.strictEqual(tagsMc(tr.children, "td").length, 2, `${name}: '${textMc(tr.children)}' has two cells`);
+    assert.ok(!textMc(tree).includes("In effect"), `${name}: nothing in effect differs at rest`);
   }
 });
 
-test("every ledger column header goes through the shared TableHead atom, so it carries scope=col", () => {
-  for (const name of ["DomainsSectionMC", "BudgetsSectionMC"] as const) {
-    const props = name === "DomainsSectionMC" ? domainsPropsMc() : budgetsPropsMc();
-    const headers = tagsMc(renderComponentMc(screens[name], props), "th");
-    assert.ok(headers.length > 0, `${name}: headers rendered`);
-    for (const th of headers) {
-      assert.strictEqual(th.props["data-atom"], "TableHead", `${name}: '${textMc(th.children)}' is a TableHead`);
-    }
-  }
-});
+const iconsMc = (nodes: McNode[], name: string): McTag[] => findAllMc(nodes, (n) => n.props["data-icon"] === name);
 
-test("a row in its steady state spends no tone; only a drifted row raises one warn badge", () => {
+test("a row in its steady state shows no mark; only a drifted row raises one warn glyph and the value in effect under its control", () => {
   const steady = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
-  assert.strictEqual(tonedMc(steady, "ok").length, 0, "no steady-state ok pill");
-  assert.strictEqual(tonedMc(steady, "warn").length, 0, "nothing to warn about");
+  assert.strictEqual(iconsMc(steady, "check").length, 0, "agreement is silence");
+  assert.strictEqual(iconsMc(steady, "warn").length, 0, "nothing to warn about");
 
   const drifted = renderComponentMc(
     screens.DomainsSectionMC,
     domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual: "claude-sonnet-5", drift: true }]),
   );
-  assert.strictEqual(tonedMc(drifted, "warn").length, 1, "exactly one warn badge per drifted row");
-  assert.ok(textMc(drifted).includes("claude-sonnet-5"), "the live value is shown, not just a flag");
+  assert.strictEqual(iconsMc(drifted, "warn").length, 1, "exactly one warn glyph per drifted row");
+  assert.strictEqual(tonedMc(drifted, "warn").length, 0, "the drift mark is glyph + word, not a badge");
+  const live = lineSlotMc(drifted, "Self-improve and wiki compile");
+  const getDisplayName = realUiMc.getDisplayName as (kind: string, id: string) => string | null;
+  assert.ok(live.includes(`In effect: ${getDisplayName("model", "claude-sonnet-5")}`), `the value in effect is named by its display name: ${live}`);
+});
+
+test("a listed model shows its name only; its id rides the select tooltip, never a second line", () => {
+  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
+  const row = tagsMc(tree, "tr").find((tr) => tagsMc(tr.children, "select").length > 0);
+  assert.ok(row, "an editable domain row is rendered");
+  const [select] = tagsMc(row.children, "select");
+  const id = String(select.props.value);
+  assert.match(id, /^claude-(opus|sonnet|haiku)-/, "the fixture holds a listed family id");
+
+  assert.strictEqual(select.props.title, id, "the id is the select's tooltip");
+  assert.ok(!textMc(tagsMc(row.children, "td")[1].children).includes(id), "the id is not printed under the name");
 });
 
 test("an apply_mode the screen does not map is stated verbatim as the take-effect mode", () => {
@@ -851,66 +864,9 @@ test("an apply_mode the screen does not map is stated verbatim as the take-effec
   assert.ok(textMc(unknown).includes("some-future-mode"), "an unmapped mode is shown verbatim");
 });
 
-test("a mixed dev value discloses its per-file actuals instead of hiding them", () => {
-  const tree = renderComponentMc(
-    screens.DomainsSectionMC,
-    domainsPropsMc([
-      {
-        ...DOMAIN_ROW_FIXTURE_MC[0],
-        actual: "mixed",
-        drift: true,
-        files: [
-          { file: "agents/glass-atrium-dev-react.md", model: "claude-opus-4-8" },
-          { file: "agents/glass-atrium-dev-node.md", model: null },
-        ],
-      },
-    ]),
-  );
-  const details = tagsMc(tree, "details");
-  assert.ok(details.length >= 1, "a disclosure is emitted for the file list");
-  const text = textMc(tree);
-  assert.ok(text.includes("dev-react") && text.includes("dev-node"), "each file is listed by its agent name");
-  assert.ok(text.includes("inherit"), "a file with no model line reads as inherit, not blank");
-});
-
-test("a mixed review or docs pair reads as a labelled row with both files and a session-model default", () => {
-  const pairs = {
-    "model.review": ["Review", "glass-atrium-qa-code-reviewer.md", "glass-atrium-qa-debugger.md"],
-    "model.docs": ["Documents", "glass-atrium-intel-reporter.md", "glass-atrium-intel-planner.md"],
-  } as const;
-  for (const [domain, [label, pinned, keyless]] of Object.entries(pairs)) {
-    const tree = renderComponentMc(screens.DomainsSectionMC, {
-      ...domainsPropsMc([
-        {
-          ...DOMAIN_ROW_FIXTURE_MC[0],
-          domain,
-          desired: "inherit",
-          actual: "mixed",
-          drift: true,
-          files: [
-            { file: `agents/${pinned}`, model: "claude-sonnet-5" },
-            { file: `agents/${keyless}`, model: null },
-          ],
-        },
-      ]),
-      form: { models: { [domain]: "inherit" }, budgets: {} },
-      baseline: { models: { [domain]: "inherit" }, budgets: {} },
-    });
-    const text = textMc(tree);
-    assert.ok(text.includes(label), `${domain}: row label from DOMAIN_META_MC, not the raw key`);
-    assert.ok(!text.includes(domain), `${domain}: raw key never shown as the label`);
-    const shown = [pinned, keyless].map((file) => getAgentDisplayNameMc(file.replace(/\.md$/, "")));
-    assert.ok(shown.every((name) => text.includes(name)), `${domain}: both files listed`);
-    assert.ok(text.includes("2 files"), `${domain}: per-file disclosure counts the pair`);
-    const options = tagsMc(tree, "option");
-    assert.strictEqual(options[0]?.props.value, "inherit", `${domain}: inherit is the first option`);
-    assert.strictEqual(textMc([options[0]]), "Session model", `${domain}: inherit reads as the session model`);
-  }
-});
-
 test("an empty roster says so; it never renders as a table with nothing in it", () => {
   const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc([]));
-  assert.strictEqual(tagsMc(tree, "tr").length, 2, "header row + the empty-state row");
+  assert.strictEqual(tagsMc(tree, "tr").length, 1, "the empty-state row alone — no head row");
   assert.ok(textMc(tree).includes("No model domains reported"), "empty is stated, not implied");
 });
 
@@ -926,12 +882,12 @@ test("section headers survive every state, and a non-ready body never reads as z
 
     const ready = renderComponentMc(screens[name], { ...props, state: "ready" });
     const loading = renderComponentMc(screens[name], { ...props, state: "loading" });
-    const columnsOf = (tree: McNode[]) => textsMc(tagsMc(tagsMc(tree, "thead"), "th"));
+    const columnsOf = (tree: McNode[]) => tagsMc(tree, "col").map((c) => JSON.stringify(c.props.style));
     assert.ok(textMc(loading).startsWith(label), `${name}: section header unchanged while loading`);
     assert.deepStrictEqual(
       columnsOf(loading),
       columnsOf(ready),
-      `${name}: the skeleton sits under the real column headers, so nothing shifts when rows land`,
+      `${name}: the skeleton sits on the real column grid, so nothing shifts when rows land`,
     );
     assert.ok(
       findAllMc(loading, (n) => n.props["aria-busy"] === "true").length === 1,
@@ -944,29 +900,38 @@ test("section headers survive every state, and a non-ready body never reads as z
   }
 });
 
-test("the header sync token answers once per state and leaves the as-of stamp to the shared atom", () => {
+test("the header sync token speaks only when the file needs action and leaves the as-of stamp to the shared atom", () => {
   const ready = renderComponentMc(screens.SyncTokenMC, {
     state: "ready",
     sync: "ok",
   });
-  assert.ok(textMc(ready).includes("In sync"), "the state is named in plain text");
-  assert.ok(!textMc(ready).includes("as of"), "the header freshness atom owns the stamp, not the token");
-  assert.strictEqual(tagsMc(ready, "i").length, 0, "the freshness stamp owns the one tick, so the steady state spends no glyph");
+  assert.deepStrictEqual(ready, [], "a file in sync is agreement, so the token renders nothing");
 
   const drifted = renderComponentMc(screens.SyncTokenMC, {
     state: "ready",
     sync: "drift",
   });
+  assert.ok(textMc(drifted).includes("Drift"), "the state is named in plain text");
+  assert.ok(!textMc(drifted).includes("as of"), "the header freshness atom owns the stamp, not the token");
   assert.strictEqual(tagsMc(drifted, "i").length, 1, "tone rides the glyph, not the text");
 
   // Loading and error are distinct readings — neither may look like a settled 'in sync'.
   const unavailable = textMc(renderComponentMc(screens.SyncTokenMC, { state: "error", sync: undefined }));
   assert.ok(unavailable.includes("unavailable") && !unavailable.includes("In sync"), "error never reads as in sync");
-  // the stamp beside it already reads '… loading' → the token adds no second ellipsis
+  // the Refresh label already reads Loading… → the token adds no second busy cue
   assert.strictEqual(textMc(renderComponentMc(screens.SyncTokenMC, { state: "loading", sync: undefined })), "");
 });
 
-test("a warm read error turns the sync token to the shared 'Last known' wording, never a settled 'In sync'", () => {
+// a payload without daemon_config_sync knows no sync state → the failed read's words, never a dash
+test("a ready read with no sync value says the sync state is unavailable, as a failed read does", () => {
+  const failed = textMc(renderComponentMc(screens.SyncTokenMC, { state: "error", sync: undefined }));
+  const headerSync = sandboxFnMc<(data: unknown) => string>("headerSyncMC");
+  const sync = headerSync({ domains: DOMAIN_ROW_FIXTURE_MC, budgets: [] });
+
+  assert.strictEqual(textMc(renderComponentMc(screens.SyncTokenMC, { state: "ready", sync })), failed);
+});
+
+test("a warm read error puts the shared 'Last known' prefix on an alarm and keeps an in-sync file silent", () => {
   const readAt = Date.parse("2026-01-10T12:00:00.000Z");
   const region = { status: "ready", data: {}, error: null, busy: false };
   const tokenFor = (sync: string, error: string | null) =>
@@ -978,22 +943,9 @@ test("a warm read error turns the sync token to the shared 'Last known' wording,
       }),
     );
 
-  assert.strictEqual(tokenFor("ok", null), "In sync", "a fresh read keeps its state word");
-  assert.strictEqual(tokenFor("ok", "HTTP 500"), "Last known", "a stale in-sync read drops to the neutral shared word");
+  assert.strictEqual(tokenFor("ok", "HTTP 500"), "", "a stale in-sync read claims nothing, so it has nothing to date");
+  assert.strictEqual(tokenFor("drift", null), "Drift", "a fresh alarm keeps its state word");
   assert.strictEqual(tokenFor("drift", "HTTP 500"), "Last known: Drift", "a stale alarm keeps its word behind the shared prefix");
-});
-
-test("a warm read error hands the verdict no age note — the alert under it already dates the last good read", () => {
-  const verdictFor = sandboxFnMc<(tone: string, at: number | null, state: object) => Record<string, unknown>>(
-    "getVerdictFreshnessMC",
-  );
-  const settled = { status: "ready", data: {}, error: null, busy: false };
-
-  assert.ok("freshness" in verdictFor("ok", 1, settled), "a clean read keeps the ticking freshness input");
-  const warm = verdictFor("ok", 1, { ...settled, error: "HTTP 500" });
-  assert.ok(!("freshness" in warm), "a warm error carries no freshness, so no 'Read Ns ago' note");
-  assert.strictEqual(warm.label, "Last known");
-  assert.strictEqual(warm.tone, "neutral", "an ok verdict never stays green over the error");
 });
 
 test("the drift banner carries exactly one remedy, matched to its cause", () => {
@@ -1013,77 +965,60 @@ test("the drift banner carries exactly one remedy, matched to its cause", () => 
   assert.ok(!rejected.includes("db-setup"), "the migration remedy does not leak into a rejected value");
 });
 
-test("save results surface only when a surface did not write cleanly", () => {
-  const extract = sandboxFnMc<(d: unknown) => unknown[] | null>("extractSurfaceResultsMC");
-  const okOnly = [{ surface: "daemon-config.json", status: "ok" }];
-  assert.strictEqual(extract({ surfaces: okOnly }), null, "an all-ok save raises no card");
-  assert.strictEqual(extract({ surfaces: [] }), null, "no surfaces → no card");
+test("a save raises the result card only when daemon-config.json did not write cleanly", () => {
+  const getProblem = sandboxFnMc<(d: unknown) => unknown>("getSurfaceProblemMC");
+  const written = { surface: "daemon-config.json", status: "ok" };
+  const failed = { surface: "daemon-config.json", status: "failed", reason: "write failed" };
+  assert.strictEqual(getProblem({ surfaces: [written] }), null, "a clean write raises no card");
+  assert.strictEqual(getProblem({ surfaces: [] }), null, "a save with no config change raises no card");
+  assert.deepStrictEqual(sameRealm(getProblem({ surfaces: [failed] })), failed, "the failed write is the card's result");
 
-  const mixed = [
-    { surface: "daemon-config.json", status: "ok" },
-    { surface: "frontmatter-dev", status: "failed", reason: "permission denied" },
-  ];
-  const kept = extract({ surfaces: mixed });
-  assert.deepStrictEqual(sameRealm(kept), mixed, "the whole population is kept, not just failures");
-
-  const card = renderComponentMc(screens.SurfaceResultsCardMC, {
-    results: mixed,
-    onDismiss: () => {},
-  });
-  const disclosures = tagsMc(card, "details");
-  assert.strictEqual(disclosures.length, 1, "ok rows sit behind one closed disclosure");
-  assert.ok(!("open" in disclosures[0].props), "the disclosure ships closed");
-  assert.ok(textMc(card).includes("frontmatter-dev"), "the failed surface is shown unfolded");
-  assert.ok(textMc(disclosures[0].children).includes("daemon-config.json"), "ok row still listed");
+  const card = renderComponentMc(screens.SurfaceResultCardMC, { result: failed, onDismiss: () => {} });
+  assert.deepStrictEqual(tagsMc(card, "details"), [], "one result, nothing folded");
+  assert.ok(textMc(card).includes("write failed"), "the failed write's reason is shown");
 });
 
 describe("a save-result row reads as words: status in plain words, mono only on the surface id", () => {
   const rows = [
     { name: "a written surface", result: { surface: "daemon-config.json", status: "ok" }, word: "Written", reason: null },
-    { name: "a skipped surface", result: { surface: "tmux", status: "skipped", reason: "session not running" }, word: "Skipped", reason: "session not running" },
-    { name: "a failed surface", result: { file: "frontmatter-dev", status: "failed", reason: "permission denied" }, word: "Failed", reason: "permission denied" },
+    { name: "a skipped surface", result: { surface: "daemon-config.json", status: "skipped", reason: "not written" }, word: "Skipped", reason: "not written" },
+    { name: "a failed surface", result: { surface: "daemon-config.json", status: "failed", reason: "unreadable/unparseable — not overwritten" }, word: "Failed", reason: "unreadable/unparseable — not overwritten" },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const tree = renderComponentMc(screens.SurfaceResultRowMC, { result: row.result });
       const text = textMc(tree);
-      const surface = row.result.surface ?? row.result.file;
-      const mono = findAllMc(tree, (n) => String(n.props.className ?? "").includes("font-mono"));
+      const mono = findAllMc(tree, (n) => n.props["data-atom"] === "MachineString");
 
       assert.ok(text.includes(row.word), `status reads "${row.word}"`);
       assert.ok(!text.includes(row.result.status), "the raw status token is not shown");
-      assert.deepStrictEqual(mono.map((n) => textMc(n.children)), [surface], "mono covers the surface id alone");
+      assert.deepStrictEqual(mono.map((n) => textMc(n.children)), [row.result.surface], "mono covers the surface id alone");
       const reasons = findAllMc(tree, (n) => String(n.props.className ?? "").includes("text-faint")).map((n) => textMc(n.children));
       assert.deepStrictEqual(reasons, row.reason === null ? [] : [row.reason], "the reason shows exactly when the row carries one");
     });
   }
-
-  test("a result missing its surface and status renders no placeholder", () => {
-    const tree = renderComponentMc(screens.SurfaceResultRowMC, { result: { reason: "no target resolved" } });
-    assert.ok(!textMc(tree).includes("—"), "no dash stands in for an empty field");
-    assert.ok(textMc(tree).includes("no target resolved"), "the reason still shows");
-  });
 });
 
 test("a read-only model row with no saved value renders no placeholder badge", () => {
   const readOnly = [{ ...DOMAIN_ROW_FIXTURE_MC[0], desired: "", actual: null, editable: false }];
   const props = domainsPropsMc(readOnly);
-  (props.form as { models: Record<string, string> }).models["model.dev"] = "";
+  (props.form as { models: Record<string, string> }).models["model.daemon_cycle_worker"] = "";
   const tree = renderComponentMc(screens.DomainsSectionMC, props);
   const modelCell = tagsMc(tree, "td")[1];
+  const face = modelCell.children.filter((n) => typeof n === "string" || n.props["data-slot"] !== "line-slot");
 
-  assert.strictEqual(textMc(modelCell.children), "", "the empty model cell stays empty");
+  assert.strictEqual(textMc(face), "", "the empty model value stays empty above its line slot");
 });
 
 test("the unsaved-changes count equals the field count the partial PUT sends", () => {
   const count = sandboxFnMc<(p: unknown) => number>("countChangesMC");
   const baseline = {
-    models: { "model.dev": "claude-opus-4-8", "model.wiki": "claude-sonnet-5" },
+    models: { "model.daemon_cycle_worker": "claude-opus-4-8" },
     budgets: { "budget.worker_max_usd": "10.00" },
     tiers: { "tier.worker_effort": "inherit", "tier.pre_verify_effort": "high" },
   };
   const form = {
-    models: { "model.dev": "claude-fable-5", "model.wiki": "claude-sonnet-5" },
+    models: { "model.daemon_cycle_worker": "claude-fable-5" },
     budgets: { "budget.worker_max_usd": "12.00" },
     tiers: { "tier.worker_effort": "medium", "tier.pre_verify_effort": "high" },
   };
@@ -1155,7 +1090,7 @@ test("a refresh keeps every unsaved edit and takes every untouched field from th
   );
   const readOf = (dev: string, dp: string, worker: string, effort: string, cap: string) => ({
     domains: [
-      { domain: "model.dev", desired: dev },
+      { domain: "model.daemon_cycle_worker", desired: dev },
       { domain: "model.dp", desired: dp },
     ],
     budgets: [{ domain: "budget.worker_max_usd", desired: worker }],
@@ -1167,20 +1102,20 @@ test("a refresh keeps every unsaved edit and takes every untouched field from th
   const prevRead = readOf("claude-opus-4-8", "claude-sonnet-4-6", "10.00", "low", "8000");
   const nextRead = readOf("claude-opus-5", "claude-haiku-4-5", "12.00", "medium", "16000");
   const edited: FormMc = {
-    models: { "model.dev": "claude-sonnet-4-6", "model.dp": "claude-sonnet-4-6" },
+    models: { "model.daemon_cycle_worker": "claude-sonnet-4-6", "model.dp": "claude-sonnet-4-6" },
     budgets: { "budget.worker_max_usd": "3.00" },
     tiers: { "tier.worker_effort": "xhigh", "tier.worker_max_output_tokens": "8000" },
   };
 
   assert.deepStrictEqual(sameRealm(getRefreshedForm(edited, prevRead, nextRead)), {
-    models: { "model.dev": "claude-sonnet-4-6", "model.dp": "claude-haiku-4-5" },
+    models: { "model.daemon_cycle_worker": "claude-sonnet-4-6", "model.dp": "claude-haiku-4-5" },
     budgets: { "budget.worker_max_usd": "3.00" },
     tiers: { "tier.worker_effort": "xhigh", "tier.worker_max_output_tokens": "16000" },
   });
   assert.deepStrictEqual(
     sameRealm(getRefreshedForm(null, null, nextRead)),
     {
-      models: { "model.dev": "claude-opus-5", "model.dp": "claude-haiku-4-5" },
+      models: { "model.daemon_cycle_worker": "claude-opus-5", "model.dp": "claude-haiku-4-5" },
       budgets: { "budget.worker_max_usd": "12.00" },
       tiers: { "tier.worker_effort": "medium", "tier.worker_max_output_tokens": "16000" },
     },
@@ -1298,7 +1233,7 @@ test("the drift banner triggers on any drifted row of any group, not on the file
   const hasDrift = sandboxFnMc<(data: unknown) => boolean>("hasRowDriftMC");
   assert.strictEqual(hasDrift({ domains: [], budgets: [], tiers: [] }), false, "nothing drifted → no trigger");
   assert.strictEqual(
-    hasDrift({ domains: [{ domain: "model.dev", drift: true }], budgets: [] }),
+    hasDrift({ domains: [{ domain: "model.daemon_cycle_worker", drift: true }], budgets: [] }),
     true,
     "one drifted model row raises it on its own",
   );
@@ -1324,8 +1259,8 @@ test("the drift banner's remedy is pressable and resends the drifted rows' saved
   const data = {
     daemon_config_sync: "ok",
     domains: [
-      { domain: "model.dev", desired: "claude-opus-4-8", actual: "stale", drift: true },
-      { domain: "model.wiki", desired: "claude-haiku-4-8", actual: "claude-haiku-4-8", drift: false },
+      { domain: "model.daemon_cycle_worker", desired: "claude-opus-4-8", actual: "stale", drift: true },
+      { domain: "model.future_unknown", desired: "claude-haiku-4-8", actual: "claude-haiku-4-8", drift: false },
     ],
     budgets: [{ domain: "budget.worker_max_usd", desired: "10.00", actual: "10.00", drift: false }],
     tiers: [
@@ -1339,7 +1274,7 @@ test("the drift banner's remedy is pressable and resends the drifted rows' saved
   const drifted = buildResync(data, null);
   assert.deepStrictEqual(
     { ...(drifted?.models ?? {}) },
-    { "model.dev": "claude-opus-4-8" },
+    { "model.daemon_cycle_worker": "claude-opus-4-8" },
     "a drifted row is resent by its saved target, a steady row is not",
   );
   assert.strictEqual(drifted?.budgets, undefined, "no drifted budget row → no budget field");
@@ -1380,9 +1315,9 @@ test("the drift banner's remedy is pressable and resends the drifted rows' saved
     "a rejected knob with no saved row is rewritten to the CLI default its row shows",
   );
 
-  const edited = buildResync(data, { models: { "model.wiki": "claude-sonnet-4-8" } });
+  const edited = buildResync(data, { models: { "model.future_unknown": "claude-sonnet-4-8" } });
   assert.strictEqual(
-    edited?.models?.["model.wiki"],
+    edited?.models?.["model.future_unknown"],
     "claude-sonnet-4-8",
     "an unsaved edit wins over the saved target it would otherwise discard",
   );
@@ -1406,22 +1341,24 @@ test("the drift banner's remedy is pressable and resends the drifted rows' saved
   assert.strictEqual(tagsMc(pending, "button").length, 0, "saving cannot fix an un-migrated DB");
 });
 
-test("an empty roster never reads as in sync, whatever the file state says", () => {
+test("an empty roster leaves the header token silent, whatever the file state says", () => {
   const headerSync = sandboxFnMc<(data: unknown) => string>("headerSyncMC");
   for (const fileSync of ["ok", "drift", "file-missing"]) {
     const sync = headerSync({ daemon_config_sync: fileSync, domains: [], budgets: [] });
-    const token = textMc(renderComponentMc(screens.SyncTokenMC, { state: "ready", sync }));
-    assert.ok(!token.includes("In sync"), `${fileSync}: an empty roster is not 'In sync'`);
-    assert.ok(token.includes("Nothing to sync"), `${fileSync}: the empty roster is named`);
+    assert.strictEqual(sync, "empty", `${fileSync}: an empty roster keeps its own sync value`);
+    // the three empty cards already say so → a header status adds nothing
+    assert.deepStrictEqual(renderComponentMc(screens.SyncTokenMC, { state: "ready", sync }), [], `${fileSync}: renders nothing`);
   }
   const populated = headerSync({ daemon_config_sync: "ok", domains: DOMAIN_ROW_FIXTURE_MC, budgets: [] });
   assert.strictEqual(populated, "ok", "a populated roster keeps the file's sync state");
 });
 
-// Live cell of the first body row — the third column in both ledgers.
+// The line slot of the first body row — under its control, where a differing or unread value lands.
 function liveCellMc(tree: McNode[]): McTag {
   const bodyRow = tagsMc(tagsMc(tree, "tbody")[0].children, "tr")[0];
-  return tagsMc(bodyRow.children, "td")[2];
+  const [slot] = findAllMc(bodyRow.children, (n) => n.props["data-slot"] === "line-slot");
+  assert.ok(slot, "the first row has its line slot");
+  return slot;
 }
 
 test("Live repeats nothing in the steady state and shows the value only when it differs", () => {
@@ -1430,41 +1367,38 @@ test("Live repeats nothing in the steady state and shows the value only when it 
     ["BudgetsSectionMC", budgetsPropsMc(), budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: "12.00", drift: true }])],
   ] as const) {
     const steady = liveCellMc(renderComponentMc(screens[name], props));
-    assert.ok(textMc([steady]).startsWith("Matches saved"), `${name}: a matching live value says so in words`);
-    assert.ok(!textMc([steady]).includes("claude-opus-4-8"), `${name}: the matching value is not repeated`);
-    assert.strictEqual(tagsMc([steady], "i")[0]?.props["data-icon"], "check", `${name}: the match carries an ok glyph`);
+    assert.strictEqual(textMc([steady]).trim(), "", `${name}: a matching live value adds no words`);
 
     const differs = textMc([liveCellMc(renderComponentMc(screens[name], drifted))]);
     assert.ok(!differs.includes("Matches saved"), `${name}: a differing value never reads as matching`);
-    assert.ok(/claude-sonnet-5|\$12\.00/.test(differs), `${name}: the differing value is shown`);
+    assert.ok(/Sonnet 5|\$12\.00/.test(differs), `${name}: the differing value is shown: ${differs}`);
   }
 });
 
 test("an inherit live value names what it inherits from, never a bare 'inherit'", () => {
-  for (const [actual, source] of [
-    ["inherit", "session model"],
-    ["inherit (settings.json)", "settings.json model"],
-  ] as const) {
-    const tree = renderComponentMc(
-      screens.DomainsSectionMC,
-      domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual, drift: true }]),
-    );
-    const live = textMc([liveCellMc(tree)]);
-    assert.ok(live.includes(source), `${actual}: names the ${source}`);
-    assert.notStrictEqual(live.replace(/\s*drift$/, ""), actual, `${actual}: not shown raw`);
-  }
+  const actual = "inherit (settings.json)";
+  const tree = renderComponentMc(
+    screens.DomainsSectionMC,
+    domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual, drift: true }]),
+  );
+  const live = textMc([liveCellMc(tree)]);
+  assert.ok(live.includes("settings.json model"), `${actual}: names the settings.json model`);
+  assert.notStrictEqual(live.replace(/\s*drift$/, ""), actual, `${actual}: not shown raw`);
 });
 
-test("both ledgers sit on one column grid, so their Live columns line up", () => {
+test("the three daemon tables sit on one two-column grid, so their controls share both edges", () => {
   const gridOf = (tree: McNode[]): string =>
     JSON.stringify(tagsMc(tree, "col").map((c) => c.props.style ?? c.props.width));
   const domains = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc());
   const budgets = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc());
-  assert.strictEqual(tagsMc(domains, "col").length, tagsMc(domains, "th").length, "one col per ledger column");
-  assert.strictEqual(gridOf(domains), gridOf(budgets), "identical column widths in both ledgers");
-  for (const tree of [domains, budgets]) {
-    const style = tagsMc(tree, "table")[0].props.style as Record<string, unknown> | undefined;
-    assert.strictEqual(style?.tableLayout, "fixed", "widths come from the grid, not the content");
+  const tiers = renderComponentMc(screens.TiersSectionMC, tiersPropsMc());
+  assert.strictEqual(tagsMc(domains, "col").length, 2, "label and control columns");
+  assert.strictEqual(gridOf(domains), gridOf(budgets), "identical column widths in the model and cap tables");
+  assert.strictEqual(gridOf(domains), gridOf(tiers), "identical column widths in the model and tier tables");
+  for (const tree of [domains, budgets, tiers]) {
+    const [table] = tagsMc(tree, "table");
+    assert.strictEqual(table.props["data-atom"], "Table", "the ledger is the Table atom");
+    assert.ok(String(table.props.className).split(/\s+/).includes("table-fixed"), "widths come from the grid, not the content");
   }
 });
 
@@ -1478,12 +1412,11 @@ test("all three tier tables take the shared .tbl geometry in the house face, wit
   ] as const) {
     const tree = renderComponentMc(screens[name], props);
     const [table] = tagsMc(tree, "table");
-    assert.strictEqual(table.props.className, "tbl", `${name}: a house .tbl table — no own-face modifier, so the face stays`);
-    const headers = tagsMc(tree, "th");
-    assert.strictEqual(headers.length, 3, `${name}: three headers`);
-    for (const th of headers) assert.strictEqual(th.props["data-atom"], "TableHead", `${name}: '${textMc(th.children)}' is a TableHead`);
-    const cells = [...headers, ...tagsMc(tree, "td")];
-    assert.ok(tagsMc(tree, "td").length >= 3, `${name}: a ready row renders its cells`);
+    const tableClasses = String(table.props.className).split(/\s+/);
+    assert.strictEqual(table.props["data-atom"], "Table", `${name}: the ledger is the Table atom`);
+    assert.ok(tableClasses.includes("tbl") && !tableClasses.includes("tbl--own-face"), `${name}: a house .tbl table — no own-face modifier, so the face stays`);
+    const cells = tagsMc(tree, "td");
+    assert.ok(cells.length >= 2, `${name}: a ready row renders its cells`);
     for (const cell of cells) {
       const style = (cell.props.style ?? {}) as Record<string, unknown>;
       const own = Object.keys(style).filter((key) => PADDING_KEYS_MC.test(key));
@@ -1493,14 +1426,15 @@ test("all three tier tables take the shared .tbl geometry in the house face, wit
   }
 });
 
-const THREE_TIERS_MC = ["model.dev", "model.research", "model.meta"].map((domain) => ({
+// the daemon row plus two domains the server added before the client → fallback meta
+const THREE_TIERS_MC = ["model.daemon_cycle_worker", "model.future_a", "model.future_b"].map((domain) => ({
   ...DOMAIN_ROW_FIXTURE_MC[0],
   domain,
 }));
 
 test("each ledger is an h2 section with a captioned table, so the outline never skips h1 to h3", () => {
   for (const [name, props, title] of [
-    ["DomainsSectionMC", domainsPropsMc(), "Model assignment"],
+    ["DomainsSectionMC", domainsPropsMc(), "Daemon model"],
     ["BudgetsSectionMC", budgetsPropsMc(), "Per-call budget caps"],
   ] as const) {
     const tree = renderComponentMc(screens[name], props);
@@ -1511,17 +1445,42 @@ test("each ledger is an h2 section with a captioned table, so the outline never 
 
 test("tier notes show one unfolded entry per described tier", () => {
   const [domainMeta] = vm.runInContext("[DOMAIN_META_MC]", screens) as Array<Record<string, unknown>>;
-  const rows = THREE_TIERS_MC.map((d) => domainMeta[(d as { domain: string }).domain]);
+  const rows = Object.values(domainMeta);
   const tree = renderComponentMc(screens.TierNotesMC, { title: "Who each tier covers", rows });
   assert.strictEqual(tagsMc(tree, "details").length, 0, "the notes are not folded away");
   assert.strictEqual(tagsMc(tree, "dt").length, rows.length, "one entry per tier");
-  assert.ok(textMc(tree).includes("self-improvement loop"), "every description stays reachable");
+  assert.ok(textMc(tree).includes("self-improve proposals"), "every description stays reachable");
+});
+
+test("the call-tier notes draw the CLI flag and the env variable as machine strings", () => {
+  const [tierMeta] = vm.runInContext("[TIER_META_MC]", screens) as Array<Record<string, unknown>>;
+  const tree = renderComponentMc(screens.TierNotesMC, { title: "What each setting does", rows: Object.values(tierMeta) });
+  const mono = textsMc(findAllMc(tree, (n) => n.props["data-atom"] === "MachineString"));
+  assert.deepStrictEqual(mono, ["--effort", "--effort", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS"]);
+  assert.ok(textMc(tree).includes("Default: no --effort flag"), "the sentence around the flag reads whole");
+});
+
+test("the model glossary names the tier's own saved id under its label", () => {
+  const props = domainsPropsMc(THREE_TIERS_MC.map((d) => ({ ...d, desired: "claude-opus-4-8" })));
+  const drawer = drawersMc(renderComponentMc(screens.DomainsSectionMC, props))[0];
+  const entries = tagsMc(drawer.children, "dl")[0].children.filter((n): n is McTag => typeof n !== "string");
+  const savedIdOf = Object.fromEntries(
+    entries.map((entry) => [
+      textsMc(tagsMc(entry.children, "dt"))[0],
+      textsMc(tagsMc(entry.children, "dd")).find((text) => text.startsWith("Saved id")) ?? null,
+    ]),
+  );
+  assert.deepStrictEqual(
+    savedIdOf,
+    { "Self-improve and wiki compile": "Saved id claude-opus-4-8" },
+    "the label carries its own tier's id; a domain with no client meta adds no entry",
+  );
 });
 
 test("no ledger text drops below the 13px type floor", () => {
   const overridden = {
-    ...domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], files: [{ file: "agents/a.md", model: "claude-opus-4-8" }] }]),
-    baseline: { models: { "model.dev": "claude-sonnet-5" }, budgets: {} },
+    ...domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual: "claude-sonnet-5", drift: true }]),
+    baseline: { models: { "model.daemon_cycle_worker": "claude-sonnet-5" }, budgets: {} },
   };
   const tree = renderComponentMc(screens.DomainsSectionMC, overridden);
   const micro = findAllMc(tree, (n) => String(n.props.className ?? "").includes("fs-micro"));
@@ -1538,22 +1497,22 @@ test("the saved-value line keeps its slot whether or not the field differs, so a
   const slotsOf = (baselineValue: string): number => {
     const tree = renderComponentMc(screens.DomainsSectionMC, {
       ...domainsPropsMc(),
-      baseline: { models: { "model.dev": baselineValue }, budgets: {} },
+      baseline: { models: { "model.daemon_cycle_worker": baselineValue }, budgets: {} },
     });
-    return findAllMc(tree, (n) => n.props["data-slot"] === "saved-line").length;
+    return findAllMc(tree, (n) => n.props["data-slot"] === "line-slot").length;
   };
   assert.strictEqual(slotsOf("claude-opus-4-8"), 1, "slot reserved while the field matches");
   assert.strictEqual(slotsOf("claude-sonnet-5"), 1, "the same slot carries the saved value once it differs");
 });
 
-test("Cost & usage is linked once per ledger, and an unpriced tier says why its cost is a fallback", () => {
+test("the daemon model card leaves Cost & usage to the agent card, and an unpriced tier says why its cost is a fallback", () => {
   for (const pricingKnown of [true, false]) {
     const tree = renderComponentMc(
       screens.DomainsSectionMC,
       domainsPropsMc(THREE_TIERS_MC.map((d) => ({ ...d, pricing_known: pricingKnown }))),
     );
     const links = tagsMc(tree, "a").filter((a) => a.props.href === "#cost");
-    assert.strictEqual(links.length, 1, `pricing_known=${pricingKnown}: one section link for three tiers`);
+    assert.strictEqual(links.length, 0, `pricing_known=${pricingKnown}: the page's one Cost & usage link sits on the agent card`);
     assert.strictEqual(
       textMc(tree).includes("No price listed"),
       !pricingKnown,
@@ -1593,37 +1552,12 @@ const footMc = (nodes: McNode[]): string[] =>
 
 test("a timing shared by every row is stated once on the card face, and a row that differs names its own", () => {
   const uniform = textMc(faceMc(renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(THREE_TIERS_MC))));
-  assert.strictEqual(countMc(uniform, "next spawn"), 1, "three next-spawn rows → stated once");
+  assert.strictEqual(countMc(uniform, "next cycle"), 1, "three next-cycle rows → stated once");
 
-  const mixed = THREE_TIERS_MC.map((d, i) => (i === 2 ? { ...d, apply_mode: "next-cycle" } : d));
+  const mixed = THREE_TIERS_MC.map((d, i) => (i === 2 ? { ...d, apply_mode: "next-spawn" } : d));
   const text = textMc(faceMc(renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(mixed))));
-  assert.strictEqual(countMc(text, "next spawn"), 1, "the shared mode stays stated once");
-  assert.strictEqual(countMc(text, "next cycle"), 1, "the differing row names its own mode");
-});
-
-test("the per-file list groups files under each model, so every model value is shown whole once", () => {
-  const tree = renderComponentMc(
-    screens.DomainsSectionMC,
-    domainsPropsMc([
-      {
-        ...DOMAIN_ROW_FIXTURE_MC[0],
-        actual: "mixed",
-        drift: true,
-        files: [
-          { file: "agents/a.md", model: "claude-opus-4-8" },
-          { file: "agents/b.md", model: "claude-opus-4-8" },
-          { file: "agents/c.md", model: "claude-sonnet-5" },
-        ],
-      },
-    ]),
-  );
-  const [details] = tagsMc(tree, "details").filter((d) => textMc(d.children).includes("claude-sonnet-5"));
-  const listed = textMc(details.children);
-  assert.strictEqual(countMc(listed, "claude-opus-4-8"), 1, "a model shared by two files is named once");
-  assert.strictEqual(countMc(listed, "claude-sonnet-5"), 1, "each model gets its group");
-  const truncatedModel = findAllMc(details.children, (n) =>
-    String(n.props.className ?? "").includes("truncate") && textMc(n.children).includes("claude-"));
-  assert.strictEqual(truncatedModel.length, 0, "no model value is cut off");
+  assert.strictEqual(countMc(text, "next cycle"), 1, "the shared mode stays stated once");
+  assert.strictEqual(countMc(text, "next spawn"), 1, "the differing row names its own mode");
 });
 
 test("an invalid cap shows its reason and aria-invalid as soon as it is invalid, not only after blur", () => {
@@ -1637,212 +1571,140 @@ test("an invalid cap shows its reason and aria-invalid as soon as it is invalid,
   assert.strictEqual(input.props["aria-invalid"], "true", "the field is marked invalid");
   const alerts = findAllMc(tree, (n) => n.props.role === "alert");
   assert.ok(textsMc(alerts).some((t) => t.includes("Must be between")), "the reason sits beside the field");
+  assert.strictEqual(input.props["aria-describedby"], alerts[0].props.id, "the field names its reason as its description");
+});
+
+// The form selects ride the shared Select atom; the row header shows the name, so the atom's label is for assistive tech only.
+test("each form select is the shared Select atom, named by a hidden label tied to it", () => {
+  const rows = [
+    { name: "model tier", tree: renderComponentMc(screens.DomainsSectionMC, domainsPropsMc()), suffix: " model" },
+    { name: "effort tier", tree: renderComponentMc(screens.TiersSectionMC, tiersPropsMc()), suffix: " level" },
+  ];
+  for (const row of rows) {
+    const atoms = findAllMc(row.tree, (n) => n.props["data-atom"] === "Select");
+    assert.strictEqual(atoms.length, tagsMc(row.tree, "select").length, `${row.name}: every select is the atom`);
+    const [label] = tagsMc(atoms[0].children, "label");
+    const [select] = tagsMc(atoms[0].children, "select");
+    assert.strictEqual(label.props.className, "sr-only", `${row.name}: the label takes no line of its own`);
+    assert.strictEqual(label.props.htmlFor, select.props.id, `${row.name}: the label names its select`);
+    assert.ok(textMc(label.children).endsWith(row.suffix), `${row.name}: the label words what is picked`);
+  }
+});
+
+// One crit edge per row: a listed value puts it on the select, custom mode on the entry field; either names the worded reason.
+test("an invalid model pick marks the control holding the value and points it at its reason", () => {
+  const renderInvalid = (value: string) =>
+    renderComponentMc(screens.DomainsSectionMC, {
+      ...domainsPropsMc(),
+      form: { models: { "model.daemon_cycle_worker": value }, budgets: {} },
+      errors: { "model.daemon_cycle_worker": "Unknown model id" },
+    });
+  const reasonId = (tree: McNode[]) => findAllMc(tree, (n) => n.props.role === "alert")[0].props.id;
+
+  const listed = renderInvalid("claude-opus-4-8");
+  const [listedSelect] = tagsMc(listed, "select");
+  assert.strictEqual(listedSelect.props["aria-invalid"], "true", "a listed value: the select is invalid");
+  assert.strictEqual(listedSelect.props["aria-describedby"], reasonId(listed), "a listed value: the select names its reason");
+
+  const custom = renderInvalid("my-model");
+  const [customSelect] = tagsMc(custom, "select");
+  const [entry] = tagsMc(custom, "input");
+  assert.strictEqual(entry.props["aria-invalid"], "true", "custom mode: the entry field is invalid");
+  assert.strictEqual(entry.props["aria-describedby"], reasonId(custom), "custom mode: the entry field names its reason");
+  assert.ok(!String(customSelect.props.className).includes("is-error"), "custom mode: the select keeps no second ring");
+  assert.strictEqual(customSelect.props["aria-invalid"], undefined, "custom mode: the select is not marked");
 });
 
 test("a live value the payload does not carry is left out, never shown as a placeholder dash", () => {
   const tree = renderComponentMc(
     screens.DomainsSectionMC,
-    domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual: null, drift: false }]),
+    domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], domain: "model.future_a", actual: null, drift: false }]),
   );
-  assert.strictEqual(textMc([liveCellMc(tree)]), "", "an absent live value renders nothing");
+  assert.strictEqual(textMc([liveCellMc(tree)]), "", "an absent live value with no source renders nothing");
 });
 
-type VerdictMc = { tone: string; text: string; chips: { label: string; targetId: string }[] };
-
-describe("the page verdict is ok exactly when every row matches and the file is in sync", () => {
-  const getPageVerdictMc = sandboxFnMc<(data: unknown) => VerdictMc>("getPageVerdictMC");
-  const clean = { daemon_config_sync: "ok", domains: THREE_TIERS_MC, budgets: BUDGET_ROW_FIXTURE_MC };
+describe("a ledger card head counts only the unread rows that render nothing, and a row that names its unread source keeps the fact to itself", () => {
+  const unreadTier = THREE_TIERS_MC.map((d, i) => (i === 1 ? { ...d, actual: null, drift: false } : d));
   const rows = [
-    { name: "every row matching reads as one ok line with both totals", data: clean, tone: "ok", names: ["3/3 tiers", "1/1 caps", "config file in sync"], section: null },
-    {
-      name: "a drifted tier is named and its chip jumps to the model ledger",
-      data: { ...clean, domains: THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, drift: true } : d)) },
-      tone: "warn",
-      names: ["1 tier drifting", "Dev agents"],
-      section: "DomainsSectionMC",
-    },
-    {
-      name: "a drifted cap is named and its chip jumps to the cap ledger",
-      data: { ...clean, budgets: [{ ...BUDGET_ROW_FIXTURE_MC[0], drift: true }] },
-      tone: "warn",
-      names: ["1 cap drifting", "Self-improve + wiki call cap"],
-      section: "BudgetsSectionMC",
-    },
-    {
-      name: "a tier whose live value was not read is named, never counted as matching",
-      data: { ...clean, domains: THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, actual: null, drift: false } : d)) },
-      tone: "warn",
-      names: ["1 tier not read", "Dev agents"],
-      section: "DomainsSectionMC",
-    },
-    {
-      name: "a cap whose live value was not read is named, never counted as matching",
-      data: { ...clean, budgets: [{ ...BUDGET_ROW_FIXTURE_MC[0], actual: null, drift: false }] },
-      tone: "warn",
-      names: ["1 cap not read", "Self-improve + wiki call cap"],
-      section: "BudgetsSectionMC",
-    },
-    { name: "a missing config file warns even when every row matches", data: { ...clean, daemon_config_sync: "file-missing" }, tone: "warn", names: ["File missing"], section: null },
-    { name: "an empty roster claims nothing", data: { daemon_config_sync: "ok", domains: [], budgets: [] }, tone: "neutral", names: [], section: null },
+    { name: "every model row read: the head stays silent", section: "DomainsSectionMC", props: domainsPropsMc(THREE_TIERS_MC), mark: null },
+    { name: "a drifted model row: the row carries it, the head stays silent", section: "DomainsSectionMC", props: domainsPropsMc(THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, drift: true } : d))), mark: null },
+    { name: "an unread model row with no source: the head names it", section: "DomainsSectionMC", props: domainsPropsMc(unreadTier), mark: "1 not read" },
+    { name: "an unread cap row names its source in the row, so the head stays silent", section: "BudgetsSectionMC", props: budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: null, drift: false }]), mark: null },
+    { name: "an unread model row with a source names it in the row, so the head stays silent", section: "DomainsSectionMC", props: domainsPropsMc(THREE_TIERS_MC.map((d, i) => (i === 0 ? { ...d, actual: null, drift: false } : d))), mark: null },
+    { name: "a loading ledger claims nothing", section: "DomainsSectionMC", props: { ...domainsPropsMc(unreadTier), state: "loading" }, mark: null },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const verdict = getPageVerdictMc(row.data);
-      assert.strictEqual(verdict.tone, row.tone);
-      assert.strictEqual(verdict.text.includes("match saved"), row.tone === "ok", "only an ok verdict claims a match");
-      for (const name of row.names) assert.ok(verdict.text.includes(name), `names '${name}'`);
-      if (row.section === null) {
-        assert.strictEqual(verdict.chips.length, 0, "no chip without a drifted ledger");
-        return;
-      }
-      assert.strictEqual(verdict.chips.length, 1, "one chip per drifted ledger");
-      const props = row.section === "DomainsSectionMC" ? domainsPropsMc() : budgetsPropsMc();
-      const tree = renderComponentMc(screens[row.section], props);
-      const targets = findAllMc(tree, (n) => n.props.id === verdict.chips[0].targetId);
-      assert.strictEqual(targets.length, 1, "the chip targets the ledger holding the drifted row");
+      const tree = renderComponentMc(screens[row.section], row.props);
+      const head = textMc(findAllMc(tree, (n) => n.props["data-atom"] === "Card").flatMap((card) => card.children.slice(0, 1)));
+      assert.strictEqual(head.includes("not read"), row.mark !== null, `head: ${head}`);
+      if (row.mark) assert.ok(head.includes(row.mark), `names '${row.mark}'`);
     });
   }
 });
 
-test("a model id reads as its family and version; an id outside the naming pattern gets none", () => {
-  const getModelFamilyMc = sandboxFnMc<(model: string) => string | null>("getModelFamilyMC");
-  for (const [id, family] of [
-    ["claude-opus-5-5", "Opus 5.5"],
-    ["claude-sonnet-5", "Sonnet 5"],
-    ["claude-haiku-4-5", "Haiku 4.5"],
-    ["inherit", "Session model"],
-    ["my-local-model", null],
-  ] as const) {
-    assert.strictEqual(getModelFamilyMc(id), family, id);
-  }
-});
-
-test("the model mix counts every tier once under its family, and each select names its family in text with its id below", () => {
-  const models = { "model.dev": "claude-opus-4-8", "model.research": "claude-sonnet-5", "model.meta": "claude-opus-4-8" };
-  const tree = renderComponentMc(screens.DomainsSectionMC, {
-    ...domainsPropsMc(THREE_TIERS_MC),
-    form: { models, budgets: {} },
-    baseline: { models: { ...models }, budgets: {} },
-  });
-  assert.ok(textMc(tree).includes("Opus 4.8 ×2 · Sonnet 5 ×1"), "the mix totals the tiers per family");
-  const selects = tagsMc(tree, "select");
-  const shown = selects.map((select) => {
-    const picked = tagsMc(select.children, "option").find((o) => o.props.value === select.props.value)!;
-    return textMc(picked.children);
-  });
-  assert.deepStrictEqual(shown, ["Opus 4.8", "Sonnet 5", "Opus 4.8"], "each select names its tier's family");
-  const ids = findAllMc(tree, (n) => n.props["data-slot"] === "model-id");
-  assert.deepStrictEqual(textsMc(ids), Object.values(models), "one id tag per select, naming its saved id");
-  for (const id of ids) {
-    assert.match(String(id.props.className), /\btruncate\b/, "the id is one nowrap token with an end ellipsis");
-    assert.strictEqual(id.props.title, textMc(id.children), "a clipped id keeps its full value in the title");
-  }
-});
-
-test("a tier set to inherit reads as the session model in its select and shows no id tag", () => {
-  const models = { "model.dev": "claude-opus-4-8", "model.research": "inherit", "model.meta": "claude-sonnet-5" };
-  const tree = renderComponentMc(screens.DomainsSectionMC, {
-    ...domainsPropsMc(THREE_TIERS_MC),
-    form: { models, budgets: {} },
-    baseline: { models: { ...models }, budgets: {} },
-  });
-  const research = tagsMc(tree, "select").find((s) => s.props.value === "inherit");
-  assert.ok(research, "the inherit tier is a listed select value, not custom mode");
-  const picked = tagsMc(research!.children, "option").find((o) => o.props.value === "inherit")!;
-  assert.strictEqual(textMc(picked.children), "Session model", "the select words inherit");
-  const ids = textsMc(findAllMc(tree, (n) => n.props["data-slot"] === "model-id"));
-  assert.deepStrictEqual(ids, ["claude-opus-4-8", "claude-sonnet-5"], "only the tiers with a real id carry an id tag");
-  assert.ok(!ids.includes("inherit"), "the raw inherit key never shows as an id");
-});
-
 test("a model option reads as its friendly name with the id leading its title; an id outside the pattern reads as itself", () => {
-  const roster = ["claude-opus-5-5", "claude-sonnet-5-5", "my-local-model"];
+  const roster = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-4-5-20251101", "my-local-model"];
   const tree = renderComponentMc(screens.DomainsSectionMC, {
     ...domainsPropsMc(THREE_TIERS_MC.slice(0, 1)),
     knownModels: roster,
-    form: { models: { "model.dev": "claude-sonnet-5-5" }, budgets: {} },
-    baseline: { models: { "model.dev": "claude-sonnet-5-5" }, budgets: {} },
+    form: { models: { "model.daemon_cycle_worker": "claude-sonnet-5-5" }, budgets: {} },
+    baseline: { models: { "model.daemon_cycle_worker": "claude-sonnet-5-5" }, budgets: {} },
   });
-  const options = tagsMc(tree, "option").filter((o) => roster.includes(String(o.props.value)));
-  assert.deepStrictEqual(textsMc(options), ["Opus 5.5", "Sonnet 5.5", "my-local-model"], "friendly names, never a clipped id");
-  for (const option of options) {
+  const options = tagsMc(tree, "option");
+  assert.deepStrictEqual(
+    textsMc(options),
+    ["Opus 5.5", "Sonnet 5.5", "Opus 4.5", "my-local-model", "custom…"],
+    "the known models by friendly name, a dated id included, then the custom entry",
+  );
+  for (const option of options.filter((o) => roster.includes(String(o.props.value)))) {
     assert.ok(String(option.props.title).startsWith(String(option.props.value)), `${option.props.value}: the id leads the title`);
   }
 });
 
-test("the file list toggle is an interactive pill on the disclosure atom, not a heading or a card", () => {
-  const tree = renderComponentMc(screens.LiveValueMC, {
-    value: "claude-opus-4-8",
-    drift: false,
-    files: [{ file: "agents/glass-atrium-dev-react.md", model: "claude-opus-4-8" }],
-  });
-  const [summary] = tagsMc(tree, "summary");
-  assert.ok(summary, "the toggle is a native summary");
-  assert.ok(textMc(summary.children).includes("1 file"), "the toggle names the file count");
-  const classes = String(summary.props.className ?? "").split(/\s+/);
-  for (const name of ["disclosure", "pill", "pill--interactive"]) assert.ok(classes.includes(name), `summary class ${name}: ${classes}`);
-  assert.strictEqual(findAllMc(tree, (n) => /^h[1-6]$/.test(n.tag) || "data-kind" in n.props).length, 0, "no heading, no card fold");
-});
-
-test("a file list stays folded while every file carries the saved model, and opens on drift or mixed models", () => {
-  const filesOf = (models: string[]) => models.map((model, i) => ({ file: `glass-atrium-dev-${i}.md`, model }));
+// one head in every state: an empty or failed read swaps the body, never the card's timing meta
+describe("each card states its daemon timing in a header meta within the 32-char cap, in every state", () => {
   const rows = [
-    { name: "uniform files, no drift", drift: false, files: filesOf(["claude-opus-4-8", "claude-opus-4-8"]), open: false },
-    { name: "uniform files, drifted row", drift: true, files: filesOf(["claude-opus-4-8", "claude-opus-4-8"]), open: true },
-    { name: "mixed files, no drift", drift: false, files: filesOf(["claude-opus-4-8", "claude-sonnet-5"]), open: true },
+    { name: "model assignment", section: "DomainsSectionMC", props: () => domainsPropsMc(THREE_TIERS_MC), list: "domains" },
+    { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), list: "budgets" },
+    { name: "call tiers", section: "TiersSectionMC", props: () => tiersPropsMc(), list: "tiers" },
+  ];
+  const forms = [
+    { name: "ready", props: (props: Record<string, unknown>) => props },
+    { name: "empty", props: (props: Record<string, unknown>, list: string) => ({ ...props, [list]: [] }) },
+    { name: "unavailable", props: (props: Record<string, unknown>, list: string) => ({ ...props, state: "unavailable", [list]: [] }) },
   ];
   for (const row of rows) {
-    const tree = renderComponentMc(
-      screens.DomainsSectionMC,
-      domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], drift: row.drift, files: row.files }]),
-    );
-    const [fold] = tagsMc(tree, "details");
-    assert.ok(fold, `${row.name}: the file list sits in a fold`);
-    assert.strictEqual(Boolean(fold.props.open), row.open, `${row.name}: open state`);
+    for (const form of forms) {
+      test(`${row.name}, ${form.name}`, () => {
+        const metas = headMetaMc(renderComponentMc(screens[row.section], form.props(row.props(), row.list)));
+        assert.deepStrictEqual(metas, ["Applies at next cycle"], `${row.name}: one header meta`);
+        assert.ok(metas[0].length <= 32, `${row.name}: "${metas[0]}" exceeds the 32-char meta cap`);
+      });
+    }
   }
 });
 
-describe("each card states its shared timing in a header meta within the 32-char cap", () => {
-  const rows = [
-    { name: "model assignment", section: "DomainsSectionMC", props: () => domainsPropsMc(THREE_TIERS_MC), meta: "Applies at next spawn" },
-    { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), meta: "Applies at next cycle" },
-    { name: "call tiers", section: "TiersSectionMC", props: () => tiersPropsMc(), meta: "Applies at next cycle" },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      const metas = headMetaMc(renderComponentMc(screens[row.section], row.props()));
-      assert.deepStrictEqual(metas, [row.meta], `${row.name}: one header meta`);
-      assert.ok(metas[0].length <= 32, `${row.name}: "${metas[0]}" exceeds the 32-char meta cap`);
-    });
-  }
+test("the card timing is the mode every daemon-config domain the server defines applies at", () => {
+  const [mode] = vm.runInContext("[DAEMON_APPLY_MODE_MC]", screens) as string[];
+  const served = [...MODEL_DOMAINS, ...BUDGET_DOMAINS, ...TIER_DOMAINS].map((def) => def.applyMode);
+  assert.deepStrictEqual([...new Set(served)], [mode]);
 });
 
 test("a row departing from the card's timing states its own timing in its row", () => {
-  const departing = { ...DOMAIN_ROW_FIXTURE_MC[0], domain: "model.daemon_cycle_worker", apply_mode: "next-cycle" };
-  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc([...THREE_TIERS_MC, departing]));
-  assert.deepStrictEqual(headMetaMc(tree), ["Applies at next spawn"], "the header keeps the shared mode alone");
+  const departing = THREE_TIERS_MC.map((d, i) => (i === 1 ? { ...d, apply_mode: "immediate" } : d));
+  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(departing));
+  assert.deepStrictEqual(headMetaMc(tree), ["Applies at next cycle"], "the header keeps the shared mode alone");
   const rows = tagsMc(tagsMc(tree, "tbody")[0].children, "tr");
-  const own = rows.filter((row) => textMc(row.children).includes("Applies at next cycle"));
+  const own = rows.filter((row) => textMc(row.children).includes("Applies immediately"));
   assert.strictEqual(own.length, 1, "exactly one row states a timing of its own");
-  assert.ok(textMc(own[0].children).includes("Daemon cycle helper"), "the departing row carries it");
-});
-
-test("the model mix sits in the card foot, so the header line keeps room for its meta", () => {
-  const models = { "model.dev": "claude-opus-4-8", "model.research": "claude-sonnet-5", "model.meta": "claude-opus-4-8" };
-  const tree = renderComponentMc(screens.DomainsSectionMC, {
-    ...domainsPropsMc(THREE_TIERS_MC),
-    form: { models, budgets: {} },
-    baseline: { models: { ...models }, budgets: {} },
-  });
-  assert.deepStrictEqual(footMc(tree), ["Opus 4.8 ×2 · Sonnet 5 ×1"], "the foot carries the mix");
-  const head = textsMc(findAllMc(faceMc(tree), (n) => String(n.props.className ?? "").includes("card-head")));
-  assert.ok(!head.join(" ").includes("×"), `the header carries no mix: ${head}`);
+  assert.ok(textMc(own[0].children).includes("model.future_a"), "the departing row carries it");
 });
 
 describe("each card's glossary opens from its About settings drawer, never on the card face", () => {
   const rows = [
-    { name: "model assignment", section: "DomainsSectionMC", props: () => domainsPropsMc(THREE_TIERS_MC), heading: "Who each tier covers" },
-    { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), heading: "When a cap trips" },
+    { name: "model assignment", section: "DomainsSectionMC", props: () => domainsPropsMc(THREE_TIERS_MC), heading: "What the helper runs" },
+    { name: "budget caps", section: "BudgetsSectionMC", props: () => budgetsPropsMc(), heading: "What each cap covers" },
     { name: "call tiers", section: "TiersSectionMC", props: () => tiersPropsMc(), heading: "What each setting does" },
   ];
   for (const row of rows) {
@@ -1858,27 +1720,34 @@ describe("each card's glossary opens from its About settings drawer, never on th
   }
 });
 
-test("a glossary entry never restates its row's own hint", () => {
-  // script-scope consts stay off the context global, so read them through the context itself
-  const tables = vm.runInContext("[DOMAIN_META_MC, BUDGET_META_MC]", screens) as object[];
-  const metas = tables.flatMap((table) => Object.values(table));
-  for (const meta of metas as Array<{ label: string; hint: string; desc: string }>) {
-    assert.ok(!meta.desc.toLowerCase().includes(meta.hint.toLowerCase()), `${meta.label}: note restates its hint`);
+test("a daemon row at rest shows its label alone, and Self-improve is named once across the three daemon cards", () => {
+  const labels: string[] = [];
+  for (const [name, props] of [
+    ["DomainsSectionMC", domainsPropsMc()],
+    ["BudgetsSectionMC", budgetsPropsMc()],
+    ["TiersSectionMC", tiersPropsMc()],
+  ] as const) {
+    for (const tr of tagsMc(faceMc(renderComponentMc(screens[name], props)), "tr")) {
+      const lines = tagsMc(tr.children, "td")[0].children.filter((n): n is McTag => typeof n !== "string");
+      assert.strictEqual(lines.length, 1, `${name}: '${textMc(lines)}' holds its label alone`);
+      labels.push(textMc(lines));
+    }
   }
+  assert.strictEqual(labels.filter((label) => label.includes("Self-improve")).length, 1, labels.join(" · "));
 });
 
 test("long take-effect, cap and default sentences read as short labels; their detail sits in the drawer", () => {
   const [budgetMeta, tierMeta] = vm.runInContext("[BUDGET_META_MC, TIER_META_MC]", screens) as Array<
     Record<string, { desc: string; note?: string }>
   >;
-  assert.strictEqual(budgetMeta["budget.worker_max_usd"].desc, "Shared cap: generation + wiki compile");
+  assert.strictEqual(budgetMeta["budget.worker_max_usd"].desc, "One cap for both calls");
   for (const knob of ["tier.worker_effort", "tier.pre_verify_effort"]) {
     assert.strictEqual(tierMeta[knob].desc, "Default: no --effort flag", knob);
   }
 
   const domains = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(THREE_TIERS_MC));
-  const caveat = "a running agent keeps its current model";
-  assert.ok(!textMc(faceMc(domains)).includes(caveat), "the running-agent caveat is off the face");
+  const caveat = "the daemon picks it up on its next cycle";
+  assert.ok(!textMc(faceMc(domains)).includes(caveat), "the take-effect caveat is off the face");
   assert.ok(textMc(drawersMc(domains)[0].children).includes(caveat), "the caveat is in the drawer");
 
   const tiers = renderComponentMc(screens.TiersSectionMC, tiersPropsMc());
@@ -1886,47 +1755,89 @@ test("long take-effect, cap and default sentences read as short labels; their de
   assert.ok(textMc(drawersMc(tiers)[0].children).includes(precedence), "the precedence note is in the drawer");
 });
 
-test("the three ledgers share one split row, model assignment leading", () => {
+test("the tier drawer names an unset output-token field by the field's own placeholder", () => {
+  const tiers = renderComponentMc(screens.TiersSectionMC, tiersPropsMc());
+  const placeholders = new Set(tagsMc(faceMc(tiers), "input").map((input) => input.props.placeholder));
+  assert.strictEqual(placeholders.size, 1, "the output-token fields share one placeholder");
+  const unsetNames = textsMc(tagsMc(drawersMc(tiers)[0].children, "dd"))
+    .filter((note) => note.startsWith("Blank = "))
+    .map((note) => note.slice("Blank = ".length));
+  assert.ok(unsetNames.length > 0, "the drawer says what a blank field means");
+  assert.deepStrictEqual(new Set(unsetNames), placeholders);
+});
+
+test("the agent card leads at full width, and the three daemon ledgers share one split row under it", () => {
   const tree = renderComponentMc(screens.ScreenModelConfig);
+  const cardSizesOf = (nodes: McNode[]): unknown[] =>
+    findAllMc(nodes, (n) => n.props["data-atom"] === "Card").map((c) => c.props["data-size"]);
+  assert.strictEqual(textsMc(tagsMc(tree, "h2"))[0], "Agent models", "the agent card comes first");
+  assert.strictEqual(cardSizesOf(tree)[0], "L", "the agent card is the L card");
   const [split] = findAllMc(tree, (n) => n.props["data-atom"] === "SplitRow");
   assert.ok(split, "a split row holds the ledgers");
   // 1:1 over 2:1 — at 1280 a third-width column overflows the cap and tier fields
   assert.strictEqual(split.props["data-ratio"], "1:1");
-  assert.strictEqual(split.props["data-layout"], "equal", "peer cards stretch to one end edge");
-  const [lead, column] = split.children.filter((c): c is McTag => typeof c !== "string");
-  const cardSizesOf = (node: McTag): unknown[] =>
-    findAllMc([node], (n) => n.props["data-atom"] === "Card").map((c) => c.props["data-size"]);
-  assert.deepStrictEqual(cardSizesOf(lead), ["L"], "model assignment is the L card");
-  assert.strictEqual(column.props["data-atom"], "SplitColumn", "caps and tiers stack in one column");
-  assert.deepStrictEqual(cardSizesOf(column), ["M", "M"], "caps and tiers are M cards");
+  assert.strictEqual(split.props["data-layout"], "content", "each column ends at its own content");
+  const [column, tiers] = split.children.filter((c): c is McTag => typeof c !== "string");
+  assert.strictEqual(column.props["data-atom"], "SplitColumn", "the daemon model and the caps stack in the left column");
+  assert.deepStrictEqual(cardSizesOf([column]), ["M", "M"], "daemon model and caps are M cards");
+  assert.deepStrictEqual(cardSizesOf([tiers]), ["M"], "the call tiers fill the right column");
   assert.deepStrictEqual(textsMc(tagsMc(split.children, "h2")), [
-    "Model assignment",
+    "Daemon model",
     "Per-call budget caps",
     "Daemon call tiers",
   ]);
 });
 
-test("every cap carries its own reference link to Cost & usage", () => {
+test("the caps card names Recent costs once, in its head, never per cap row", () => {
   const budgets = [BUDGET_ROW_FIXTURE_MC[0], { ...BUDGET_ROW_FIXTURE_MC[0], domain: "budget.pre_verify_max_usd" }];
   const tree = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc(budgets));
-  const rows = tagsMc(tagsMc(tree, "tbody")[0].children, "tr");
-  assert.strictEqual(rows.length, 2, "one row per cap");
-  for (const row of rows) {
-    const links = tagsMc(row.children, "a").filter((a) => a.props.href === "#cost");
-    assert.strictEqual(links.length, 1, "one reference link per cap row");
+  const links = tagsMc(tree, "a").filter((a) => a.props.href === "#cost");
+  assert.deepStrictEqual(links.map((a) => [a.props["data-atom"], textMc(a.children)]), [["Link", "Recent costs"]], "one shared Link atom");
+  assert.strictEqual(tagsMc(tagsMc(tree, "tbody")[0].children, "a").length, 0, "no cap row carries a link");
+});
+
+test("the card-head Cost & usage navigation is the shared Link atom", () => {
+  const tree = renderComponentMc(screens.AgentModelsSectionMC, { state: "loading", knownModels: [], onAgentsRead: () => {}, showToast: () => {} });
+  const links = tagsMc(tree, "a").filter((a) => a.props.href === "#cost");
+  assert.deepStrictEqual(links.map((a) => a.props["data-atom"]), ["Link"]);
+});
+
+test("mono comes only from the machine-string atom: no element styles itself mono", () => {
+  const domains = renderComponentMc(
+    screens.DomainsSectionMC,
+    domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual: "claude-sonnet-5", drift: true }]),
+  );
+  const trees = [
+    domains,
+    renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc()),
+    renderComponentMc(screens.SurfaceResultRowMC, { result: { surface: "daemon-config.json", status: "failed", reason: "write failed" } }),
+  ];
+  for (const tree of trees) {
+    const selfMono = findAllMc(tree, (n) => /\bfont-mono\b/.test(String(n.props.className ?? "")));
+    assert.deepStrictEqual(selfMono.map((n) => textMc(n.children)), [], "no ad-hoc mono class");
+  }
+  for (const [name, tree] of [
+    ["budgets", trees[1]],
+    ["tiers", renderComponentMc(screens.TiersSectionMC, tiersPropsMc())],
+  ] as const) {
+    const numeric = findAllMc(tree, (n) => n.tag === "input" && ["decimal", "numeric"].includes(String(n.props.inputMode)));
+    assert.ok(numeric.length > 0, `${name}: a numeric field renders`);
+    for (const input of numeric) {
+      const classes = String(input.props.className).split(/\s+/);
+      assert.ok(classes.includes("tabular-nums") && !classes.includes("field--mono"), `${name}: a number field is sans tnum, never mono`);
+    }
   }
 });
 
-test("a listed agent file reads as the shared agent name, never the raw file name", () => {
-  const files = [{ file: "glass-atrium-qa-code-reviewer.md", model: "claude-opus-4-8" }];
-  const tree = renderComponentMc(
-    screens.DomainsSectionMC,
-    domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], drift: true, files }]),
-  );
-  const names = findAllMc(tree, (n) => n.props["data-atom"] === "AgentName");
-
-  assert.deepStrictEqual(names.map((n) => n.props.title), ["glass-atrium-qa-code-reviewer"], "the atom gets the agent name");
-  assert.ok(!textMc(tree).includes(".md"), "no file extension on screen");
+test("a differing model's saved line names the saved model, never its raw id", () => {
+  const tree = renderComponentMc(screens.DomainsSectionMC, {
+    ...domainsPropsMc(),
+    baseline: { models: { "model.daemon_cycle_worker": "claude-sonnet-5" }, budgets: {} },
+  });
+  const [slot] = findAllMc(tree, (n) => n.props["data-slot"] === "line-slot");
+  const text = textMc(slot.children);
+  assert.ok(!text.includes("claude-sonnet-5"), `no raw id: ${text}`);
+  assert.ok(text.includes("Sonnet 5"), `the friendly name: ${text}`);
 });
 
 // ScreenModelConfig's useState calls in declaration order → a named seed lands in its slot.
@@ -1970,7 +1881,7 @@ describe("a config read that failed after an earlier read shows the last good re
     known_models: [],
     daemon_config_sync: "ok",
   };
-  const form = { models: { "model.dev": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "10.00" } };
+  const form = { models: { "model.daemon_cycle_worker": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "10.00" } };
   const error = "HTTP 500 Internal Server Error";
   const rows = [
     { name: "fresh read", region: { status: "ready", data, error: null, busy: false }, isLastKnown: false },
@@ -1982,13 +1893,11 @@ describe("a config read that failed after an earlier read shows the last good re
     test(row.name, async () => {
       const config = { ...(realUiMc.INITIAL_REGION_STATE as object), ...row.region };
       const tree = await renderSeededScreenMc({ config, form, asOfAt: Date.now() - 60_000 });
-      const [verdict] = findAllMc(tree, (n) => n.props["data-atom"] === "PageVerdict");
       const alerts = findAllMc(tree, (n) => n.props.role === "alert");
       const [card] = findAllMc(alerts, (n) => n.props["data-atom"] === "RegionUnavailable");
-      const label = String(verdict?.props["data-verdict-label"]);
+      const text = textMc(tree);
 
-      assert.strictEqual(label.startsWith("Last known"), row.isLastKnown, `verdict label: ${label}`);
-      assert.strictEqual(verdict?.props["data-verdict-tone"] === "ok", !row.isLastKnown, "only a fresh read is toned ok");
+      assert.ok(!text.includes("In sync") && !text.includes("match saved"), "no line claims the saved config is in force");
       assert.strictEqual(textMc(alerts).includes("last good read"), row.isLastKnown, "the banner names the held data");
       if (!row.isLastKnown) return;
       assert.strictEqual(card?.props.isBusy, row.region.busy, "the Retry reports its own request");
@@ -1997,27 +1906,7 @@ describe("a config read that failed after an earlier read shows the last good re
   }
 });
 
-test("a cap field fits the longest valid cap and is never squeezed by its link", () => {
-  const tree = renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc());
-  const [input] = tagsMc(tree, "input");
-  const [affix] = findAllMc(tree, (n) => String(n.props.className ?? "").includes("field-affix"));
-  const widthCh = Number(/(\d+)ch/.exec(String((input?.props.style as { width?: string })?.width))?.[1]);
-
-  assert.ok(widthCh >= BUDGET_MAX_USD.toFixed(2).length, `field width ${widthCh}ch holds ${BUDGET_MAX_USD.toFixed(2)}`);
-  assert.ok(String(affix?.props.className).includes("flex-shrink-0"), "the field keeps its width beside the link");
-});
-
 // Screen-level reads: announcements, stale rows, file lists, rail headings, In-effect sources.
-
-const ALL_TIERS_MC = [
-  "model.dev",
-  "model.research",
-  "model.meta",
-  "model.wiki",
-  "model.review",
-  "model.docs",
-  "model.daemon_cycle_worker",
-].map((domain) => ({ ...DOMAIN_ROW_FIXTURE_MC[0], domain }));
 
 const SCREEN_DATA_MC = {
   domains: DOMAIN_ROW_FIXTURE_MC,
@@ -2026,7 +1915,7 @@ const SCREEN_DATA_MC = {
   known_models: [],
   daemon_config_sync: "ok",
 };
-const SCREEN_FORM_MC = { models: { "model.dev": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "10.00" } };
+const SCREEN_FORM_MC = { models: { "model.daemon_cycle_worker": "claude-opus-4-8" }, budgets: { "budget.worker_max_usd": "10.00" } };
 
 function seededConfigMc(region: Record<string, unknown>): Record<string, unknown> {
   return { ...(realUiMc.INITIAL_REGION_STATE as object), ...region };
@@ -2073,10 +1962,10 @@ describe("a Refresh or Retry result is announced in one polite live region, moun
   }
 });
 
-test("under a failed reload no row keeps a green 'Matches saved'; the match is dated to the last good read", async () => {
-  for (const [name, error, isStale] of [
-    ["fresh read", null, false],
-    ["warm error", "HTTP 500", true],
+test("a matching row stays silent whether the read is fresh or a failed reload holds it", async () => {
+  for (const [name, error] of [
+    ["fresh read", null],
+    ["warm error", "HTTP 500"],
   ] as const) {
     const tree = await renderSeededScreenMc({
       config: seededConfigMc({ status: "ready", data: SCREEN_DATA_MC, key: "config", error, busy: false }),
@@ -2086,80 +1975,68 @@ test("under a failed reload no row keeps a green 'Matches saved'; the match is d
     const bodies = tagsMc(tree, "tbody");
     const rowCount = bodies.flatMap((b) => tagsMc(b.children, "tr")).length;
     const text = textMc(bodies);
-    const checks = findAllMc(bodies, (n) => n.props["data-icon"] === "check").length;
 
-    assert.strictEqual(countMc(text, "Matches saved"), isStale ? 0 : rowCount, `${name}: matching rows`);
-    assert.strictEqual(checks, isStale ? 0 : rowCount, `${name}: ok glyphs`);
-    assert.strictEqual(countMc(text, "Matched at last read"), isStale ? rowCount : 0, `${name}: stale rows dated`);
+    assert.ok(rowCount > 0, `${name}: rows rendered`);
+    for (const claim of ["Matches saved", "Matched at last read", "Read from daemon-config.json"]) {
+      assert.strictEqual(countMc(text, claim), 0, `${name}: no row says '${claim}'`);
+    }
+    assert.strictEqual(iconsMc(bodies, "check").length, 0, `${name}: no ok glyphs`);
   }
 });
 
-test("the file list toggle shows a chevron and its opened list is never clipped by an inner scroller", () => {
-  const files = Array.from({ length: 13 }, (_, i) => ({ file: `agents/glass-atrium-dev-${i}.md`, model: "claude-opus-4-8" }));
-  const tree = renderComponentMc(screens.LiveValueMC, { value: "claude-opus-4-8", drift: false, files });
-  const [summary] = tagsMc(tree, "summary");
-  const [list] = findAllMc(tree, (n) => n.props.role === "region");
-
-  const chevron = tagsMc([summary], "i").find((n) => String(n.props["data-icon"]).startsWith("chev"));
-
-  assert.ok(chevron, "the pill carries a chevron");
-  // the class base.css turns while the summary's details is open
-  assert.ok(String(chevron.props.className ?? "").split(/\s+/).includes("disclosure-chevron"), "the chevron takes the shared open-state turn");
-  assert.strictEqual((list.props.style as Record<string, unknown> | undefined)?.maxHeight, undefined, "no height cap");
-  assert.ok(!String(list.props.className).includes("overflow-y-auto"), "no inner scroller");
-  assert.strictEqual(tagsMc(list.children, "span").length, files.length, "every file is listed");
+test("an invalid edit puts a sentence-case alert in the save bar", async () => {
+  const tree = await renderSeededScreenMc({
+    config: seededConfigMc({ status: "ready", data: SCREEN_DATA_MC, key: "config", busy: false }),
+    form: { ...SCREEN_FORM_MC, budgets: { "budget.worker_max_usd": "abc" } },
+    asOfAt: Date.now(),
+  });
+  const [bar] = findAllMc(tree, (n) => n.props["aria-label"] === "Unsaved changes");
+  assert.ok(bar, "a dirty form shows the save bar");
+  const [alert] = findAllMc(bar.children, (n) => String(n.props.className ?? "").includes("text-crit"));
+  assert.strictEqual(textMc(alert.children).replace("✕", "").trim(), "Fix the highlighted fields before saving");
 });
 
 test("the glossary labels are headings, and their notes never repeat the agent a row already names", async () => {
   const tree = await renderSeededScreenMc({
-    config: seededConfigMc({ status: "ready", data: { ...SCREEN_DATA_MC, domains: ALL_TIERS_MC }, key: "config", busy: false }),
+    config: seededConfigMc({ status: "ready", data: SCREEN_DATA_MC, key: "config", busy: false }),
     form: SCREEN_FORM_MC,
     asOfAt: Date.now(),
   });
   const headings = textsMc(tagsMc(tree, "h3"));
-  assert.ok(headings.includes("Who each tier covers"), `headings: ${headings}`);
-  assert.ok(headings.includes("When a cap trips"), `headings: ${headings}`);
+  assert.ok(headings.includes("What the helper runs"), `headings: ${headings}`);
+  assert.ok(headings.includes("What each cap covers"), `headings: ${headings}`);
 
   const notes = textsMc(tagsMc(tree, "dd")).join(" ");
   assert.ok(notes.length > 0, "the notes are rendered");
   assert.ok(!notes.includes("glass-atrium-"), `a note repeats an agent id the row shows: ${notes}`);
 });
 
-test("every In-effect cell is filled: a tier without a file list names where its value was read from", () => {
-  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(ALL_TIERS_MC));
-  const bodyRows = tagsMc(tagsMc(tree, "tbody")[0].children, "tr");
-  const sources: Record<string, string> = {
-    "model.research": "intel-researcher",
-    "model.meta": "meta-agent",
-    "model.wiki": "wiki-curator",
-    "model.daemon_cycle_worker": "daemon-config.json",
-  };
-  assert.strictEqual(bodyRows.length, ALL_TIERS_MC.length);
-  for (const [domain, source] of Object.entries(sources)) {
-    const row = bodyRows[ALL_TIERS_MC.findIndex((tier) => tier.domain === domain)];
-    const live = textMc([tagsMc(row.children, "td")[2]]);
-    assert.ok(live.includes("Read from"), `${domain}: names its source (${live})`);
-    assert.ok(live.includes(source), `${domain}: reads from ${source} (${live})`);
+test("no daemon card has a foot, and a row at rest never names the file it reads", () => {
+  for (const [name, tree] of [
+    ["models", renderComponentMc(screens.DomainsSectionMC, domainsPropsMc())],
+    ["budgets", renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc())],
+    ["tiers", renderComponentMc(screens.TiersSectionMC, tiersPropsMc())],
+  ] as const) {
+    assert.deepStrictEqual(footMc(tree), [], `${name}: no foot`);
+    assert.ok(!textMc(tree).includes("daemon-config.json"), `${name}: the file is named only where a line needs it`);
   }
-
-  const cap = textMc([liveCellMc(renderComponentMc(screens.BudgetsSectionMC, budgetsPropsMc()))]);
-  assert.ok(cap.includes("Read from daemon-config.json"), `a cap names its source (${cap})`);
 });
 
-test("a sourced In-effect cell with no live value names the source without claiming it was read", () => {
-  const unread = ALL_TIERS_MC.map((tier) => ({ ...tier, actual: null, drift: false }));
-  const tree = renderComponentMc(screens.DomainsSectionMC, domainsPropsMc(unread));
-  const bodyRows = tagsMc(tagsMc(tree, "tbody")[0].children, "tr");
-  const cells = [
-    ...["model.research", "model.meta", "model.wiki", "model.daemon_cycle_worker"].map((domain) =>
-      [domain, textMc([tagsMc(bodyRows[unread.findIndex((tier) => tier.domain === domain)].children, "td")[2]])] as const),
-    ["budget.worker_max_usd", textMc([liveCellMc(renderComponentMc(
+test("a sourced row with no live value says no value was read, naming the file in the line's title", () => {
+  const trees = [
+    ["model.daemon_cycle_worker", renderComponentMc(
+      screens.DomainsSectionMC,
+      domainsPropsMc([{ ...DOMAIN_ROW_FIXTURE_MC[0], actual: null, drift: false }]),
+    )] as const,
+    ["budget.worker_max_usd", renderComponentMc(
       screens.BudgetsSectionMC,
       budgetsPropsMc([{ ...BUDGET_ROW_FIXTURE_MC[0], actual: null, drift: false }]),
-    ))])] as const,
+    )] as const,
   ];
-  for (const [domain, live] of cells) {
-    assert.ok(live.startsWith("No value read from"), `${domain}: says nothing was read (${live})`);
-    assert.ok(!live.includes("Matches saved"), `${domain}: an unread value never reads as matching (${live})`);
+  for (const [domain, tree] of trees) {
+    const slot = liveCellMc(tree);
+    assert.strictEqual(textMc([slot]), "No value read", `${domain}: says nothing was read`);
+    const titles = findAllMc([slot], (n) => typeof n.props.title === "string").map((n) => n.props.title);
+    assert.deepStrictEqual(titles, ["No value read from daemon-config.json"], `${domain}: the file rides the title`);
   }
 });

@@ -1,6 +1,6 @@
 ---
 name: glass-atrium-ops-verify-gate
-description: Pre-commit 6-stage sequential verification covering build, types, lint, tests, console cleanup, and git audit. Invoke with /verify.
+description: Pre-commit 6-stage sequential verification covering build, types, lint, tests, console cleanup, and git audit — changed-files scope before an intermediate commit, full scope at a job's final gate or PR. Invoke with /verify.
 ---
 
 ## Overview
@@ -8,11 +8,13 @@ description: Pre-commit 6-stage sequential verification covering build, types, l
 Sequentially verifies code quality in 6 stages before committing, enforcing evidence-based completion claims.
 
 - No stage is skipped without a documented reason.
-- Failure at any stage halts the pipeline.
+- A failed check at any stage halts the pipeline.
+  - So does a stage that still cannot run after its retry: `### Verification Order (halt on failure)`.
 
 ## When to Use
 
-- Right before a commit, before creating a PR, after completing a feature implementation
+- Right before a commit or after completing a feature implementation — `changed` scope (`### Scope argument`)
+- Before creating a PR, and at a job's final gate — `full` scope
 - When any agent claims a task is "done" or "fixed"
 - After refactoring to confirm no behavioral changes
 - **Exclusions**: Documentation-only changes, configuration file edits with no code impact, memory/ file updates
@@ -35,6 +37,15 @@ Success Criteria:
 - Rationale: pre-stated success criteria are the mechanical anchor Stages 1-6 verify against
 - **Exclusions inheritance**: Stage 0 inherits the `## When to Use` Exclusions — it targets code-change correctness, not documentation precision
 
+### Scope argument
+
+- `/verify` or `/verify changed` (the default): every stage runs on the change's affected set, as `scoped/shared-testing.md` → **Verification scope** defines it.
+  - Build and Types: the narrowest target the tool offers — the changed module (`./gradlew :<module>:compileKotlin`); a whole-project `tsc --noEmit` is already that target.
+  - Lint: the changed files (`npx biome check <files>` / `npx eslint <files>` / `./gradlew :<module>:detekt`).
+  - Tests: the affected tests only (`npm test -- <test files>` / `./gradlew :<module>:test --tests <Class>`).
+  - Console.log residuals: the changed files.
+- `/verify full`: only at a job's final gate and before a PR — every stage on the whole project, with the commands of `### Verification Order (halt on failure)`.
+
 ### Verification Order (halt on failure)
 
 1. **Build**: `npm run build` / `pnpm build` / `./gradlew build` — on failure, report error and **halt**
@@ -44,10 +55,18 @@ Success Criteria:
 5. **Console.log residuals**: Grep across `*.ts/*.tsx/*.js` — warn if found
 6. **Git status**: `git status` + `git diff --stat` — report commit-readiness status
 
+- The commands above are the `full` form; in `changed` scope each stage takes the form `### Scope argument` names.
+- A stage that could not run — a missing command, a timeout, a locked file — is an ordinary obstacle, not a failed check: diagnose it and run the stage again (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
+  - The retry is bounded: each attempt that ends without the stage running counts as a fail toward the Stage 0 **Loop termination cap**.
+    - A stage that still cannot run when the cap is reached halts the pipeline: report it as FAIL with its cause, never as SKIP or OK.
+  - A stage a deliberate blocker stops is not retried: it halts the pipeline, reported as FAIL with its cause.
+    - Outcome Record emit: `result: blocked`, never `fail` — FAIL here is the `### Result Format` stage status only.
+      - Why: the orchestrator reports a `blocked` deliberate blocker to the user, while a `fail` enters Retry and Fallback, which route around the control.
+
 ### Result Format
 
 ```
-VERIFICATION: [PASS/FAIL]
+VERIFICATION: [PASS/FAIL] · scope: [changed/full]
 Build/Types/Lint/Tests/Console/Git: [OK/FAIL/WARN/SKIP]
 ```
 
@@ -71,7 +90,8 @@ See [red-flag.md](references/red-flag.md) for the evidence each claim requires a
 | Excuse | Rebuttal |
 |--------|----------|
 | "Linter passed, so the build is fine" | Linting checks style/patterns, not compilation — a file can lint clean and fail to build |
-| "I only changed one line, no need to run the full suite" | One-line changes cause regressions — the verification loop exists precisely for small changes |
+| "One more full-suite run before this intermediate commit can't hurt" | Beyond the affected set it is waste — it spends the turn budget and proves nothing the final gate's full run does not |
+| "I only changed one line, so I can skip its tests" | A one-line change can still break its callers — its affected tests run before the commit; only the full suite waits for the final gate |
 | "Tests are slow, I'll run them after the commit" | Post-commit test failure means a broken commit in history — run before, not after |
 | "The type checker is too strict, this `any` is fine for now" | Type failures are real errors masked by `any` — fix the type, don't skip the stage |
 | "Console.logs are just for debugging, I'll remove them later" | "Later" is never — stage 5 catches them now so they don't ship to production |
@@ -79,6 +99,7 @@ See [red-flag.md](references/red-flag.md) for the evidence each claim requires a
 ## Red Flags
 
 - A stage marked SKIP without a documented reason
+- A stage that could not run reported as SKIP or OK
 - Build output not read after execution (command run but result ignored)
 - Exit code not checked — only partial output scanned for "success" keywords
 - Console.log warnings dismissed without removal
@@ -88,6 +109,6 @@ See [red-flag.md](references/red-flag.md) for the evidence each claim requires a
 
 - [ ] **Sequential execution**: All 6 stages ran in order — no stage skipped without documented reason
 - [ ] **Exit code evidence**: Each stage's exit code (0 or non-zero) is explicitly reported
-- [ ] **Failure halt**: If any stage failed, subsequent stages were not executed
-- [ ] **Result format**: Final output matches the `VERIFICATION: [PASS/FAIL]` template with per-stage status
+- [ ] **Failure halt**: If any stage failed, or still could not run, subsequent stages were not executed
+- [ ] **Result format**: Final output matches the `VERIFICATION: [PASS/FAIL] · scope: [changed/full]` template with per-stage status
 - [ ] **No red-flag language**: Completion declaration is accompanied by tool output evidence, not speculative language

@@ -13,6 +13,9 @@
 # never host/port/localhost. Emits an elapsed_ms stderr line per op for latency
 # aggregation.
 
+# daemon imports this on an install's python3 3.9 → no 3.10+ construct at import
+from __future__ import annotations
+
 import sys
 import time
 from collections import defaultdict
@@ -46,6 +49,7 @@ except ImportError as exc:
 # daemon's reason templates runs where psycopg is absent. Unguarded — a failure
 # there is a packaging fault, not a degradable condition.
 from _learning_log_limits import LEARNING_LOG_REASON_MAX
+from _pg_connect import CONNECT_TIMEOUT_SEC, RETRY_BACKOFF_SEC
 
 from _outcome_signal import (  # noqa: F401 — re-export surface, see above
     negative_signal_hits,
@@ -177,7 +181,7 @@ def _classify_error(exc):
 def _record_hook_failure(target_table, error_kind, payload_ref, retry_attempted):
     """Best-effort secondary INSERT into core.hook_failures. ANY exception swallowed."""
     try:
-        with psycopg.connect("dbname=glass_atrium", connect_timeout=1) as conn:
+        with psycopg.connect("dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO core.hook_failures "
@@ -222,7 +226,7 @@ def _emit_stderr_failure(op_name, target_table, error_kind, error_class,
 
 
 # ---------------------------------------------------------------------------
-# Generic UPSERT runner with 1 retry + 100 ms backoff
+# Generic UPSERT runner with 1 retry after RETRY_BACKOFF_SEC
 # ---------------------------------------------------------------------------
 
 def _run_with_retry(op_name, target_table, payload_ref, fn):
@@ -250,7 +254,7 @@ def _run_with_retry(op_name, target_table, payload_ref, fn):
             last_exc = exc
             if attempt == 1:
                 retry_attempted = True
-                time.sleep(0.1)
+                time.sleep(RETRY_BACKOFF_SEC)
 
     error_kind = _classify_error(last_exc)
     error_class = type(last_exc).__name__
@@ -381,7 +385,7 @@ def upsert_learning_pattern(
         # autocommit=False so SELECT-validate-UPSERT runs in one transaction,
         # closing the race between reading old_status and the UPSERT.
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(_LEARNING_LOG_SELECT_SQL, (pattern_signature,))
@@ -451,7 +455,7 @@ def reject_learning_pattern(pattern_id: int, reason: str) -> int | None:
 
     def _do():
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -538,7 +542,7 @@ def discharge_learning_pattern(pattern_id: int, reason: str) -> DischargeResult:
         updated.clear()
         committed.clear()
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -641,7 +645,7 @@ def put_learning_pattern_status(
         updated.clear()
         committed.clear()
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(_LEARNING_LOG_STATUS_SQL, params)
@@ -711,7 +715,7 @@ def update_aggregator_state(
 
     def _do():
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(_AGGREGATOR_STATE_UPSERT_SQL, row)
@@ -786,7 +790,7 @@ def insert_audit_queue_rows(rows: list[dict]) -> int:
 
     def _do():
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.executemany(_AUDIT_QUEUE_INSERT_SQL, clean)
@@ -849,7 +853,7 @@ def insert_liveness_observation(
 
     try:
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(_LIVENESS_INSERT_SQL, row)
@@ -987,7 +991,7 @@ def read_learning_log_signatures() -> dict:
 # user-pending flow downstream, never dropped). Served by learning_log_status_tier_idx.
 _PENDING_PATTERNS_SELECT_TEMPLATE = """
 SELECT id, discovered_date, pattern_signature, frequency, agent,
-       status::text, approval_tier::text, {metric_key_column}, last_transition_at
+       status::text, approval_tier::text, {metric_key_column}
 FROM core.learning_log
 WHERE status = 'identified'::core."LearningStatus"
   AND approval_tier IN ('user-pending'::core."ApprovalTier",
@@ -1013,9 +1017,8 @@ def read_pending_learning_patterns() -> list[dict]:
 
     Shape: [{"id": int, "discovered_date": date, "pattern_signature": str,
     "frequency": int, "agent": str, "status": str, "approval_tier": str,
-    "metric_key": str | None, "last_transition_at": datetime | None}], frequency
-    DESC. metric_key is None for a keyless row and for every row of a schema
-    without the column; last_transition_at is None for a row never transitioned.
+    "metric_key": str | None}], frequency DESC. metric_key is None for a keyless
+    row and for every row of a schema without the column.
     Falls back to [] on any failure — the daemon takes the zero-pattern path
     (no generation this cycle; next cycle retries).
     """
@@ -1032,7 +1035,7 @@ def read_pending_learning_patterns() -> list[dict]:
                 rows: list[dict] = []
                 for (
                     row_id, discovered_date, signature, frequency, agent,
-                    status, tier, metric_key, last_transition_at,
+                    status, tier, metric_key,
                 ) in cur.fetchall():
                     rows.append({
                         "id": row_id,
@@ -1043,7 +1046,6 @@ def read_pending_learning_patterns() -> list[dict]:
                         "status": status or "identified",
                         "approval_tier": tier or "user-pending",
                         "metric_key": metric_key,
-                        "last_transition_at": last_transition_at,
                     })
                 return rows
     except Exception as exc:  # noqa: BLE001 — read fallback is loud (stderr) + safe
@@ -1103,10 +1105,8 @@ def _learning_window_where(
 ) -> tuple[list[str], list[object]]:
     """WHERE clauses + params for the learning-signal window — single SoT.
 
-    Shared by read_outcomes_since (row read) and count_outcomes_since
-    (observation count) so the two consumers can never diverge on what
-    "qualifying outcome" means. Learning-signal exclusion (always on) drops
-    rows that are not real per-agent signal:
+    What "qualifying outcome" means for read_outcomes_since. Learning-signal
+    exclusion (always on) drops rows that are not real per-agent signal:
       1) sentinel agents (subagent_stop_missing / agent_id_missing) are
          attribution failures — counting them invents a phantom top-agent.
       2) attribution_source IS NULL = legacy rows with no recoverable agent
@@ -1302,50 +1302,6 @@ def _fetch_outcome_rows(sql: str, params: list[object]) -> list[dict]:
     return rows
 
 
-def count_outcomes_since(
-    since_epoch: float,
-    *,
-    agent: str | None = None,
-    task_type: str | None = None,
-) -> int | None:
-    """COUNT(*) of qualifying core.outcomes rows over the learning-signal window.
-
-    Same WHERE as read_outcomes_since (shared _learning_window_where — the row
-    read and the count can never diverge on what "qualifying" means), with no
-    LIMIT: a row-read cap bounds LLM-context size, never evidence volume. This
-    is the promotion ladder's observation_count source — len() of a capped
-    sample undercounts and silently blocks the n>=10 candidate floor.
-
-    - fallback: PG unreachable / query error → None (caller chooses the
-      degrade; None is distinct from a true 0 of an empty window).
-    """
-    where_clauses, params = _learning_window_where(
-        since_epoch, agent=agent, task_type=task_type
-    )
-    sql = (
-        "SELECT count(*) FROM core.outcomes WHERE " + " AND ".join(where_clauses)
-    )
-    try:
-        with psycopg.connect("dbname=glass_atrium", connect_timeout=2, autocommit=True) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, tuple(params))
-                row = cur.fetchone()
-        return int(row[0]) if row is not None else None
-    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
-        sys.stderr.write(
-            '{"hook":"_pg_learning_dualwrite","op":"count_outcomes_since",'
-            '"error_kind":"%s","fallback":"none","since_epoch":%s,'
-            '"agent":%s,"task_type":%s}\n'
-            % (
-                type(exc).__name__,
-                since_epoch,
-                ('"%s"' % agent) if agent else "null",
-                ('"%s"' % task_type) if task_type else "null",
-            )
-        )
-        return None
-
-
 # Per-pattern metric window read: one row per spawn unit of any listed agent type
 # unit = every MANIFEST row of one agent_id (SubagentStart fires per activation, resumes included)
 # → formed over all time before the type + window filters: a resume never enters as a new spawn
@@ -1355,6 +1311,7 @@ def count_outcomes_since(
 # joined tables pre-grouped by agent_id → a spawn with N overage / outcome rows counts once
 # outside [baseline, end) task members only: up to evaluation + earlier ones stopped ≥ baseline − W
 # tool_use_actual: the recorder's header line, read as _OUTCOME.FACTS_SELECT_SQL reads it
+# both outcome aggregates ORDER BY id → the two arrays zip row for row
 _SPAWN_FACTS_SELECT_SQL = SimpleNamespace(
     TEMPLATE="""
 WITH manifest AS (
@@ -1396,7 +1353,8 @@ spawns AS (
 )
 SELECT s.agent_type, s.agent_id, s.session_id, s.started_at,
        COALESCE(b.overage_rows, 0), stop.stopped_at,
-       COALESCE(o.attributions, '{{}}'::text[]), o.tool_use_actual,
+       COALESCE(o.attributions, '{{}}'::text[]), COALESCE(o.verdicts, '{{}}'::text[]),
+       o.tool_use_actual,
        s.arm, s.salt_id, s.delivered, s.delivered_hash, s.any_delivered, s.activations
 FROM spawns s
 LEFT JOIN (
@@ -1409,7 +1367,8 @@ LEFT JOIN (
     GROUP BY agent_id
 ) stop ON stop.agent_id = s.agent_id
 LEFT JOIN (
-    SELECT agent_id, array_agg(attribution_source) AS attributions,
+    SELECT agent_id, array_agg(attribution_source ORDER BY id) AS attributions,
+           array_agg(grader_verdict::text ORDER BY id) AS verdicts,
            max(substring(split_part(body_md, chr(10) || '## ', 1)
                          FROM '(?n)' || %s::text)::numeric) AS tool_use_actual
     FROM core.outcomes
@@ -1506,7 +1465,34 @@ def _read_spawn_facts(
 ) -> tuple[datetime | None, defaultdict[str, list[SpawnFacts]]]:
     """The provenance start and each agent's spawns over baseline..end, plus the task members
     `get_floor_verdict` places outside it (up to `evaluated_at`, None → windows.end); raises on
-    any failure. A schema without the canary exposure columns reads every spawn's as None."""
+    any failure. A schema without the canary exposure columns reads every spawn's as None.
+    Each outcome row carries its attribution_source and grader_verdict, None while ungraded."""
+    provenance_start, rows = _fetch_spawn_rows(agents, windows, evaluated_at, redelegation_window)
+    spawns: defaultdict[str, list[SpawnFacts]] = defaultdict(list)
+    for (
+        agent_type, agent_id, session_id, started_at, overage_rows, stopped_at, attributions,
+        verdicts, tool_use_actual, *exposure, activations,
+    ) in rows:
+        spawns[agent_type].append(SpawnFacts(
+            agent_id, session_id, started_at, int(overage_rows), stopped_at is not None,
+            tuple(
+                {"attribution_source": source, "grader_verdict": verdict}
+                for source, verdict in zip(attributions, verdicts)
+            ),
+            stopped_at, None if tool_use_actual is None else int(tool_use_actual), *exposure,
+            int(activations),
+        ))
+    return provenance_start, spawns
+
+
+def _fetch_spawn_rows(
+    agents: list[str],
+    windows: PairWindows,
+    evaluated_at: datetime | None,
+    redelegation_window: timedelta,
+) -> tuple[datetime | None, list[tuple]]:
+    """The provenance start and the spawn select's rows, its exposure columns read only on a
+    schema that has them; raises on any failure."""
     upper = windows.end if evaluated_at is None else max(windows.end, evaluated_at)
     params = (
         agents, upper, windows.start.baseline, windows.start.baseline - redelegation_window,
@@ -1523,18 +1509,7 @@ def _read_spawn_facts(
             sql = _SPAWN_FACTS_SELECT_SQL.TEMPLATE.format(exposure_columns=columns)
             cur.execute(sql, params)
             rows = cur.fetchall()
-    spawns: defaultdict[str, list[SpawnFacts]] = defaultdict(list)
-    for (
-        agent_type, agent_id, session_id, started_at, overage_rows, stopped_at, attributions,
-        tool_use_actual, *exposure, activations,
-    ) in rows:
-        spawns[agent_type].append(SpawnFacts(
-            agent_id, session_id, started_at, int(overage_rows), stopped_at is not None,
-            tuple({"attribution_source": source} for source in attributions),
-            stopped_at, None if tool_use_actual is None else int(tool_use_actual), *exposure,
-            int(activations),
-        ))
-    return provenance_start, spawns
+    return provenance_start, rows
 
 
 # Generator evidence read

@@ -96,7 +96,10 @@ if [[ "${1:-}" != "-a" || "${2:-}" != "256" ]]; then
   printf 'stub-shasum: require multi-arg "-a 256", got: [%s]\n' "$*" >&2
   exit 64
 fi
-printf '%s  -\n' "${GA_STUB_HASH:?stub hash env missing}"
+# one digest line per file operand after `--`, as the real tool prints for a batched call
+while [[ "$#" -gt 0 && "$1" != "--" ]]; do shift; done
+shift
+for file in "$@"; do printf '%s  %s\n' "${GA_STUB_HASH:?stub hash env missing}" "${file}"; done
 SH
   chmod +x "${STUB_BIN}/shasum"
 }
@@ -154,6 +157,7 @@ run_doctor_strict_ifs() {
     bash -c '
       set -Eeuo pipefail
       source "$1/lib/ga-core.sh"
+      source "$1/test/lib/remote-run-stub.bash"
       ga_init_env "$2"
       printf -v IFS "\n\t"
       run_doctor

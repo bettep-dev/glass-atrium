@@ -1,6 +1,6 @@
 # Review rounds and reviewer prompts
 
-- **Pointer site**: `skills/glass-atrium-ops-orchestrator.md` → `#### Review rounds and reviewer prompts`.
+- **Pointer site**: `skills/glass-atrium-ops-orchestrator.md` → `### Review rounds and reviewer prompts`.
 
 ## Non-convergence routing
 

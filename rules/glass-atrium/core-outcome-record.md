@@ -56,6 +56,8 @@ Applies to all agents. [ALL]
 | `needs_context` | information is insufficient | user response needed — not an escalation target |
 | `fail` | the task failed | glass-atrium-qa-debugger escalation target |
 
+- Before selecting `blocked`, apply `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`.
+
 ### Whose outcome `result` describes
 
 - `result` reports the emitting agent's own task outcome.
@@ -166,14 +168,15 @@ Field rules: `#### Self-assessment fields` · `### Correction fields` · `### Co
 | task_type | Bar for `metric_pass=true` |
 |-----------|----------------------------|
 | `bug-fix` | failing test → passing test, exit code 0 required |
-| `feature` | a test observed to fail before the implementation existed now passes, and the full suite passes |
-| `refactor` | behavior unchanged + existing test suite passes |
+| `feature` | a test observed to fail before the implementation existed now passes, and the suite its verification scope names passes |
+| `refactor` | behavior unchanged + the existing tests its verification scope names pass |
 | `research` | 3+ sources cited with cross-verification |
 | `plan` | goal + chosen direction and why + work streams in execution order, each naming its files + an Open Questions section |
 | `review` / `diagnosis` / `doc` / `cleanup` | no test bar — the verdict, diagnosis, document or hygiene change was produced |
 
 - `feature`: a test file merely added is not the bar.
   - A test written after its implementation qualifies only through the deliberate-break exception, made and run as `scoped/shared-testing.md` → **Qualifier on the last row (the deliberate-break exception)** states — including where the break is made.
+- `feature` · `refactor` — verification scope: `scoped/shared-testing.md` → **Verification scope**; an intermediate work-unit meets the bar on its affected tests, and the full suite is the bar only at the job's final gate.
 - `plan`: an empty Open Questions section is valid.
   - A dependency DAG, per-task acceptance criteria or any other exhaustive structure joins the bar only when the user asked for that kind of deliverable (spec · PRD · ADR · roadmap) or for that structure by name.
 - **Blank value policy**: a blank `confidence` or `metric_pass` degrades the learning signal — when judgment is impossible, write `low` / `false` explicitly.

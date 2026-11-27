@@ -15,11 +15,10 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 |---|---|---|
 | `hooks/test/inject-scope-rules-nodrop.bats` | frontmatter `maxTurns`; its own `BUDGET_DEV_CARRIERS` literal | carrier status; meter bytes count into a pinned worst-case DEV assembly total |
 | `hooks/inject-scope-rules.sh` → `read_max_turns` | `^maxTurns:` at column 0 | turn-budget meter sizing |
-| `hooks/enforce-harness-critical.sh` | live frontmatter identity keys (name, tools, scope) and the fence-line count | edits to them blocked for every caller (LLM06) |
+| `lib/ga-doctor.sh` → `get_integrity_drift` | live frontmatter identity keys (name, tools, scope) and text outside EDITABLE regions | a live edit to either is reported as drift, never blocked |
 | `autoagent/daemon_cycle.py` → `match_sensitive_diff` | added lines of any patch to this body | `## Destructive-literal convention` |
 | `scripts/audit-inert-assert.sh` header | cites `### Bats + test-run discipline` as its convention SoT | keep the heading text |
 
-- Several harness-critical suites write a fake-HOME copy of this filename as a fixture; repo-tree edits do not affect them.
 - `scoped/maintainers/shared-testing.md` also cites `### Bats + test-run discipline`, for the shared bash 3.2 errexit reason.
 
 ## Budget-sizing bullets — why they are not a mirror
@@ -71,7 +70,7 @@ Check the tree before reverting any of these.
 - The write-count premise also sits in the `hooks/lib/pipe-drain.sh` header and the `scripts/audit-pipe-drain.sh` header Why — canonical + mirror: keep the three in step and report drift.
 - The auditor sub-bullet points at the auditor header for the modeled readers, so an auditor change needs no body edit.
   - "A wrapper the auditor does not know" means a helper missing from `READER_HELPERS`; edit the named examples if the auditor starts modeling one.
-- The rule's reach stays `hooks/`, the auditor's scope; **Interrupted builtin writes** is the bullet that binds every shell file.
+- The rule's reach is the auditor's scope, which the body reads from `scripts/audit-pipe-drain.sh` → `SCOPE_DIRS` and never names as a directory, so a root added there needs no body edit; **Interrupted builtin writes** is the bullet that binds every shell file.
 
 ## Interrupted builtin writes — the decided keeps
 

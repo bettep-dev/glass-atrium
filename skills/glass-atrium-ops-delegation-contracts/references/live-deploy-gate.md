@@ -16,6 +16,9 @@
   - Route: the sanctioned updater's local-source seam; its env vars and the copy-step idiom: `references/deploy-safety-idiom.md`.
 - **Verify empirically on that live install** — rule and behavior probes, live test execution, doctor and monitor state.
   - A probe run against the repo tree does not satisfy this gate.
+  - A session started only as a probe declares itself to the owner queue: launch it with `ATRIUM_QUEUE_PROBE=1` in its environment (`scripts/lib/queue-session.sh` → `QUEUE_PROBE_DECLARED`).
+    - Its register then marks it a probe: hidden on the Queue page, refused as a message or relay target and as a relay sender.
+    - Honest backing — unmeasured: that a `claude -p` probe's SessionStart hook inherits the launcher's variable; a probe that runs the CLI's `register` under it is marked either way.
   - **Why the live suite is the threshold** (the threshold itself: the pointer site):
     - The daemon's green-suite gate (`autoagent/daemon-apply.sh` → `verify_green_suite`) runs the same runner and re-entry sentinel, so a red run here aborts a daemon cycle there after one retry.
     - The runner recurses the test roots on disk, so a stale `.bats` the repo no longer ships fails only on the live install.

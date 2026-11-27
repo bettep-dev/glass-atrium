@@ -111,7 +111,8 @@
 # Named exit codes (headless loud-fail — Precondition Loud-Fail): 1 generic fatal ·
 # 2 usage · 7 claude binary unresolvable in the job/monitor plist env (the merge
 # stage would fail) · 8 another update already in-progress (single-active DB guard)
-# · 9 install-parity post-step failed · 10 agents-bak restore failed · 11
+# · 9 monitor build failed (headless: inside the install-parity post-step; files
+# APPLIED, monitor NOT restarted) · 10 agents-bak restore failed · 11
 # mirror-farm refresh failed (files APPLIED, but the ~/.claude facade mirror was
 # not refreshed — run `glass-atrium agents-only`; no rollback of applied files) ·
 # 12 hook-binding wiring failed (files APPLIED + mirror refreshed, but the
@@ -126,7 +127,13 @@
 # a stale body inside a valid request is refused per body instead, never exit 16 ·
 # 17 release manifest names a files[] entry or modes key that escapes the install
 # root (empty, absolute, or a `..` segment), or its keys are unreadable — caught
-# right after the fetch, before the roster gate and any staging, nothing applied.
+# right after the fetch, before the roster gate and any staging, nothing applied ·
+# 18 monitor dependency step failed — `npm ci` or `prisma generate` (files APPLIED,
+# migrations NOT applied, monitor NOT rebuilt or restarted — run `glass-atrium
+# db-setup`, then `npm run build` in the monitor, then restart it) · 19 the release's
+# hooks/pricing.json has no row for a model id this install ran in the last 30 days or holds
+# in its model config (update_check_pricing_roster) — caught after verify, before the swap,
+# nothing applied; ATRIUM_UPDATE_ALLOW_UNPRICED=1 applies past it with a WARN.
 # The record subcommand also exits 16, writing nothing, for a pending request, an
 # invalid or non-merge-claimed name, an absent body, or a body without EDITABLE
 # regions; the reset restore exits 10 (the restore code) on any missing, refused or
@@ -147,9 +154,11 @@
 # PENDING migrations between the apply and the monitor restart (named exit 15 on
 # failure, never a silent skip, never a rollback of the applied files). It no-ops —
 # loudly, naming the remedy — under GA_SKIP_DB_SETUP, with no migrations directory,
-# and on a monitor whose node_modules were never installed (a recoverable state
-# `npm ci` self-heals, not a broken one worth failing an update over).
+# and on a monitor whose node_modules are still absent when it runs.
 # `glass-atrium doctor` §21 reports any migration left pending.
+# Before it, update_install_monitor_deps runs `npm ci` and/or `prisma generate` on an
+# apply-set trigger path or a self-heal need; when the heal runs, skips or fails, and why
+# the node_modules-absent no-op is defensive: update_get_monitor_heal.
 #
 # core.update_job tracking is HEADLESS-ONLY — the interactive/CLI path opens no
 # update_job row. That is scoped to update_job and is NOT a whole-path no-DB claim:
@@ -170,11 +179,14 @@
 # ATRIUM_UPDATE_MONITOR_PLIST · ATRIUM_UPDATE_ONESHOT_PLIST ·
 # ATRIUM_UPDATE_RENDER_LAUNCHD · ATRIUM_UPDATE_RENDER_MONITOR_ENV ·
 # ATRIUM_UPDATE_CLAUDE_BIN · ATRIUM_UPDATE_PRISMA (the monitor's prisma CLI) ·
+# ATRIUM_UPDATE_PRICING_CHECK (scripts/check-pricing-roster.sh beside the running updater) ·
 # AUTOAGENT_BACKUP_DIR (agents-bak base). GA_SKIP_DB_SETUP (the shared install /
 # doctor DB opt-out) additionally skips the post-apply migrate step.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
+# own mask → a caller's 077 never lands created install files 600 / dirs 700; the modes map still re-modes its rows
+umask 022
 
 # bash 5.2+ turns patsub_replacement ON by default, making a bare '&' in a
 # ${var//pat/repl} REPLACEMENT expand to the matched text — that would corrupt the
@@ -192,16 +204,9 @@ update_ga_root() {
   printf '%s\n' "${GA_ROOT:-${HOME}/.glass-atrium}"
 }
 
-# The autoagent daemon reports dir holding the shared .apply-lock — resolved with
-# the SAME precedence daemon-apply.sh uses, so updater and daemon contend on ONE
-# canonical lock directory.
-update_reports_dir() {
-  printf '%s\n' "${AUTOAGENT_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
-}
-
-# The daemon .apply-lock directory (mkdir-atomic lock, same as daemon-apply.sh).
-update_apply_lock_dir() {
-  printf '%s\n' "$(update_reports_dir)/.apply-lock"
+# The monitor checkout the dependency, migrate and build steps act on.
+update_get_monitor_dir() {
+  printf '%s\n' "${ATRIUM_UPDATE_MONITOR_DIR:-$(update_ga_root)/monitor}"
 }
 
 # Resolve the GitHub release repo slug: ATRIUM_RELEASE_REPO env → config.toml
@@ -298,6 +303,9 @@ _update_workdir=""
 _update_apply_paths=""
 _update_staging=""
 _update_snapshot=""
+# 1 once the monitor dependency step has started on node_modules / the generated client
+# this run → a later failure's recovery must rebuild before any restart.
+_update_has_refreshed_deps=0
 
 # P3 headless / web-triggered orchestration run state (see the file header). Mode
 # flag + DB update_job tracking state + the resolved running-script dir (for the
@@ -1414,7 +1422,7 @@ update_cleanup() {
   if [[ "${_update_lock_acquired}" -eq 1 ]]; then
     # Path-guarded rm -rf (via the shared lib) — the lock dir now holds a pid
     # file, so a bare rmdir would fail; the lib releases ONLY a lock we still own.
-    apply_lock_release "$(update_apply_lock_dir)"
+    apply_lock_release "$(apply_lock_get_dir)"
     _update_lock_acquired=0
   fi
   if [[ -n "${_update_workdir}" && -d "${_update_workdir}" ]]; then
@@ -1459,8 +1467,8 @@ update_serialize_begin() {
   local lock_dir
   # Ensure the reports dir exists (same as daemon-apply.sh) so the lock mkdir
   # fails ONLY on genuine contention, not a missing parent.
-  mkdir -p -- "$(update_reports_dir)"
-  lock_dir="$(update_apply_lock_dir)"
+  mkdir -p -- "$(apply_lock_get_reports_dir)"
+  lock_dir="$(apply_lock_get_dir)"
   # Shared stale-reclaim acquire: a crashed daemon (SIGKILL, no EXIT trap) leaves
   # a stranded lock that the lib reclaims once the holder is not-live AND aged
   # past the TTL — so the updater no longer loud-fails forever on a dead lock. A
@@ -2876,6 +2884,170 @@ update_wire_hooks_post_apply() {
   update_log "settings.json hook bindings reconciled to the applied release"
 }
 
+# the update's last line while any profile lacks the queue MCP registration (update_report_queue_mcp_summary)
+_UPDATE_QUEUE_MCP_SUMMARY=""
+
+# Post-apply queue MCP registration — every profile present now, one created after the last registration included.
+# A CLI update at a terminal runs the launcher's queue-mcp writer, which shows each write and asks (default No).
+# Any other update has no one to answer, so the dry run only reports and leaves the summary line. The terminal
+# test comes from the running updater's own lib, as update_reissue_remote_leaf sources it. A failure WARNs
+# and never fails the applied update; the doctor reports the same gaps.
+update_report_queue_mcp_post_apply() {
+  local launcher report rc=0 line
+  launcher="$(update_ga_root)/glass-atrium"
+  if [[ ! -x "${launcher}" ]]; then
+    update_log "WARN: launcher missing or not executable (${launcher}) — the queue MCP registration was not checked"
+    return 0
+  fi
+  if ! declare -F ga_remote_is_terminal >/dev/null; then
+    # shellcheck source=/dev/null
+    source "${_update_script_dir}/../lib/ga-remote.sh"
+  fi
+  # shellcheck disable=SC2310  # pure predicate — the terminal decides who answers
+  if [[ "${_update_headless}" -ne 1 ]] && ga_remote_is_terminal; then
+    "${launcher}" queue-mcp || update_log "WARN: the queue MCP registration failed (rc=$?) — '${launcher} queue-mcp' repeats it"
+    return 0
+  fi
+  report="$("${launcher}" queue-mcp --dry-run 2>&1)" || rc=$?
+  printf '%s\n' "${report}" >&2
+  if [[ "${rc}" -ne 0 ]]; then
+    update_log "WARN: the queue MCP registration check failed (rc=${rc}) — '${launcher} queue-mcp --dry-run' repeats it"
+  else
+    # the launcher's own remedy line (print_queue_mcp_remedy), the doctor's words too
+    while IFS= read -r line; do
+      [[ "${line}" != "queue MCP: registration incomplete"* ]] || _UPDATE_QUEUE_MCP_SUMMARY="${line}"
+    done <<<"${report}"
+  fi
+}
+
+# The summary line the post-apply report left, as the update's last line; never a write
+update_report_queue_mcp_summary() {
+  [[ -z "${_UPDATE_QUEUE_MCP_SUMMARY}" ]] || update_log "${_UPDATE_QUEUE_MCP_SUMMARY}"
+}
+
+# Post-apply `npm ci` / `prisma generate` on an apply-set trigger or a self-heal need
+# (update_get_monitor_heal): a release ships a new package-lock or schema but never node_modules
+# or the git-ignored generated client, and the build's tsc fails on them yet still emits dist/server.
+#   * Registry reach — the updater's only one: this `npm ci`, stdin closed, fetch-bounded,
+#     never `npx`; the bounds miss the postinstall (playwright install chromium).
+#   * Never-installed monitor (no node_modules) → the heal's case (update_get_monitor_heal).
+#   * prisma.config.ts reads DATABASE_URL + SHADOW_DATABASE_URL through env(), which throws when
+#     unset → generate needs monitor/.env, though no DB connection; GA_SKIP_DB_SETUP never skips
+#     a triggered generate.
+#   * `npm ci` deletes node_modules first → after a failure the running monitor survives only on
+#     modules already loaded; a lazy import or a KeepAlive restart fails until recovery.
+update_install_monitor_deps() {
+  local paths monitor_dir need='' heal=''
+  paths=$'\n'"${_update_apply_paths}"$'\n'
+  monitor_dir="$(update_get_monitor_dir)"
+  case "${paths}" in
+    *$'\n'monitor/package-lock.json$'\n'* | *$'\n'monitor/package.json$'\n'*) need=install ;;
+    *$'\n'monitor/prisma/schema.prisma$'\n'* | *$'\n'monitor/prisma.config.ts$'\n'*) need=generate ;;
+    *) ;;
+  esac
+  if [[ ! -d "${monitor_dir}" ]]; then
+    [[ -z "${need}" ]] || update_log "deps: monitor dir absent (${monitor_dir}) — skipping the dependency step"
+    return 0
+  fi
+  [[ "${need}" == install ]] || heal="$(update_get_monitor_heal "${monitor_dir}")"
+  need="${heal:-${need}}"
+  if [[ -z "${need}" ]]; then return 0; fi
+  _update_has_refreshed_deps=1
+  if [[ "${need}" == install ]]; then
+    update_monitor_npm_ci "${monitor_dir}"
+  fi
+  update_monitor_prisma_generate "${monitor_dir}"
+}
+
+# Self-heal need for state no apply set shows (uninstall removes node_modules; the client is
+# git-ignored); nothing when none:
+#   * `install` when the monitor's own tsc or prisma binary is absent, else `generate` when the
+#     client dir (the schema's `output`) is absent
+#   * skips loudly, naming db-setup, under GA_SKIP_DB_SETUP or with no monitor/.env, where
+#     generate cannot succeed
+#   * offline the heal's `npm ci` fails with exit 18 naming db-setup, files applied
+#   * → migrate's node_modules-absent no-op (update_migrate_deploy_post_apply) is a defensive
+#     branch, reached only where the heal skipped
+update_get_monitor_heal() {
+  local monitor_dir="$1" prisma_bin heal='' reason=''
+  # the install's own binary, never the ATRIUM_UPDATE_PRISMA override
+  prisma_bin="$(ATRIUM_UPDATE_PRISMA='' update_get_prisma_bin "${monitor_dir}")"
+  if [[ ! -x "${monitor_dir}/node_modules/.bin/tsc" || ! -x "${prisma_bin}" ]]; then
+    heal=install
+  elif [[ ! -d "${monitor_dir}/src/generated/prisma" ]]; then
+    heal=generate
+  fi
+  if [[ -n "${heal}" && -n "${GA_SKIP_DB_SETUP:-}" ]]; then
+    reason='GA_SKIP_DB_SETUP set'
+  elif [[ -n "${heal}" && ! -e "${monitor_dir}/.env" ]]; then
+    reason="${monitor_dir}/.env absent, which prisma generate needs"
+  fi
+  if [[ -n "${reason}" ]]; then
+    update_log "deps: monitor self-heal SKIPPED (${reason}) — the monitor tooling or generated Prisma client is missing; run '$(update_ga_root)/glass-atrium db-setup', then 'npm run build' in ${monitor_dir}"
+    heal=''
+  fi
+  printf '%s\n' "${heal}"
+}
+
+# npm's default fetch timeout and retries allow minutes → offline fails in bounded time
+# rather than hanging the one-shot job.
+update_monitor_npm_ci() {
+  local monitor_dir="$1" npm rc=0
+  npm="${ATRIUM_UPDATE_NPM:-npm}"
+  update_log "deps: installing monitor dependencies — npm ci from the npm registry (${monitor_dir})"
+  update_ticker_start
+  (cd -- "${monitor_dir}" && "${npm}" ci --no-audit --no-fund --fetch-timeout=60000 --fetch-retries=1 </dev/null) || rc=$?
+  update_ticker_stop
+  if [[ "${rc}" -ne 0 ]]; then
+    update_die_monitor_deps "npm ci" "${rc}" "npm registry unreachable (offline?), or a dependency or its postinstall (playwright install chromium) failed — see the npm output above" "${monitor_dir}"
+  fi
+  update_log "deps: monitor dependencies installed"
+}
+
+# prisma generate from the monitor root, so prisma.config.ts is in scope.
+update_monitor_prisma_generate() {
+  local monitor_dir="$1" prisma_bin rc=0
+  prisma_bin="$(update_get_prisma_bin "${monitor_dir}")"
+  if [[ -z "${prisma_bin}" ]]; then
+    update_log "deps: prisma generate SKIPPED — monitor dependencies not installed (${monitor_dir}/node_modules absent); run 'npm ci' in ${monitor_dir}, then '$(update_ga_root)/glass-atrium db-setup'"
+    return 0
+  fi
+  if [[ ! -x "${prisma_bin}" ]]; then
+    update_die_monitor_deps "prisma generate" 127 "prisma CLI missing or not executable (${prisma_bin})" "${monitor_dir}"
+  fi
+  update_log "deps: regenerating the Prisma client (${monitor_dir})"
+  (cd -- "${monitor_dir}" && "${prisma_bin}" generate </dev/null) || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    update_die_monitor_deps "prisma generate" "${rc}" "monitor/.env missing or DATABASE_URL / SHADOW_DATABASE_URL unset (prisma.config.ts reads both), or the schema is invalid — see the prisma output above" "${monitor_dir}"
+  fi
+  update_log "deps: Prisma client regenerated"
+}
+
+# The prisma CLI the generate and migrate steps run: ATRIUM_UPDATE_PRISMA outright, else the
+# monitor's own binary (`npx` would reach the registry unbounded). Empty → dependencies never installed.
+update_get_prisma_bin() {
+  local monitor_dir="$1"
+  if [[ -z "${ATRIUM_UPDATE_PRISMA:-}" && ! -d "${monitor_dir}/node_modules" ]]; then
+    return 0
+  fi
+  printf '%s\n' "${ATRIUM_UPDATE_PRISMA:-${monitor_dir}/node_modules/.bin/prisma}"
+}
+
+# Exit 18 naming the failed sub-step, its likely cause and the full recovery.
+# Args: $1 sub-step · $2 rc · $3 cause · $4 monitor dir.
+update_die_monitor_deps() {
+  local root
+  root="$(update_ga_root)"
+  update_die_code 18 "$1 failed (rc=$2) — $3. Update files APPLIED; migrations were NOT applied and the monitor was NOT rebuilt or restarted. Do not restart the monitor before recovering: '${root}/glass-atrium db-setup' (npm ci, prisma generate, migrate deploy), then 'npm run build' in $4, then restart the monitor"
+}
+
+# Recovery suffix for a failure after the dependency step rewrote node_modules this run: the
+# old dist/server may not load against them. Empty when the step did not run.
+update_get_rebuild_note() {
+  [[ "${_update_has_refreshed_deps}" -eq 1 ]] || return 0
+  printf '%s\n' "; the monitor dependencies or Prisma client were refreshed this run, so run 'npm run build' in ${1} before restarting the monitor"
+}
+
 # ---------------------------------------------------------------------------
 # Post-apply Prisma migration deploy — schema parity with the applied code
 # ---------------------------------------------------------------------------
@@ -2903,10 +3075,8 @@ update_wire_hooks_post_apply() {
 # monitor root so prisma.config.ts is the config in scope, and let ITS
 # `dotenv/config` + env("DATABASE_URL") supply the connection string (Prisma 7
 # does not auto-load .env). The URL is never read, reconstructed, echoed or
-# logged here — no credential enters this process (core-security.md). The CLI is
-# the monitor's OWN installed binary rather than `npx prisma`: npx silently
-# reaches the registry when node_modules is absent, which inside an updater is a
-# hang rather than a diagnosis.
+# logged here — no credential enters this process (core-security.md). The CLI comes
+# from update_get_prisma_bin.
 #
 # LOUD-FAIL (Precondition Loud-Fail Principle): an unresolvable prisma CLI, an
 # unreachable database, or a failing migration all exit with the NAMED code 15
@@ -2931,23 +3101,22 @@ update_wire_hooks_post_apply() {
 #   * GA_SKIP_DB_SETUP — the same opt-out setup_database (lib/ga-db.sh) and doctor
 #     §21 honour, so a sandbox/CI run never touches machine-global PostgreSQL.
 #   * no prisma/migrations directory under the monitor root — nothing to apply.
-#   * no monitor node_modules at all — the dependencies were never installed here.
-#     That is a DEGRADED but recoverable install, not a broken one: `npm ci` is this
+#   * no monitor node_modules at all — the dependencies were never installed here; a
+#     defensive branch (update_get_monitor_heal). That is a DEGRADED but recoverable install, not a broken one: `npm ci` is this
 #     project's documented self-heal for it (lib/ga-core.sh and lib/ga-tui-run.sh both
 #     run it before the monitor build) and uninstall deliberately REMOVES node_modules
 #     as a regenerable artifact. Hard-failing here would brick `glass-atrium update` on
 #     every machine sitting in that state — including one mid-reinstall — while the
 #     migrations directory itself ships with the release, so the state is reached by
-#     updating rather than by breaking anything. An EXPLICIT ATRIUM_UPDATE_PRISMA
-#     override bypasses the branch: naming a binary means use it.
+#     updating rather than by breaking anything.
 # None of the three runs the unadjudicated backfill, and neither does a deploy whose
 # target was overridden (the DB-target skip in update_run_unadjudicated_backfill); the
 # re-arm marker written first leaves each of them to the daemon cycle head.
 update_migrate_deploy_post_apply() {
   local root monitor_dir prisma_bin rc=0
   root="$(update_ga_root)"
-  monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-${root}/monitor}"
-  prisma_bin="${ATRIUM_UPDATE_PRISMA:-${monitor_dir}/node_modules/.bin/prisma}"
+  monitor_dir="$(update_get_monitor_dir)"
+  prisma_bin="$(update_get_prisma_bin "${monitor_dir}")"
 
   update_rearm_unadjudicated_backfill
   if [[ -n "${GA_SKIP_DB_SETUP:-}" ]]; then
@@ -2958,14 +3127,14 @@ update_migrate_deploy_post_apply() {
     update_log "migrate: no migrations directory under ${monitor_dir} — nothing to apply"
     return 0
   fi
-  if [[ -z "${ATRIUM_UPDATE_PRISMA:-}" && ! -d "${monitor_dir}/node_modules" ]]; then
+  if [[ -z "${prisma_bin}" ]]; then
     update_log "migrate: SKIPPED — monitor dependencies not installed (${monitor_dir}/node_modules absent); PENDING migrations stay pending. Run 'npm ci' in ${monitor_dir}, then '${root}/glass-atrium db-setup'; '${root}/glass-atrium doctor' reports what is still pending"
     return 0
   fi
   # node_modules IS present (or a binary was named outright) and the CLI still is not
   # there — that is a broken install rather than an uninstalled one, so it loud-fails.
   if [[ ! -x "${prisma_bin}" ]]; then
-    update_die_code 15 "prisma CLI missing or not executable (${prisma_bin}) — update files APPLIED but PENDING migrations were NOT applied; reinstall the monitor dependencies (npm ci in ${monitor_dir}), then run '${root}/glass-atrium db-setup'"
+    update_die_code 15 "prisma CLI missing or not executable (${prisma_bin}) — update files APPLIED but PENDING migrations were NOT applied; reinstall the monitor dependencies (npm ci in ${monitor_dir}), then run '${root}/glass-atrium db-setup'$(update_get_rebuild_note "${monitor_dir}")"
   fi
 
   update_log "migrate: applying pending Prisma migrations (${monitor_dir})"
@@ -2973,7 +3142,7 @@ update_migrate_deploy_post_apply() {
   update_heartbeat
   (cd -- "${monitor_dir}" && "${prisma_bin}" migrate deploy) || rc=$?
   if [[ "${rc}" -ne 0 ]]; then
-    update_die_code 15 "prisma migrate deploy failed (rc=${rc}) — update files APPLIED but the database schema was NOT migrated (database unreachable, or a migration errored — see the prisma output above); the monitor was NOT restarted. Recover with '${root}/glass-atrium db-setup', then '${root}/glass-atrium doctor'"
+    update_die_code 15 "prisma migrate deploy failed (rc=${rc}) — update files APPLIED but the database schema was NOT migrated (database unreachable, or a migration errored — see the prisma output above); the monitor was NOT restarted. Recover with '${root}/glass-atrium db-setup', then '${root}/glass-atrium doctor'$(update_get_rebuild_note "${monitor_dir}")"
   fi
   update_log "migrate: pending Prisma migrations applied"
   update_run_unadjudicated_backfill "${root}"
@@ -2983,7 +3152,7 @@ update_migrate_deploy_post_apply() {
 # no-op or failure can return, so the backfill still runs when the hand-off below does not.
 update_rearm_unadjudicated_backfill() {
   local reports
-  reports="$(update_reports_dir)"
+  reports="$(apply_lock_get_reports_dir)"
   if ! { mkdir -p -- "${reports}" && : >"${reports}/.unadjudicated-backfill-pending"; }; then
     update_log "WARN: could not write the unadjudicated-backfill re-arm marker under ${reports} — the update continues; the next update or '$(update_ga_root)/glass-atrium db-setup' re-arms it"
   fi
@@ -3004,7 +3173,7 @@ update_run_unadjudicated_backfill() {
     update_log "WARN: unadjudicated backfill skipped — no entry point at ${mode}; the re-arm marker leaves it to the daemon cycle"
     return 0
   fi
-  reports="$(update_reports_dir)"
+  reports="$(apply_lock_get_reports_dir)"
   update_log "migrate: running the unadjudicated backfill (${reports})"
   python3 "${mode}" --backfill-unadjudicated --reports-dir "${reports}" >&2 || rc=$?
   update_log_backfill_rc "${rc}"
@@ -3455,25 +3624,28 @@ PLIST
 # runner.
 # ---------------------------------------------------------------------------
 
-# Build the monitor (tsc + build:assets + build:client via `npm run build`). Returns
-# non-zero on build failure (headless: fatal → job 'failed'; CLI: a warning).
+# Build the monitor (tsc + build:assets + build:client via `npm run build`), gated on
+# `npm run typecheck`: tsc emits even on a type error, so the no-emit check first keeps
+# the previous dist/server + dist/generated pair intact. Non-zero on failure → exit 9.
 update_build_monitor() {
   local monitor_dir npm
-  monitor_dir="${ATRIUM_UPDATE_MONITOR_DIR:-$(update_ga_root)/monitor}"
+  monitor_dir="$(update_get_monitor_dir)"
   npm="${ATRIUM_UPDATE_NPM:-npm}"
   if [[ ! -d "${monitor_dir}" ]]; then
     update_log "post-step: monitor dir absent (${monitor_dir}) — skipping build"
     return 0
   fi
   update_log "post-step: building monitor (${monitor_dir})"
-  (cd -- "${monitor_dir}" && "${npm}" run build)
+  (cd -- "${monitor_dir}" && "${npm}" run typecheck && "${npm}" run build)
 }
 
-# Re-render the launchd plists + monitor env for config parity (FIXED script paths,
+# Re-resolve the config.toml binaries, then re-render the launchd plists + monitor env for config parity (FIXED script paths,
 # never request-derived — SECURITY), then (re)render the decoupled one-shot plist.
 # Each render is best-effort + loud (a failure warns, never aborts the applied update).
 update_render_parity() {
   local render_launchd render_monitor_env
+  # [paths] binaries first, so the plists below render from them
+  update_repair_config_binaries
   render_launchd="${ATRIUM_UPDATE_RENDER_LAUNCHD:-${_update_script_dir}/render-launchd-plists.sh}"
   render_monitor_env="${ATRIUM_UPDATE_RENDER_MONITOR_ENV:-${_update_script_dir}/render-monitor-env.sh}"
   # Loud-fail an absent/non-executable render script (Precondition Loud-Fail Principle) — a SILENT
@@ -3491,6 +3663,47 @@ update_render_parity() {
     update_log "WARN: render-monitor-env.sh missing or non-executable (${render_monitor_env}) — monitor env parity SKIPPED; ATRIUM_* env NOT rendered (monitor will fall back to dev schedules + UTC day-bucket)"
   fi
   update_render_oneshot_plist >/dev/null 2>&1 || update_log "WARN: one-shot plist render failed"
+}
+
+# The launcher's repair keeps a working value and moves a Homebrew Cellar one to its version-free twin (the fix for
+# an install whose node path breaks on an upgrade); never the template render, so every other config byte stays.
+# Its lines (a moved key, the backup) reach the log. Best-effort + loud like the renders.
+update_repair_config_binaries() {
+  local launcher usage report rc=0 line
+  launcher="$(update_ga_root)/glass-atrium"
+  if [[ ! -x "${launcher}" ]]; then
+    update_log "WARN: launcher missing or not executable (${launcher}) — config.toml [paths] binaries not re-resolved"
+    return 0
+  fi
+  # a launcher older than the subcommand refuses it as unknown → probe its usage, so that is never logged as a failed repair
+  usage="$("${launcher}" --help 2>/dev/null)" || usage=""
+  if [[ "${usage}" != *"glass-atrium repair-config-binaries"* ]]; then
+    update_log "note: launcher (${launcher}) has no repair-config-binaries subcommand — config.toml [paths] binaries left as they are"
+    return 0
+  fi
+  report="$("${launcher}" repair-config-binaries 2>&1 >/dev/null)" || rc=$?
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] || update_log "${line}"
+  done <<<"${report}"
+  [[ "${rc}" -eq 0 ]] || update_log "WARN: config binary repair failed (rc=${rc}) — config.toml [paths] binaries not re-resolved; run '${launcher} repair-config-binaries'"
+}
+
+# Reissue the remote leaf while access is on and the leaf is due (expiry, address or name); never turns
+# access on and never creates a CA. Best-effort + loud like the renders.
+update_reissue_remote_leaf() {
+  local dir
+  [[ "$(atrium_toml_get "[remote_access]" "enabled")" == "true" ]] || return 0
+  if ! declare -F ga_remote_issue_leaf >/dev/null; then
+    # shellcheck source=/dev/null
+    source "${_update_script_dir}/../lib/ga-remote.sh"
+  fi
+  dir="$(ga_remote_get_key_dir)"
+  [[ -f "${dir}/ca.key" ]] || return 0
+  # shellcheck disable=SC2310  # a failed due check or reissue is reported here, never an abort
+  if ga_remote_is_leaf_due "${dir}" && ! ga_remote_issue_leaf "${dir}"; then
+    update_log "WARN: remote leaf reissue failed — the current leaf stays; run 'glass-atrium remote reissue'"
+  fi
+  return 0
 }
 
 # Refresh the monitor's launchd job. PROBE with `launchctl print` first: loaded →
@@ -3580,6 +3793,41 @@ update_launchd_jobs_from_ga_env() {
     printf '%s\n' "${LAUNCHD_JOBS[@]}"
   )
 }
+
+# Harness tamper report (lib/ga-doctor.sh → get_integrity_drift), logged and recorded for the
+# session-start line. $1 = before (preflight: what this update is about to restore is on record) or
+# after (the restored state, so the session line is current). Detection only: an unrunnable check is
+# one log line and the update proceeds.
+update_report_integrity() {
+  local stage="$1" root report line count
+  root="$(update_ga_root)"
+  if [[ ! -f "${root}/lib/ga-core.sh" ]]; then
+    update_log "integrity ${stage} update: skipped — ${root}/lib/ga-core.sh absent"
+    return 0
+  fi
+  # GA-ABSORB[handled@the could-not-run line below]: a failed source or init is reported, never fatal
+  report="$(update_get_integrity_report "${root}")" || report=""
+  count="${report##*$'\n'}"
+  if [[ ! "${count}" =~ ^[0-9]+$ ]]; then
+    update_log "integrity ${stage} update: the check could not run — run 'glass-atrium doctor'"
+    return 0
+  fi
+  while IFS= read -r line; do
+    if [[ -n "${line}" && "${line}" != "${count}" ]]; then update_log "integrity ${stage} update: ${line#"${line%%[![:space:]]*}"}"; fi
+  done <<<"${report%$'\n'*}"
+  update_log "integrity ${stage} update: ${count} finding(s) (detection only — 'glass-atrium doctor' lists the current ones)"
+}
+
+# get_integrity_drift's report (stderr findings + the stdout count) from install root $1, rc 1 when
+# the engine cannot load. Isolated subshell for the reason update_launchd_jobs_from_ga_env gives:
+# ga-env.sh's readonly globals must not reach this script.
+update_get_integrity_report() (
+  trap - ERR
+  # shellcheck source=/dev/null
+  source "${1}/lib/ga-core.sh" >/dev/null 2>&1 || exit 1
+  ga_init_env "${1}" >/dev/null 2>&1 || exit 1
+  get_integrity_drift 2>&1
+)
 
 # Re-deploy + reload EVERY resident (already-loaded) com.glass-atrium.* launchd job whose
 # deployed plist has DRIFTED from the freshly-rendered SoT, so a renderer / PATH /
@@ -3685,6 +3933,7 @@ update_post_step() {
   fi
   update_heartbeat
   update_render_parity
+  update_reissue_remote_leaf
   update_refresh_monitor_launchd
   update_refresh_resident_launchd
   update_log "post-step: install-parity complete"
@@ -3989,32 +4238,46 @@ update_restore_agents() {
 # ---------------------------------------------------------------------------
 
 # Single success-path finalizer. On the applied path (did_apply=1) in headless mode
-# run the install-parity post-step (fatal on build failure → exit 9); in CLI mode run
-# the best-effort monitor rebuild only. Then mark the job completed (a CLI no-op).
+# run the install-parity post-step; in CLI mode run the monitor rebuild, the parity
+# renders and the leaf reissue, never a restart. A build failure is exit 9 in both.
+# Then mark the job completed (a CLI no-op).
 # did_apply=0 (a no-op "already up to date" path) skips both (nothing was applied).
 update_finalize_success() {
   local did_apply="${1:-0}"
   if [[ "${did_apply}" -eq 1 ]]; then
     if [[ "${_update_headless}" -eq 1 ]]; then
       if ! update_post_step; then
-        update_die_code 9 "install-parity post-step (monitor build / launchd refresh) failed — update files applied but the monitor was not rebuilt/restarted; retry"
+        update_die_monitor_build "install-parity post-step: monitor build failed"
       fi
     else
       update_build_monitor_cli
+      update_render_parity
+      update_reissue_remote_leaf
     fi
   fi
   update_job_complete
 }
 
 # CLI apply whose set touches monitor/ → rebuild, so the served bundle is not stale.
-# A failure warns, never fails the applied update; the restart stays headless-only.
+# The restart stays headless-only.
 update_build_monitor_cli() {
   [[ $'\n'"${_update_apply_paths}" == *$'\n'monitor/* ]] || return 0
-  if update_build_monitor; then
-    update_log "monitor not restarted by a CLI update — restart the monitor to load a server-side change"
-  else
-    update_log "WARN: monitor build failed — update files applied; rebuild by hand: (cd monitor && npm run build)"
+  if ! update_build_monitor; then
+    update_die_monitor_build "monitor build failed"
   fi
+  update_log "monitor not restarted by a CLI update — restart the monitor to load a server-side change"
+}
+
+# Exit 9 with the rebuild recovery; node_modules absent → the build cannot run until db-setup
+# installs them, so the recovery leads with that. Args: $1 = what failed.
+update_die_monitor_build() {
+  local monitor_dir recovery
+  monitor_dir="$(update_get_monitor_dir)"
+  recovery="Fix the cause, then 'npm run build' in ${monitor_dir}"
+  if [[ ! -d "${monitor_dir}/node_modules" ]]; then
+    recovery="The monitor dependencies are not installed (${monitor_dir}/node_modules absent): run '$(update_ga_root)/glass-atrium db-setup' (npm ci, prisma generate, migrate deploy), then 'npm run build' in ${monitor_dir}"
+  fi
+  update_die_code 9 "$1 (see the npm output above) — update files APPLIED but the monitor was NOT restarted; a type error leaves the previous dist in place. ${recovery} before restarting the monitor"
 }
 
 # ---------------------------------------------------------------------------
@@ -4049,6 +4312,64 @@ monitor/ rebuilds the monitor but does not restart it. Headless additionally
 tracks the core.update_job row and runs the install-parity post-step. No
 path-pattern refusal holds a changed row back for manual review.
 USAGE
+}
+
+# Pricing-roster gate, after verify and before the swap: a release whose hooks/pricing.json has no
+# row for a model id this install ran would have the cost hook price that id at a guessed rate.
+# Reads the release-tree copy, hash-checked here: staging holds only changed paths, and the
+# installed copy can carry rows the loader's self-refresh added that the release lacks.
+# Only a verdict of unpriced ids refuses; no verdict (database unavailable, a loader that rejects
+# a newer schema, a missing checker) warns and applies, so the gate never blocks on itself.
+# $1 = extracted release dir · $2 = release manifest · $3 = install root.
+update_check_pricing_roster() {
+  local pricing="$1/hooks/pricing.json" manifest="$2" root="$3" checker unpriced rc=0
+  # shellcheck disable=SC2310  # predicate in a condition by design — it logs its own skip
+  update_is_verified_release_pricing "${pricing}" "${manifest}" || return 0
+  if [[ -n "${GA_SKIP_DB_SETUP:-}" ]] || ! update_db_enabled; then
+    update_log "WARN: pricing-roster check skipped — database opt-out (GA_SKIP_DB_SETUP, ATRIUM_UPDATE_DB=off or no psql); the release's pricing.json is unchecked against the model ids this install ran"
+    return 0
+  fi
+  checker="${ATRIUM_UPDATE_PRICING_CHECK:-${_update_script_dir}/check-pricing-roster.sh}"
+  unpriced="$("${checker}" "${pricing}")" || rc=$? # GA-ABSORB[handled@update_check_pricing_roster]: rc selects refuse or warn below
+  case "${rc}" in
+    0) update_log "pricing-roster check: every model id this install ran has a pricing row" ;;
+    3) update_refuse_unpriced_models "${root}" "$(printf '%s' "${unpriced}" | tr '\n' ' ')" ;;
+    *) update_log "WARN: pricing-roster check gave no verdict (rc=${rc}: database unavailable or the check could not run) — applying unchecked" ;;
+  esac
+}
+
+# rc 0 when the release ships hooks/pricing.json at its manifest hash. A release without the file
+# skips the gate (rc 1, logged); a copy off its hash is a corrupt download and ends the run.
+update_is_verified_release_pricing() {
+  local pricing="$1" manifest="$2" want got
+  want="$(spine_get_manifest_hash "${manifest}" "hooks/pricing.json")"
+  if [[ -z "${want}" || ! -f "${pricing}" ]]; then
+    update_log "WARN: the release ships no hooks/pricing.json — pricing-roster check skipped"
+    return 1
+  fi
+  got="$(spine_sha256_of "${pricing}")" || update_die "could not hash the release's hooks/pricing.json"
+  [[ "${got}" == "${want}" ]] \
+    || update_die "per-file hash verification failed for hooks/pricing.json (want=${want} got=${got}) — corrupt download, refusing to apply"
+}
+
+# Record the unpriced verdict in the run ledger (Precondition Loud-Fail's third leg), then refuse
+# with exit 19 unless ATRIUM_UPDATE_ALLOW_UNPRICED applies past it. $1 = install root · $2 = ids.
+update_refuse_unpriced_models() {
+  local root="$1" ids="$2" outcome=refused dest
+  [[ -z "${ATRIUM_UPDATE_ALLOW_UNPRICED:-}" ]] || outcome=allowed-by-override
+  dest="$(update_declines_dir "${root}")"
+  if mkdir -p -- "${dest}" \
+    && printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${outcome}" "${ids}" >>"${dest}/pricing-roster.log"; then
+    update_log "  pricing-roster verdict recorded → ${dest}/pricing-roster.log"
+  else
+    update_log "WARN: could not persist the pricing-roster verdict (${dest}) — it is stderr-only"
+  fi
+  if [[ "${outcome}" != refused ]]; then
+    update_log "WARN: ATRIUM_UPDATE_ALLOW_UNPRICED set — applying a release whose hooks/pricing.json has no row for: ${ids}"
+    return 0
+  fi
+  update_job_fail "pricing-roster: no pricing row for ${ids} (exit=19)"
+  update_die_code 19 "the release's hooks/pricing.json has no row for model id(s) this install ran: ${ids} — the cost hook would price them at a guessed rate; update once a release adds the rows, or apply anyway with ATRIUM_UPDATE_ALLOW_UNPRICED=1"
 }
 
 # The committing callback for the non-agent sync: snapshot+swap the staged change
@@ -4465,6 +4786,9 @@ update_run() {
   update_job_begin
   update_headless_load_claude_auth
 
+  # Step 1.5 — integrity preflight: report-only tamper record before the apply.
+  update_report_integrity before
+
   # Step 2 — download + stage the latest release.
   work="$(mktemp -d -t glass-atrium-update.XXXXXX)"
   _update_workdir="${work}"
@@ -4553,6 +4877,7 @@ update_run() {
     # the "update available" badge (DF-10) — the full-apply path persists via
     # update_refresh_mirror_farm, which this early return never reaches.
     update_persist_root_manifest "${manifest}" "${root}"
+    update_report_integrity after
     update_finalize_success 0
     return 0
   fi
@@ -4564,6 +4889,10 @@ update_run() {
   update_heartbeat
   spine_stage_and_verify "${new_dir}" "${manifest}" "${staging}" <"${apply_paths}" \
     || update_die "per-file hash verification failed — corrupt download, refusing to apply"
+
+  # Step 4.5 — pricing-roster gate: exit 19 before the swap on a model id this install ran that
+  # the release's pricing.json cannot price.
+  update_check_pricing_roster "${new_dir}" "${manifest}" "${root}"
 
   # Step 5 — deterministic snapshot+swap of every staged change.
   _update_apply_paths="$(cat "${apply_paths}")"
@@ -4599,6 +4928,11 @@ update_run() {
   # Runs AFTER the verified apply + farm refresh so the atomic-restore/rollback
   # contract is intact and the hook files the bindings point at already exist.
   update_wire_hooks_post_apply
+  update_report_queue_mcp_post_apply
+
+  # Step 8.5 — refresh the monitor dependencies / Prisma client BEFORE migrate (so it runs
+  # the CLI the release pins) and before the build — see update_install_monitor_deps.
+  update_install_monitor_deps
 
   # Step 9 — apply PENDING Prisma migrations. Position is load-bearing: AFTER the
   # verified file apply (so the new migration directories are on disk) and BEFORE
@@ -4607,11 +4941,15 @@ update_run() {
   # the applied files in place — see update_migrate_deploy_post_apply.
   update_migrate_deploy_post_apply
 
+  # Step 9.5 — record the restored state, so the session-start line stops showing the preflight count.
+  update_report_integrity after
+
   # Headless success finalize: install-parity post-step (monitor rebuild + launchd
   # refresh) then mark the update_job row completed. Interactive mode rebuilds a
-  # changed monitor only.
+  # changed monitor and re-renders the env and plists, with no restart.
   update_finalize_success 1
   update_log "update complete"
+  update_report_queue_mcp_summary
 }
 
 # Usage checks for the operator reset flags, once every argument is read (flag order is

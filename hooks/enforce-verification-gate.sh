@@ -1,88 +1,72 @@
 #!/usr/bin/env bash
 # enforce-verification-gate.sh — PreToolUse(Agent) verification-gate hook.
 #
-# Six distinct surfaces on a DEV subagent spawn:
-#   1) reviewer-miss BLOCK (channel-a: emit_error stderr JSON + exit 2, code VGATE-REVIEWER-001) — a
+# Eight distinct surfaces on a DEV subagent spawn, every one advisory: the hook exits 0 on every path.
+#   1) reviewer-miss WARNING (emit_error stderr JSON, severity warn, code VGATE-REVIEWER-001) — a
 #      plan-referencing DEV spawn with no qa-code-reviewer recorded this session, surfacing the missing
-#      Stage-2 gate. Promoted from a stderr-advisory to a block so it matches its sibling attestation
-#      checks (VGATE-ENTRY-001 / VGATE-SIZE-001). GUARDED by hook_is_subagent like surface 2: only an
-#      orchestrator-origin spawn (agent_id absent) composes the Stage-2 {qa-code-reviewer, DEV} team, so
-#      it blocks there; a NESTED sub-worker origin (agent_id present) keeps only the informational
-#      stderr advisory (exit 0) and is never false-blocked (see the nested-spawn scope note below).
-#   2) size-est-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — an ORCHESTRATOR-ORIGIN DEV
-#      spawn (agent_id absent) carrying NO [SIZE-EST] token. That contract applies to every DEV spawn except a simple-task
-#      entry (skills/glass-atrium-ops-orchestrator-role.md ### Spawn Budget), so it fires even for a plan-bearing spawn. GUARDED by
-#      hook_is_subagent: a nested sub-worker origin (agent_id present) does NOT load the token-defining
-#      rules → never blocked (directionally fail-safe: misread ⇒ skipped block, never a false-block).
-#      Runs BEFORE surfaces 1/3 so plan-bearing spawns are checked.
-#   3) entry-miss BLOCK (channel-a: emit_error stderr JSON + exit 2) — a DEV spawn with NEITHER a
-#      plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss); that token is the
-#      escape hatch for legitimate small DEV work. Non-DEV spawns exit 0; plan-bearing spawns clear
-#      THIS branch (but still face surface 2).
+#      Stage-2 gate. An orchestrator-origin spawn (agent_id absent) gets the structured warning and a
+#      trace line; a NESTED sub-worker origin (agent_id present) gets a plain stderr line only.
+#   2) size-est-miss WARNING (emit_error stderr JSON, severity warn, code VGATE-SIZE-001) — an
+#      ORCHESTRATOR-ORIGIN DEV spawn (agent_id absent) carrying NO [SIZE-EST] token. That contract applies
+#      to every DEV spawn except a simple-task entry (skills/glass-atrium-ops-orchestrator-role.md
+#      ### Spawn Budget), so it fires even for a plan-bearing spawn. A nested sub-worker origin does NOT
+#      load the token-defining rules → never warned. Runs BEFORE surfaces 1/3.
+#   3) entry-miss WARNING (emit_error stderr JSON, severity warn, code VGATE-ENTRY-001) — a DEV spawn with
+#      NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task token (the silent entry-miss). Non-DEV
+#      spawns exit 0 silently; plan-bearing spawns clear THIS branch (but still face surface 2).
+#   Surfaces 1 and 3 exclude each other (plan-reference or none); surface 2 can join either. No
+#      warning ends the hook: every warned spawn still reaches surfaces 4-6.
 #   SIMPLE-TASK ENTRY — a spawn carrying [ENTRY-CLASS] simple-task and NO plan-reference exits 0
-#      silently before surfaces 2-5: it owes no other attestation token and no reviewer.
+#      silently before surfaces 2-5 and 7: it owes no other attestation token and no reviewer.
 #   4) scope-miss ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin DEV spawn whose
-#      prompt carries no bare line-opening [SCOPE] declaration. Advisory-first deliberately: a syntactic
-#      scan cannot tell a relayed line-opening declaration from the real one, so promotion to exit 2
-#      waits on accumulated false-positive data plus an explicit user decision. Emitted on the PASS
-#      paths only, after every verdict above.
+#      prompt carries no bare line-opening [SCOPE] declaration, whatever surfaces 1-3 reported.
 #   5) deep-review ADVISORY (stderr, exit 0 — never a block) — a carried [SCOPE] declaration listing
 #      DEEP_REVIEW_FILE_THRESHOLD or more paths, or any path under DEEP_REVIEW_SENSITIVE_PREFIXES,
 #      nudges the orchestrator to compose a Deep (4-pass) review whatever confidence the writer
 #      reports. Counts through the shared scope_decl_files parser; an unparseable declaration is
 #      silence, never a guess. The routing decision itself stays orchestrator prose (honor-system).
 #   6) implementing ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin, plan-referencing
-#      DEV spawn past the reviewer check whose cited plan (authored by glass-atrium-intel-planner) is
+#      DEV spawn whose cited plan (authored by glass-atrium-intel-planner) is
 #      still at doc_review is nudged to record the `implementing` stage, so the session-start open-plan
 #      list carries the plan until it closes. Another author's document is never named — a stage write
 #      would pin a reporter's standing tracker to that list for good. The hook's only monitor read;
 #      PreToolUse-only (the PostToolUse branch exits first); fails open to silence, verdict unchanged.
+#   7) units ADVISORY (stderr, exit 0 — never a block) — an orchestrator-origin [SIZE-EST] declaring
+#      units= above 1: one work-unit per DEV spawn by default, tiny units may share one, so it is a
+#      prompt to check. The key is optional — absent means silence.
+#   8) live-index-owner ADVISORY (stderr, exit 0 — never a block) — a DEV spawn whose prompt carries
+#      the `worktree <path> — INDEX OWNER` contract while another agent's writer lock
+#      (lib/worktree-lock.sh) still holds that worktree. Runs before the simple-task exit: a second
+#      index owner races the one index whatever the entry class.
 #
-# Nested-spawn scope (T6): the former spawn-depth predicate is dropped, not deferred — the inner
-#   envelope exposes only an opaque agent id with no parent linkage, so such a check would land as a
-#   no-op. NESTED spawns therefore remain UNGATED (recorded here, not masked): both the reviewer-miss
-#   and [SIZE-EST] blocks fire on orchestrator origin only (the hook_is_subagent guard), so a nested
-#   sub-worker origin is never false-blocked.
+# Nested-spawn scope: the inner envelope exposes only an opaque agent id with no parent linkage, so a
+#   spawn-depth predicate would land as a no-op. NESTED spawns therefore remain ungated: they draw no
+#   structured warning (the hook_is_subagent guard), only the reviewer-miss plain line.
 #
-# BLOCK FIRING TRACE (durable, observability-only): every block path appends ONE verdict-tagged line
+# FIRING TRACE (durable, observability-only): every surface 1-3 warning appends ONE verdict-tagged line
 #   to ${GA_DATA_ROOT:-~/.glass-atrium}/data/verification-gate-fired.log (env override VGATE_FIRED_LOG,
-#   line cap VGATE_FIRED_LOG_CAP, default 1000). Closes the asymmetry with the workflow path, whose gate
-#   already records every firing: the manual path's emit_error output is ephemeral to the turn and the
-#   session-spawns marker records EXECUTED spawns by design, so a spawn blocked before it started left
-#   no durable trace at all. Verdict tags: block-sizeest · block-reviewer · block-entry (one per block
-#   surface). Read it back with `enforce-verification-gate.sh --block-counts`.
-#   NOT an outcome row: the outcome `result` enum is a closed five-value set that cannot express a
-#   never-started spawn, and a row for an agent that never ran pollutes a table whose every consumer
-#   assumes a real run.
-#   FAIL-SAFE ISOLATION IS LOAD-BEARING, NOT STYLISTIC: this hook's ERR trap exits ZERO (fail-open), so
-#   any statement added to a block path that trips it converts a BLOCK into a PASS. emit_gate_trace
-#   therefore runs its whole body in a parenthesized subshell with stderr suppressed and the enclosing
-#   statement made unconditionally successful, every step carrying its own exit-zero fallback. With
-#   errtrace set the trap IS inherited into that subshell — but its exit-zero then terminates only the
-#   subshell, which the enclosing `|| true` absorbs, so the isolation holds even against a trap fire (an
-#   inline append cannot claim that). The trace is emitted AFTER emit_error and immediately before
-#   exit 2, so a trace failure can never preempt the operator-facing error.
-#   PRUNE RACE (accepted, not designed around): the line-cap prune reads with tail into a temp file then
-#   renames, so lines appended between the read and the rename are lost. The same race exists in the
-#   proven workflow-gate pattern; this sink is observability-only and is never read for a verdict.
-#   REGISTER ONCE, TRACE ONCE: the hook is registered on BOTH PreToolUse and PostToolUse (DF-5 below).
-#   The trace belongs to the PreToolUse block paths ONLY — the PostToolUse surface records executed
-#   spawns by design, and a line fired there would record a STARTED spawn in a sink whose whole meaning
-#   is "never started".
+#   line cap VGATE_FIRED_LOG_CAP, default 1000). Verdict tags: block-sizeest · block-reviewer ·
+#   block-entry — each names the tripped check; the spawn itself still runs. Read it back with
+#   `enforce-verification-gate.sh --block-counts`. NOT an outcome row: the spawn's own run records that.
+#   emit_gate_trace runs in a parenthesized subshell with stderr suppressed and `|| true`, so a trace
+#   failure can neither replace the warning nor change the exit.
+#   PRUNE RACE (accepted): the line-cap prune reads with tail into a temp file then renames, so lines
+#   appended between the read and the rename are lost; the sink is never read for a verdict.
+#   TRACE ONCE: the trace belongs to the PreToolUse warning paths ONLY — the PostToolUse surface stamps
+#   executed spawns, a different record.
 #
 # Manual-path only — ultracode/Workflow agent() spawn does not fire PreToolUse(Agent), so that
-#   path's equivalent entry-miss block lives in enforce-workflow-verify-stage.sh (skills/glass-atrium-ops-orchestrator-role.md).
+#   path's equivalent entry-miss warning lives in enforce-workflow-verify-stage.sh (skills/glass-atrium-ops-orchestrator-role.md).
 # Session state: agent_events has no session_id column + async PG write → no synchronous lookup, so
 #   an EXECUTED spawn appends its agent_type to a local marker (session-spawns/<key>), read here.
 # Dual-event (DF-5): registered on BOTH PreToolUse(Agent) AND PostToolUse(Agent).
 #   - PreToolUse: READ the reviewer-present snapshot + run all verdict/advisory logic. NEVER stamps.
 #   - PostToolUse: STAMP the marker (the spawn actually executed) + prune. No verdict logic.
-#   A spawn blocked at PreToolUse (this gate's exit 2, or a sibling hook) reaches no PostToolUse, so
-#   it leaves NO stamp — no false reviewer-present, no inflated spawn-budget counter. Sequential
-#   reviewer→DEV still passes: the reviewer's PostToolUse commits its qa-code-reviewer line before the
-#   later DEV spawn's PreToolUse read. Same-batch parallel reviewer+DEV finds no reviewer line at the
-#   DEV read → an orchestrator-origin spawn blocks with VGATE-REVIEWER-001, a nested sub-worker origin
-#   gets the stderr advisory only — correct, parallel is the wrong pattern.
+#   A spawn a sibling PreToolUse hook blocks reaches no PostToolUse, so it leaves NO stamp — no false
+#   reviewer-present, no inflated spawn-budget counter. Sequential reviewer→DEV reads clean: the
+#   reviewer's PostToolUse commits its qa-code-reviewer line before the later DEV spawn's PreToolUse
+#   read. Same-batch parallel reviewer+DEV finds no reviewer line at the DEV read → VGATE-REVIEWER-001
+#   warns — correct, parallel is the wrong pattern.
 # fail-open: internal error / marker absent / corrupted payload → exit 0, never interferes.
 
 set -Eeuo pipefail
@@ -93,17 +77,16 @@ trap 'printf "[enforce-verification-gate] internal error at line %d: %s — fail
 
 readonly DEFAULT_DATA_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data"
 # Capture the data dir BEFORE sourcing hook-utils.sh — that library assigns HOOK_DATA_DIR
-# unconditionally, which would clobber the Bats-sandbox env override read here. (block-doc-routing-leak.sh
-# captures its override path before sourcing for the same reason.)
+# unconditionally, which would clobber the Bats-sandbox env override read here.
 data_dir="${HOOK_DATA_DIR:-${DEFAULT_DATA_DIR}}"
 spawn_dir="${data_dir}/session-spawns"
 
-# Block firing-trace sink — direct sibling of enforce-workflow-verify-stage.sh's WORKFLOW_GATE_FIRED_LOG.
+# Firing-trace sink — direct sibling of enforce-workflow-verify-stage.sh's WORKFLOW_GATE_FIRED_LOG.
 # Its own env override exists so a Bats case can isolate the sink per test (an unwritable-sink case
 # cannot be written without it); the default resolves under the same data root as the spawn marker.
 VGATE_FIRED_LOG="${VGATE_FIRED_LOG:-${data_dir}/verification-gate-fired.log}"
 
-# Firing-trace line cap. One line per block with no rotation, so a long-lived install would grow the
+# Firing-trace line cap. One line per warning with no rotation, so a long-lived install would grow the
 # sink unboundedly (no SessionStart reaper sweeps it). Observability-only — no line carries decision
 # signal — so bounding to the most-recent N lines is verdict-safe by construction.
 readonly DEFAULT_TRACE_LINE_CAP=1000
@@ -165,11 +148,8 @@ readonly DEEP_REVIEW_SENSITIVE_PREFIXES='hooks/ settings*.json rules/ agents/ au
 readonly PLANNER_AUTHOR="glass-atrium-intel-planner"
 readonly MONITOR_CURL_TIMEOUT_SEC=1
 
-# emit_gate_trace VERDICT SUBAGENT_TYPE — append one block firing-trace line, FAIL-SAFE.
-# The block verdict is ALWAYS decided and emitted before this runs. Every failure mode (unwritable
-# dir, mkdir refusal, printf error, a fired ERR trap) is contained by the subshell + unconditional
-# success below, so this can NEVER alter the hook's exit code — see the header's load-bearing-isolation
-# note: a leaked non-zero here would fail-open the gate and convert a BLOCK into a PASS.
+# emit_gate_trace VERDICT SUBAGENT_TYPE — append one firing-trace line, FAIL-SAFE: every failure mode
+# (unwritable dir, mkdir refusal, printf error, a fired ERR trap) stays inside the subshell.
 # SECURITY: subagent_type is external payload → allowlist-transform before writing it to the sink, so
 # an embedded TAB/newline cannot forge a trace line (core-security.md Input Validation).
 # `verdict=` is the LAST field so a reader can anchor an exact tag match at end-of-line.
@@ -203,19 +183,16 @@ emit_gate_trace() {
   ) 2>/dev/null || true
 }
 
-# block_and_exit CODE REASON FIX CONTEXT_JSON TRACE_TAG — the single terminal block path shared by all
-# three block surfaces (VGATE-SIZE-001 / VGATE-REVIEWER-001 / VGATE-ENTRY-001). Extracted so the trace
-# append exists exactly ONCE: three inline appends would triple the surface on which the fail-open trap
-# hazard above can be reintroduced. Order is fixed — structured error first, trace second, exit 2 last.
-block_and_exit() {
+# warn_tripped_check CODE REASON FIX CONTEXT_JSON TRACE_TAG — the shared warning of surfaces 1-3
+# (VGATE-SIZE-001 / VGATE-REVIEWER-001 / VGATE-ENTRY-001): structured warning + one trace line; returns.
+warn_tripped_check() {
   local code="${1}" reason="${2}" fix="${3}" ctx="${4}" trace_tag="${5}"
-  emit_error "${code}" "block" "${reason}" "${fix}" "${ctx}"
+  emit_error "${code}" "warn" "${reason}" "${fix}" "${ctx}"
   emit_gate_trace "${trace_tag}" "${subagent_type:-}"
-  exit 2
 }
 
-# Named aggregation query over the block sink — reports never-started block counts by verdict tag.
-# Read-only: never writes, never touches a verdict. Absent sink reads as 0 (a first run is 0 blocks),
+# Named aggregation query over the trace sink — reports tripped-check counts by verdict tag.
+# Read-only: never writes, never touches a verdict. Absent sink reads as 0 (a first run is 0 trips),
 # NOT missing data. jq-free (grep only), so it works even where the gate path would fail-open on
 # absent jq. Mirrors inject-scope-rules.sh --drop-rate.
 aggregate_block_counts() {
@@ -248,7 +225,7 @@ fi
 
 # stdin non-interactive → drain once, otherwise fail-open.
 # Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
-export -n input gate_tsv hook_event session_id prompt_b64 prompt_full text scope_line files line scan
+export -n input gate_tsv hook_event session_id agent_id prompt_b64 prompt_full text scope_line files line scan units paths path seen root
 input=""
 if [[ ! -t 0 ]]; then
   input="$(cat 2>/dev/null)" || input=""
@@ -266,13 +243,14 @@ tool_name=""
 tool_name="$(printf '%s' "${input}" | jq -r '.tool_name // ""' 2>/dev/null || true)" || tool_name=""
 [[ "${tool_name}" != "Agent" ]] && exit 0
 
-# Single jq fan-out — hook_event / session_id / subagent_type / prompt at once.
+# Single jq fan-out — hook_event / session_id / subagent_type / agent_id / prompt at once.
 gate_sep=$'\x1f'
 gate_tsv=""
 gate_tsv="$(printf '%s' "${input}" | jq -r --arg sep "${gate_sep}" '[
   (.hook_event_name // ""),
   (.session_id // ""),
   (.tool_input.subagent_type // ""),
+  (.agent_id // ""),
   ((.tool_input.prompt // "") | @base64)
 ] | join($sep)' 2>/dev/null || true)" || gate_tsv=""
 [[ -z "${gate_tsv}" ]] && exit 0
@@ -280,9 +258,10 @@ gate_tsv="$(printf '%s' "${input}" | jq -r --arg sep "${gate_sep}" '[
 hook_event=""
 session_id=""
 subagent_type=""
+agent_id=""
 prompt_b64=""
 {
-  IFS=$'\x1f' read -r hook_event session_id subagent_type prompt_b64
+  IFS=$'\x1f' read -r hook_event session_id subagent_type agent_id prompt_b64
 } <<<"${gate_tsv}"
 
 # session_id absent → marker key impossible → fail-open.
@@ -321,7 +300,7 @@ is_dev_agent() {
 #      it a structured REFERENCE rather than incidental hyphenated prose (cross-plan, well-planned).
 #      WORD-ANCHORED: the slug alternations are bounded by (^|[^A-Za-z0-9_]) … ([^A-Za-z0-9]|$) so an
 #      incidental token that merely CONTAINS the slug (workplan-2026) does NOT silently convert an
-#      entry-miss BLOCK into a pass, while a real reference (plan-6569, docs/plan-42, 2026-plan) matches.
+#      entry-miss warning into a pass, while a real reference (plan-6569, docs/plan-42, 2026-plan) matches.
 # Keep in sync with enforce-workflow-verify-stage.sh's inline PLAN_REF_RE copy — both raw-scan these
 # self-attestation tokens (P0), matching regardless of comment placement (the anchors are mirrored).
 references_plan() {
@@ -345,9 +324,8 @@ has_token() {
 has_simple_task_token() { has_token "${1}" '[ENTRY-CLASS] simple-task'; }
 
 # [SIZE-EST] self-attestation token — the orchestrator's per-delegation packing estimate emitted at
-# every DEV spawn not classified simple-task (format `[SIZE-EST] bundles=N tool_uses~=N — <reason>`, skills/glass-atrium-ops-orchestrator-role.md
-# ### Spawn Budget). Anchored bracketed literal (grep -qF, mirrors has_simple_task_token's
-# structured-match discipline) — checks PRESENCE only, never the estimate's correctness (same
+# every DEV spawn not classified simple-task (format: hook-utils.sh → HOOK_SIZE_EST_FORM, units= optional).
+# Anchored bracketed literal (grep -qF, mirrors has_simple_task_token's structured-match discipline) — checks PRESENCE only, never the estimate's correctness (same
 # existence-only boundary as the [ENTRY-CLASS] entry tokens).
 has_size_est_token() { has_token "${1}" '[SIZE-EST]'; }
 
@@ -355,6 +333,57 @@ has_size_est_token() { has_token "${1}" '[SIZE-EST]'; }
 # predecessor edges classified before spawning (skills/glass-atrium-ops-orchestrator-role.md ### Phase Notes, plan edge
 # discovery). Anchored bracketed literal, PRESENCE only — never the classification's correctness.
 has_plan_subset_token() { has_token "${1}" '[PLAN-SUBSET]'; }
+
+# Surface 7 emitter — a [SIZE-EST] declaring more than one work-unit (parser + advice: hook-utils.sh).
+warn_multi_unit_spawn() {
+  [[ "${orchestrator_origin}" == true ]] || return 0
+  local units advice
+  units="$(hook_get_size_est_units "${prompt_full}")"
+  advice="$(hook_get_multi_unit_advice "${units}")"
+  [[ -n "${advice}" ]] || return 0
+  (printf '[enforce-verification-gate] DEV spawn of %s %s\n' "${subagent_type}" "${advice}") >&2 || true
+}
+
+# Prints each distinct absolute worktree path a `worktree <path> — INDEX OWNER` contract names; a
+# backtick-wrapped path counts, a placeholder such as <path> does not.
+get_index_owner_paths() {
+  local line path seen=$'\n'
+  # shellcheck disable=SC2016  # the backticks are literal pattern text, not a substitution
+  local re='worktree[[:space:]]+`?([/~][^[:space:]`]*)`?[[:space:]]+— INDEX OWNER'
+  while IFS= read -r line; do
+    [[ "${line}" =~ ${re} ]] || continue
+    path="$(hook_normalize_path "${BASH_REMATCH[1]}")"
+    [[ "${seen}" == *$'\n'"${path}"$'\n'* ]] && continue
+    seen+="${path}"$'\n'
+    printf '%s\n' "${path}"
+  done <<<"$(grep -F -- '— INDEX OWNER' <<<"${prompt_full}" || true)"
+}
+
+# Surface 8 emitter — reads each contracted worktree's holder through the shared lock library. The
+# spawner's own lock is no second owner: it is handing its worktree on, and the main session's lock
+# is never released (it fires Stop, not SubagentStop), so warning on it would warn for the whole TTL.
+# SC2310: every lock-library call is a predicate whose miss means silence.
+# SC2154: the worktree_lock_* result globals are assigned inside the sourced library.
+# shellcheck disable=SC2310,SC2154
+warn_live_index_owner() {
+  local paths root holder self lib="${BASH_SOURCE%/*}/lib/worktree-lock.sh"
+  paths="$(get_index_owner_paths)"
+  [[ -n "${paths}" && -r "${lib}" ]] || return 0
+  # shellcheck source=lib/worktree-lock.sh
+  source "${lib}" || return 0
+  worktree_lock_holder_id "${agent_id}"
+  self="${worktree_lock_holder_id_out}"
+  while IFS= read -r root; do
+    [[ -e "${root}/.git" ]] || continue
+    worktree_lock_dir_for "${root}" || continue
+    worktree_lock_is_live "${worktree_lock_dir_out}" || continue
+    worktree_lock_read_holder "${worktree_lock_dir_out}" || continue
+    holder="${worktree_lock_holder_out}"
+    [[ "${holder}" != "${self}" ]] || continue
+    (printf '[enforce-verification-gate] Worktree %s already has a live index owner: %s holds its writer lock, and this spawn of %s names a second INDEX OWNER there. Stop or finish the holder first (an idle agent that still has a queued message can resume editing), or give this track its own worktree. Checked at spawn because the write-time lock warns only on a Write/Edit call: the holder'"'"'s Bash-run writes (a build, a git command) race the one index unseen. Advisory only — a holder that never fired SubagentStop stays listed until the lock TTL (%ss).\n' \
+      "${root}" "${holder}" "${subagent_type}" "${WORKTREE_LOCK_TTL_SECS:-${WORKTREE_LOCK_TTL_DEFAULT}}") >&2 || true
+  done <<<"${paths}"
+}
 
 # Prints the first sensitive prefix matched by the declared paths (empty when none). Read into an
 # array rather than word-split in place: an unquoted expansion would also glob `settings*.json`
@@ -399,8 +428,7 @@ warn_deep_review() {
     "${count}" "${prefix_note}" >&2
 }
 
-# Surfaces 4+5 emitter. Called from the PASS paths only so a fault in these newest checks can never
-# turn one of the blocks above into a pass. A missing declaration is nudged; a present one is sized.
+# Surfaces 4+5 emitter, after any surface 1-3 warning. A missing declaration is nudged; a present one is sized.
 # [SCOPE] = the orchestrator's record of the delegation's literal scope, checked for PRESENCE only —
 # a line the shared scope_decl_select accepts, so a quoted `[SCOPE]` mention does not silence the nudge.
 # Selector status 2 = the declaration was never read → reported as unread, neither nudged nor sized.
@@ -485,7 +513,7 @@ warn_unstarted_plan() {
 # 1. READ reviewer-present snapshot from PRIOR EXECUTED spawns (PostToolUse stamps only — DF-5).
 # Sequential reviewer→DEV: the reviewer's PostToolUse durably commits the qa-code-reviewer line when
 # it completes → this DEV spawn's PreToolUse read observes it → pass. Same-batch parallel reviewer+DEV:
-# the reviewer has not completed at the DEV read → snapshot absent → VGATE-REVIEWER-001 block on
+# the reviewer has not completed at the DEV read → snapshot absent → VGATE-REVIEWER-001 warning on
 # orchestrator origin, stderr advisory on a nested sub-worker origin (surface 1). This PreToolUse read is
 # used only by the verdict logic below; the marker is never written on PreToolUse. (Append is
 # O_APPEND atomic per line.)
@@ -532,9 +560,8 @@ prune_marker_file() {
 }
 
 # 2. Spawn-SUCCESS stamp — PostToolUse ONLY (DF-5). PreToolUse fires BEFORE the spawn runs, so
-# stamping there records a mere ATTEMPT: a spawn later blocked (by THIS gate's exit 2, or by a
-# sibling PreToolUse hook) never executes yet still leaves a marker line — falsely satisfying a
-# later DEV spawn's reviewer-presence check AND inflating advisory-spawn-budget.sh's counter with
+# stamping there records a mere ATTEMPT: a spawn a sibling PreToolUse hook blocks never executes yet
+# still leaves a marker line — falsely satisfying a later DEV spawn's reviewer-presence check AND inflating advisory-spawn-budget.sh's counter with
 # never-executed spawns. PostToolUse fires only after the Agent actually executed, so it is the
 # reliable spawn-success signal: a blocked spawn reaches no PostToolUse → leaves NO stamp. The
 # PreToolUse path reads the reviewer-present snapshot above but MUST NOT stamp. An empty/unknown
@@ -566,12 +593,11 @@ if ! is_dev_agent "${subagent_type}"; then
   exit 0
 fi
 
-# Spawn ORIGIN, computed ONCE over the immutable ${input} and reused by both the [SIZE-EST] gate (3a)
-# and the reviewer-miss gate (4). hook_is_subagent spawns a python3 read, so a single evaluation drops
+# Spawn ORIGIN, computed ONCE over the immutable ${input} and reused by both the [SIZE-EST] check (3a)
+# and the reviewer-miss check (4). hook_is_subagent spawns a python3 read, so a single evaluation drops
 # a redundant interpreter cold-start on this PreToolUse hot path. orchestrator_origin=true ⇔ agent_id
 # ABSENT (main-session/orchestrator spawn, which loads the token-defining rules); a nested sub-worker
-# origin (agent_id present) is never false-blocked. Directionally fail-safe — a misread ⇒ skipped
-# block, never a false-block — inheriting the fail-open ERR trap above.
+# origin (agent_id present) draws no structured warning.
 orchestrator_origin=false
 # SC2310: hook_is_subagent is a pure predicate — set -e disable under `if !` intended.
 # shellcheck disable=SC2310
@@ -579,87 +605,76 @@ if ! hook_is_subagent "${input}"; then
   orchestrator_origin=true
 fi
 
+warn_live_index_owner
+
 # Simple-task entry — [ENTRY-CLASS] simple-task with no plan-reference. Such a spawn owes no other
-# attestation token, so the [SIZE-EST] gate and the [SCOPE] / [PLAN-SUBSET] advisories pass it
+# attestation token, so the [SIZE-EST] check and the [SCOPE] / [PLAN-SUBSET] advisories pass it
 # silently; a plan-reference keeps every token check, whatever classification travels beside it.
 # shellcheck disable=SC2310  # pure predicates — set -e disable under `if` intended
 if has_simple_task_token "${prompt_full}" && ! references_plan "${prompt_full}"; then
   exit 0
 fi
 
-# 3a. [SIZE-EST] presence gate — EVERY non-simple-task orchestrator DEV spawn MUST carry a [SIZE-EST] self-attestation
-# token (T1 contract, skills/glass-atrium-ops-orchestrator-role.md ### Spawn Budget). Placed BEFORE the entry-decision branch
-# so a plan-bearing orchestrator spawn is STILL size-checked — revoking the header's former
-# plan-bearing zero-false-block guarantee for this dimension. GUARDED by orchestrator_origin (the cached
-# hook_is_subagent, reused VERBATIM from hook-utils.sh as enforce-delegation.sh / advisory-subagent-budget.sh
-# do): block ONLY when agent_id is ABSENT (main-session/orchestrator origin, which loads the token-defining
-# rules); a nested sub-worker origin (agent_id present) does NOT load those rules → never blocked.
+# 3a. [SIZE-EST] presence check — every non-simple-task orchestrator DEV spawn owes a [SIZE-EST]
+# self-attestation token (skills/glass-atrium-ops-orchestrator-role.md ### Spawn Budget). Placed BEFORE
+# the entry-decision branch so a plan-bearing orchestrator spawn is still size-checked.
 # SC2310: has_size_est_token is a pure predicate — set -e disable under `if` intended.
 # shellcheck disable=SC2310
 if [[ "${orchestrator_origin}" == true ]] && ! has_size_est_token "${prompt_full}"; then
   size_reason="Spawning DEV agent '${subagent_type}' from the orchestrator with NO [SIZE-EST] self-attestation token — a DEV spawn that is not an [ENTRY-CLASS] simple-task entry MUST declare its delegation-size estimate (skills/glass-atrium-ops-orchestrator-role.md ### Spawn Budget)."
-  size_fix="Record [SIZE-EST] bundles=N tool_uses~=N — <1-line reason> in the prompt: bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into THIS delegation, tool_uses~=N = your rough pre-spawn estimate. On a borderline count, round up: an under-estimate hides an oversized delegation from the split discipline. A genuinely simple task with no plan-reference records [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> instead: that alone clears this gate and every other token check."
-  block_and_exit "VGATE-SIZE-001" "${size_reason}" "${size_fix}" \
+  size_fix="Record ${HOOK_SIZE_EST_FORM} in the prompt: units = the work-units THIS delegation carries (one by default), bundles = count of {implement, write-tests, run-full-suite, report-consolidation} packed into it, tool_uses~=N = your rough pre-spawn estimate. On a borderline count, round up: an under-estimate hides an oversized delegation from the split discipline. A genuinely simple task with no plan-reference records [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> instead: that alone clears this gate and every other token check."
+  warn_tripped_check "VGATE-SIZE-001" "${size_reason}" "${size_fix}" \
     "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"size-est-miss\"}" "block-sizeest"
 fi
+warn_multi_unit_spawn
 
 # Entry-decision branch — three mutually exclusive paths:
-#   plan-ref present       → task entered the flow → fall through to the reviewer check (advisory).
+#   plan-ref present       → task entered the flow → the reviewer check.
 #   [ENTRY-CLASS] token    → orchestrator consciously classified it simple → exited 0 silent above.
-#   NEITHER                → silent entry-miss → channel-a BLOCK (emit_error + exit 2). The token is
-#                            the escape hatch; this is the only branch that blocks.
+#   NEITHER                → silent entry-miss → VGATE-ENTRY-001 warning.
+# Both remaining paths fall through to surfaces 4-6.
 # SC2310: references_plan/has_simple_task_token are pure predicates — set -e disable under `if`
 # intended (same posture as is_dev_agent above).
 # shellcheck disable=SC2310
 if references_plan "${prompt_full}"; then
   # 3b. C3-H — [PLAN-SUBSET] presence NUDGE (stderr advisory, exit 0, NEVER a block). A plan-derived
   # delegation classifies its included tasks' declared predecessors before spawning; the token records
-  # that the check ran. Deliberately NOT a fifth exit-2 gate: the token is conditional on the delegation
-  # being a strict SUBSET of the plan, so its absence is often correct — a block would false-fire on
-  # every whole-plan delegation. HONEST BACKING: presence-checkable only; whether the classification
+  # that the check ran. The token is conditional on the delegation being a strict SUBSET of the plan,
+  # so its absence is often correct, and the nudge says so. HONEST BACKING: presence-checkable only; whether the classification
   # beneath the token is true is never verifiable here, and the edge-ordering obligation itself lives in
   # guardrail (c), which no token gates.
   # SC2310: has_plan_subset_token is a pure predicate — set -e disable under `if` intended.
   # shellcheck disable=SC2310
   if [[ "${orchestrator_origin}" == true ]] && ! has_plan_subset_token "${prompt_full}"; then
-    # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → the reviewer-miss block keeps exit 2.
+    # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
     (printf '[enforce-verification-gate] Plan-referencing spawn of %s carries no [PLAN-SUBSET] token. If this delegation is a strict subset of the plan, classify each included task'"'"'s declared predecessors first and record [PLAN-SUBSET] included=<ids> landed=<ids|none> excluded=<ids|none> order=<edges|n/a>. Advisory only — absence is correct for a whole-plan delegation.\n' \
       "${subagent_type}") >&2 || true
   fi
-  # Reviewer durably recorded BEFORE this spawn (sequential reviewer→DEV) → gate satisfied.
-  if [[ "${reviewer_present}" == true ]]; then
-    warn_scope_advisories
-    warn_unstarted_plan
-    exit 0
+  # 4. Reviewer-miss: a plan-referencing DEV spawn with no qa-code-reviewer recorded before it
+  # (sequential reviewer→DEV satisfies it). An orchestrator-origin spawn (agent_id absent) composes
+  # the Stage-2 {qa-code-reviewer, DEV} team, so it gets the structured VGATE-REVIEWER-001 warning; a
+  # NESTED sub-worker origin gets the plain line only. "no qa-code-reviewer recorded" stays verbatim
+  # in both, so a downstream log scan keys on one phrase.
+  if [[ "${reviewer_present}" != true ]]; then
+    reviewer_reason="Verification-gate reviewer-miss: spawning DEV agent '${subagent_type}' on a plan-referencing task, but no qa-code-reviewer recorded in this session. Complex plans require a {qa-code-reviewer, DEV} Plan Direction Verification team before implementation entry (skills/glass-atrium-ops-orchestrator-role.md Stage-2 gate)."
+    if [[ "${orchestrator_origin}" == true ]]; then
+      reviewer_fix="Spawn glass-atrium-qa-code-reviewer FIRST (sequentially, before this DEV spawn) so its PostToolUse stamp records the Stage-2 verdict — the later DEV spawn then reads clean. If this task is genuinely simple/exempt, record [ENTRY-CLASS] simple-task in the prompt instead of a plan-reference."
+      warn_tripped_check "VGATE-REVIEWER-001" "${reviewer_reason}" "${reviewer_fix}" \
+        "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"reviewer-miss\"}" "block-reviewer"
+    else
+      printf '[enforce-verification-gate] %s\n' "${reviewer_reason}" >&2
+    fi
   fi
-  # 4. Reviewer-miss (T6): a plan-referencing DEV spawn with no qa-code-reviewer recorded is PROMOTED
-  # from a stderr-advisory to a channel-a BLOCK (emit_error stderr JSON + exit 2, code
-  # VGATE-REVIEWER-001, reason phrase reviewer-miss), matching its sibling attestation checks
-  # (VGATE-ENTRY-001 / VGATE-SIZE-001). GUARDED by orchestrator_origin exactly like the [SIZE-EST] gate:
-  # only an orchestrator-origin spawn (agent_id absent) composes the Stage-2 {qa-code-reviewer, DEV}
-  # verification team, so it blocks there; a NESTED sub-worker origin (agent_id present) keeps only the
-  # informational advisory and is never false-blocked (nested spawns remain ungated per the header
-  # note). "no qa-code-reviewer recorded" is retained verbatim in both messages so a downstream log
-  # scan keys on one phrase across both surfaces.
-  reviewer_reason="Verification-gate reviewer-miss: spawning DEV agent '${subagent_type}' on a plan-referencing task, but no qa-code-reviewer recorded in this session. Complex plans require a {qa-code-reviewer, DEV} Plan Direction Verification team before implementation entry (skills/glass-atrium-ops-orchestrator-role.md Stage-2 gate)."
-  if [[ "${orchestrator_origin}" == true ]]; then
-    reviewer_fix="Spawn glass-atrium-qa-code-reviewer FIRST (sequentially, before this DEV spawn) so its PostToolUse stamp records the Stage-2 verdict — the later DEV spawn then passes. If this task is genuinely simple/exempt, record [ENTRY-CLASS] simple-task in the prompt instead of a plan-reference."
-    block_and_exit "VGATE-REVIEWER-001" "${reviewer_reason}" "${reviewer_fix}" \
-      "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"reviewer-miss\"}" "block-reviewer"
-  fi
-  # Nested sub-worker origin → informational advisory only (never a false-block).
-  printf '[enforce-verification-gate] %s\n' "${reviewer_reason}" >&2
-  exit 0
+else
+  # 5. Entry-miss — no plan-reference AND no [ENTRY-CLASS] simple-task classification (the silent
+  # entry-miss): DEV ∧ !references_plan ∧ !has_simple_task_token; the simple-task token exited above.
+  entry_reason="Spawning DEV agent '${subagent_type}' with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — sizable DEV work MUST enter the Document-Driven Workflow (author a plan first)."
+  entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scoped/maintainers/scope-dev.md -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> in the prompt to silence this check. NOTE: a plan-referencing spawn must ALSO carry a ${HOOK_SIZE_EST_FORM} delegation-size token (checked separately by VGATE-SIZE-001); a simple-task spawn needs no other token."
+  warn_tripped_check "VGATE-ENTRY-001" "${entry_reason}" "${entry_fix}" \
+    "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"entry-miss\"}" "block-entry"
 fi
 
-# 5. Entry-miss BLOCK — no plan-reference AND no [ENTRY-CLASS] simple-task classification (the
-# silent entry-miss). This is the ONLY blocking branch: DEV ∧ !references_plan ∧ !has_simple_task_token.
-# Every other path (non-DEV, plan-bearing, simple-task-token) already exited 0 above, so zero
-# legitimate work is false-blocked here. The [ENTRY-CLASS] simple-task token remains the escape hatch
-# (record it in the prompt to pass instantly). Channel-a (emit_error stderr JSON + exit 2) per the
-# PreToolUse block surface — mirrors block-doc-routing-leak.sh. The fail-open ERR trap above still
-# governs the hook's OWN errors → an internal failure never reaches this block.
-entry_reason="Spawning DEV agent '${subagent_type}' with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — sizable DEV work MUST enter the Document-Driven Workflow (author a plan first)."
-entry_fix="If this task meets the sizable floor (multi-file blast radius — ~3+ COORDINATED target files; 3+ files is a STRONG sizable signal, borderline → SIZABLE / cross-module / >=3 turns / public-contract — see scoped/maintainers/scope-dev.md -> Sizable-task definition) author a plan and reference it. If genuinely simple, record [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> in the prompt to silence this gate. NOTE: a plan-referencing spawn must ALSO carry a [SIZE-EST] bundles=N tool_uses~=N — <1-line> delegation-size token (checked separately by VGATE-SIZE-001); a simple-task spawn needs no other token."
-block_and_exit "VGATE-ENTRY-001" "${entry_reason}" "${entry_fix}" \
-  "{\"subagent_type\":\"${subagent_type}\",\"reason\":\"entry-miss\"}" "block-entry"
+# 6. Surfaces 4-6 — every DEV spawn that reaches here, warned or not.
+warn_scope_advisories
+warn_unstarted_plan
+exit 0

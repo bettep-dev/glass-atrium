@@ -85,6 +85,7 @@ run_doctor_sandbox() {
     bash -c '
       set -Eeuo pipefail
       source "$1/lib/ga-core.sh"
+      source "$1/test/lib/remote-run-stub.bash"
       ga_init_env "$2"
       run_doctor
     ' _ "${GA}" "${GA_SANDBOX}"
@@ -264,6 +265,7 @@ warn_total_of_output() {
     bash -c '
       set -Eeuo pipefail
       source "$1/lib/ga-core.sh"
+      source "$1/test/lib/remote-run-stub.bash"
       ga_init_env "$2"
       run_doctor
     ' _ "${GA}" "${GA_SANDBOX}"

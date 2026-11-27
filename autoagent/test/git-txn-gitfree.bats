@@ -348,6 +348,26 @@ SHIM
   [ "${output}" = "probe.md" ]
 }
 
+# Protects daemon-apply's bare git_txn_apply call under errexit: a large diff reaches its OK outcome, never a 141 abort.
+@test "git_txn_apply reaches OK under strict mode for a diff larger than the pipe buffer" {
+  run bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    _apply_append() { printf "%s\n" "inserted line" >>"$1"; }
+    _verify_pass() { return 0; }
+    printf -v nl "\n"
+    body="+$(printf "%080d" 0)"
+    for _ in {1..12}; do body="${body}${nl}${body}"; done
+    diff="--- a/probe.md${nl}+++ b/probe.md${nl}@@ -1 +1,4096 @@${nl}${body}"
+    git_txn_apply "$2" "$3" "$3" "${diff}" "$4" _apply_append _verify_pass
+    printf "rc=%s\n" "${GIT_TXN_RC}"
+  ' _ "${LIB}" "${INSTALL_ROOT}" "${TARGET}" "${BACKUP_DIR}"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; return 1; }
+  [ "${output}" = "rc=${GIT_TXN_OK}" ]
+  grep -q 'inserted line' "${TARGET}"
+}
+
 # ---------------------------------------------------------------------------
 # (8) before-image capture failure aborts BEFORE apply → BACKUP_CAPTURE_FAIL
 # ---------------------------------------------------------------------------

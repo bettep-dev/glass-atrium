@@ -45,7 +45,7 @@ const AGENTS = getMarkup("BreakageAgents", {
   agents: ["glass-atrium-dev-react", "glass-atrium-qa-debugger", LONG_AGENT].map((agent, i) => ({ agent, count: 9 - i })),
 });
 
-const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="agents" style="width: 240px; padding: 24px;">${AGENTS}</div>
 </body></html>`;
 

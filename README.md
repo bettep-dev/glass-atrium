@@ -19,7 +19,7 @@
 - The orchestrator takes a single request, breaks it into pieces for a team of specialist agents, and pulls the results back together.
 - Every cost, outcome, and agent event surfaces on the real-time monitor dashboard, laid bare as if you were looking through a glass wall.
 - The system is designed to revise its own instructions in response to recurring failures — no prompt tweaking on your part.
-  - Automatic instruction patching stays closed until live trials confirm it works (step 8 of [How it works](#how-it-works-end-to-end)).
+  - Automatic instruction patches pass a trial gate: a patch reaches agents only after it wins a live trial against the unchanged instructions (step 8 of [How it works](#how-it-works-end-to-end)).
 
 > [!WARNING]
 > - Once installed, background daemons start running **automatically**.
@@ -62,7 +62,7 @@
   - A **lifecycle hook pipeline** that enforces those rules (secrets, dangerous commands, budgets, deliverables) *mechanically* at every tool boundary
   - A **real-time monitoring dashboard** (the Atrium Monitor) that gathers every cost, outcome, and agent event in one place
   - A **self-improvement loop** designed to turn recurring failures into agent-instruction patches
-    - Automatic patch generation and application stay closed until live trials confirm they work.
+    - Automatic instruction patches apply only after they win a live trial against the unchanged instructions, and risky changes apply only after user approval.
 
 ## Why it was built
 
@@ -100,13 +100,13 @@
   - Concurrency cap: the workflow engine runtime enforces it.
   - Spawn depth: bounded structurally rather than by a policy number — no agent's frontmatter grants a re-spawn tool (Agent/Task/Workflow), and that tool list is frozen at spawn time.
 - **Mechanical layer and discipline layer** — the repository's rule files describe themselves the same way.
-  - Mechanical layer (real code): the PreToolUse hook pipeline · the harness-critical path block in `enforce-harness-critical.sh` · the spawn-time tool freeze
+  - Mechanical layer (real code): the PreToolUse hook pipeline · harness integrity detection that compares the install against the release manifest (`glass-atrium doctor` — it detects rather than blocks; `glass-atrium update` restores) · the spawn-time tool freeze
   - Discipline (honor-system) layer: delegation retry, fallback, and escalation · the `MAX_DEPTH=2` policy number and its depth counting
 - **How it differs from an uncontrolled handoff system**
   - Lifecycle hooks intercept every tool call — hook-backed enforcement.
   - The monitor observes every event — full observability.
   - Outcome records keep every delegation traceable and auditable.
-  - The learning loop is designed to feed those records and correction signals back into instruction patches. Recording and aggregation run today; automatic patch generation and application stay closed until live trials.
+  - The learning loop is designed to feed those records and correction signals back into instruction patches. Recording and aggregation run today; automatic instruction patches apply only after they win a live trial, and risky changes apply only after user approval.
 
 ## How it works, end to end
 
@@ -124,7 +124,7 @@
    - Every cost, outcome, and agent event streams into PostgreSQL and the Atrium Monitor in real time.
 8. **The system is designed to improve itself.**
    - A background daemon gathers outcome records and correction signals, and flags recurring failure patterns as instruction-improvement candidates.
-   - Automatic generation and application of instruction patches stay closed on every install until live trials confirm they work.
+   - A recurring pattern receives a patch only after the install has accumulated outcome data to test it on. A safe patch auto-applies only when it runs as a live trial and wins; risky changes go to the user-approval queue.
 
 ## Big tasks carefully, small tasks fast
 
@@ -146,20 +146,76 @@
   - The rules loaded in every session hold only the sentences every session needs; the detail lives in reference files read on demand.
     - Always-loaded set (the global charter + the `rules/glass-atrium/*.md` files without `paths:`, 8 files): 156,912 → 69,405 UTF-16 units
       - The largest share is the always-loaded rule `rules/glass-atrium/orchestrator-role.md` (66,061 → 775 units) — its body moved to the on-demand `skills/glass-atrium-ops-orchestrator-role.md`, leaving only a stub.
-    - The main session additionally receives the orchestrator core (`scoped/orchestrator-core.md`, 7,492 units), added by the SessionStart hook.
+    - The main session additionally receives the orchestrator core (`scoped/orchestrator-core.md`, 7,504 units), added by the SessionStart hook.
     - The on-demand orchestrator skill (`skills/glass-atrium-ops-orchestrator.md`): 142,358 → 99,449 bytes
   - A CI test (`scripts/test/startup-budget.bats`) keeps the always-loaded set under 145,000 UTF-16 units.
 - **Lifecycle hook pipeline** — a set of hook scripts (`hooks/`) that mechanically enforce secrets, dangerous commands, budgets, and outcome records at every tool boundary.
 - **Self-improvement loop** — the autoagent daemon (`autoagent/`) is designed to turn accumulated outcome records and correction signals into agent-instruction patches.
   - It auto-applies only safe patches, keeps the original before each apply, and restores it if verification fails.
   - Risky changes (deletion, external calls, permissions, agent identity, and the like) go to a user-approval queue.
-  - For now, automatic patch generation and application are closed on every install until live trials confirm they work; outcome-record and correction-signal aggregation keep running.
-- **Atrium Monitor** — a 9-screen real-time dashboard built on Fastify 5 + Prisma 7 + React 18 (`http://127.0.0.1:16145`).
+  - Patch generation opens only once an A/A trial has passed (a trial that compares two arms without changing the instructions, to measure instrumentation and design effects).
+    - With no passed A/A result, the power check cannot pass, so no patch is generated.
+    - A new install's first A/A opens automatically on its first writing cycle (a cycle that is not `--dry-run`).
+    - Once an A/A has closed, failed closes included, the next one opens only when you run `daemon_cycle.py --aa-start` yourself.
+      - Run the installed copy (`~/.glass-atrium/autoagent/daemon_cycle.py`), not the checkout, once, with the Python interpreter the scheduled cycle uses (`AUTOAGENT_PYTHON_BIN` in `autoagent/daemon-cycle.sh`).
+      - The command does not check that you are running it from the install.
+      - If it is refused, it states the reason and exits non-zero without recording anything.
+    - An open A/A restarts its measurement window by itself on the next writing cycle after a deploy changes the install fingerprint, so there is nothing for you to do.
+  - Safe patches auto-apply only after they win a live trial; outcome-record and correction-signal aggregation keep running.
+- **Atrium Monitor** — an 11-screen real-time dashboard built on Fastify 5 + Prisma 7 + React 18 (`http://127.0.0.1:16145`).
+  - Sidebar screens
+    - **Dashboard** — the first screen, showing only what a person needs to look at now: the alarm list, tiles for harness health, task results, agent fleet, and today's spend, and this week's panels
+    - **Cost & usage** — cost by day, model, and session, with spend-rate warnings
+    - **Models & budgets** — model pins, and the model and budget settings for daemon calls
+    - **Agents** — per-agent performance, failures, and unroutable status
+    - **Task results** — task-result analysis and a result-browsing table
+    - **Learning** — status of the self-improvement loop's proposals, trials, and patterns
+    - **Wiki** — the wiki compile schedule and status
+    - **System map** — 7 architecture diagrams with live part status
+    - **Documents** — browse the documents agents have written, switch them between in-progress and done, and replace them
+    - **Queue** — the owner queue (below)
+    - **Remote access** — remote access setup and device registration (opens on the Mac only; it is not in the sidebar of a registered device)
   - Every screen uses the same layout atoms: a 4px spacing ladder · a named page header · a single KPI tile structure · a shared table row height
   - Controls follow a shared size scale (32px for buttons, segments, inputs, and filter chips; 24px or more for inline targets), and their size and position do not change when their state does.
-  - The default border of toggles and input fields is at least 3:1 against the background in both themes, so even an unselected chip reads as a box.
-- **Direct model + budget assignment** — the monitor's **Models & budgets** screen assigns a per-domain model and a per-call USD hard cap without your having to edit the config file.
-- **Live architecture map** — the monitor's System map screen renders the canonical architecture map (one Mermaid diagram) alongside live daemon status.
+  - The default border of toggles and input fields is at least 3:1 against the background, so even an unselected chip reads as a box.
+- **Direct model + budget assignment** — on the monitor's **Models & budgets** screen you assign models and a per-call USD hard cap without editing a config file.
+  - Agent models: change the model line (the pin) of the agent files (`~/.glass-atrium/agents/*.md`) for several agents at once.
+    - It is saved straight to the file; a session that is already running picks it up reliably after a restart. Updates preserve this line.
+    - If a spawn sets its model explicitly, that comes first; with no pin, the model of the session that started the conversation is used.
+  - Daemon cards: the model for self-improvement and wiki-compile calls · a per-call budget cap · effort and output-token limits for each generation and pre-verify stage
+    - The budget is not a monthly billing limit but a per-call hard cap that stops a single call from running away.
+    - The daemon reads `daemon-config.json` once per cycle and applies it; a drift warning appears when the saved value differs from the one actually applied.
+- **Owner queue** — on the monitor's **Queue** screen you answer the decisions and reports that sessions post, and send work orders to sessions.
+  - The screen is a desk that fills one PC screen (for a phone, see Remote access below), and its three columns stay put: the session list on the left · the item list in the middle · **Orders** on the right.
+    - A decision or report picked from the list opens in the middle column as a one-page sheet in place of the list, and you answer in the input below the sheet.
+    - From an open report the `←` button (Esc) returns to the list, and `J` / `K` step to the previous or next item.
+  - Each session has one checkbox, and the checked sessions set the scope of the list and the order thread, and they are the sessions that receive orders.
+    - **Orders** is always open and sends an order straight to the checked sessions. The names of the receiving sessions are shown above the input, and nothing is sent when none is checked.
+    - The thread shows only the orders the owner sent, and for each receiving session only whether it received them (`Received` · `Not yet` · `Next turn` · `Not reachable` · `Not received`).
+  - The middle list is grouped as decisions · reports · in-delivery items, and **relays** that one session sends to another appear in the same list, read-only.
+    - A relay is delivered without owner approval, but to the receiving session it is only information from a peer session — neither an owner instruction nor an approval.
+    - Every relay and every refusal is recorded, and the owner can use `Redact text` to erase a stored relay body irreversibly.
+  - A high-risk action (deletion, merge, deploy, and the like) is posted by the session as an approval decision carrying an **Approval** tag, and only an answer that picks an approval option approves that one action, once.
+    - An answer of free text alone is not an approval, and if the facts change after posting, the approval is void and the session posts a new approval decision.
+    - The host's permission prompt or a blocked command cannot be answered through the queue and stays in that session's terminal.
+  - You can attach up to 8 images (10 MB each) to an order or a report reply (button · drag and drop · paste).
+    - Images are stored in the monitor's data folder, and the receiving session reads them through the local file paths that `scripts/atrium-queue.sh get` prints after the item.
+  - The screen re-reads itself periodically, so newly arrived items show without a refresh.
+  - It opens like any other screen, with no login or prior setup.
+  - Requests from other websites are refused.
+  - Answers and orders that pass through the monitor are recorded with when and by which route they arrived, and an answer the monitor did not record (written outside the monitor) is flagged on the screen.
+  - A queue answer is not proof of the owner: a process on the same computer that forges the screen's request headers can answer as the owner, and cannot be told apart from an answer sent from the screen — a secret-scan approval answer included.
+  - The monitor pushes nothing into a running session.
+    - A wait command the session runs in the background (`scripts/atrium-queue.sh wait`) fetches its own answers and orders.
+    - So there is no command for the receiving session to approve.
+    - A waiting session is marked in the session list, and an answer sent to a session that is not waiting comes with the command to run in that session.
+    - An interactive session with the harness listener (`hooks/queue-listener.sh`) attached ends its turn and waits instead of using `wait`. When an answer arrives, the listener wakes the idle session with one line, and the session does the fetching.
+  - An answer or order sent to a session that has ended resumes that session automatically to deliver it.
+  - Sessions use the main session's `atrium-queue` MCP tools (`post` · `claim` · `record` · `sessions` · `relay`) or the installed CLI `~/.glass-atrium/scripts/atrium-queue.sh` (`help` lists its commands).
+    - A subagent does not use the queue itself; it returns what it would post to its parent session.
+    - A turn that used a tool ends with `record`, which records the items that turn posted.
+    - A background work session must always post a finished-work report, anything the owner has to decide, work that stopped or failed, and an approval request for a high-risk action.
+- **Live architecture map** — the monitor's System map screen renders the 7 canonical architecture diagrams (Mermaid) alongside live daemon status.
 - **Wiki knowledge store** — an LLM-only store (`wiki/`) with a raw-source → curated-notes pipeline and a SQLite BM25 full-text search index.
   - The research agents' web findings accumulate here.
   - It is consulted first, ahead of any new research or analysis, to reuse existing knowledge.
@@ -172,7 +228,19 @@
 - **Trash purge command** — `~/.glass-atrium/scripts/ga-trash-purge.sh <entry>` permanently deletes only one named entry directly under the home Trash (`~/.Trash`), and writes a one-line log for each deletion.
   - Agents move files to the Trash instead of deleting them, so they can clean up the entries they moved without anyone emptying the Trash.
   - It refuses the Trash folder itself, any other path, and any path deeper than one level.
+- **Worktree prune command** — `~/.glass-atrium/scripts/prune-worktrees.sh [--apply] [--deployed <sha>] <worktree>...` cleans up the work folders (git worktrees) of finished delegations.
+  - By default it is a check-only dry run, and nothing is deleted without `--apply`. `--list-all` only lists every linked worktree of the repository.
+  - A worktree is deleted only when all four checks pass: its branch is contained in main (or the `--deployed` commit) · there are no uncommitted changes or untracked files · there is no write lock · no process is running inside the folder
+    - A process with no owner is cleaned up with a termination signal (TERM); if a process belongs to another session, that worktree is left as it is.
+  - It never uses a forced delete and never deletes a branch. If git refuses, that is the answer.
 - **Zero secret material in the repository** — peer-auth-only PostgreSQL (no passwords), secret-scan hooks, and a release-gate PII scan.
+  - When the secret-scan hook blocks a write, it stays blocked.
+    - There is one exception. A write caught only by the generic credential-assignment rule (`SEC-013`) can be approved once by the owner on the Queue screen, for exactly those lines.
+      - The hook registers the blocked lines with the monitor as a request, and the session posts only the request number, without the line contents, as an approval decision.
+      - The owner sees the lines on a card on the Queue screen and approves or declines. A warning to decline if a real password or key is present is shown with them.
+      - The identical write must be retried within 10 minutes of approval to pass, and a single differing line fails it. The lines live only in the monitor's memory and vanish on restart.
+      - A write caught by a token, key, or connection-string shape cannot be approved.
+    - This approval is a path for agents that follow the rules. That a queue answer is not proof of the owner is stated under **Owner queue** above.
 
 ## Skills: the internal quality layer
 
@@ -198,6 +266,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 ```
 
 - When the interactive menu opens, choose **Install**.
+  - The menu entries are Install · Token Setup (issues only the headless OAuth token the daemons use) · Monitor (opens the dashboard in a browser) · Uninstall · Quit.
   - Once it finishes, the dependencies and daemons are configured and started automatically.
   - The dashboard is reachable at `http://127.0.0.1:16145`.
 - The install is not finished until it clears a health gate.
@@ -225,6 +294,53 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 - The bundle **holds authority over deletion too**.
   - A file on the manifest's `retired` list is moved to the Trash.
   - A file whose hash the vendor never shipped is read as your own edit and left alone.
+- Before the bundle is applied, if a model this install recently used, or one in its model settings, is missing from the release's price list (`hooks/pricing.json`), nothing is applied and the update stops.
+- After it is applied, the hook wiring is reconciled to the new release and any pending DB migrations are applied.
+  - If a migration fails, the update stops with a named exit code and points you to `glass-atrium db-setup`.
+  - Applying through the dashboard badge rebuilds and restarts the monitor and refreshes the daemon jobs. The terminal `glass-atrium update` rebuilds the monitor when the release changes it, and does not restart it. To re-render and load the daemon jobs, use `glass-atrium reload-launchd` (refused while an update is running).
+  - The result of the harness integrity check is logged before and after the update (it detects only and does not block; for the current state, run `glass-atrium doctor`).
+- A release that changes the monitor's `package-lock.json` or `package.json` **installs dependencies from the npm registry**, regenerates the Prisma client, and then builds.
+  - A release that changes only the Prisma schema (`schema.prisma`) or `prisma.config.ts` does not reach the registry and only regenerates the Prisma client.
+  - If you are offline, this step stops with a named exit code and tells you the recovery order (`glass-atrium db-setup` → the monitor's `npm run build` → restart).
+  - A failed build also stops with a non-zero exit code, and on a type error the previous build output is left in place.
+
+### Remote access (registered devices on the same Wi-Fi)
+
+- On a trusted network such as your home Wi-Fi, a phone or tablet browser you have registered once uses the monitor's features exactly as the Mac does.
+  - On a phone held upright (screen width under 640 px) only the **Queue** screen opens as a simple one-column layout (the list · Sessions · Orders, one at a time); the other screens show the PC screen as is. Answering in the Queue and giving orders to sessions work too.
+  - The **Remote access** screen, however, opens only on the Mac and does not appear on a registered device.
+  - On the Mac itself you keep using it without a login, as now.
+- It is **off by default**.
+  - The install asks once (the default is no). An install run without a terminal stays loopback-only.
+  - An update neither turns this on nor changes it.
+- Turning it on creates a local certificate authority (CA) and a server certificate on the Mac, and asks whether to register the current Wi-Fi as a trusted network.
+  - A trusted network is identified by the router's address and its hardware address. On any other Wi-Fi the remote listener does not open.
+  - The port follows `[remote_access].port` in `config.toml`.
+- Each device is set up once, and the **Remote access** screen of the Mac's monitor guides you through it in order once you pick the device kind (**iPhone or iPad** · **Galaxy phone**).
+  - The screen also handles turning remote access on and off, trusting the current Wi-Fi, and the list of registered devices (`Remove` per device · `Remove all devices` for all).
+  - iPhone and iPad: send the Mac's CA certificate (never the key file) by AirDrop, compare the SHA-256 fingerprint on the screen with the one shown on the device before installing, install it, and turn on full trust.
+    - Then scan the QR code on the Mac's screen (if that fails, type the address and code by hand) and register the device under a name.
+  - Galaxy phone: send the certificate to the phone and install it as a CA certificate from the install screen, compare the fingerprint right after installing, then type the address into Samsung Internet and enter the code.
+    - This walkthrough was checked on one Galaxy phone (installing the CA certificate, the menu names on screen, the fingerprint comparison, and the remove button on the same screen). The One UI version and DeX mode were not reported, so other Android versions and modes are unverified.
+  - The registration code is created only when you open it on the Mac's screen and expires after 5 minutes.
+  - After that the device is not asked again until you remove it.
+- Terminal commands (`glass-atrium remote …`)
+  - `on` · `off` — turn on or off
+  - `list` — the registered devices
+  - `revoke <id>` · `revoke-all` — remove one device or all of them
+  - `trust` — add the current Wi-Fi to the trusted networks
+  - `reissue` — reissue the server certificate now
+    - Normally the monitor and updates reissue it by themselves 30 days before expiry, or when the Wi-Fi address or the Mac's name changes. Devices trust the CA, so they are not asked again.
+  - A device cannot be registered from the terminal, only from the monitor page on the Mac.
+- `glass-atrium doctor` checks key permissions, Time Machine exclusion, the certificate's host name, addresses, and approaching expiry, the address the listener is bound to and the trusted networks, and the firewall state (read-only).
+- Residual risks (what the owner has chosen to accept)
+  - If a registered device is lost, taken, or infected, it can use every feature until you remove it — including session instructions that run without permission prompts, settings changes, self-update, and viewing every document and session. This case is not designed to be prevented.
+  - Where a queue answer is treated as an approval, such a device can approve a deploy, merge, or deletion. The queue record does not yet note whether an answer came from a phone; only the remote audit record does.
+  - A copied session cookie is equivalent to the owner until you remove the device.
+  - A process running with the owner's privileges on this Mac can forge the page-origin header, open registration, read the code, and register a device. The device list and audit record show it but do not prevent it.
+  - The registration page can be opened by anyone on the trusted Wi-Fi.
+  - On a device that ignores the CA's name constraints, whoever holds the CA key could impersonate other private-network sites to that device. The CA key never leaves this Mac.
+  - For details see [SECURITY.md](SECURITY.md#remote-access-opt-in).
 
 ### Uninstall
 
@@ -233,6 +349,7 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
   - The symlinks the Atrium laid down and the empty directory shells
   - The hook wiring in `settings.json` (the original is left beside it as `settings.json.ga-backup.<timestamp>`)
   - The PATH line in your shell rc
+  - The remote access keys and registered-device records (the CA each device trusts you must remove yourself)
 - Your own files are left untouched.
   - The `~/.glass-atrium` folder holding the real files also remains.
 - `~/.claude` is **not** emptied completely.
@@ -278,19 +395,28 @@ curl -fsSL https://github.com/bettep-dev/glass-atrium/raw/main/install.sh | bash
 - The screens below were captured from a separate monitor loaded with synthetic data only (no real install data).
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-dashboard.webp" alt="Dashboard" width="100%"></p>
-<p align="center"><em>Dashboard — a top banner flags stopped harness parts and spend running ahead of the 7-day average; below the tiles for harness health, 7-day task results, the agent fleet, and today's spend come this week's task-result bars and an hourly run heatmap.</em></p>
+<p align="center"><em>Dashboard — shows the harness status row (5 of 5 parts up, the share of failed or blocked runs over 7 days, agents suspended, today's spend against yesterday) with the 7-day task results, the agents that fail or are blocked most, an hourly run heatmap, and a daily spend bar chart. A banner at the top flags a stopped part or spend running ahead of the 7-day average when there is one.</em></p>
+
+<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-queue.webp" alt="Queue" width="100%"></p>
+<p align="center"><em>Queue — the session list on the left (the checked sessions set the scope of the list and of the orders); in the middle column one session's approval decision opened with its options and each option's pros and cons (with nothing open, this column lists decisions, reports, and in-delivery items); and on the right, Orders, showing the orders sent to the checked sessions and each session's receipt state.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-cost.webp" alt="Cost & usage" width="100%"></p>
-<p align="center"><em>Cost & usage — first raises a "higher than usual" status line and a spend-rate warning, then shows KPIs for today versus usual, 30-day cost, cost per finished task, and cache share, a daily cost trend chart, cost by token type and model, and a table of the most expensive sessions, with a 7 · 30 · 90-day period switch.</em></p>
+<p align="center"><em>Cost & usage — shows KPIs for today, 7-day cost (reading "No comparison" when the prior window has no data), cost per finished task, and cache share, a 7-day cost trend line marked with the normal range, cost by token type and by model, and a table of the most expensive sessions, with a 7 · 30 · 90-day period switch. A status line and a warning come first when spend runs higher or faster than usual.</em></p>
+
+<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-models.webp" alt="Models & budgets" width="100%"></p>
+<p align="center"><em>Models & budgets — a per-agent model pin table with a bar for changing several chosen agents at once, then the daemon model for self-improvement and wiki-compile calls, the per-call budget cap, and the effort and output-token limits for each generation and pre-verify stage, with a marker for any difference between the saved value and the one actually applied.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-agents.webp" alt="Agents" width="100%"></p>
-<p align="center"><em>Agents — points out in one line the agents that need action; below KPIs for agents unsafe to route to, failures, over-tool-use-cap runs, and needs-context results come the agent-task pairs that fail most often, runs with no completion record and P95, and a per-agent performance table.</em></p>
+<p align="center"><em>Agents — flags an agent on a fail streak in one line at the top; below KPIs for agents unsafe to route to, failures, over-tool-use-cap runs, and needs-context results come the agent-task pairs that fail most often, runs with no completion record and P95, and a per-agent performance table.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-learning.webp" alt="Learning" width="100%"></p>
-<p align="center"><em>Learning — shows a one-line state of the self-improvement loop, tiles for awaiting approval, applied in the last 7 days, proposable backlog, and held patterns that need a human call, and an instrumentation status line. As on today's installs, where automatic patch generation and application are closed, applied-in-the-last-7-days is 0; the suggestion board keeps the apply history from before the closure, rejections by cause, and proposals closed without a verdict (generation closed until live trials), then leads into the pattern ledger.</em></p>
+<p align="center"><em>Learning — shows tiles for 1 suggestion awaiting approval, 3 applied in the last 7 days, and 0 held patterns that need a human call; below them a suggestion board opens the awaiting suggestion beside its Reject and Approve buttons and lists the 3 applied suggestions next to the rejected and not-judged ones split by cause, then leads into the pattern ledger.</em></p>
 
 <p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-system-map.webp" alt="System map" width="100%"></p>
-<p align="center"><em>System map — puts the parts that need attention and the status-ring legend at the top, overlays per-part status rings on a diagram running through inputs, daemons, orchestrator, agents, safety hooks, the PostgreSQL store, and Chromium document export, and continues into the part-health list below.</em></p>
+<p align="center"><em>System map — puts the status-ring legend at the top and a diagram running through inputs, daemons, orchestrator, agents, safety hooks, the PostgreSQL store, and Chromium document export, with the two daemons that are not yet verified drawn dashed, and continues into the part-health list below.</em></p>
+
+<p align="center"><img src="https://github.com/bettep-dev/glass-atrium/raw/main/docs/assets/screen-remote-access.webp" alt="Remote access" width="100%"></p>
+<p align="center"><em>Remote access — the state of the enabled remote access and the trusted Wi-Fi, a guided walkthrough you follow in order after picking the device kind (certificate transfer · fingerprint comparison · registration code and QR code), and the list of registered devices with their remove buttons.</em></p>
 
 ## License
 

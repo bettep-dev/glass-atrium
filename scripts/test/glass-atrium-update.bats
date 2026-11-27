@@ -153,15 +153,13 @@ load_skill() {
 
 # resolution helpers
 
-@test "resolution helpers anchor on GA_ROOT and the daemon reports dir" {
+@test "resolution helpers anchor on GA_ROOT" {
   run bash -c '
     source "'"${SKILL}"'"
     GA_ROOT="/x" update_ga_root
-    AUTOAGENT_REPORTS_DIR="/r" update_apply_lock_dir
   '
   [ "$status" -eq 0 ]
   [[ "${lines[0]}" == "/x" ]]
-  [[ "${lines[1]}" == "/r/.apply-lock" ]]
 }
 
 @test "release slug prefers ATRIUM_RELEASE_REPO over config" {
@@ -244,6 +242,42 @@ load_skill() {
     = "$(jq -r '.hashes["rules/glass-atrium/GLASS_ATRIUM_GLOBAL_RULES.md"]' "${WORK}/manifest.json")" ] || return 1
 }
 
+@test "a run under a caller's umask 077 lands new files 644 and new dirs 755, while a mapped 600 stays 600" {
+  # The updater's own mask decides what it creates; the modes map still decides every row it lists.
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new"
+  seed_file "${NEWSRC}" "scripts/fresh/private.sh" "private"
+  jq -n \
+    --arg tool "$(sha256_of "${NEWSRC}/scripts/tool.sh")" \
+    --arg private "$(sha256_of "${NEWSRC}/scripts/fresh/private.sh")" \
+    '{version: "1.0.0", files: ["scripts/tool.sh", "scripts/fresh/private.sh"],
+      hashes: {"scripts/tool.sh": $tool, "scripts/fresh/private.sh": $private},
+      modes: {"scripts/tool.sh": "644", "scripts/fresh/private.sh": "600"}}' >"${WORK}/manifest.json"
+
+  run bash -c 'umask 077 && exec env \
+    GA_ROOT="$1" AUTOAGENT_REPORTS_DIR="$2/daemon-reports" ATRIUM_UPDATE_STATE_DIR="$2/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="$3" ATRIUM_UPDATE_SRC_MANIFEST="$4" bash "$5"' \
+    _ "${INSTALL}" "${STATE}" "${NEWSRC}" "${WORK}/manifest.json" "${SKILL}"
+
+  [ "${status}" -eq 0 ] || {
+    echo "${output}"
+    return 1
+  }
+  local row name rel want
+  local rows=(
+    "a new file the updater writes|manifest.json|644"
+    "a new release directory|scripts/fresh|755"
+    "a row the modes map sets to 600|scripts/fresh/private.sh|600"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name rel want <<<"${row}"
+    [ "$(mode_of "${INSTALL}/${rel}")" = "${want}" ] || {
+      echo "${name}: ${rel} is $(mode_of "${INSTALL}/${rel}"), want ${want}"
+      return 1
+    }
+  done
+}
+
 # serialize begin + cleanup unwind
 
 @test "serialize_begin acquires the apply-lock; cleanup releases it" {
@@ -252,7 +286,7 @@ load_skill() {
     INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
     load_skill
     update_serialize_begin
-    lock="$(update_apply_lock_dir)"
+    lock="$(apply_lock_get_dir)"
     [[ -d "${lock}" ]] && echo "LOCK_HELD"
     update_cleanup
     [[ ! -d "${lock}" ]] && echo "LOCK_RELEASED"
@@ -415,10 +449,12 @@ STUB
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]] # apply happened first
   [[ -f "${WORK}/launcher-calls.log" ]]
   # wire-hooks was invoked, and it ran AFTER the farm's agents-only (install
-  # ordering: run_symlink_farm -> wire_hooks). The LAST recorded call is wire-hooks.
+  # ordering: run_symlink_farm -> wire_hooks): no agents-only call follows the first wire-hooks.
   [[ "$(grep -c '^wire-hooks$' "${WORK}/launcher-calls.log")" -ge 1 ]]
   [[ "$(grep -c '^agents-only$' "${WORK}/launcher-calls.log")" -ge 1 ]]
-  [[ "$(tail -n 1 "${WORK}/launcher-calls.log")" == "wire-hooks" ]]
+  local after_wire
+  after_wire="$(sed -n '/^wire-hooks$/,$p' "${WORK}/launcher-calls.log")"
+  [[ "${after_wire}" != *agents-only* ]]
 }
 
 @test "post-apply: a FAILING wire-hooks loud-fails exit 12 and does NOT roll back the applied files" {
@@ -485,6 +521,134 @@ STUB
     "${WORK}/target/settings.json"
   [ "$status" -eq 0 ]
   [[ "$output" -ge 1 ]]
+}
+
+@test "post-apply: the queue MCP report prints each profile write with the approval command and writes nothing (real launcher)" {
+  [[ -f "${GA}/glass-atrium" ]] || skip "real glass-atrium launcher not found"
+  cp "${GA}/glass-atrium" "${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
+  # the applied tree the launcher and the adapter source from beside themselves
+  mkdir -p "${INSTALL}/scripts" "${WORK}/target"
+  ln -s "${GA}/lib" "${INSTALL}/lib"
+  ln -s "${GA}/hooks" "${INSTALL}/hooks"
+  ln -s "${GA}/scripts/lib" "${INSTALL}/scripts/lib"
+  ln -s "${GA}/scripts/atrium-queue-mcp.sh" "${INSTALL}/scripts/atrium-queue-mcp.sh"
+  printf '%s\n' '{ "hooks": {} }' >"${WORK}/target/settings.json"
+
+  run --separate-stderr bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    export GA_TARGET_HOME="'"${WORK}"'/target"
+    load_skill
+    _update_script_dir="'"${GA}"'/scripts"
+    update_report_queue_mcp_post_apply
+  '
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output} ${stderr}"
+    return 1
+  }
+  [[ "${stderr}" == *"${WORK}/.claude.json: mcpServers.atrium-queue"* &&
+    "${stderr}" == *"${WORK}/target/settings.json: permissions.allow + mcp__atrium-queue__claim"* &&
+    "${stderr}" == *"queue-mcp --approve-profile-writes"* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+  local settings
+  settings="$(jq -c . "${WORK}/target/settings.json")"
+  [[ ! -e "${WORK}/.claude.json" && "${settings}" == '{"hooks":{}}' ]]
+}
+
+@test "post-apply: the update's last line names the queue-mcp command while any profile, a new one included, lacks the registration" {
+  [[ -f "${GA}/glass-atrium" ]] || skip "real glass-atrium launcher not found"
+  cp "${GA}/glass-atrium" "${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
+  mkdir -p "${INSTALL}/scripts" "${WORK}/target"
+  ln -s "${GA}/lib" "${INSTALL}/lib"
+  ln -s "${GA}/hooks" "${INSTALL}/hooks"
+  ln -s "${GA}/scripts/lib" "${INSTALL}/scripts/lib"
+  ln -s "${GA}/scripts/atrium-queue-mcp.sh" "${INSTALL}/scripts/atrium-queue-mcp.sh"
+  # registered in the one existing profile, its five allow lines present
+  jq -n --arg a "${INSTALL}/scripts/atrium-queue-mcp.sh" \
+    '{mcpServers: {"atrium-queue": {type: "stdio", command: "/bin/bash", args: [$a], env: {}}}}' >"${WORK}/.claude.json"
+  jq -n '{hooks: {}, permissions: {allow: ["post", "claim", "record", "sessions", "relay"] | map("mcp__atrium-queue__" + .)}}' \
+    >"${WORK}/target/settings.json"
+  local row name new_profile want last
+  local rows=('every profile registered||none' 'a profile created after the registration|.claude-work|line')
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name new_profile want <<<"${row}"
+    if [[ -n "${new_profile}" ]]; then
+      mkdir -p "${WORK}/${new_profile}"
+      printf '{}\n' >"${WORK}/${new_profile}/.claude.json"
+    fi
+    run --separate-stderr bash -c '
+      '"$(declare -f load_skill)"'
+      INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+      export GA_TARGET_HOME="'"${WORK}"'/target"
+      load_skill
+      _update_script_dir="'"${GA}"'/scripts"
+      update_report_queue_mcp_post_apply
+      update_log "update complete"
+      update_report_queue_mcp_summary
+    '
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: ${output} ${stderr}"
+      return 1
+    }
+    last="${stderr##*$'\n'}"
+    if [[ "${want}" == none ]]; then
+      [[ "${last}" == *"update complete" ]] || {
+        echo "${name}: ${stderr}"
+        return 1
+      }
+    else
+      [[ "${last}" == *"'${INSTALL}/glass-atrium queue-mcp'"* && -z "$(jq -c '.mcpServers // empty' "${WORK}/${new_profile}/.claude.json")" ]] || {
+        echo "${name}: ${stderr}"
+        return 1
+      }
+    fi
+  done
+}
+
+@test "post-apply: a CLI update at a terminal runs the asking queue MCP writer and names no command; any other update only reports" {
+  local log="${WORK}/launcher.log"
+  cat >"${INSTALL}/glass-atrium" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${log}"
+# the dry run's remedy line, as the real launcher prints it while a write is pending
+[[ "\$*" != *--dry-run* ]] || printf '%s\n' "queue MCP: registration incomplete — '${INSTALL}/glass-atrium queue-mcp' at a terminal shows each write and asks before any" >&2
+STUB
+  chmod +x "${INSTALL}/glass-atrium"
+  local row name terminal headless want
+  local rows=('CLI at a terminal|true|0|queue-mcp' 'headless at a terminal|true|1|queue-mcp --dry-run'
+    'CLI without a terminal|false|0|queue-mcp --dry-run')
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name terminal headless want <<<"${row}"
+    : >"${log}"
+    run --separate-stderr bash -c '
+      '"$(declare -f load_skill)"'
+      INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+      load_skill
+      ga_remote_is_terminal() { '"${terminal}"'; }
+      _update_headless='"${headless}"'
+      update_report_queue_mcp_post_apply
+      update_report_queue_mcp_summary
+    '
+    [[ "${status}" -eq 0 && "$(<"${log}")" == "${want}" ]] || {
+      echo "${name}: status ${status}, launcher ran '$(<"${log}")': ${stderr}"
+      return 1
+    }
+    if [[ "${want}" == queue-mcp ]]; then
+      [[ "${stderr}" != *"shows each write and asks"* ]] || {
+        echo "${name}: ${stderr}"
+        return 1
+      }
+    else
+      [[ "${stderr##*$'\n'}" == *"'${INSTALL}/glass-atrium queue-mcp' at a terminal"* ]] || {
+        echo "${name}: ${stderr}"
+        return 1
+      }
+    fi
+  done
 }
 
 # roster-migration gate (T20 / gate G8)
@@ -1523,12 +1687,43 @@ MOCK
   chmod +x "$1"
 }
 
-# A mock npm: logs "$*" to $NPM_LOG, exits $NPM_RC (default 0).
+# A mock npm: logs "$*" to $NPM_LOG and exits $NPM_RC_<sub> for its subcommand (`ci`, or
+# the script name after `run`), else $NPM_RC (default 0). NPM_BUILD_EMIT=1 makes `run build`
+# rewrite dist/server/app.js before its exit, the way tsc emits even on a type error.
+# STDIN_LOG set → appends "<sub> stdin=open|closed": open when a line could be read from stdin.
 write_mock_npm() {
   cat >"$1" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${NPM_LOG:-/dev/null}"
-exit "${NPM_RC:-0}"
+sub="$1"
+[[ "$1" == run ]] && sub="$2"
+if [[ -n "${STDIN_LOG:-}" ]]; then
+  stdin=closed
+  IFS= read -r -t 1 _ && stdin=open
+  printf '%s stdin=%s\n' "${sub}" "${stdin}" >>"${STDIN_LOG}"
+fi
+if [[ "${sub}" == build && -n "${NPM_BUILD_EMIT:-}" ]]; then
+  mkdir -p dist/server && printf 'rebuilt\n' >dist/server/app.js
+fi
+rc_var="NPM_RC_${sub}"
+exit "${!rc_var:-${NPM_RC:-0}}"
+MOCK
+  chmod +x "$1"
+}
+
+# A mock prisma CLI: logs "prisma $*" to $PRISMA_LOG, exits $PRISMA_RC_<subcommand> (default 0).
+# STDIN_LOG set → appends "prisma <subcommand> stdin=open|closed", as the mock npm does.
+write_mock_prisma() {
+  cat >"$1" <<'MOCK'
+#!/usr/bin/env bash
+printf 'prisma %s\n' "$*" >>"${PRISMA_LOG:-/dev/null}"
+if [[ -n "${STDIN_LOG:-}" ]]; then
+  stdin=closed
+  IFS= read -r -t 1 _ && stdin=open
+  printf 'prisma %s stdin=%s\n' "$1" "${stdin}" >>"${STDIN_LOG}"
+fi
+rc_var="PRISMA_RC_$1"
+exit "${!rc_var:-0}"
 MOCK
   chmod +x "$1"
 }
@@ -1928,29 +2123,50 @@ MOCK
   grep -q "bootstrap" "${WORK}/lc.log"                            # unloaded → bootstrap
 }
 
-# CLI (non-headless) apply of the one release file $1, npm + launchctl seamed; NPM_RC
-# picks the build's exit. The install's monitor dir exists in every case, so a build
-# skipped for an absent dir can never pass for a build the apply set did not ask for.
+# CLI (non-headless) apply of the release files "$@", npm + prisma + launchctl seamed, both
+# CLIs logging in call order to ${WORK}/calls.log. NPM_RC_<sub> / PRISMA_RC_<sub> pick a
+# sub-step's exit. The install's monitor dir exists in every case, so a build skipped for
+# an absent dir can never pass for a build the apply set did not ask for. The updater's
+# stdin is $CLI_STDIN (default /dev/null), and STDIN_LOG passes through to both mocks.
 run_cli_apply() {
-  local rel="$1"
+  local rel
   write_mock_npm "${WORK}/npm"
+  write_mock_prisma "${WORK}/prisma"
   write_mock_launchctl "${WORK}/launchctl"
   mkdir -p "${INSTALL}/monitor"
-  seed_file "${INSTALL}" "${rel}" "old"
-  seed_file "${NEWSRC}" "${rel}" "new content"
-  write_manifest "${WORK}/manifest.json" "${rel}"
-  run env \
+  for rel in "$@"; do
+    seed_file "${INSTALL}" "${rel}" "old"
+    seed_file "${NEWSRC}" "${rel}" "new content"
+  done
+  write_manifest "${WORK}/manifest.json" "$@"
+  run env -u GA_SKIP_DB_SETUP -u DATABASE_URL -u ATRIUM_UPDATE_DB_NAME \
+    GA_SKIP_DB_SETUP="${CLI_SKIP_DB_SETUP:-}" \
     GA_ROOT="${INSTALL}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
     ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
     ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
     ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_BACKFILL_PY="${WORK}/absent-backfill.py" \
     ATRIUM_UPDATE_NPM="${WORK}/npm" \
-    NPM_LOG="${WORK}/npm.log" \
-    NPM_RC="${NPM_RC:-0}" \
+    NPM_LOG="${WORK}/calls.log" \
+    NPM_RC_ci="${NPM_RC_ci:-}" \
+    NPM_RC_typecheck="${NPM_RC_typecheck:-}" \
+    NPM_RC_build="${NPM_RC_build:-}" \
+    NPM_BUILD_EMIT="${NPM_BUILD_EMIT:-}" \
+    ATRIUM_UPDATE_PRISMA="${WORK}/prisma" \
+    PRISMA_LOG="${WORK}/calls.log" \
+    PRISMA_RC_generate="${PRISMA_RC_generate:-}" \
+    PRISMA_RC_migrate="${PRISMA_RC_migrate:-}" \
     ATRIUM_UPDATE_LAUNCHCTL="${WORK}/launchctl" \
     LAUNCHCTL_LOG="${WORK}/launchctl.log" \
-    bash "${SKILL}"
+    STDIN_LOG="${STDIN_LOG:-}" \
+    bash "${SKILL}" <"${CLI_STDIN:-/dev/null}"
+}
+
+# The call log with the npm ci flags folded to a bare `ci`, so a row states the call order.
+# Sets CALLS rather than printing, so an assertion reads it without a masked substitution.
+read_calls() {
+  CALLS="$(sed 's/^ci .*/ci/' "${WORK}/calls.log" | tr '\n' ' ')"
 }
 
 @test "CLI apply touching monitor/ rebuilds the monitor and names the restart it does not do" {
@@ -1958,19 +2174,206 @@ run_cli_apply() {
 
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
   [[ "$(<"${INSTALL}/monitor/src/server/app.ts")" == "new content" ]] || return 1
-  [[ -f "${WORK}/npm.log" && "$(<"${WORK}/npm.log")" == "run build" ]] || { echo "${output}"; return 1; }
+  read_calls
+  [[ "${CALLS}" == "run typecheck run build " ]] || { echo "${output}"; return 1; }
   [[ "${output}" == *"restart the monitor to load a server-side change"* ]] || { echo "${output}"; return 1; }
   [[ ! -e "${WORK}/launchctl.log" ]] || { echo "CLI apply reached launchd"; return 1; }
 }
 
-@test "CLI apply whose monitor build fails warns and still exits 0 with the files applied" {
-  NPM_RC=1 run_cli_apply "monitor/public/src/ui.jsx"
+@test "CLI apply whose monitor typecheck fails exits 9 with the files applied and the old dist untouched" {
+  mkdir -p "${INSTALL}/monitor/dist/server"
+  printf 'compiled before the update\n' >"${INSTALL}/monitor/dist/server/app.js"
+  NPM_RC_typecheck=1 NPM_RC_build=1 NPM_BUILD_EMIT=1 run_cli_apply "monitor/src/server/app.ts"
+
+  [[ "${status}" -eq 9 ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${INSTALL}/monitor/src/server/app.ts")" == "new content" ]] || return 1
+  [[ "$(<"${INSTALL}/monitor/dist/server/app.js")" == "compiled before the update" ]] || { echo "dist rewritten"; return 1; }
+  read_calls
+  [[ "${CALLS}" == "run typecheck " ]] || { echo "${output}"; return 1; }
+  [[ "${output}" == *"monitor build failed"*"npm run build"* ]] || { echo "${output}"; return 1; }
+  [[ "${output}" != *"restart the monitor to load a server-side change"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "CLI apply whose monitor build fails after a passing typecheck exits 9" {
+  NPM_RC_build=1 run_cli_apply "monitor/public/src/ui.jsx"
+
+  [[ "${status}" -eq 9 ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${INSTALL}/monitor/public/src/ui.jsx")" == "new content" ]] || return 1
+  read_calls
+  [[ "${CALLS}" == "run typecheck run build " ]] || { echo "${output}"; return 1; }
+  [[ "${output}" != *"update complete"* ]] || { echo "${output}"; return 1; }
+}
+
+@test "an exit-9 recovery names the dependency install exactly when the monitor's node_modules are absent" {
+  local row label state want_install client_dir modules="${INSTALL}/monitor/node_modules"
+  local -a rows=(
+    "dependencies never installed|absent|1"
+    "dependencies installed|present|0"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label state want_install <<<"${row}"
+    if ga_guard_path "${modules}"; then rm -rf -- "${modules:?}"; fi
+    if [[ "${state}" == present ]]; then
+      client_dir="$(get_schema_client_dir "${INSTALL}/monitor")"
+      mkdir -p "${modules}/.bin" "${client_dir}"
+      printf '#!/bin/sh\n' | tee "${modules}/.bin/tsc" >"${modules}/.bin/prisma"
+      chmod +x "${modules}/.bin/tsc" "${modules}/.bin/prisma"
+    fi
+    NPM_RC_typecheck=1 run_cli_apply "monitor/src/server/app.ts"
+    [[ "${status}" -eq 9 ]] || { echo "${label}: ${output}"; return 1; }
+    if [[ "${want_install}" -eq 1 ]]; then
+      [[ "${output}" == *"node_modules absent"*"glass-atrium db-setup"*"npm run build"* ]] || { echo "${label}: ${output}"; return 1; }
+    else
+      [[ "${output}" != *"glass-atrium db-setup"* ]] || { echo "${label}: ${output}"; return 1; }
+    fi
+  done
+}
+
+@test "CLI apply re-resolves the config binaries, then re-renders the launchd plists and the monitor env, without restarting anything" {
+  local render
+  for render in env launchd; do
+    printf '#!/usr/bin/env bash\nprintf "render-%s\\n" >>"%s"\n' "${render}" "${WORK}/renders.log" >"${WORK}/render-${render}.sh"
+    chmod +x "${WORK}/render-${render}.sh"
+  done
+  # the applied install's launcher, listing the subcommand in its usage; only its repair-config-binaries call belongs to this ordering
+  printf '#!/usr/bin/env bash\n[[ "$1" != --help ]] || echo "  glass-atrium repair-config-binaries"\n[[ "$1" != repair-config-binaries ]] || printf "repair-config-binaries\\n" >>"%s"\n' "${WORK}/renders.log" >"${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
+  export ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/render-env.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/render-launchd.sh"
+  export ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist"
+  run_cli_apply "scripts/tool.sh"
 
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
-  [[ "$(<"${INSTALL}/monitor/public/src/ui.jsx")" == "new content" ]] || return 1
-  [[ -f "${WORK}/npm.log" && "$(<"${WORK}/npm.log")" == "run build" ]] || { echo "${output}"; return 1; }
-  [[ "${output}" == *"WARN: monitor build failed"* ]] || { echo "${output}"; return 1; }
-  [[ "${output}" != *"restart the monitor to load a server-side change"* ]] || { echo "${output}"; return 1; }
+  [[ "$(<"${WORK}/renders.log")" == $'repair-config-binaries\nrender-launchd\nrender-env' ]] || { echo "${output}"; cat "${WORK}/renders.log"; return 1; }
+  [[ ! -e "${WORK}/launchctl.log" ]] || { echo "CLI apply reached launchd"; return 1; }
+}
+
+@test "the update moves only a Cellar binary path of an existing config, names the move in its log, and WARNs on a failed repair" {
+  [[ -f "${GA}/glass-atrium" ]] || skip "real glass-atrium launcher not found"
+  cp "${GA}/glass-atrium" "${INSTALL}/glass-atrium"
+  chmod +x "${INSTALL}/glass-atrium"
+  mkdir -p "${INSTALL}/scripts"
+  ln -s "${GA}/lib" "${INSTALL}/lib"
+  ln -s "${GA}/hooks" "${INSTALL}/hooks"
+  ln -s "${GA}/scripts/lib" "${INSTALL}/scripts/lib"
+  # the template a re-render would copy over the hand-tuned values below
+  ln -s "${GA}/config.toml.example" "${INSTALL}/config.toml.example"
+  local cellar="${WORK}/brew/Cellar/node@22/22.11.0/bin/node" opt="${WORK}/brew/opt/node@22/bin/node" claude="${WORK}/bin/claude"
+  mkdir -p "$(dirname -- "${cellar}")" "${WORK}/brew/opt" "${WORK}/bin"
+  printf '#!/bin/sh\n' | tee "${cellar}" >"${claude}"
+  chmod +x "${cellar}" "${claude}"
+  ln -s ../Cellar/node@22/22.11.0 "${WORK}/brew/opt/node@22"
+  printf '#!/usr/bin/env bash\n' >"${WORK}/render-noop.sh"
+  chmod +x "${WORK}/render-noop.sh"
+  # a ${HOME} token in a comment, and values no template carries
+  # shellcheck disable=SC2016
+  local before
+  before="$(printf '# hand note: the old tree lived under ${HOME}/old-atrium\n[paths]\nnode_bin = "%s"\nclaude_bin = "%s"\nmonitor_docs_html_root = "%s/docs"\n\n[remote_access]\nenabled = true\nport = 17001\n' \
+    "${cellar}" "${claude}" "${WORK}")"
+  printf '%s\n' "${before}" >"${INSTALL}/config.toml"
+
+  run --separate-stderr bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export HOME="'"${WORK}"'" PATH="'"${WORK}"'/bin:/usr/bin:/bin"
+    export ATRIUM_UPDATE_RENDER_MONITOR_ENV="'"${WORK}"'/render-noop.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="'"${WORK}"'/render-noop.sh"
+    export ATRIUM_UPDATE_ONESHOT_PLIST="'"${WORK}"'/oneshot.plist"
+    update_render_parity
+  '
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output} ${stderr}"
+    return 1
+  }
+  local want="${before//"${cellar}"/${opt}}"
+  [[ "$(<"${INSTALL}/config.toml")" == "${want}" ]] || {
+    diff <(printf '%s\n' "${want}") "${INSTALL}/config.toml"
+    return 1
+  }
+  [[ "${stderr}" == *"node_bin ${cellar} -> ${opt}"* && "${stderr}" != *"claude_bin "*" -> "* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+
+  printf '#!/usr/bin/env bash\n[[ "$1" != --help ]] || { echo "  glass-atrium repair-config-binaries"; exit 0; }\nprintf "FATAL: config unreadable\\n" >&2\nexit 1\n' >"${INSTALL}/glass-atrium"
+  run --separate-stderr bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_RENDER_MONITOR_ENV="'"${WORK}"'/render-noop.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="'"${WORK}"'/render-noop.sh"
+    export ATRIUM_UPDATE_ONESHOT_PLIST="'"${WORK}"'/oneshot.plist"
+    update_render_parity
+  '
+  [[ "${status}" -eq 0 && "${stderr}" == *"FATAL: config unreadable"*"WARN: "*"[paths] binaries not re-resolved"* ]] || {
+    echo "status ${status}: ${stderr}"
+    return 1
+  }
+}
+
+@test "the update leaves the config binaries to a launcher without the repair subcommand, with a note rather than a failed-repair WARN, and still renders" {
+  local render
+  for render in env launchd; do
+    printf '#!/usr/bin/env bash\nprintf "render-%s\\n" >>"%s"\n' "${render}" "${WORK}/renders.log" >"${WORK}/render-${render}.sh"
+    chmod +x "${WORK}/render-${render}.sh"
+  done
+  # a launcher older than repair-config-binaries: its usage omits it and its passthrough refuses it as unknown
+  cat >"${INSTALL}/glass-atrium" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == --help ]]; then
+  printf '  glass-atrium reload-launchd  re-render the launchd jobs and reload them\n'
+  exit 0
+fi
+printf 'glass-atrium: unknown internal subcommand: %s\n' "$1" >&2
+exit 2
+STUB
+  chmod +x "${INSTALL}/glass-atrium"
+  run --separate-stderr bash -c '
+    '"$(declare -f load_skill)"'
+    INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+    load_skill
+    export ATRIUM_UPDATE_RENDER_MONITOR_ENV="'"${WORK}"'/render-env.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="'"${WORK}"'/render-launchd.sh"
+    export ATRIUM_UPDATE_ONESHOT_PLIST="'"${WORK}"'/oneshot.plist"
+    update_render_parity
+  '
+  [[ "${status}" -eq 0 ]] || {
+    echo "status ${status}: ${stderr}"
+    return 1
+  }
+  [[ "${stderr}" == *"has no repair-config-binaries subcommand"* && "${stderr}" != *"WARN: "* && "${stderr}" != *"unknown internal subcommand"* ]] || {
+    echo "${stderr}"
+    return 1
+  }
+  [[ "$(<"${WORK}/renders.log")" == $'render-launchd\nrender-env' ]] || {
+    cat "${WORK}/renders.log"
+    return 1
+  }
+}
+
+@test "CLI apply reissues a due remote leaf only while remote access is on" {
+  local row label enabled want key_dir="${INSTALL}/monitor/data/remote-access"
+  local -a rows=(
+    "access on|true|${key_dir}"
+    "access off|false|"
+  )
+  printf '#!/usr/bin/env bash\n' >"${WORK}/render-noop.sh"
+  chmod +x "${WORK}/render-noop.sh"
+  export ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/render-noop.sh" ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/render-noop.sh"
+  export ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist"
+  # the real key-dir and due rules; a CA key with no leaf is due → only the signing is stubbed
+  # shellcheck source-path=SCRIPTDIR source=../../lib/ga-remote.sh
+  source "${GA}/lib/ga-remote.sh"
+  ga_remote_issue_leaf() { printf '%s\n' "$1" >>"${LEAF_LOG}"; }
+  export -f ga_remote_get_key_dir ga_remote_is_leaf_due ga_remote_issue_leaf
+  export LEAF_LOG="${WORK}/leaf.log"
+  mkdir -p "${key_dir}"
+  : >"${key_dir}/ca.key"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label enabled want <<<"${row}"
+    printf '[remote_access]\nenabled = %s\n' "${enabled}" >"${INSTALL}/config.toml"
+    : >"${LEAF_LOG}"
+    run_cli_apply "scripts/tool.sh"
+    [[ "${status}" -eq 0 ]] || { echo "${label}: ${output}"; return 1; }
+    [[ "$(<"${LEAF_LOG}")" == "${want}" ]] || { echo "${label}: reissued '$(<"${LEAF_LOG}")'"; return 1; }
+  done
 }
 
 @test "CLI apply that touches no monitor/ path never reaches the monitor build" {
@@ -1978,7 +2381,223 @@ run_cli_apply() {
 
   [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
   [[ "$(<"${INSTALL}/scripts/tool.sh")" == "new content" ]] || return 1
-  [[ ! -e "${WORK}/npm.log" ]] || { echo "${output}"; return 1; }
+  [[ ! -e "${WORK}/calls.log" ]] || { echo "${output}"; return 1; }
+}
+
+@test "the dependency step installs on a dependency-manifest change and regenerates on a schema change, before migrate and build" {
+  local row label rel want
+  local -a rows=(
+    "lockfile|monitor/package-lock.json|ci prisma generate prisma migrate deploy run typecheck run build "
+    "package manifest|monitor/package.json|ci prisma generate prisma migrate deploy run typecheck run build "
+    "prisma schema|monitor/prisma/schema.prisma|prisma generate prisma migrate deploy run typecheck run build "
+    "prisma config|monitor/prisma.config.ts|prisma generate prisma migrate deploy run typecheck run build "
+    "server source only|monitor/src/server/app.ts|prisma migrate deploy run typecheck run build "
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label rel want <<<"${row}"
+    : >"${WORK}/calls.log"
+    mkdir -p "${INSTALL}/monitor/prisma/migrations/20260101000000_probe"
+    run_cli_apply "${rel}"
+    [[ "${status}" -eq 0 ]] || { echo "${label}: ${output}"; return 1; }
+    read_calls
+    [[ "${CALLS}" == "${want}" ]] || { echo "${label}: got '${CALLS}'"; return 1; }
+  done
+}
+
+# Generated-client dir under $1 (a monitor dir), from the release schema's generator `output`
+# → a heal row seeded here fails when update_get_monitor_heal checks another path.
+get_schema_client_dir() {
+  local output
+  output="$(sed -n 's/^[[:space:]]*output[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "${GA}/monitor/prisma/schema.prisma")"
+  [[ -n "${output}" ]] || { echo "no generator output in ${GA}/monitor/prisma/schema.prisma" >&2; return 1; }
+  printf '%s\n' "$1/prisma/${output}"
+}
+
+# Seed the install's monitor for one self-heal row: each of tsc / prisma / client is
+# present|absent, and the fixture monitor/.env exists (empty) unless $4 is absent.
+seed_monitor_heal_state() {
+  local monitor="${INSTALL}/monitor" entry bin client_dir
+  # shellcheck disable=SC2310  # pure predicate — nothing inside it for errexit to catch
+  if ga_guard_path "${monitor}"; then rm -rf -- "${monitor:?}"; fi
+  mkdir -p "${monitor}/node_modules/.bin" "${monitor}/prisma/migrations/20260101000000_probe"
+  for entry in "tsc:$1" "prisma:$2"; do
+    [[ "${entry#*:}" == present ]] || continue
+    bin="${monitor}/node_modules/.bin/${entry%%:*}"
+    printf '#!/bin/sh\n' >"${bin}"
+    chmod +x "${bin}"
+  done
+  if [[ "$3" != absent ]]; then
+    client_dir="$(get_schema_client_dir "${monitor}")"
+    mkdir -p "${client_dir}"
+  fi
+  [[ "${4:-present}" == absent ]] || : >"${monitor}/.env"
+}
+
+@test "an apply set with no trigger path heals missing monitor tooling with an install and a missing client with a generate" {
+  local row label tsc prisma client want
+  local -a rows=(
+    "tsc binary absent|absent|present|present|ci prisma generate prisma migrate deploy run typecheck run build "
+    "prisma binary absent|present|absent|present|ci prisma generate prisma migrate deploy run typecheck run build "
+    "generated client absent|present|present|absent|prisma generate prisma migrate deploy run typecheck run build "
+    "tooling and client present|present|present|present|prisma migrate deploy run typecheck run build "
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label tsc prisma client want <<<"${row}"
+    seed_monitor_heal_state "${tsc}" "${prisma}" "${client}"
+    : >"${WORK}/calls.log"
+    run_cli_apply "monitor/src/server/app.ts"
+    [[ "${status}" -eq 0 ]] || { echo "${label}: ${output}"; return 1; }
+    read_calls
+    [[ "${CALLS}" == "${want}" ]] || { echo "${label}: got '${CALLS}'"; return 1; }
+  done
+}
+
+@test "the self-heal skips loudly, naming db-setup, under GA_SKIP_DB_SETUP or with no monitor/.env" {
+  local row label skip_db env_file want_text
+  local -a rows=(
+    "GA_SKIP_DB_SETUP set|1|present|GA_SKIP_DB_SETUP set"
+    "monitor/.env absent||absent|.env absent"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label skip_db env_file want_text <<<"${row}"
+    seed_monitor_heal_state absent absent absent "${env_file}"
+    : >"${WORK}/calls.log"
+    CLI_SKIP_DB_SETUP="${skip_db}" run_cli_apply "monitor/src/server/app.ts"
+    [[ "${status}" -eq 0 ]] || { echo "${label}: ${output}"; return 1; }
+    read_calls
+    [[ "${CALLS}" != *"ci"* && "${CALLS}" != *"generate"* ]] || { echo "${label}: healed: ${CALLS}"; return 1; }
+    [[ "${output}" == *"self-heal SKIPPED"*"${want_text}"*"glass-atrium db-setup"* ]] || { echo "${label}: ${output}"; return 1; }
+  done
+}
+
+@test "npm ci and prisma generate read nothing from the updater's stdin" {
+  printf 'y\n%.0s' {1..20} >"${WORK}/operator-input"
+  CLI_STDIN="${WORK}/operator-input" STDIN_LOG="${WORK}/stdin.log" run_cli_apply "monitor/package-lock.json"
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  grep -qx 'ci stdin=closed' "${WORK}/stdin.log" || { cat "${WORK}/stdin.log"; return 1; }
+  grep -qx 'prisma generate stdin=closed' "${WORK}/stdin.log" || { cat "${WORK}/stdin.log"; return 1; }
+}
+
+@test "npm ci bounds a fetch's worst-case wait to two minutes across its retries" {
+  local timeout_ms retries
+  run_cli_apply "monitor/package-lock.json"
+
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+  timeout_ms="$(sed -n 's/^ci .*--fetch-timeout=\([0-9][0-9]*\).*/\1/p' "${WORK}/calls.log")"
+  retries="$(sed -n 's/^ci .*--fetch-retries=\([0-9][0-9]*\).*/\1/p' "${WORK}/calls.log")"
+  [[ -n "${timeout_ms}" && -n "${retries}" ]] || { cat "${WORK}/calls.log"; return 1; }
+  (( timeout_ms >= 1 && timeout_ms * (retries + 1) <= 120000 )) || { cat "${WORK}/calls.log"; return 1; }
+}
+
+@test "a failing dependency sub-step exits 18 naming it and the recovery, and never reaches migrate or the build" {
+  local row label rc_env rel substep
+  local -a rows=(
+    "install fails|NPM_RC_ci|monitor/package-lock.json|npm ci"
+    "generate fails|PRISMA_RC_generate|monitor/prisma/schema.prisma|prisma generate"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label rc_env rel substep <<<"${row}"
+    : >"${WORK}/calls.log"
+    mkdir -p "${INSTALL}/monitor/prisma/migrations/20260101000000_probe"
+    export "${rc_env}=3"
+    run_cli_apply "${rel}"
+    unset "${rc_env}"
+    [[ "${status}" -eq 18 ]] || { echo "${label}: ${output}"; return 1; }
+    [[ "$(<"${INSTALL}/${rel}")" == "new content" ]] || { echo "${label}: not applied"; return 1; }
+    [[ "${output}" == *"${substep} failed"* ]] || { echo "${label}: ${output}"; return 1; }
+    [[ "${output}" == *"db-setup"*"npm run build"* ]] || { echo "${label}: ${output}"; return 1; }
+    read_calls
+    [[ "${CALLS}" != *"migrate"* && "${CALLS}" != *"run "* ]] \
+      || { echo "${label}: ran past the failure: ${CALLS}"; return 1; }
+  done
+}
+
+@test "headless: a failing dependency step closes the job row failed with exit 18" {
+  # Every post-step effect is seamed, so a run that wrongly walks past the failure
+  # cannot restart the live monitor or reach launchd.
+  write_mock_psql "${WORK}/psql"
+  write_mock_claude "${WORK}/claude"
+  write_mock_npm "${WORK}/npm"
+  write_mock_prisma "${WORK}/prisma"
+  write_mock_launchctl "${WORK}/launchctl"
+  mkdir -p "${WORK}/monitor"
+  seed_file "${INSTALL}" "monitor/package-lock.json" "old"
+  seed_file "${NEWSRC}" "monitor/package-lock.json" "new content"
+  write_manifest "${WORK}/manifest.json" "monitor/package-lock.json"
+
+  run env -u GA_SKIP_DB_SETUP -u DATABASE_URL \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${WORK}/manifest.json" \
+    ATRIUM_UPDATE_BACKFILL_PY="${WORK}/absent-backfill.py" \
+    ATRIUM_UPDATE_PSQL="${WORK}/psql" \
+    PSQL_LOG="${WORK}/psql.log" \
+    ATRIUM_UPDATE_CLAUDE_BIN="${WORK}/claude" \
+    ATRIUM_UPDATE_MONITOR_PLIST="${WORK}/nonexistent-monitor.plist" \
+    ATRIUM_UPDATE_ONESHOT_PLIST="${WORK}/oneshot.plist" \
+    ATRIUM_UPDATE_MONITOR_DIR="${WORK}/monitor" \
+    ATRIUM_UPDATE_NPM="${WORK}/npm" \
+    NPM_LOG="${WORK}/calls.log" \
+    NPM_RC_ci=3 \
+    ATRIUM_UPDATE_PRISMA="${WORK}/prisma" \
+    PRISMA_LOG="${WORK}/calls.log" \
+    ATRIUM_UPDATE_LAUNCHCTL="${WORK}/launchctl" \
+    LAUNCHCTL_LOG="${WORK}/launchctl.log" \
+    ATRIUM_UPDATE_RENDER_LAUNCHD="${WORK}/nonexistent-render-launchd.sh" \
+    ATRIUM_UPDATE_RENDER_MONITOR_ENV="${WORK}/nonexistent-render-env.sh" \
+    bash "${SKILL}" --headless
+
+  [ "${status}" -eq 18 ] || { echo "${output}"; return 1; }
+  grep -q "fr=aborted (exit=18)" "${WORK}/psql.log" || { cat "${WORK}/psql.log"; return 1; }
+  ! grep -q "status = 'completed'" "${WORK}/psql.log" || { cat "${WORK}/psql.log"; return 1; }
+  read_calls
+  [[ "${CALLS}" == "ci " ]] || { echo "ran past the failure: ${CALLS}"; return 1; }
+  [ ! -e "${WORK}/launchctl.log" ] || { cat "${WORK}/launchctl.log"; return 1; }
+}
+
+@test "prisma generate skips an uninstalled monitor loudly and exits 18 on a broken install" {
+  local row label seed want_rc want_text
+  local -a rows=(
+    "no node_modules|none|0|prisma generate SKIPPED"
+    "node_modules without the prisma CLI|node_modules|18|prisma CLI missing or not executable"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label seed want_rc want_text <<<"${row}"
+    mkdir -p "${WORK}/${label}"
+    [[ "${seed}" == none ]] || mkdir -p "${WORK}/${label}/${seed}"
+    run bash -c '
+      '"$(declare -f load_skill)"'
+      INSTALL="'"${INSTALL}"'"; STATE="'"${STATE}"'"
+      load_skill
+      unset ATRIUM_UPDATE_PRISMA
+      update_monitor_prisma_generate "$1"
+    ' _ "${WORK}/${label}"
+    [[ "${status}" -eq "${want_rc}" ]] || { echo "${label}: ${output}"; return 1; }
+    [[ "${output}" == *"${want_text}"* ]] || { echo "${label}: ${output}"; return 1; }
+  done
+}
+
+@test "a migrate failure after the dependency step ran names the rebuild before any restart" {
+  local row label rel want
+  local -a rows=(
+    "dependencies installed this run|monitor/package-lock.json|yes"
+    "no dependency step this run|monitor/src/server/app.ts|no"
+  )
+  for row in "${rows[@]}"; do
+    IFS='|' read -r label rel want <<<"${row}"
+    mkdir -p "${INSTALL}/monitor/prisma/migrations/20260101000000_probe"
+    PRISMA_RC_migrate=4 run_cli_apply "${rel}"
+    [[ "${status}" -eq 15 ]] || { echo "${label}: ${output}"; return 1; }
+    if [[ "${want}" == yes ]]; then
+      [[ "${output}" == *"npm run build"*"before restarting the monitor"* ]] || { echo "${label}: ${output}"; return 1; }
+    else
+      [[ "${output}" != *"before restarting the monitor"* ]] || { echo "${label}: ${output}"; return 1; }
+    fi
+  done
 }
 
 @test "P3: the decoupled one-shot launchd plist renders with the update-oneshot label + --headless args" {
@@ -2369,9 +2988,11 @@ retired_live_map() {
 
 # Drive the updater through the source-tree seam with the sweep's own sandbox seams
 # pinned: the Trash sink and the facade home both inside the per-test dir, so no run
-# can reach ~/.Trash or the real ~/.claude.
+# can reach ~/.Trash or the real ~/.claude. GA_SKIP_DB_SETUP keeps a fixture monitor that
+# seeds a .env out of the dependency self-heal, so no sweep run reaches the npm registry.
 run_update_sweep() {
   run env \
+    GA_SKIP_DB_SETUP=1 \
     GA_ROOT="${INSTALL}" \
     GA_TARGET_HOME="${FARM}" \
     AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
@@ -3351,4 +3972,115 @@ write_escaping_files_manifest() {
   [ "${status}" -eq 17 ] || { echo "${output}"; return 1; }
   grep -q "fr=aborted (exit=17)" "${WORK}/psql.log" || { cat "${WORK}/psql.log"; return 1; }
   [ ! -e "${WORK}/nest/escaped.sh" ] || return 1
+}
+
+# Apply of a changed scripts/tool.sh beside a shipped hooks/pricing.json, with the
+# pricing-roster checker stubbed: it logs its argument to check.log in ${GATE_DIR} (set to ${WORK} when unset), prints
+# $CHECK_OUT and exits $CHECK_RC. psql is the mock, so the DB-enabled arm is reachable
+# without a database. PRICING_SHIPPED=0 leaves pricing.json out of the release.
+run_pricing_gate_apply() {
+  GATE_DIR="${GATE_DIR:-${WORK}}"
+  write_mock_psql "${WORK}/psql"
+  cat >"${WORK}/check-stub" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >>"${CHECK_LOG}"
+[[ -n "${CHECK_OUT}" ]] && printf '%s\n' "${CHECK_OUT}"
+exit "${CHECK_RC}"
+STUB
+  chmod +x "${WORK}/check-stub"
+  local rels=("scripts/tool.sh")
+  seed_file "${INSTALL}" "scripts/tool.sh" "old"
+  seed_file "${NEWSRC}" "scripts/tool.sh" "new content"
+  if [[ "${PRICING_SHIPPED:-1}" -eq 1 ]]; then
+    seed_file "${INSTALL}" "hooks/pricing.json" '{"models":{}}'
+    seed_file "${NEWSRC}" "hooks/pricing.json" '{"models":{}}'
+    rels+=("hooks/pricing.json")
+  fi
+  write_manifest "${GATE_DIR}/manifest.json" "${rels[@]}"
+  [[ -z "${PRICING_TAMPER:-}" ]] || printf 'tampered' >"${NEWSRC}/hooks/pricing.json"
+  run --separate-stderr env -u GA_SKIP_DB_SETUP -u ATRIUM_UPDATE_DB -u ATRIUM_UPDATE_ALLOW_UNPRICED \
+    GA_SKIP_DB_SETUP="${SKIP_DB:-}" \
+    ATRIUM_UPDATE_ALLOW_UNPRICED="${ALLOW_UNPRICED:-}" \
+    GA_ROOT="${INSTALL}" \
+    AUTOAGENT_REPORTS_DIR="${STATE}/daemon-reports" \
+    ATRIUM_UPDATE_STATE_DIR="${STATE}/update-state" \
+    ATRIUM_UPDATE_SRC_DIR="${NEWSRC}" \
+    ATRIUM_UPDATE_SRC_MANIFEST="${GATE_DIR}/manifest.json" \
+    ATRIUM_UPDATE_PSQL="${WORK}/psql" \
+    ATRIUM_UPDATE_PRICING_CHECK="${WORK}/check-stub" \
+    CHECK_LOG="${GATE_DIR}/check.log" CHECK_RC="${CHECK_RC:-0}" CHECK_OUT="${CHECK_OUT:-}" \
+    bash "${SKILL}"
+}
+
+@test "the pricing-roster gate refuses an apply only on a verdict of unpriced ids, before any file is swapped" {
+  # name | checker rc | override | db opt-out | shipped | tampered | want status | applied | checked | stderr needle
+  local rows=(
+    "every id priced|0|||1||0|1|1|"
+    "unpriced ids refuse with the named code|3|||1||19|0|1|claude-new-9-9"
+    "the override applies past unpriced ids|3|1||1||0|1|1|ATRIUM_UPDATE_ALLOW_UNPRICED"
+    "a database without a verdict warns and applies|4|||1||0|1|1|no verdict"
+    "a check that cannot run warns and applies|127|||1||0|1|1|no verdict"
+    "the DB opt-out skips the check|3||1|1||0|1|0|database opt-out"
+    "a release without pricing.json skips the check|3|||0||0|1|0|ships no hooks/pricing.json"
+    "a release pricing.json off its manifest hash is refused|0|||1|1|1|0|0|hash"
+  )
+  local row name want_status want_applied want_checked needle applied checked i=0
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name CHECK_RC ALLOW_UNPRICED SKIP_DB PRICING_SHIPPED PRICING_TAMPER \
+      want_status want_applied want_checked needle <<<"${row}"
+    [[ -n "${PRICING_SHIPPED}" ]] || PRICING_SHIPPED=1
+    CHECK_OUT=$'claude-new-9-9\nclaude-other-9-9'
+    i=$((i + 1))
+    GATE_DIR="${WORK}/gate-row-${i}"
+    INSTALL="${GATE_DIR}/install" NEWSRC="${GATE_DIR}/newsrc" STATE="${GATE_DIR}/state"
+    mkdir -p -- "${INSTALL}" "${NEWSRC}" "${STATE}"
+    run_pricing_gate_apply
+    [[ "${status}" -eq "${want_status}" ]] || {
+      echo "${name}: status ${status}"
+      echo "${stderr}"
+      return 1
+    }
+    applied=0
+    [[ "$(cat "${INSTALL}/scripts/tool.sh")" != "new content" ]] || applied=1
+    [[ "${applied}" -eq "${want_applied}" ]] || {
+      echo "${name}: applied=${applied}"
+      echo "${stderr}"
+      return 1
+    }
+    checked=0
+    [[ ! -s "${GATE_DIR}/check.log" ]] || checked=1
+    [[ "${checked}" -eq "${want_checked}" ]] || {
+      echo "${name}: checked=${checked}"
+      echo "${stderr}"
+      return 1
+    }
+    [[ -z "${needle}" || "${stderr}" == *"${needle}"* ]] || {
+      echo "${name}: stderr lacks ${needle}"
+      echo "${stderr}"
+      return 1
+    }
+  done
+}
+
+@test "the pricing-roster gate checks the release's own pricing.json and records each unpriced verdict durably" {
+  CHECK_RC=3 CHECK_OUT=$'claude-new-9-9\nclaude-other-9-9'
+  run_pricing_gate_apply
+  [[ "${status}" -eq 19 ]] || {
+    echo "${stderr}"
+    return 1
+  }
+  [[ "$(cat "${GATE_DIR}/check.log")" == */new/hooks/pricing.json ]] || {
+    cat "${GATE_DIR}/check.log"
+    return 1
+  }
+  local ledger
+  ledger="$(find "${WORK}" -name pricing-roster.log -print)"
+  [[ -n "${ledger}" ]] || {
+    echo "no pricing-roster.log under ${WORK}"
+    return 1
+  }
+  grep -q 'refused.*claude-new-9-9 claude-other-9-9' "${ledger}" || {
+    cat "${ledger}"
+    return 1
+  }
 }

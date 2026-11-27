@@ -56,6 +56,7 @@ import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerImprovementRoutes } from "../src/server/routes/improvement.js";
 import { LIVE_URL_ENV, TEST_URL_ENV, isSameDatabase, isSameServer } from "./lib/select-test-db.js";
+import { lockTableWrites, unlockTableWrites } from "./lib/table-write-lock.js";
 
 const SUITE_MARKER = `impr-suppress-${randomUUID().slice(0, 8)}`;
 const AGENT_A = `${SUITE_MARKER}-a`;
@@ -226,6 +227,7 @@ before(async () => {
 
   // Deliberately UNGUARDED. fetchState asserts 200, so a route regression reds
   // here rather than flipping the suite to skipped.
+  await lockTableWrites("learning-log");
   baseline = await fetchState();
   await seed();
   body = await fetchState();
@@ -250,6 +252,7 @@ after(async () => {
       console.error("[impr-suppress cleanup] DB scrub failed:", error);
     }
   }
+  await unlockTableWrites("learning-log");
   await disconnectPrisma();
   delete process.env.AGENT_REGISTRY_PATH;
   resetAgentRegistryCache();
@@ -336,6 +339,7 @@ async function seed(): Promise<void> {
     ["stale-unobserved-skip", AGENT_A, 0],
     ["stale-gate-unknown-family", AGENT_B, 0],
     ["roster-mismatch", AGENT_OFF, 0],
+    ["reverted-snooze", AGENT_A, 0],
     // Not a suppression — the control that stops a "count every loop event"
     // implementation from passing.
     ["verified", AGENT_A, 0],
@@ -409,6 +413,31 @@ test("every per-cycle bucket a daemon token fills carries a distinct operator la
   for (const b of buckets) {
     assert.notStrictEqual(b.label, b.cause, `${b.cause} has no operator-facing label`);
     assert.ok(b.hint.length > 0, `${b.cause} has no remedy text`);
+  }
+});
+
+// The held causes the Learning ledger prints on its face, one remedy line per row.
+const HELD_CAUSES = [
+  "reject-streak-snooze",
+  "non-auto-fixable",
+  "repeat-apply-cap",
+  "reverted-snooze",
+  "roster-mismatch",
+  "non-promptable",
+] as const;
+const HELD_HINT_MAX_WORDS = 12;
+
+test("every sentence of a held cause's remedy fits the ledger face's 12-word bar", async (t) => {
+  if (!dbReady) return t.skip("DB unavailable");
+  const state = body.loop_suppression_state;
+  const buckets = [...state.parked, ...state.per_cycle, ...state.dormant.buckets];
+  for (const cause of HELD_CAUSES) {
+    const hint = bucket(buckets, cause)?.hint;
+    assert.ok(hint, `${cause} reaches no bucket after seeding`);
+    for (const sentence of hint.split(/(?<=\.)\s+/)) {
+      const words = sentence.split(/\s+/).length;
+      assert.ok(words <= HELD_HINT_MAX_WORDS, `${cause} remedy sentence runs ${words} words: ${sentence}`);
+    }
   }
 });
 

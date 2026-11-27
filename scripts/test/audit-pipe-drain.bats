@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# audit-pipe-drain.bats — pins scripts/audit-pipe-drain.sh: every early-exit pipe reader in a hooks/
-# shell file is reported unless drain_after wraps it or the `|| true` right after its pipeline discards its status,
+# audit-pipe-drain.bats — pins scripts/audit-pipe-drain.sh: every early-exit pipe reader in a hooks/ or
+# autoagent/ shell file is reported unless drain_after wraps it or the `|| true` right after its pipeline discards its status,
 # no file is exempt, and the scope run is clean on this tree.
 
 # shellcheck disable=SC2016  # fixtures are literal shell text written to files, never expanded here
@@ -99,6 +99,7 @@ assert_summary() {
 
 @test "a scope run blocks on a planted undrained site and names it" {
   local root="${BATS_TEST_TMPDIR}/root"
+  mkdir -p "${root}/autoagent"
   write_fixture "${root}/hooks/planted.sh" '#!/usr/bin/env bash' 'printf x | grep -q x && exit 2'
   write_fixture "${root}/hooks/test/fixture.bats" '@test "t" { printf x | grep -q x; }'
   run bash "${AUDIT_SH}" --root "${root}"
@@ -109,8 +110,38 @@ assert_summary() {
   }
 }
 
+@test "a scope run blocks on a planted undrained site in a non-test autoagent/ shell file" {
+  local root="${BATS_TEST_TMPDIR}/root"
+  mkdir -p "${root}/hooks"
+  write_fixture "${root}/autoagent/planted.sh" '#!/usr/bin/env bash' "printf x | awk '/x/ { print; exit }'"
+  write_fixture "${root}/autoagent/test/fixture.bats" '@test "t" { printf x | grep -q x; }'
+  run bash "${AUDIT_SH}" --root "${root}"
+  [[ "${status}" -eq 1 && "${output}" == *"UNDRAINED"*"autoagent/planted.sh:2"* &&
+    "${output}" != *"autoagent/test/"* ]] || {
+    echo "${output}"
+    return 1
+  }
+}
+
+@test "a scope run missing either scope root is an exit-3 scope error naming that root" {
+  local present="" missing="" root=""
+  for missing in hooks autoagent; do
+    root="${BATS_TEST_TMPDIR}/no-${missing}"
+    present=hooks
+    [[ "${missing}" == hooks ]] && present=autoagent
+    write_fixture "${root}/${present}/clean.sh" '#!/usr/bin/env bash' ':'
+    run bash "${AUDIT_SH}" --root "${root}"
+    [[ "${status}" -eq 3 && "${output}" == *"scope directory missing"*"${root}/${missing}"* ]] || {
+      echo "missing ${missing}: exit ${status}"
+      echo "${output}"
+      return 1
+    }
+  done
+}
+
 @test "a planted site in the outcome recorder or the scope-match library blocks like any other" {
   local root="${BATS_TEST_TMPDIR}/root" file=""
+  mkdir -p "${root}/autoagent"
   for file in hooks/track-outcome.sh hooks/lib/scope-match.sh; do
     write_fixture "${root}/${file}" '#!/usr/bin/env bash' 'printf x | grep -q x && exit 2'
   done

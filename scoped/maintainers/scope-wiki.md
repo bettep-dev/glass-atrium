@@ -38,20 +38,25 @@ Each duty already lives at the site named.
 - It was dropped rather than corrected:
   - Nothing creates that path, so the guard always passes.
   - The real lock is `scripts/wiki-lock.sh` → its header `Interface`; the dropped bullet's `do NOT wait/spin` and `remove the lock atomically` clauses contradict it.
-- The lock duty lives in the curator body: the turn-0 acquire, Guardrails **Lock pre-check**, `### Concurrent Write Safety`, and the extended-timeout reindex pattern.
+- The lock duty lives in the curator body: the turn-0 pre-flight, `### Concurrent Write Safety`, and the extended-timeout reindex pattern.
+- **Lock helper facts the body's text rests on** [measured: a probe-lock run of each `scripts/wiki-lock.sh` subcommand]:
+  - A call naming no subcommand exits 64 with the usage text and takes no lock, so the pre-flight is spelled `with wiki-compile 30 -- true`.
+  - `with` wraps a shell command (`-- <command...>`), which a Write or Edit tool call is not.
+  - A bare `acquire` records the Bash tool call's own shell as holder; that shell ends with the call, the next acquirer reaps the lock, and a later `release` is a silent no-op.
+  - So no helper form holds a lock across tool calls.
 - **Open lock-protocol defects** — owned by whoever next changes the body's lock protocol:
-  - The turn-0 acquire `wiki-lock.sh wiki-compile 30` names no subcommand; the helper answers an unknown subcommand with its usage text and exit 64 [measured: `scripts/wiki-lock.sh` → `usage` and the subcommand `case`].
-  - The **Lock pre-check** names the `with` form before the first Write/Edit, but `with` wraps a shell command (`-- <command...>`), which a Write or Edit tool call is not [measured: `scripts/wiki-lock.sh` → header `Interface`].
-  - A bare `acquire` records the caller shell (`$PPID`) as holder; whether an agent's Bash tool call keeps that shell alive past the call is [hypothesis], unmeasured.
+  - A batch compile that starts mid-session is not excluded from an interactive run's Write and Edit calls; the body states this limit in `### Concurrent Write Safety`.
+  - `scripts/wiki-sync.sh` locks `wiki-sync`, not `wiki-compile`, so a `wiki-compile` holder does not exclude a standalone sync.
 
 ## Index regeneration obligation — DROPPED as superseded
 
 - The dropped bullet: any structural change under `wiki/` regenerates the master index in the same session, atomically; `Partial-index session termination is FORBIDDEN`.
 - It was dropped as superseded:
   - Curator `## Guardrails (Absolute)` → **Index post-check** grades unregistered notes `result: done_with_concerns`.
-  - It exempts batch-compile runs (`-p` / `wiki-daily-compile.sh`), whose index `wiki-sync.sh` regenerates downstream — so a legitimate batch run ends with a partial index.
+  - The curator's `## Run Paths` exempts batch-compile runs (`-p` / `wiki-daily-compile.sh`), whose index `wiki-sync.sh` regenerates downstream — so a legitimate batch run ends with a partial index.
   - That exception stays in the body alone, the copy both the spawned curator and the batch reader hold.
-- Registration itself survives in the body: turn-0 sequence step 3, **Index post-check** and `### Master Index = Single Source of Truth`.
+- Registration itself survives in the body as a `wiki-sync.sh` run, never a hand edit: **Index post-check** and `### Master Index = Single Source of Truth`.
+  - `scripts/wiki-sync.sh` → `regenerate_master_index` writes `master-index.md` from `wiki.sqlite` alone, so a hand-written line — a skip record included — is erased at the next regeneration [measured: sandbox sync after a raw mtime change].
 
 ## `raw/` frontmatter validation — kept, with its live scope named
 
@@ -69,6 +74,17 @@ Each duty already lives at the site named.
 - `autoagent/daemon_cycle.py` → `_AGENT_SCOPE_MAP` maps the curator to the source file by basename for the daemon verify prompt's C3 axis.
   - A missing source file emits `SCOPE_UNRESOLVED_SIGNAL` (`_scope_file_for_agent`); an empty one emits `SCOPE_EMPTY_SIGNAL` (`_empty_excerpt_directive`).
   - Each warns on stderr and tells the verifier to answer C3: FAIL.
+
+## Curator body — text coupled to the scripts
+
+- `## Run Paths` is the single site for what differs between the spawned curator and the batch reader; a change to the batch `PROMPT` or to what `scripts/wiki-daily-compile.sh` does around the call is checked against that table.
+- `### Incremental Compilation` → **Unprocessed** mirrors `scripts/wiki-daily-compile.sh` → `_classify_raw` — a canonical + mirror pair, because the spawned curator cannot call the function.
+  - Bound by `scripts/test/wiki-source-raw.bats`: the body's tests, in order, against `_is_processed_raw`'s paths, and the cited skip-record path against `SKIP_RECORD`.
+- The skip record `index/compile-skips.tsv` is one fact read by `_classify_raw` and `scripts/wiki_daemon_cycle.py` → `detect_unprocessed_raw`; `scripts/test/test_wiki_source_raw.py` binds the two paths.
+- The **Frontmatter** `category` sub-bullet mirrors `scripts/wiki_deadlinks.py` → `_parse_topic_map_categories` — a canonical + mirror pair, because the curator sets `category` while authoring a note, before the checker can read it.
+  - Bound by `scripts/test/test_wiki_deadlinks.py`: the body's heading level against the levels the function reads.
+- The **Frontmatter** `source_raw` key is written on the interactive path only: `_inject_source_raw` leaves an existing key untouched, so a value the batch model wrote would outrank the script's stamp.
+- No other literal of the curator body, and none of `skills/glass-atrium-wiki-compiler/SKILL.md`, is pinned by a test.
 
 ## Curator body — machine readers and placement
 

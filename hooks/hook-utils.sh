@@ -5,6 +5,7 @@
 
 # Guard against double-sourcing
 if [[ -n "${_HOOK_UTILS_LOADED:-}" ]]; then
+  # shellcheck disable=SC2317  # reached only when the file is executed, not sourced
   return 0 2>/dev/null || true
 fi
 readonly _HOOK_UTILS_LOADED=1
@@ -339,11 +340,57 @@ hook_join_alt() {
   printf '%s' "$*"
 }
 
+# DEV-mode [SIZE-EST] form every gate remediation teaches → one spelling for authors; units= stays
+# optional to the parser below (skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md).
+# shellcheck disable=SC2034  # read by the gates that source this file
+HOOK_SIZE_EST_FORM='[SIZE-EST] units=N bundles=N tool_uses~=N — <1-line reason>'
+
+# Largest units= value across the [SIZE-EST] lines of $1, read after the token only; nothing when no
+# token line carries the key. Here-string input — no pipe, so the reader's early stop races no writer.
+# Shared by the manual and workflow verification gates → one parser of the optional key.
+hook_get_size_est_units() {
+  awk '(i = index($0, "[SIZE-EST]")) {
+    rest = substr($0, i + 10)
+    if (match(rest, /(^|[ \t])units=[0-9]+/)) {
+      hit = substr(rest, RSTART, RLENGTH)
+      sub(/.*units=/, "", hit)
+      if (!found || hit + 0 > max + 0) { max = hit; found = 1 }
+    }
+  }
+  END { if (found) print max }' <<<"${1}" 2>/dev/null || true
+}
+
+# One-work-unit advice for a units= count ($1) above 1; nothing for 1 or a non-number. The caller
+# prefixes its hook tag and the spawn it names.
+hook_get_multi_unit_advice() {
+  [[ "${1}" =~ ^[0-9]+$ ]] || return 0
+  ((10#${1} > 1)) || return 0
+  printf 'carries units=%s work-units — one work-unit per DEV spawn is the default, so split it unless every unit is tiny: tiny units (one file each, no test change) may share a spawn while its [SIZE-EST] stays under the split triggers (skills/glass-atrium-ops-orchestrator-role.md → Spawn Granularity). Advisory only — a prompt to check, not an error.' "${1}"
+}
+
 # Runtime log/data roots — HOME-anchored (GA_DATA_ROOT override), DECOUPLED from the install-tree GA_ROOT,
 # which is unset in the CLI-fired-hook + launchd-daemon contexts these consumers run in. Python twin:
 # hooks/ga_paths.py. Default-only change: an exported GA_DATA_ROOT still redirects both roots.
 HOOK_LOG_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/logs"
 HOOK_DATA_DIR="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data"
+# One empty file per running subagent (agent-tracker.sh: SubagentStart writes, SubagentStop removes).
+# A truncated agent fires no SubagentStop → a marker older than the TTL counts as dead, not running.
+LIVE_CHILD_DIR="${HOOK_DATA_DIR}/live-children"
+LIVE_CHILD_TTL_MIN=360
+
+# Live agents = markers younger than LIVE_CHILD_TTL_MIN; 0 with no store; rc 1 = the store cannot be read.
+hook_get_live_child_count() {
+  local listing line count=0
+  [[ -d "${LIVE_CHILD_DIR}" ]] || {
+    printf '0\n'
+    return 0
+  }
+  listing="$(find "${LIVE_CHILD_DIR}" -type f -mmin "-${LIVE_CHILD_TTL_MIN}" 2>/dev/null)" || return 1
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] || count=$((count + 1))
+  done <<<"${listing}"
+  printf '%s\n' "${count}"
+}
 
 # English-only alias for hooks using the 5-param emit_error signature → hook_emit_error.
 emit_error() {

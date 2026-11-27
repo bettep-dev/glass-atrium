@@ -1,0 +1,988 @@
+// Owner queue tables (monitor.queue_*) guards, run by execution against the migrated test database.
+// CI builds that database with `prisma migrate deploy` over the whole chain → a squash that loses the raw-SQL CHECKs
+// or the resume partial unique index turns this red.
+// Every case runs in transactions that never commit → the test database keeps no queue rows.
+
+import test, { after, describe } from "node:test";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+
+import "dotenv/config";
+
+import { Prisma } from "../src/generated/prisma/client.js";
+import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { RELAY_TEXT_MAX, registerBodySchema } from "../src/server/queue/schemas.js";
+
+/** Thrown last inside a case's transaction → the transaction rolls back and nothing persists. */
+class Rollback extends Error {}
+
+const SENT_AT = new Date("2026-11-09T08:10:00.000Z");
+const ACK_DEADLINE_AT = new Date("2026-11-09T08:12:00.000Z");
+
+after(async () => {
+  await disconnectPrisma();
+});
+
+function runRolledBack(work: (tx: Prisma.TransactionClient) => Promise<unknown>): Promise<void> {
+  return getPrisma().$transaction(async (tx) => {
+    await work(tx);
+    throw new Rollback();
+  });
+}
+
+function buildSession(pid: number): Prisma.QueueSessionCreateInput {
+  return {
+    sessionId: randomUUID(),
+    isConfigDirSet: true,
+    configDir: "/Users/owner/.claude-work",
+    profileLabel: ".claude-work",
+    cwd: "/Users/owner/Desktop/git/glass-atrium",
+    worktreeRoot: "/Users/owner/Desktop/git/glass-atrium",
+    pid,
+    processStartTime: "Mon Nov  9 08:01:12 2026",
+    socketPath: `/private/tmp/cc-socks/${pid}.sock`,
+    permissionHint: "default",
+    state: "live",
+    lastSeenAt: SENT_AT,
+  };
+}
+
+function buildDecision(sessionId: string): Prisma.QueueItemUncheckedCreateInput {
+  return {
+    kind: "decision",
+    sessionId,
+    title: "Pick the sweep interval",
+    body: "The sweep re-probes stale rows; a shorter interval spends more probes.",
+    options: [
+      { code: "R1", label: "30 seconds", pros: "fast recovery", cons: "more probes" },
+      { code: "R2", label: "2 minutes", pros: "fewer probes", cons: "slower recovery" },
+    ],
+    recommendedCode: "R1",
+    isFreeTextAllowed: true,
+  };
+}
+
+function buildReport(sessionId: string): Prisma.QueueItemUncheckedCreateInput {
+  return { kind: "report", sessionId, title: "Deploy 70 finished", body: "The monitor restarted and every probe passed.", isFreeTextAllowed: true };
+}
+
+function buildDelivery(
+  itemId: bigint,
+  route: Prisma.QueueDeliveryUncheckedCreateInput["route"],
+  attempt: number,
+): Prisma.QueueDeliveryUncheckedCreateInput {
+  return { msgId: randomUUID(), itemId, route, attempt, result: "sent", sentAt: SENT_AT, ackDeadlineAt: ACK_DEADLINE_AT };
+}
+
+/** Option entries R1..R<count> in the route's entry shape. */
+function buildOptions(count: number): Prisma.InputJsonArray {
+  return Array.from({ length: count }, (_, i) => ({ code: `R${i + 1}`, label: `Interval ${i + 1}`, pros: "fast", cons: "costly" }));
+}
+
+function buildDriftCheck(): Prisma.QueueDriftCheckCreateInput {
+  return {
+    binaryRealpath: "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+    binarySize: 319598464n,
+    binaryModifiedAt: new Date("2026-11-01T02:00:00.000Z"),
+    version: "2.1.318",
+    bundleResult: "pass",
+    checkedAt: SENT_AT,
+  };
+}
+
+/**
+ * Rejection oracle for one unique key: Prisma P2002 whose Postgres 23505 names `index`.
+ * P2002's own message lists the key's fields only → the name comes from the driver-adapter cause.
+ */
+function expectUniqueViolation(index: string): (error: unknown) => true {
+  return (error) => {
+    assert.ok(error instanceof Prisma.PrismaClientKnownRequestError, `expected a Prisma request error, got ${String(error)}`);
+    assert.equal(error.code, "P2002");
+    const postgres = getPostgresCause(error);
+    assert.equal(postgres.code, "23505");
+    assert.ok(typeof postgres.message === "string", "driver-adapter cause carries no Postgres message");
+    assert.ok(postgres.message.includes(`"${index}"`), `unique violation names another key: ${postgres.message}`);
+    return true;
+  };
+}
+
+/** meta.driverAdapterError.cause → the Postgres SQLSTATE and message behind a Prisma error code. */
+function getPostgresCause(error: Prisma.PrismaClientKnownRequestError): { code: unknown; message: unknown } {
+  const adapterError = error.meta?.driverAdapterError;
+  const cause = typeof adapterError === "object" && adapterError !== null && "cause" in adapterError ? adapterError.cause : null;
+  if (typeof cause !== "object" || cause === null) return { code: undefined, message: undefined };
+  return {
+    code: "originalCode" in cause ? cause.originalCode : undefined,
+    message: "originalMessage" in cause ? cause.originalMessage : undefined,
+  };
+}
+
+/** Session + one decision item → the item id the delivery cases hang rows on. */
+async function createItem(tx: Prisma.TransactionClient, pid: number): Promise<bigint> {
+  const { sessionId } = await tx.queueSession.create({ data: buildSession(pid), select: { sessionId: true } });
+  const { id } = await tx.queueItem.create({ data: buildDecision(sessionId), select: { id: true } });
+  return id;
+}
+
+describe("monitor.queue_deliveries resume bound", () => {
+  test("a second resume row for the same item and attempt is rejected", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const itemId = await createItem(tx, 41001);
+        await tx.queueDelivery.create({ data: buildDelivery(itemId, "resume", 1) });
+        await tx.queueDelivery.create({ data: buildDelivery(itemId, "resume", 1) });
+      }),
+      expectUniqueViolation("queue_deliveries_resume_item_attempt_key"),
+    );
+  });
+
+  const acceptedSeconds: readonly {
+    name: string;
+    first: Prisma.QueueDeliveryUncheckedCreateInput["route"];
+    second: Prisma.QueueDeliveryUncheckedCreateInput["route"];
+    secondAttempt: number;
+  }[] = [
+    { name: "a second socket row for the same attempt is accepted", first: "socket", second: "socket", secondAttempt: 1 },
+    { name: "a second pull row for the same attempt is accepted", first: "pull", second: "pull", secondAttempt: 1 },
+    { name: "a resume row beside a socket row of the same attempt is accepted", first: "socket", second: "resume", secondAttempt: 1 },
+    { name: "a resume row for the next attempt is accepted", first: "resume", second: "resume", secondAttempt: 2 },
+  ];
+
+  for (const row of acceptedSeconds) {
+    test(row.name, async () => {
+      await assert.rejects(
+        runRolledBack(async (tx) => {
+          const itemId = await createItem(tx, 41002);
+          await tx.queueDelivery.create({ data: buildDelivery(itemId, row.first, 1) });
+          await tx.queueDelivery.create({ data: buildDelivery(itemId, row.second, row.secondAttempt) });
+          assert.equal(await tx.queueDelivery.count({ where: { itemId } }), 2);
+        }),
+        Rollback,
+      );
+    });
+  }
+});
+
+describe("monitor.queue_deliveries msg id", () => {
+  test("a msg id already taken by another delivery is rejected", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const itemId = await createItem(tx, 41003);
+        const first = buildDelivery(itemId, "socket", 1);
+        await tx.queueDelivery.create({ data: first });
+        await tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "pull", 1), msgId: first.msgId } });
+      }),
+      expectUniqueViolation("queue_deliveries_msg_id_key"),
+    );
+  });
+});
+
+describe("monitor.queue_items queue position", () => {
+  test("two writers whose transactions overlap draw distinct positions", async () => {
+    // Each writer holds its transaction open until both have inserted → a max()+1 default would hand both one value.
+    let releaseWriters!: () => void;
+    const bothInserted = new Promise<void>((resolve) => {
+      releaseWriters = resolve;
+    });
+    let insertedCount = 0;
+    const positions: bigint[] = [];
+
+    const writeItem = (pid: number): Promise<void> =>
+      runRolledBack(async (tx) => {
+        const { sessionId } = await tx.queueSession.create({ data: buildSession(pid), select: { sessionId: true } });
+        const { queuePosition } = await tx.queueItem.create({
+          data: buildDecision(sessionId),
+          select: { queuePosition: true },
+        });
+        positions.push(queuePosition);
+        insertedCount += 1;
+        if (insertedCount === 2) releaseWriters();
+        await bothInserted;
+      });
+
+    await Promise.all([assert.rejects(writeItem(41004), Rollback), assert.rejects(writeItem(41005), Rollback)]);
+    assert.equal(new Set(positions).size, 2);
+  });
+
+  test("Later draws a position behind every item already queued", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const { sessionId } = await tx.queueSession.create({ data: buildSession(41006), select: { sessionId: true } });
+        const deferred = await tx.queueItem.create({ data: buildDecision(sessionId), select: { id: true } });
+        await tx.queueItem.create({ data: buildDecision(sessionId) });
+        await tx.$executeRaw`
+          UPDATE "monitor"."queue_items"
+          SET "queue_position" = nextval('"monitor"."queue_items_queue_position_seq"'), "defer_count" = "defer_count" + 1
+          WHERE "id" = ${deferred.id}`;
+        const last = await tx.queueItem.findFirstOrThrow({
+          where: { sessionId },
+          orderBy: { queuePosition: "desc" },
+          select: { id: true, deferCount: true },
+        });
+        assert.deepEqual(last, { id: deferred.id, deferCount: 1 });
+      }),
+      Rollback,
+    );
+  });
+});
+
+describe("monitor.queue_* enum limits", () => {
+  // Raw SQL → a value outside the enum reaches Postgres instead of stopping at the typed client.
+  const outsideValues: readonly { name: string; insert: (tx: Prisma.TransactionClient, itemId: bigint) => Promise<unknown> }[] = [
+    {
+      name: "rejects an item status outside the item states",
+      insert: (tx, itemId) =>
+        tx.$executeRaw`UPDATE "monitor"."queue_items" SET "status" = ${"answering"}::"monitor"."QueueItemStatus" WHERE "id" = ${itemId}`,
+    },
+    {
+      name: "rejects a delivery route outside socket, resume and pull",
+      insert: (tx, itemId) =>
+        tx.$executeRaw`
+          INSERT INTO "monitor"."queue_deliveries" ("msg_id", "item_id", "route", "attempt", "result", "sent_at", "ack_deadline_at")
+          VALUES (${randomUUID()}::uuid, ${itemId}, ${"email"}::"monitor"."QueueDeliveryRoute", 1, 'sent', ${SENT_AT}, ${ACK_DEADLINE_AT})`,
+    },
+    {
+      name: "rejects a session state outside live, stale and exited",
+      insert: (tx) =>
+        tx.$executeRaw`UPDATE "monitor"."queue_sessions" SET "state" = ${"sleeping"}::"monitor"."QueueSessionState" WHERE "pid" = 41007`,
+    },
+  ];
+
+  for (const row of outsideValues) {
+    test(row.name, async () => {
+      await assert.rejects(
+        runRolledBack(async (tx) => row.insert(tx, await createItem(tx, 41007))),
+        /invalid input value for enum/,
+      );
+    });
+  }
+});
+
+describe("monitor.queue_items answer record", () => {
+  // Raw SQL → the enum types and the pairing CHECK reach Postgres, not the typed client's own checks.
+  const rows: readonly { name: string; route: string | null; signal: string | null; isAccepted: boolean; error?: RegExp }[] = [
+    { name: "accepts the answer route with fetch metadata", route: "answer", signal: "fetch_metadata", isAccepted: true },
+    { name: "accepts the reply route with an Origin-only signal", route: "reply", signal: "origin", isAccepted: true },
+    { name: "rejects the message route on a decision", route: "message", signal: "fetch_metadata", isAccepted: false, error: /queue_items_message_check/ },
+    { name: "accepts a backfilled row from before the record", route: "answer", signal: "before_record", isAccepted: true },
+    { name: "accepts an unstamped answer, which the page lists as outside", route: null, signal: null, isAccepted: true },
+    { name: "rejects a route with no signal", route: "answer", signal: null, isAccepted: false, error: /queue_items_answer_record_check/ },
+    { name: "rejects a signal with no route", route: null, signal: "origin", isAccepted: false, error: /queue_items_answer_record_check/ },
+    { name: "rejects a route outside answer, reply and message", route: "cli", signal: "origin", isAccepted: false, error: /invalid input value for enum/ },
+    { name: "rejects a signal outside the recorded signals", route: "answer", signal: "cookie", isAccepted: false, error: /invalid input value for enum/ },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const itemId = await createItem(tx, 41011);
+        await tx.$executeRaw`
+          UPDATE "monitor"."queue_items"
+          SET "status" = 'answered', "answer_code" = 'R1', "answered_at" = ${SENT_AT},
+              "answer_route" = ${row.route}::"monitor"."QueueAnswerRoute", "answer_signal" = ${row.signal}::"monitor"."QueueAnswerSignal"
+          WHERE "id" = ${itemId}`;
+      });
+      if (row.isAccepted) await assert.rejects(work, Rollback);
+      else await assert.rejects(work, row.error ?? /./);
+    });
+  }
+});
+
+describe("monitor.queue_items message kind", () => {
+  // Raw SQL → the new enum value and the message CHECK reach Postgres, not the typed client's own checks.
+  const rows: readonly { name: string; change: Prisma.Sql | null; error?: RegExp }[] = [
+    { name: "accepts a plain message answered through the send route", change: null },
+    {
+      name: "rejects a message carrying options",
+      change: Prisma.sql`"options" = ${JSON.stringify(buildOptions(2))}::jsonb, "recommended_code" = 'R1'`,
+      error: /queue_items_decision_options_check/,
+    },
+    { name: "rejects a message carrying an answer code", change: Prisma.sql`"answer_code" = 'R1'`, error: /queue_items_answer_code_check/ },
+    { name: "rejects a message carrying answer text", change: Prisma.sql`"answer_text" = 'done'`, error: /queue_items_message_check/ },
+    { name: "rejects a message in the approval class", change: Prisma.sql`"approval_class" = true`, error: /queue_items_message_check/ },
+    {
+      name: "rejects a message with no answer record",
+      change: Prisma.sql`"answer_route" = NULL, "answer_signal" = NULL`,
+      error: /queue_items_message_check/,
+    },
+    { name: "rejects a message stamped with the answer route", change: Prisma.sql`"answer_route" = 'answer'`, error: /queue_items_message_check/ },
+    { name: "rejects a message that is open to the owner", change: Prisma.sql`"status" = 'open'`, error: /queue_items_message_check/ },
+    { name: "rejects a message marked seen", change: Prisma.sql`"status" = 'seen'`, error: /queue_items_message_check/ },
+    { name: "rejects a close time on a message", change: Prisma.sql`"closed_at" = ${SENT_AT}`, error: /queue_items_closed_check/ },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const { sessionId } = await tx.queueSession.create({ data: buildSession(41013), select: { sessionId: true } });
+        const [message] = await tx.$queryRaw<Array<{ id: bigint }>>`
+          INSERT INTO "monitor"."queue_items"
+            ("kind", "session_id", "title", "body", "free_text_allowed", "status", "answered_at", "answer_route", "answer_signal")
+          VALUES ('message', ${sessionId}::uuid, 'Rebase onto main before the review', ${"Rebase onto main before the review\nthen rerun the suite"},
+                  false, 'answered', ${SENT_AT}, 'message', 'fetch_metadata')
+          RETURNING "id"`;
+        assert.ok(message !== undefined, "insert returned no row");
+        if (row.change !== null) await tx.$executeRaw`UPDATE "monitor"."queue_items" SET ${row.change} WHERE "id" = ${message.id}`;
+      });
+      if (row.error === undefined) await assert.rejects(work, Rollback);
+      else await assert.rejects(work, row.error);
+    });
+  }
+});
+
+describe("monitor.queue_items secret request link", () => {
+  // Raw SQL → the link CHECK reaches Postgres, not the typed client's own checks.
+  const rows: readonly { name: string; change: Prisma.Sql; error?: RegExp }[] = [
+    { name: "accepts a link on an approval-class decision taking no free text", change: Prisma.sql`"approval_class" = true, "free_text_allowed" = false` },
+    { name: "rejects a link on a decision outside the approval class", change: Prisma.sql`"approval_class" = false, "free_text_allowed" = false`, error: /queue_items_secret_request_check/ },
+    { name: "rejects a link on a decision taking free text", change: Prisma.sql`"approval_class" = true, "free_text_allowed" = true`, error: /queue_items_secret_request_check/ },
+    {
+      name: "rejects a link on a report",
+      change: Prisma.sql`"kind" = 'report', "options" = NULL, "recommended_code" = NULL, "approval_class" = true, "free_text_allowed" = false`,
+      error: /queue_items_secret_request_check/,
+    },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const itemId = await createItem(tx, 41041);
+        await tx.$executeRaw`UPDATE "monitor"."queue_items" SET ${row.change}, "secret_request_id" = ${randomUUID()}::uuid WHERE "id" = ${itemId}`;
+      });
+      if (row.error === undefined) await assert.rejects(work, Rollback);
+      else await assert.rejects(work, row.error);
+    });
+  }
+
+  test("a second item linking the same request is rejected", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const { sessionId } = await tx.queueSession.create({ data: buildSession(41042), select: { sessionId: true } });
+        const link = { ...buildDecision(sessionId), isApprovalClass: true, isFreeTextAllowed: false, secretRequestId: randomUUID() };
+        await tx.queueItem.create({ data: link });
+        await tx.queueItem.create({ data: link });
+      }),
+      expectUniqueViolation("queue_items_secret_request_id_key"),
+    );
+  });
+});
+
+interface RelayIds {
+  senderId: string;
+  recipientId: string;
+  parentId: bigint;
+  relayId: bigint;
+}
+
+/** Raw insert → the 'relay' enum value and the relay CHECKs reach Postgres, not the typed client's own checks. */
+async function insertRelay(tx: Prisma.TransactionClient, senderId: string, recipientId: string, hop: number, parentId: bigint | null): Promise<bigint> {
+  const [relay] = await tx.$queryRaw<Array<{ id: bigint }>>`
+    INSERT INTO "monitor"."queue_items"
+      ("kind", "session_id", "from_session_id", "relay_hop", "relay_parent_id", "title", "body", "free_text_allowed", "status")
+    VALUES ('relay', ${recipientId}::uuid, ${senderId}::uuid, ${hop}, ${parentId}, 'Schema review is done',
+            ${"Schema review is done\nthe relay CHECKs are in the migration"}, false, 'answered')
+    RETURNING "id"`;
+  assert.ok(relay !== undefined, "insert returned no row");
+  return relay.id;
+}
+
+/** Sender and recipient rows, a hop-0 parent relay between them, and the hop-1 relay a row then changes. */
+async function createRelay(tx: Prisma.TransactionClient, pid: number): Promise<RelayIds> {
+  const { sessionId: senderId } = await tx.queueSession.create({ data: buildSession(pid), select: { sessionId: true } });
+  const { sessionId: recipientId } = await tx.queueSession.create({ data: buildSession(pid + 1), select: { sessionId: true } });
+  const parentId = await insertRelay(tx, senderId, recipientId, 0, null);
+  const relayId = await insertRelay(tx, senderId, recipientId, 1, parentId);
+  return { senderId, recipientId, parentId, relayId };
+}
+
+describe("monitor.queue_items relay kind", () => {
+  const rows: readonly { name: string; change: ((ids: RelayIds) => Prisma.Sql) | null; error?: RegExp }[] = [
+    { name: "accepts a relay from another session naming the relay that set its hop", change: null },
+    { name: "accepts a relay at hop 2", change: () => Prisma.sql`"relay_hop" = 2` },
+    { name: "accepts a relay at hop 0 with no parent", change: () => Prisma.sql`"relay_hop" = 0, "relay_parent_id" = NULL` },
+    {
+      name: "accepts a relay fetched, then delivered",
+      change: () => Prisma.sql`"relay_fetched_at" = ${SENT_AT}, "status" = 'delivered', "delivered_at" = ${ACK_DEADLINE_AT}`,
+    },
+    { name: "accepts a redacted relay carrying its original length", change: () => Prisma.sql`"relay_redacted_at" = ${SENT_AT}, "relay_redacted_length" = 4000` },
+    { name: "accepts a lapsed relay closed at its lapse", change: () => Prisma.sql`"status" = 'withdrawn', "relay_closed_at" = ${SENT_AT}` },
+    { name: "accepts a relay body at the route's text cap", change: () => Prisma.sql`"body" = ${"b".repeat(RELAY_TEXT_MAX)}` },
+    { name: "rejects a relay with no sender", change: () => Prisma.sql`"from_session_id" = NULL`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay with no hop", change: () => Prisma.sql`"relay_hop" = NULL`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay to its own sender", change: (ids) => Prisma.sql`"session_id" = ${ids.senderId}::uuid`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay at hop 3", change: () => Prisma.sql`"relay_hop" = 3`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay at a negative hop", change: () => Prisma.sql`"relay_hop" = -1`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay open to the owner", change: () => Prisma.sql`"status" = 'open'`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay marked seen", change: () => Prisma.sql`"status" = 'seen'`, error: /queue_items_relay_check/ },
+    {
+      name: "rejects a relay carrying an answer record",
+      change: () => Prisma.sql`"answer_route" = 'reply', "answer_signal" = 'origin'`,
+      error: /queue_items_relay_check/,
+    },
+    { name: "rejects a relay carrying answer text", change: () => Prisma.sql`"answer_text" = 'approved'`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay carrying an answer code", change: () => Prisma.sql`"answer_code" = 'R1'`, error: /queue_items_answer_code_check/ },
+    {
+      name: "rejects a relay carrying options",
+      change: () => Prisma.sql`"options" = ${JSON.stringify(buildOptions(2))}::jsonb, "recommended_code" = 'R1'`,
+      error: /queue_items_decision_options_check/,
+    },
+    { name: "rejects a relay in the approval class", change: () => Prisma.sql`"approval_class" = true`, error: /queue_items_relay_check/ },
+    { name: "rejects a relay body past the route's text cap", change: () => Prisma.sql`"body" = ${"b".repeat(RELAY_TEXT_MAX + 1)}`, error: /queue_items_relay_check/ },
+    { name: "rejects a redaction stamp with no original length", change: () => Prisma.sql`"relay_redacted_at" = ${SENT_AT}`, error: /queue_items_relay_check/ },
+    { name: "rejects an original length with no redaction stamp", change: () => Prisma.sql`"relay_redacted_length" = 12`, error: /queue_items_relay_check/ },
+    {
+      name: "rejects a redacted relay recording an empty original",
+      change: () => Prisma.sql`"relay_redacted_at" = ${SENT_AT}, "relay_redacted_length" = 0`,
+      error: /queue_items_relay_check/,
+    },
+    { name: "rejects a lapsed relay with no close stamp", change: () => Prisma.sql`"status" = 'withdrawn'`, error: /queue_items_relay_closed_check/ },
+    { name: "rejects a close stamp on a relay still in delivery", change: () => Prisma.sql`"relay_closed_at" = ${SENT_AT}`, error: /queue_items_relay_closed_check/ },
+    {
+      name: "rejects an owner-wait close time on a lapsed relay",
+      change: () => Prisma.sql`"status" = 'withdrawn', "relay_closed_at" = ${SENT_AT}, "closed_at" = ${SENT_AT}`,
+      error: /queue_items_closed_check/,
+    },
+    {
+      name: "rejects a sender with no session row",
+      change: () => Prisma.sql`"from_session_id" = ${randomUUID()}::uuid`,
+      error: /queue_items_from_session_id_fkey/,
+    },
+    { name: "rejects a parent naming no item", change: (ids) => Prisma.sql`"relay_parent_id" = ${ids.relayId + 1000000n}`, error: /queue_items_relay_parent_id_fkey/ },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const ids = await createRelay(tx, 41021);
+        if (row.change !== null) await tx.$executeRaw`UPDATE "monitor"."queue_items" SET ${row.change(ids)} WHERE "id" = ${ids.relayId}`;
+      });
+      if (row.error === undefined) await assert.rejects(work, Rollback);
+      else await assert.rejects(work, row.error);
+    });
+  }
+
+  test("a sender's session row that still sends a relay cannot be deleted", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const ids = await createRelay(tx, 41023);
+        await tx.$executeRaw`DELETE FROM "monitor"."queue_sessions" WHERE "session_id" = ${ids.senderId}::uuid`;
+      }),
+      /queue_items_from_session_id_fkey/,
+    );
+  });
+});
+
+describe("monitor.queue_items relay columns on other kinds", () => {
+  const rows: readonly { name: string; change: ((senderId: string, parentId: bigint) => Prisma.Sql) | null; error?: RegExp }[] = [
+    { name: "accepts a decision withdrawn with no relay close stamp", change: () => Prisma.sql`"status" = 'withdrawn'` },
+    { name: "rejects a sender on a decision", change: (senderId) => Prisma.sql`"from_session_id" = ${senderId}::uuid`, error: /queue_items_relay_check/ },
+    { name: "rejects a hop on a decision", change: () => Prisma.sql`"relay_hop" = 0`, error: /queue_items_relay_check/ },
+    { name: "rejects a parent relay on a decision", change: (_, parentId) => Prisma.sql`"relay_parent_id" = ${parentId}`, error: /queue_items_relay_check/ },
+    { name: "rejects a fetch stamp on a decision", change: () => Prisma.sql`"relay_fetched_at" = ${SENT_AT}`, error: /queue_items_relay_check/ },
+    {
+      name: "rejects a redaction stamp on a decision",
+      change: () => Prisma.sql`"relay_redacted_at" = ${SENT_AT}, "relay_redacted_length" = 12`,
+      error: /queue_items_relay_check/,
+    },
+    {
+      name: "rejects a relay close stamp on a withdrawn decision",
+      change: () => Prisma.sql`"status" = 'withdrawn', "relay_closed_at" = ${SENT_AT}`,
+      error: /queue_items_relay_closed_check/,
+    },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const ids = await createRelay(tx, 41025);
+        const { id: decisionId } = await tx.queueItem.create({ data: buildDecision(ids.recipientId), select: { id: true } });
+        if (row.change !== null) {
+          await tx.$executeRaw`UPDATE "monitor"."queue_items" SET ${row.change(ids.senderId, ids.parentId)} WHERE "id" = ${decisionId}`;
+        }
+      });
+      if (row.error === undefined) await assert.rejects(work, Rollback);
+      else await assert.rejects(work, row.error);
+    });
+  }
+});
+
+describe("monitor.queue_items close time", () => {
+  // Raw SQL writes → the database stamps the close, whichever client moves the item out of open
+  const ANSWER = Prisma.sql`"status" = 'answered', "answer_code" = 'R1', "answered_at" = ${SENT_AT}`;
+  const REPLY = Prisma.sql`"status" = 'answered', "answer_text" = 'Merge it after the review.', "answered_at" = ${SENT_AT}`;
+  const WITHDRAW = Prisma.sql`"status" = 'withdrawn'`;
+  const rows: readonly {
+    name: string;
+    item: (sessionId: string) => Prisma.QueueItemUncheckedCreateInput;
+    writes: Prisma.Sql[];
+    closedAt: "answer" | "write" | null;
+  }[] = [
+    { name: "an answered decision closes at its answer time", item: buildDecision, writes: [ANSWER], closedAt: "answer" },
+    { name: "a report replied to closes at its answer time", item: buildReport, writes: [REPLY], closedAt: "answer" },
+    { name: "a report marked seen closes at the time of that write", item: buildReport, writes: [Prisma.sql`"status" = 'seen'`], closedAt: "write" },
+    { name: "a decision withdrawn while open closes at the time of that write", item: buildDecision, writes: [WITHDRAW], closedAt: "write" },
+    { name: "a decision answered, then withdrawn, keeps its answer time", item: buildDecision, writes: [ANSWER, WITHDRAW], closedAt: "answer" },
+    {
+      name: "a decision stored already delivered closes at its answer time",
+      item: (sessionId) => ({ ...buildDecision(sessionId), status: "delivered", answerCode: "R1", answeredAt: SENT_AT }),
+      writes: [],
+      closedAt: "answer",
+    },
+    { name: "a report deferred within open stays unclosed", item: buildReport, writes: [Prisma.sql`"defer_count" = "defer_count" + 1`], closedAt: null },
+  ];
+
+  for (const row of rows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const { sessionId } = await tx.queueSession.create({ data: buildSession(41027), select: { sessionId: true } });
+        const { id } = await tx.queueItem.create({ data: row.item(sessionId), select: { id: true } });
+        for (const write of row.writes) await tx.$executeRaw`UPDATE "monitor"."queue_items" SET ${write} WHERE "id" = ${id}`;
+        const [stored] = await tx.$queryRaw<Array<{ closedAt: Date | null; writeAt: Date }>>`
+          SELECT "closed_at" AS "closedAt", now() AS "writeAt" FROM "monitor"."queue_items" WHERE "id" = ${id}`;
+        assert.ok(stored !== undefined, "the item row is gone");
+        const expected = { answer: SENT_AT, write: stored.writeAt, none: null }[row.closedAt ?? "none"];
+        assert.deepEqual(stored.closedAt, expected);
+      });
+      await assert.rejects(work, Rollback);
+    });
+  }
+
+  test("rejects a close time on an item still open", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const id = await createItem(tx, 41029);
+        await tx.$executeRaw`UPDATE "monitor"."queue_items" SET "closed_at" = ${SENT_AT} WHERE "id" = ${id}`;
+      }),
+      /queue_items_closed_check/,
+    );
+  });
+});
+
+describe("monitor.queue_sessions probe flag and transcript path", () => {
+  test("a session registers as no probe unless it declares one", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const { sessionId } = await tx.queueSession.create({ data: buildSession(41027), select: { sessionId: true } });
+        const [row] = await tx.$queryRaw<Array<{ is_probe: boolean }>>`
+          SELECT "is_probe" FROM "monitor"."queue_sessions" WHERE "session_id" = ${sessionId}::uuid`;
+        assert.equal(row?.is_probe, false);
+      }),
+      Rollback,
+    );
+  });
+
+  const transcriptRows: readonly { name: string; value: string | null; error?: RegExp }[] = [
+    { name: "accepts a session with no transcript path", value: null },
+    { name: "accepts an absolute transcript path ending .jsonl", value: "/Users/owner/.claude-work/projects/-Users-owner/2f0c.jsonl" },
+    { name: "rejects a relative transcript path", value: "projects/-Users-owner/2f0c.jsonl", error: /queue_sessions_transcript_path_check/ },
+    { name: "rejects a transcript path not ending .jsonl", value: "/Users/owner/.claude-work/projects/-Users-owner/2f0c.json", error: /queue_sessions_transcript_path_check/ },
+  ];
+
+  for (const row of transcriptRows) {
+    test(row.name, async () => {
+      const work = runRolledBack(async (tx) => {
+        const { sessionId } = await tx.queueSession.create({ data: buildSession(41028), select: { sessionId: true } });
+        await tx.$executeRaw`UPDATE "monitor"."queue_sessions" SET "transcript_path" = ${row.value} WHERE "session_id" = ${sessionId}::uuid`;
+      });
+      if (row.error === undefined) await assert.rejects(work, Rollback);
+      else await assert.rejects(work, row.error);
+    });
+  }
+});
+
+describe("monitor.queue_sessions name", () => {
+  const acceptedNames: readonly { name: string; value: string | undefined }[] = [
+    { name: "accepts a session registered without a name", value: undefined },
+    { name: "accepts a session name at the 100-character cap", value: "n".repeat(100) },
+  ];
+
+  for (const row of acceptedNames) {
+    test(row.name, async () => {
+      await assert.rejects(
+        runRolledBack(async (tx) => {
+          const session = await tx.queueSession.create({ data: { ...buildSession(41014), name: row.value }, select: { name: true } });
+          assert.equal(session.name, row.value ?? null);
+        }),
+        Rollback,
+      );
+    });
+  }
+
+  const rejectedNames: readonly { name: string; value: string; error: RegExp }[] = [
+    { name: "rejects a session name past 100 characters", value: "n".repeat(101), error: /value too long|too long for the column/ },
+    { name: "rejects a blank session name", value: "   ", error: /queue_sessions_name_check/ },
+    { name: "rejects a session name carrying a line break", value: "queue sessions\nsecond line", error: /queue_sessions_name_check/ },
+  ];
+
+  for (const row of rejectedNames) {
+    test(row.name, async () => {
+      await assert.rejects(
+        runRolledBack((tx) => tx.queueSession.create({ data: { ...buildSession(41015), name: row.value } })),
+        row.error,
+      );
+    });
+  }
+
+  // one limit in two layers → same unit (code points) and same character class (\p{Cc}) on both sides
+  test("the register schema and the name column accept the same names", async () => {
+    const astral = "\u{1F600}";
+    const candidates = [astral.repeat(100), astral.repeat(101), "n".repeat(99) + astral, "n".repeat(100) + astral];
+    for (const code of [...range(0x01, 0xff), ...range(0x2000, 0x206f), 0xfeff, 0xfff9, 0xfffa, 0xfffb, 0xe0001]) {
+      candidates.push(`a${String.fromCodePoint(code)}b`);
+    }
+    const disagreements: string[] = [];
+    for (const name of candidates) {
+      const isSchemaAccepted = registerBodySchema.safeParse({ sessionId: randomUUID(), pid: 1, cwd: "/tmp", name }).success;
+      if (isSchemaAccepted !== (await isNameStored(name))) disagreements.push(JSON.stringify(name.length > 8 ? `${[...name].length} cp` : name));
+    }
+    assert.deepEqual(disagreements, []);
+  });
+});
+
+function range(first: number, last: number): number[] {
+  return Array.from({ length: last - first + 1 }, (_, offset) => first + offset);
+}
+
+async function isNameStored(name: string): Promise<boolean> {
+  try {
+    await runRolledBack((tx) => tx.queueSession.create({ data: { ...buildSession(41016), name } }));
+  } catch (error) {
+    if (error instanceof Rollback) return true;
+    if (/queue_sessions_name_check|value too long|too long for the column/.test(String(error))) return false;
+    throw error;
+  }
+  throw new Error("rolled-back create returned without the rollback signal");
+}
+
+describe("monitor.queue_* length and shape limits", () => {
+  const rejectedRows: readonly {
+    name: string;
+    write: (tx: Prisma.TransactionClient, itemId: bigint) => Promise<unknown>;
+    constraint: RegExp;
+  }[] = [
+    {
+      name: "rejects an item title past 200 characters",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { title: "t".repeat(201) } }),
+      constraint: /value too long|too long for the column/,
+    },
+    {
+      name: "rejects an item body past 20000 characters",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { body: "b".repeat(20001) } }),
+      constraint: /queue_items_body_check/,
+    },
+    {
+      name: "rejects a blank item body",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { body: "   " } }),
+      constraint: /queue_items_body_check/,
+    },
+    {
+      name: "rejects an answer text past 20000 characters",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { answerText: "a".repeat(20001) } }),
+      constraint: /queue_items_answer_text_check/,
+    },
+    {
+      name: "rejects more than 20 linked doc ids",
+      write: (tx, itemId) =>
+        tx.queueItem.update({
+          where: { id: itemId },
+          data: { linkedDocIds: Array.from({ length: 21 }, (_, i) => BigInt(43900 + i)) },
+        }),
+      constraint: /queue_items_linked_doc_ids_check/,
+    },
+    {
+      // Raw SQL → the typed client cannot write a NULL array or a NULL entry
+      name: "rejects a NULL linked doc ids array",
+      write: (tx, itemId) => tx.$executeRaw`UPDATE "monitor"."queue_items" SET "linked_doc_ids" = NULL WHERE "id" = ${itemId}`,
+      constraint: /queue_items_linked_doc_ids_check/,
+    },
+    {
+      name: "rejects a linked doc id entry that is NULL",
+      write: (tx, itemId) =>
+        tx.$executeRaw`UPDATE "monitor"."queue_items" SET "linked_doc_ids" = ARRAY[43944, NULL]::bigint[] WHERE "id" = ${itemId}`,
+      constraint: /queue_items_linked_doc_ids_check/,
+    },
+    {
+      name: "rejects a blank item title",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { title: "   " } }),
+      constraint: /queue_items_title_check/,
+    },
+    {
+      name: "rejects a recommended code that names no option",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { recommendedCode: "R3" } }),
+      constraint: /queue_items_decision_options_check/,
+    },
+    {
+      name: "rejects a report that carries options",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { kind: "report" } }),
+      constraint: /queue_items_decision_options_check/,
+    },
+    {
+      name: "rejects a decision with fewer than 2 options",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { options: buildOptions(1) } }),
+      constraint: /queue_items_decision_options_check/,
+    },
+    {
+      name: "rejects a decision with more than 9 options",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { options: buildOptions(10) } }),
+      constraint: /queue_items_decision_options_check/,
+    },
+    {
+      name: "rejects a decision without an options array",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { options: Prisma.DbNull } }),
+      constraint: /queue_items_decision_options_check/,
+    },
+    {
+      // the code names an entry → only the R1..R9 form is under test
+      name: "rejects a recommended code outside R1 to R9",
+      write: (tx, itemId) =>
+        tx.queueItem.update({
+          where: { id: itemId },
+          data: {
+            options: [
+              { code: "X1", label: "30 seconds", pros: "fast recovery", cons: "more probes" },
+              { code: "R2", label: "2 minutes", pros: "fewer probes", cons: "slower recovery" },
+            ],
+            recommendedCode: "X1",
+          },
+        }),
+      constraint: /queue_items_decision_options_check/,
+    },
+    {
+      name: "rejects options whose serialized text passes 20000 characters",
+      write: (tx, itemId) =>
+        tx.queueItem.update({
+          where: { id: itemId },
+          data: {
+            options: [
+              { code: "R1", label: "30 seconds", pros: "p".repeat(20000), cons: "more probes" },
+              { code: "R2", label: "2 minutes", pros: "fewer probes", cons: "slower recovery" },
+            ],
+          },
+        }),
+      constraint: /queue_items_options_check/,
+    },
+    {
+      name: "rejects an answer code that names no option",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { answerCode: "R9" } }),
+      constraint: /queue_items_answer_code_check/,
+    },
+    {
+      name: "rejects a next attempt below 1",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { nextAttempt: 0 } }),
+      constraint: /queue_items_next_attempt_check/,
+    },
+    {
+      name: "rejects a negative defer count",
+      write: (tx, itemId) => tx.queueItem.update({ where: { id: itemId }, data: { deferCount: -1 } }),
+      constraint: /queue_items_defer_count_check/,
+    },
+    {
+      name: "rejects a bg id that starts with a hyphen",
+      write: (tx, itemId) => tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "resume", 1), bgId: "-h" } }),
+      constraint: /queue_deliveries_bg_id_check/,
+    },
+    {
+      name: "rejects a bg id carrying a character other than letters, digits and hyphens",
+      write: (tx, itemId) => tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "resume", 1), bgId: "a.b" } }),
+      constraint: /queue_deliveries_bg_id_check/,
+    },
+    {
+      name: "rejects a bg id on a socket row",
+      write: (tx, itemId) => tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "socket", 1), bgId: "abc123" } }),
+      constraint: /queue_deliveries_bg_id_check/,
+    },
+    {
+      name: "rejects an aborted row with no abort reason",
+      write: (tx, itemId) => tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "resume", 1), result: "aborted" } }),
+      constraint: /queue_deliveries_abort_reason_check/,
+    },
+    {
+      name: "rejects an abort reason on a row that did not abort",
+      write: (tx, itemId) =>
+        tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "resume", 1), abortReason: "shared_worktree" } }),
+      constraint: /queue_deliveries_abort_reason_check/,
+    },
+    {
+      name: "rejects an aborted row on a route other than resume",
+      write: (tx, itemId) =>
+        tx.queueDelivery.create({
+          data: { ...buildDelivery(itemId, "socket", 1), result: "aborted", abortReason: "session_returned" },
+        }),
+      constraint: /queue_deliveries_abort_reason_check/,
+    },
+    {
+      name: "rejects an attempt below 1",
+      write: (tx, itemId) => tx.queueDelivery.create({ data: buildDelivery(itemId, "pull", 0) }),
+      constraint: /queue_deliveries_attempt_check/,
+    },
+    {
+      name: "rejects an ack deadline that is not after the send time",
+      write: (tx, itemId) => tx.queueDelivery.create({ data: { ...buildDelivery(itemId, "socket", 1), ackDeadlineAt: SENT_AT } }),
+      constraint: /queue_deliveries_ack_deadline_check/,
+    },
+  ];
+
+  for (const row of rejectedRows) {
+    test(row.name, async () => {
+      await assert.rejects(
+        runRolledBack(async (tx) => row.write(tx, await createItem(tx, 41008))),
+        row.constraint,
+      );
+    });
+  }
+
+  const rejectedSessions: readonly {
+    name: string;
+    override: Partial<Prisma.QueueSessionCreateInput>;
+    constraint: RegExp;
+  }[] = [
+    {
+      name: "rejects a socket path outside cc-socks for the registered pid",
+      override: { socketPath: "/private/tmp/cc-socks/41010.sock" },
+      constraint: /queue_sessions_socket_path_check/,
+    },
+    {
+      name: "rejects an exited row with no exit reason",
+      override: { state: "exited" },
+      constraint: /queue_sessions_exit_reason_check/,
+    },
+    {
+      name: "rejects a live row that carries an exit reason",
+      override: { exitReason: "dead" },
+      constraint: /queue_sessions_exit_reason_check/,
+    },
+    {
+      name: "rejects a config dir present while the flag says unset",
+      override: { isConfigDirSet: false },
+      constraint: /queue_sessions_config_dir_check/,
+    },
+    {
+      name: "rejects a relative config dir",
+      override: { configDir: ".claude-work" },
+      constraint: /queue_sessions_config_dir_check/,
+    },
+    {
+      name: "rejects a relative cwd",
+      override: { cwd: "Desktop/git/glass-atrium" },
+      constraint: /queue_sessions_cwd_check/,
+    },
+    {
+      name: "rejects a relative worktree root",
+      override: { worktreeRoot: "Desktop/git/glass-atrium" },
+      constraint: /queue_sessions_worktree_root_check/,
+    },
+    {
+      // no socket path → the pid-keyed socket path CHECK stays out of the way
+      name: "rejects a pid of 0",
+      override: { pid: 0, socketPath: null },
+      constraint: /queue_sessions_pid_check/,
+    },
+    {
+      name: "rejects an empty profile label",
+      override: { profileLabel: "" },
+      constraint: /queue_sessions_profile_label_check/,
+    },
+    {
+      name: "rejects an empty process start time",
+      override: { processStartTime: "" },
+      constraint: /queue_sessions_process_start_time_check/,
+    },
+  ];
+
+  for (const row of rejectedSessions) {
+    test(row.name, async () => {
+      await assert.rejects(
+        runRolledBack((tx) => tx.queueSession.create({ data: { ...buildSession(41009), ...row.override } })),
+        row.constraint,
+      );
+    });
+  }
+
+  const rejectedDriftChecks: readonly {
+    name: string;
+    override: Partial<Prisma.QueueDriftCheckCreateInput>;
+    constraint: RegExp;
+  }[] = [
+    {
+      name: "rejects a relative binary realpath",
+      override: { binaryRealpath: "bin/claude.exe" },
+      constraint: /queue_drift_checks_binary_realpath_check/,
+    },
+    {
+      name: "rejects a negative binary size",
+      override: { binarySize: -1n },
+      constraint: /queue_drift_checks_binary_size_check/,
+    },
+    {
+      name: "rejects an empty version",
+      override: { version: "" },
+      constraint: /queue_drift_checks_version_check/,
+    },
+  ];
+
+  for (const row of rejectedDriftChecks) {
+    test(row.name, async () => {
+      await assert.rejects(
+        runRolledBack((tx) => tx.queueDriftCheck.create({ data: { ...buildDriftCheck(), ...row.override } })),
+        row.constraint,
+      );
+    });
+  }
+
+  test("accepts an item at every length and count cap", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const itemId = await createItem(tx, 41012);
+        const item = await tx.queueItem.update({
+          where: { id: itemId },
+          data: {
+            title: "t".repeat(200),
+            body: "b".repeat(20000),
+            answerText: "a".repeat(20000),
+            linkedDocIds: Array.from({ length: 20 }, (_, i) => BigInt(43900 + i)),
+            options: buildOptions(9),
+          },
+          select: { title: true, body: true, answerText: true, linkedDocIds: true, options: true },
+        });
+        assert.deepEqual(
+          {
+            title: item.title.length,
+            body: item.body.length,
+            answerText: item.answerText?.length,
+            linkedDocIds: item.linkedDocIds.length,
+            options: Array.isArray(item.options) ? item.options.length : null,
+          },
+          { title: 200, body: 20000, answerText: 20000, linkedDocIds: 20, options: 9 },
+        );
+      }),
+      Rollback,
+    );
+  });
+
+  test("accepts a resume row carrying a bg id of letters, digits and a hyphen", async () => {
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        const itemId = await createItem(tx, 41011);
+        const { bgId } = await tx.queueDelivery.create({
+          data: { ...buildDelivery(itemId, "resume", 1), bgId: "a1b2-c3d4" },
+          select: { bgId: true },
+        });
+        assert.equal(bgId, "a1b2-c3d4");
+      }),
+      Rollback,
+    );
+  });
+});
+
+describe("monitor.queue_drift_checks one row per Claude Code version", () => {
+  test("a second row for a recorded version is rejected", async () => {
+    const row = buildDriftCheck();
+    await assert.rejects(
+      runRolledBack(async (tx) => {
+        await tx.queueDriftCheck.create({ data: row });
+        await tx.queueDriftCheck.create({ data: { ...row, binarySize: 319598465n } });
+      }),
+      expectUniqueViolation("queue_drift_checks_version_key"),
+    );
+  });
+});

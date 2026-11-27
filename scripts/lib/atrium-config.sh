@@ -171,6 +171,31 @@ atrium_monitor_port() {
   atrium_config_port '[ports]' 'monitor' '16145'
 }
 
+# Version-free form of a [paths] binary: a Homebrew keg path <prefix>/Cellar/<formula>/<version>/<rest>
+# echoes its <prefix>/opt/<formula>/<rest> twin when that twin is executable — the opt link survives an
+# upgrade, the versioned folder is deleted by it. Keyed on the Cellar segment, never on a prefix, so the
+# arm64 (/opt/homebrew) and Intel (/usr/local) layouts take the same path. Any other path echoes as given.
+atrium_get_stable_bin() {
+  local path="$1" prefix keg formula twin
+  case "${path}" in
+    */Cellar/*/*/*) ;;
+    *)
+      printf '%s\n' "${path}"
+      return 0
+      ;;
+  esac
+  prefix="${path%%/Cellar/*}"
+  keg="${path#"${prefix}"/Cellar/}"
+  formula="${keg%%/*}"
+  keg="${keg#*/}"
+  twin="${prefix}/opt/${formula}/${keg#*/}"
+  if [[ -x "${twin}" ]]; then
+    printf '%s\n' "${twin}"
+  else
+    printf '%s\n' "${path}"
+  fi
+}
+
 # Escape ERE metacharacters so a config value embeds literally in a grep -E
 # pattern (IANA tz ids may carry '+', e.g. Etc/GMT+9 — unescaped, detection
 # would silently mismatch).

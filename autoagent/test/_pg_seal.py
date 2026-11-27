@@ -1,8 +1,13 @@
-"""Live-DB seal for the autoagent tests: no test reaches an install's live database.
+"""Live-DB seal for autoagent, hooks and scripts tests: no test reaches an install's live database.
 
 ``seal_pg_reach`` serves tests that drive ``daemon_cycle`` without a database;
-``get_ephemeral_connection`` serves classes that need real PostgreSQL;
+``get_ephemeral_connection`` serves classes that need real PostgreSQL, and its bounded-retry
+``get_connection`` serves their fixtures' own connects on the same cluster, plus the
+``hooks/test/track-outcome-{schema-mode-completion,so-completion-block,transcript-source}.bats``
+row reads and writes on each file's own cluster;
 ``set_install_tree`` gives a test a temp code tree that is its own install;
+``create_trial_ledger_table`` / ``create_live_trial`` seed the trial ledger on the
+stdlib stand-in (``scripts/test/_pg_stub_backend.py``, anchored by the caller);
 ``put_install_config`` writes the rendered config that names a tree's install root.
 Not a test module (no ``test_`` prefix): consumers anchor this directory on
 ``sys.path``; ``seal_pg_reach`` callers import ``daemon_cycle`` first.
@@ -10,11 +15,15 @@ Not a test module (no ``test_`` prefix): consumers anchor this directory on
 
 from __future__ import annotations
 
+import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest import mock
 
@@ -28,7 +37,6 @@ _SEAMS: dict[str | None, tuple[str, ...]] = {
         "_pg_read_pending_patterns",
         "_pg_read_coverage_patterns",
         "_pg_read_outcomes_since",
-        "_pg_count_outcomes_since",
         "_pg_reject_learning_pattern",
         "_pg_discharge_learning_pattern",
         "_pg_put_learning_pattern_status",
@@ -45,10 +53,13 @@ _SEAMS: dict[str | None, tuple[str, ...]] = {
         "_pg_count_spawn_manifest",
         "_pg_write_trial_ledger_row",
     ),
-    None: ("_invoke_pg_helper_subprocess",),
+    None: ("_invoke_pg_helper_subprocess", "_pg_read_open_trials", "_pg_read_held_trials"),
 }
 
 _AVAILABILITY_FLAGS = ("HAS_PG_LOOP_WRITE", "HAS_PG_PATTERN_READ", "HAS_PG_OUTCOME_READ")
+
+# a loaded host stalls one connect past any single budget → a wide budget, a few attempts
+CONNECT = SimpleNamespace(ATTEMPTS=3, TIMEOUT_S=10)
 
 
 def seal_pg_reach(testcase: unittest.TestCase) -> list[str]:
@@ -93,6 +104,47 @@ def set_install_tree(testcase: unittest.TestCase) -> None:
     root = Path(tree.name)
     put_install_config(root, root)
     _patch(testcase, sys.modules["daemon_cycle"], "_INSTALL_ROOT", root)
+
+
+def create_trial_ledger_table(db_path: Path) -> None:
+    """core.autoagent_trial_ledger in the stand-in's file, its columns read off the Prisma model."""
+    import _pg_stub_backend as stub
+
+    columns = stub._get_model_columns("AutoagentTrialLedger")
+    declared = ", ".join(
+        "id INTEGER PRIMARY KEY" if column == "id" else f"{column} TEXT" for column in columns
+    )
+    with closing(sqlite3.connect(db_path)) as db:
+        db.execute(f"CREATE TABLE autoagent_trial_ledger ({declared}, UNIQUE(dedupe_key))")
+        db.commit()
+
+
+def create_live_trial(
+    db_path: Path, proposal_id: int, agent: str, *, is_decided: bool = False
+) -> None:
+    """A live pre-registration naming ``proposal_id``; ``is_decided`` adds its decision row."""
+    import _pg_stub_backend as stub
+
+    event = stub.get_trial_ledger().EVENT
+    trial_key = f"{proposal_id:064x}"
+    rows = [
+        (
+            trial_key,
+            agent,
+            event.LIVE_PREREGISTRATION,
+            json.dumps({"proposal_id": proposal_id}),
+            trial_key,
+        )
+    ]
+    if is_decided:
+        rows.append((trial_key, agent, event.LIVE_DECISION, "{}", f"{trial_key}:decision"))
+    with closing(sqlite3.connect(db_path)) as db:
+        db.executemany(
+            "INSERT INTO autoagent_trial_ledger (trial_key, agent, event, payload, dedupe_key)"
+            " VALUES (?, ?, ?, ?, ?)",
+            rows,
+        )
+        db.commit()
 
 
 def put_install_config(root: Path, declared: Path) -> None:
@@ -146,11 +198,23 @@ def get_ephemeral_connection() -> psycopg.Connection:
     import psycopg
 
     try:
-        return psycopg.connect(
-            dbname="glass_atrium",
-            host=sockdir,
-            port=os.environ.get("EPH_PORT") or None,
-            connect_timeout=2,
-        )
+        return get_connection("glass_atrium", host=sockdir, port=os.environ.get("EPH_PORT") or None)
     except psycopg.OperationalError as exc:
         raise unittest.SkipTest(f"ephemeral cluster unreachable: {exc}") from exc
+
+
+def get_connection(dbname: str, **options: object) -> psycopg.Connection:
+    """A connection to ``dbname``; only a timed-out attempt is retried, up to ``CONNECT.ATTEMPTS``.
+
+    Any other refusal is raised at once, so a dead or misnamed cluster still fails loudly.
+    """
+    import psycopg
+
+    attempts_left = CONNECT.ATTEMPTS
+    while True:
+        try:
+            return psycopg.connect(dbname=dbname, connect_timeout=CONNECT.TIMEOUT_S, **options)
+        except psycopg.errors.ConnectionTimeout:
+            attempts_left -= 1
+            if not attempts_left:
+                raise

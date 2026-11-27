@@ -131,8 +131,7 @@ describe("DetailSurface focus containment", () => {
   const panel = { name: "panel", contains: (node: unknown) => node === panel || focusables.includes(node as typeof first) };
 
   const rows = [
-    { name: "opening moves focus to the first control", args: { focusables, active: null, shiftKey: false }, expected: first },
-    { name: "opening a surface with no control focuses the panel itself", args: { focusables: [], active: null, shiftKey: false }, expected: panel },
+    { name: "Tab with nothing focused enters at the first control", args: { focusables, active: null, shiftKey: false }, expected: first },
     { name: "Tab in an empty panel keeps focus on the panel", args: { focusables: [], active: panel, shiftKey: false }, expected: panel },
     { name: "Tab from outside the panel pulls focus to the first control", args: { focusables, active: outside, shiftKey: false }, expected: first },
     { name: "Shift+Tab from outside the panel pulls focus to the last control", args: { focusables, active: outside, shiftKey: true }, expected: last },
@@ -213,12 +212,55 @@ describe("DetailSurface inert background", () => {
   });
 });
 
+describe("DetailSurface inert background across stacked surfaces", async () => {
+  const effects = createEffectReact();
+  const doc = createFakeDocument();
+  const live = await loadScreenModule(UI_SRC, { React: effects.react, document: doc });
+
+  function buildStack() {
+    const overlays = [createNode("drawer-overlay"), createNode("confirm-overlay")];
+    const list = createNode("list");
+    const sidebar = createNode("sidebar");
+    createNode("body", [sidebar, createNode("main", [list, ...overlays])]);
+    const mount = (overlay: FakeNode) => {
+      const panel = { name: "panel", querySelectorAll: () => [], contains: (node: unknown) => node === panel, focus: () => { doc.activeElement = panel; } };
+      return effects.mount(
+        () => (live.DetailSurface as Component)({ open: true, onClose: () => undefined, title: "Session cost", children: "body" }),
+        (element) => (element.props.role === "dialog" ? panel : overlay),
+      );
+    };
+    return { overlays, background: [list, sidebar], mount };
+  }
+
+  const rows = [
+    { name: "the drawer closed while the confirm over it stays open", releaseOrder: [0, 1] },
+    { name: "the confirm closed before the drawer under it", releaseOrder: [1, 0] },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name}: the shared background stays inert until the last modal surface closes`, () => {
+      doc.reset();
+      const stack = buildStack();
+      const surfaces = stack.overlays.map((overlay) => stack.mount(overlay));
+      const [firstIndex, secondIndex] = row.releaseOrder;
+      surfaces[firstIndex].unmount();
+      const afterFirstRelease = stack.background.map((node) => node.inert);
+      surfaces[secondIndex].unmount();
+
+      assert.deepEqual(
+        { afterFirstRelease, afterRelease: stack.background.map((node) => node.inert) },
+        { afterFirstRelease: [true, true], afterRelease: [false, false] },
+      );
+    });
+  }
+});
+
 describe("DetailSurface dismissal", async () => {
   const effects = createEffectReact();
   const doc = createFakeDocument();
   const live = await loadScreenModule(UI_SRC, { React: effects.react, document: doc });
 
-  function mountSurface(onClose: () => void) {
+  function mountSurface(onClose: () => void, controls: unknown[] = []) {
     const trigger = { name: "trigger", focus: () => undefined as void };
     const list = createNode("list");
     const overlay = createNode("overlay");
@@ -226,8 +268,8 @@ describe("DetailSurface dismissal", async () => {
     createNode("body", [sidebar, createNode("main", [list, overlay])]);
     const panel = {
       name: "panel",
-      querySelectorAll: () => [],
-      contains: (node: unknown) => node === panel,
+      querySelectorAll: () => controls,
+      contains: (node: unknown) => node === panel || controls.includes(node),
       focus: () => { doc.activeElement = panel; },
     };
     doc.reset();
@@ -238,6 +280,15 @@ describe("DetailSurface dismissal", async () => {
     );
     return { ...mounted, trigger, background: [list, sidebar] };
   }
+
+  test("opening focuses the panel itself, never its first control, so Tab enters at that control", () => {
+    const close = { name: "close", focus: () => { doc.activeElement = close; } };
+    const surface = mountSurface(() => undefined, [close]);
+    const focused = doc.activeElement;
+    surface.unmount();
+
+    assert.equal((focused as { name?: string } | null)?.name, "panel");
+  });
 
   test("Esc on the topmost surface closes it", () => {
     let closes = 0;
@@ -262,4 +313,42 @@ describe("DetailSurface dismissal", async () => {
 
     assert.deepEqual(refocus, [{ isBackgroundLive: true, overflow: "auto" }]);
   });
+});
+
+describe("DetailSurface scroll lock", async () => {
+  const effects = createEffectReact();
+  const doc = createFakeDocument();
+  const live = await loadScreenModule(UI_SRC, { React: effects.react, document: doc });
+
+  function mountSurface(isOpen: boolean) {
+    const panel = { name: "panel", querySelectorAll: () => [], contains: (node: unknown) => node === panel, focus: () => { doc.activeElement = panel; } };
+    const overlay = { name: "overlay", tagName: "DIV", parentElement: null };
+    return effects.mount(
+      () => (live.DetailSurface as Component)({ open: isOpen, onClose: () => undefined, title: "Relay history", children: "body" }),
+      (element) => (element.props.role === "dialog" ? panel : overlay),
+    );
+  }
+
+  const rows = [
+    { name: "a drawer closed before the confirm opened over it", opens: [true, true], releaseOrder: [0, 1], whileMounted: "hidden", afterFirstRelease: "hidden" },
+    { name: "the confirm closed before the drawer under it", opens: [true, true], releaseOrder: [1, 0], whileMounted: "hidden", afterFirstRelease: "hidden" },
+    { name: "two surfaces mounted closed, as a page at rest holds them", opens: [false, false], releaseOrder: [0, 1], whileMounted: "auto", afterFirstRelease: "auto" },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name}: the body locks only while a surface is open and scrolls again once every surface is gone`, () => {
+      doc.reset();
+      const surfaces = row.opens.map(mountSurface);
+      const whileMounted = doc.body.style.overflow;
+      const [firstIndex, secondIndex] = row.releaseOrder;
+      surfaces[firstIndex].unmount();
+      const afterFirstRelease = doc.body.style.overflow;
+      surfaces[secondIndex].unmount();
+
+      assert.deepEqual(
+        { whileMounted, afterFirstRelease, afterRelease: doc.body.style.overflow },
+        { whileMounted: row.whileMounted, afterFirstRelease: row.afterFirstRelease, afterRelease: "auto" },
+      );
+    });
+  }
 });

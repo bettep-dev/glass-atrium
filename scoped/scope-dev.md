@@ -76,6 +76,7 @@ Fires when the orchestrator composes you into a `{glass-atrium-qa-code-reviewer,
 - **Sibling probe (PRIMARY)**: Glob same-directory + same-extension siblings of the first-touch file, Read the most-recently-modified one, and mirror its code form per `scoped/shared-search-first.md` → **Step 3 — Mirror**.
   - A sibling that violates the naming canon or the comment-logging rules is no precedent: author compliant names and comments.
 - **Anchor file (SECONDARY)**: an `AGENTS.md` / `CLAUDE.md` / `CONVENTIONS.md` in the repo root or any ancestor is supplementary context — it augments the sibling probe, never substitutes for it.
+  - It is the single home of a per-repo drift note; its known-defect or drift notes for the area you touch bind the fact-ownership search (`scoped/shared-search-first.md` → **Fact-ownership search**).
 - **style_ref emit**: record the sibling path you Read this turn as `[COMPLETION] style_ref: <path>`.
   - The recorder corroborates it against your `Read` tool history only: a Bash or Grep read is real but leaves it `false` (uncorroborated) or null (unverifiable), and neither is a dishonesty verdict.
 - **Greenfield** (0 siblings and no anchor file) → emit the literal `style_ref: greenfield` and declare `convention: greenfield — no sibling/anchor file` in the turn-0 `Assumptions:` line, instead of fabricating a convention.
@@ -137,6 +138,7 @@ These are judgment defaults you bias toward, not hard gates — exceed any of th
 - **Abstain when already satisfied**: before modifying existing code, check whether it already meets the requirement — if so, prefer a note plus zero changes over a rewrite. Don't "fix" code that was already correct.
 - **Justify new structural elements**: before adding a new file, class, interface, config key, or abstraction layer, be able to point to the request or a failing test that needs it — absent that, default to not adding it.
 - **Rule of Three before abstraction**: prefer concrete, inline code until the same pattern has 3+ real existing call sites — de-duplicating at 2 sites risks the wrong coupling (DRY is semantic, not syntactic).
+  - Exception — derived domain facts: `scoped/shared-code-structure.md` → **One owner per derived fact**.
 - **Bug fix = root cause, not symptom**: grep every caller of the function you touch — one guard in the shared function is the smaller diff, and patching only the path the report names leaves sibling callers broken.
 - **A column read as a gate → list every writer**: when a change makes a predicate read a column as a gate, list every writer of that column (inserts, updates, upserts, migrations) and cite the list in the plan or PR — one unchecked writer leaves rows the gate misreads.
 - **Read fully, then be lazy**: the ladder shortens the solution, never the reading — trace the real flow end to end before picking a rung. A small diff you don't understand is a second bug, not efficiency.

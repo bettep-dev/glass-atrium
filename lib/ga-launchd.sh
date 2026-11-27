@@ -69,7 +69,7 @@ load_launchd_jobs() {
     exit "${BOOTSTRAP_EXIT_LOAD_NORENDER}"
   fi
 
-  # retired labels leave the domain before the active roster loads → --load-launchd is an honest doctor remedy
+  # retired labels leave the domain before the active roster loads → reload-launchd is an honest doctor remedy
   retire_launchd_jobs_or_warn
 
   # dry-run: report what WOULD load, touch neither launchctl nor LaunchAgents.
@@ -128,6 +128,33 @@ load_launchd_jobs() {
   done
 
   log "== bootstrap: --load-launchd done — ${loaded}/${#LAUNCHD_JOBS[@]} launchd jobs loaded =="
+}
+
+# reload_launchd_jobs — the `reload-launchd` subcommand: re-render the plists and reload every active job through
+# load_launchd_jobs, holding the shared .apply-lock (the updater's and daemon-apply's writer lock) so a reload never
+# interleaves with an update or an apply. Named exit: RELOAD_EXIT_LOCKED when a live holder keeps the lock.
+reload_launchd_jobs() {
+  local lock_dir rc=0
+  lock_dir="$(apply_lock_get_dir)"
+  mkdir -p -- "${lock_dir%/*}"
+  apply_lock_acquire "${lock_dir}"
+  if ! "${apply_lock_acquired}"; then
+    printf 'reload-launchd: an update or apply holds %s — nothing reloaded; run it again once that finishes\n' \
+      "${lock_dir}" >&2
+    exit "${RELOAD_EXIT_LOCKED}"
+  fi
+  # a subshell, so a failing render or bootstrap exits there and the lock is still released below
+  set +e
+  (
+    set -e
+    LOAD_LAUNCHD=true
+    render_plists
+    load_launchd_jobs
+  )
+  rc=$?
+  set -e
+  apply_lock_release "${lock_dir}"
+  return "${rc}"
 }
 
 # unload_launchd_jobs — uninstall teardown: bootout + remove the deployed plist for each

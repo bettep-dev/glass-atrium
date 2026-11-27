@@ -28,12 +28,19 @@ Corpus-maintenance companion to `scoped/shared-testing.md`: its readers, backing
 | **Authoring scope** | glass-atrium-qa-code-reviewer grading a change's tests | `agents/glass-atrium-qa-code-reviewer.md` → `### Testing Checks` |
 | `## Rationalization Rejection (Testing)` | every agent — the charter's excuse→rebuttal home-file list, cited by the domain word `testing` only | `GLASS_ATRIUM_GLOBAL_RULES.md` → Rationalization Rejection |
 | **Qualifier on the last row (the deliberate-break exception)** | every agent — the `feature` bar's exception | `core-outcome-record.md` → the `feature` note |
-| `## 3-Tier Test Hierarchy` | every agent — the commit rule's which-tests-when half, cited by path only | `core-git-workflow.md` → Commits |
-| `## 3-Tier Test Hierarchy` | glass-atrium-dev-shell — its affected-paths-per-commit override | `agents/glass-atrium-dev-shell.md` → `### Bats + test-run discipline` |
+| **Incremental commits** | every agent — the commit rule's which-tests-when half; index owners reach it through **Who commits** | `core-git-workflow.md` → `## Commits` |
+| `## 3-Tier Test Hierarchy` · **Incremental commits** | glass-atrium-dev-shell — which tests each commit needs | `agents/glass-atrium-dev-shell.md` → `### Bats + test-run discipline` |
+| **Verification scope** | every agent — the scope of the `feature` and `refactor` bars | `core-outcome-record.md` → the `feature` · `refactor` verification-scope note |
+| **Verification scope** | every agent — job and final gate behind the commit rule | `core-git-workflow.md` → `## Commits` |
+| **Verification scope** | any agent running `/verify` — the `changed` scope's affected set | `skills/glass-atrium-ops-verify-gate/SKILL.md` → `### Scope argument` |
+| **Verification scope** | glass-atrium-dev-node — the tests a spawn's end needs | `agents/glass-atrium-dev-node.md` → **Local test pass** |
+| **Verification scope** | glass-atrium-dev-react — the post-refactor test set | `agents/glass-atrium-dev-react.md` → **Post-refactor gate** |
+| **Verification scope** | the orchestrator, filling a DEV brief's `[VERIFY]` line | `skills/glass-atrium-ops-delegation-contracts/references/delegation-prompt.md` → `## Verification-scope line` |
 | `## Mechanical Success Metrics` | every agent — the `grader_verdict` presence-signal line | `core-outcome-record.md` → Automatic Verification Criteria |
 | **Depth follows risk** | every DEV agent sizing its tests | `scoped/scope-dev.md` → **YAGNI applies to tests too** |
 | **Depth follows risk** | the DEV body that carries a local test-size line | `agents/glass-atrium-dev-nestjs.md` → **Tests** |
-| **Depth follows risk** | the orchestrator, reading its skill on demand | `skills/glass-atrium-ops-orchestrator.md` → `### Quality Gates [ORCHESTRATOR]` |
+| **Depth follows risk** | the orchestrator, reading its skill on demand | `skills/glass-atrium-ops-orchestrator.md` → `### Quality Gates [ORCHESTRATOR]` → **Output verification** |
+| **Coupled-test check** | the orchestrator, accepting a result that names a loosened, re-pinned, renamed or retired test | `skills/glass-atrium-ops-orchestrator.md` → `### Quality Gates [ORCHESTRATOR]` → **Output verification** |
 | **Coupled-test check** | the orchestrator, declaring a delegation's `[SCOPE] files=` | `skills/glass-atrium-ops-orchestrator-role.md` → **`files=` completeness duty** |
 | **Coupled-test check** | glass-atrium-intel-planner, listing a plan's target files | `agents/glass-atrium-intel-planner.md` → "Also list the coupled tests" |
 | `### Where a test lives` | DEV and QA agents — the reproduction-test checklist item | `scoped/shared-investigation-discipline.md` → **Reproduction test exists** |

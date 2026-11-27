@@ -108,6 +108,7 @@ run_doctor_sandbox() {
     bash -c '
       set -Eeuo pipefail
       source "$1/lib/ga-core.sh"
+      source "$1/test/lib/remote-run-stub.bash"
       ga_init_env "$2"
       run_doctor
     ' _ "${GA}" "${GA_SANDBOX}"
@@ -199,6 +200,37 @@ summary_warns() {
   assert_has "${NOTICE}" || return 1
   [[ -f "${MARKER}" ]] || return 1
   grep -q 'removed=1' "${MARKER}" || return 1
+}
+
+# run_wire with the binding-options table replaced by $1 (rows, one per line).
+run_wire_with_options() {
+  run env GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA}" bash -c '
+    set -Eeuo pipefail
+    source "$1/lib/ga-core.sh"
+    ga_init_env "$1"
+    option_rows="$2"
+    get_expected_binding_option_rows() { printf "%s\n" "${option_rows}"; }
+    wire_hooks
+  ' _ "${GA}" "$1"
+}
+
+@test "a run whose only change is a binding-options repair still announces and marks" {
+  run_wire
+  [[ "${status}" -eq 0 ]] || return 1
+  if ga_guard_path "${MARKER}"; then rm -f -- "${MARKER:?}"; fi
+
+  run_wire_with_options $'Stop\tcost-tracker.sh\t{"asyncRewake":true,"timeout":1200}'
+
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  assert_has "0 binding(s) added" || return 1
+  assert_has "${NOTICE}" || return 1
+  grep -q 'repaired=2' "${MARKER}" || {
+    cat "${MARKER}"
+    return 1
+  }
 }
 
 @test "AC4: retire_hook_binding announces and marks at its own summary" {

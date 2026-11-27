@@ -206,7 +206,7 @@ _denom() { printf '%s' "$1" | sed -n 's/^BAR\[[0-9]*\/\([0-9]*\)\]$/\1/p'; }
 
 @test "INSTALL_PLAN_LEN equals the live install STEP_FN length after build_step_plan install" {
   # source in an isolated subprocess (source-guard skips main); the boxed preflight never runs,
-  # so build_step_plan install populates STEP_FN to the real plan. A future 15th step that forgets
+  # so build_step_plan install populates STEP_FN to the real plan. A future step that forgets
   # to bump INSTALL_PLAN_LEN trips this guard (mirrors step-plan-sync.bats intent).
   run bash -c '
     set -Eeuo pipefail
@@ -218,7 +218,7 @@ _denom() { printf '%s' "$1" | sed -n 's/^BAR\[[0-9]*\/\([0-9]*\)\]$/\1/p'; }
   [ "${status}" -eq 0 ]
   local len fn_count
   read -r len fn_count <<<"${output}"
-  [ "${len}" = "14" ]
+  [ "${len}" = "15" ]
   [ "${len}" = "${fn_count}" ]
 }
 

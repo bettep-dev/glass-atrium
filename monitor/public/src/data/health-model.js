@@ -7,10 +7,10 @@
 // '분모가 정의 목록을 따른다'를 붉게 만들 수 있어야 함 (T14 · architecture.live-badge 픽스처).
 const HEALTH_CARD_DEFS = [
   { id: 'pg',            name: 'PostgreSQL',      icon: 'db',       kind: 'pg' },
-  { id: 'browser',       name: 'Chromium Export', icon: 'download', kind: 'browser' },
+  { id: 'browser',       name: 'Export via Chromium', icon: 'download', kind: 'browser' },
   { id: 'daemon-cycle',  name: 'autoagent',       icon: 'spark',    kind: 'daemon', daemonName: 'autoagent' },
   { id: 'glass-atrium-wiki-curator',  name: 'glass-atrium-wiki-curator',    icon: 'brain',    kind: 'daemon', daemonName: 'wiki' },
-  { id: 'hook-chain',    name: 'Hook Chain',      icon: 'pulse',    kind: 'hook' },
+  { id: 'hook-chain',    name: 'Hooks',           icon: 'pulse',    kind: 'hook' },
 ];
 
 // 데몬 판정 = 서버의 effective_status 소비 — 지연 여부를 클라가 다시 계산하지 않음.
@@ -58,7 +58,8 @@ const CARD_FACTS_RESOLVERS = {
   },
 
   // tone 소스 = core.hook_failures 24h recency (F08) — 설정 인벤토리는 sub-metric 강등.
-  // crit = 미재시도 실패 존재(유실 위험) · warn = 24h 내 실패(재시도됨) · 집계 미수신 → 설정 기반 폴백.
+  // 실패 행 = 기록 못 하고 버린 쓰기 — retry_attempted=true 는 회복이 아니라 일시적 DB 오류로 재시도한 쓰기도 실패.
+  // crit = 재시도 없는 실패(일시적 DB 오류 아님 → 재시도로 안 낫는 결함) · warn = 일시적 DB 오류만 · 집계 미수신 → 설정 기반 폴백.
   hook(_def, { hookState, hookFailState }) {
     if (hookState.status !== 'ready') return { status: hookState.status, error: hookState.error };
     const events = hookState.data?.events || [];
@@ -117,8 +118,8 @@ function toPayloadRows(payload) {
   });
 }
 
-// 셸이 폴링한 harness 스토어 → 단일 harness 상태. 풋터 롤업 · System map nav 숫자 ·
-// Dashboard 레인/타일이 모두 이 결과 하나만 읽는다 → 같은 사실에 대해 세 표면이 어긋날 수 없음.
+// 셸이 폴링한 harness 스토어 → 단일 harness 상태. System map nav 숫자 ·
+// Dashboard 레인/타일이 모두 이 결과 하나만 읽는다 → 같은 사실에 대해 두 표면이 어긋날 수 없음.
 // 파트 분모는 '셸이 실제로 관측한' 파트뿐 — 미관측 파트를 ok 로 세지 않는다.
 
 // 스토어가 ready 일 때만 값 추출 — 미수신을 0/빈값으로 꾸미지 않음 (unknown → null).
@@ -126,14 +127,9 @@ function readReady(state, pick) {
   return state && state.status === 'ready' ? pick(state.data) : null;
 }
 
-// Daemon down = effective_status ≠ ok → feeds only the footer ISSUES flag (app.jsx); the nav badge reads downNames.
-function countDaemonsDown(livePayload) {
-  return (livePayload?.daemons || []).filter((d) => d.effective_status !== 'ok').length;
-}
-
-// tone → 파트 관측 결과. ok=정상 · crit/warn=고장 · 그 외(info·비ready)=관측 못 함(null).
+// tone → 파트 관측 결과. ok=정상 · warn=가동 중 주의(System map 'needs attention') · crit=고장 · 그 외(info·비ready)=관측 못 함(null).
 // 모르는 파트는 분모에서 빠진다 — 정상으로도 고장으로도 세지 않음.
-const PART_OK_BY_TONE = { ok: true, crit: false, warn: false };
+const PART_OK_BY_TONE = { ok: true, warn: true, crit: false };
 
 // 셸 스토어 → resolveCardFacts 입력 이름. 미폴링 스토어도 loading 계약으로 채워
 // resolver 가 옵셔널 체크 없이 같은 형태를 읽는다.
@@ -155,7 +151,7 @@ function foldHarness(states = {}) {
   const parts = HEALTH_CARD_DEFS.map((def) => {
     const facts = resolveCardFacts(def, cardStates);
     const ok = facts.status === 'ready' ? PART_OK_BY_TONE[facts.tone] : undefined;
-    return { id: def.id, name: def.name, ok: ok === undefined ? null : ok };
+    return { id: def.id, name: def.name, ok: ok === undefined ? null : ok, isCaution: ok === true && facts.tone === 'warn' };
   });
   const checked = parts.filter((p) => p.ok !== null);
   const down = checked.filter((p) => p.ok === false);
@@ -167,13 +163,13 @@ function foldHarness(states = {}) {
     partsTotal: parts.length,
     downNames: down.map((p) => p.name),
     uncheckedNames: parts.filter((p) => p.ok === null).map((p) => p.name),
-    daemonsDown: readReady(states.liveState, countDaemonsDown),
+    cautionNames: parts.filter((p) => p.isCaution).map((p) => p.name),
     failCount1h: readReady(states.kpiState, (d) => Number(d?.last_1h_fail_count) || 0),
     version: readReady(states.healthState, (d) => d?.version || null),
   };
 }
 
-// Nothing checked + a store still pending → first-poll wait, not a lost reading (tile skeleton ↔ footer CHECKING…).
+// Nothing checked + a store still pending → first-poll wait, not a lost reading (the tile skeleton).
 function resolveFoldStatus(checkedCount, cardStates) {
   if (checkedCount > 0) return 'ready';
   return Object.values(cardStates).some((state) => state.status === 'loading') ? 'loading' : 'unavailable';

@@ -51,10 +51,10 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import IntEnum
 from fractions import Fraction
-from itertools import groupby
+from itertools import groupby, starmap, takewhile
 from pathlib import Path, PurePosixPath
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Literal, NamedTuple, Optional
+from types import MappingProxyType, SimpleNamespace
+from typing import TYPE_CHECKING, Literal, NamedTuple, Optional, TypeVar
 
 # -- Constants --------------------------------------------------------------
 
@@ -97,6 +97,7 @@ import ga_paths  # noqa: E402 — hooks dir pinned by the loop above
 from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop above
     BASELINE,
     DESIGN_EFFECT_ROW_KEYS,
+    GRADER_VERDICT_FAIL,
     METRIC_BUDGET_OVERAGE,
     METRIC_EMIT_FAILURE,
     METRIC_KEYS,
@@ -105,20 +106,25 @@ from _outcome_signal import (  # noqa: E402 — hooks dir pinned by the loop abo
     FloorResult,
     PairWindows,
     SpawnFacts,
+    Window,
     WindowCount,
     WindowStarts,
     get_floor_verdict,
+    get_follow_up_counts,
+    get_overran_gaps,
     get_pair_windows,
+    get_redelegation_window,
     get_tasks,
     get_tool_budget,
+    is_floor_half,
     is_metric_event,
     is_pending,
     is_task_overrun,
 )
 
 # Runtime data roots via the shared ga_paths seam (.glass-atrium default,
-# GA_DATA_ROOT-overridable) — the SAME store project_key.py / learning-aggregator.py
-# resolve after the .claude→.glass-atrium data migration.
+# GA_DATA_ROOT-overridable) — the SAME store learning-aggregator.py resolves
+# after the .claude→.glass-atrium data migration.
 DEFAULT_REPORTS_DIR = ga_paths.get_data_root() / "daemon-reports"
 # Optional-dependency import degradation is CAPTURED here, NOT written to stderr
 # at import time: a bare CLI import of this module (autoagent/lib/sensitive_patterns.py
@@ -134,7 +140,6 @@ _PG_OUTCOME_IMPORT_EXC: Exception | None = None
 try:
     with contextlib.redirect_stderr(io.StringIO()):
         from _pg_learning_dualwrite import (
-            count_outcomes_since as _pg_count_outcomes_since,
             read_outcomes_since as _pg_read_outcomes_since,
             read_pending_learning_patterns as _pg_read_pending_patterns,
             read_coverage_learning_patterns as _pg_read_coverage_patterns,
@@ -225,6 +230,7 @@ try:
             get_spawn_manifest_row_count as _pg_count_spawn_manifest,
             TRIAL_LEDGER,
             write_trial_ledger_row as _pg_write_trial_ledger_row,
+            get_live_trial_key,
         )
     HAS_PG_LOOP_WRITE = True
 except Exception as _pg_loop_import_exc:  # noqa: BLE001 — psycopg or helper itself
@@ -276,12 +282,6 @@ from daemon_config import (  # noqa: E402 — hooks dir prepended above (repo-re
 # Per-cycle agent cap sentinel — 0/negative/None → unlimited (ALL agents).
 # Positive int → ceiling. cost_guard is informational only (not a gate).
 UNLIMITED_AGENTS = 1_000_000
-
-# Outcome sampling cap — bounds the posterior's recency sample only, NEVER
-# evidence volume: the promotion ladder's observation_count comes from
-# _count_outcome_signals (uncapped COUNT(*) over the same window), so this cap
-# cannot starve the n>=10 candidate floor.
-OUTCOME_SAMPLE_LIMIT = 5
 
 # Chronic Haiku-timeout back-off (generation side) -------------------------
 #
@@ -495,10 +495,9 @@ class ExitCode(IntEnum):
 # Intra-cycle Haiku spacing (FIX #5) ----------------------------------------
 #
 # Bounded inter-call sleep between per-agent Haiku calls in _run_generation_loop
-# (no call while IS_GENERATION_CLOSED) so the cycle does not self-contend its
-# shared OAuth/usage window. Applied only after a real call (not skip_haiku /
-# not back-off). Small enough never to materially lengthen a healthy cycle;
-# env-overridable / 0 disables.
+# so the cycle does not self-contend its shared OAuth/usage window. Applied only
+# after a real call (not skip_haiku / not back-off). Small enough never to
+# materially lengthen a healthy cycle; env-overridable / 0 disables.
 INTER_CALL_SPACING_SEC = float(
     os.environ.get("AUTOAGENT_INTER_CALL_SPACING_SEC", "2.0") or "2.0"
 )
@@ -847,6 +846,22 @@ def match_sensitive_path(path: str) -> str | None:
 DiffLineKind = Literal["header", "hunk", "added", "removed", "other"]
 
 
+def _get_diff_lines(diff: str, *, keepends: bool = False) -> list[str]:
+    """Split a diff, or a body compared with one, at ``\\n`` alone, as ``git apply`` reads both.
+
+    ``str.splitlines`` also breaks at FF, U+0085, U+2028 and a lone CR, which hides
+    the rest of an added line from every reader. A ``\\r`` ending a line is dropped
+    with the newline unless ``keepends``.
+    """
+    lines = [f"{line}\n" for line in (diff or "").split("\n")]
+    lines[-1] = lines[-1][:-1]
+    if not lines[-1]:
+        lines.pop()
+    if keepends:
+        return lines
+    return [line.removesuffix("\n").removesuffix("\r") for line in lines]
+
+
 def _get_diff_line_kinds(diff: str) -> list[tuple[DiffLineKind, str]]:
     """Classify each diff line — the one body reading of the safety/count sites.
 
@@ -855,7 +870,7 @@ def _get_diff_line_kinds(diff: str) -> list[tuple[DiffLineKind, str]]:
     are ignored.
     A header is only a ``--- `` line directly followed by ``+++ `` before any hunk.
     """
-    lines = (diff or "").splitlines()
+    lines = _get_diff_lines(diff)
     kinds: list[tuple[DiffLineKind, str]] = []
     in_hunk = False
     for idx, line in enumerate(lines):
@@ -998,8 +1013,42 @@ LANDED_HISTORY_CHAR_CAP = 4000
 LANDED_HISTORY_LIMIT = 5
 LANDED_HISTORY_ENTRY_CHAR_CAP = 400
 
-# Agent → scope mapping (from core-compliance-matrix.md Scope Legend).
-# Used to pick the correct scope-*.md file for axis C3.
+# Trialled proposals + their ledger effect; a landed one renders here, not in landed history
+# Same HARD cap discipline as the landed-history block
+PRIOR_ATTEMPTS = SimpleNamespace(
+    CHAR_CAP=4000,
+    LIMIT=5,
+    # binds the look event, the pre-registration event, the agent, then the limit
+    SQL=(
+        "SELECT pr.id, pr.pattern_label, pr.status::text, pr.proposed_diff, "
+        "(SELECT l.payload FROM core.autoagent_trial_ledger l "
+        "WHERE l.event = %s AND l.trial_key = t.trial_key ORDER BY l.id DESC LIMIT 1), "
+        "(SELECT d.payload FROM core.autoagent_trial_ledger d "
+        "WHERE d.dedupe_key = t.trial_key || ':decision') "
+        "FROM core.autoagent_trial_ledger t JOIN core.autoagent_proposals pr "
+        "ON pr.id = (t.payload->>'proposal_id')::bigint "
+        "WHERE t.event = %s AND pr.target_agent = %s "
+        "ORDER BY t.id DESC LIMIT %s"
+    ),
+    # the only look and decision fields the effect text renders, in order; a dot = a nested key
+    EFFECT_FIELDS=(
+        "reason",
+        "look",
+        "fraction",
+        "z",
+        "boundary",
+        "arms.control.events",
+        "arms.control.units",
+        "arms.treatment.events",
+        "arms.treatment.units",
+    ),
+)
+
+# Agent → scope file (core-compliance-matrix.md Scope Legend); two readers:
+# - axis C3 (_scope_file_for_agent): the scope-*.md the verifier judges against
+# - k (get_guardrail_count): a non-DEV scope file → 3 guardrails, no verified_fail
+# - an agent the map does not name: C3 unresolved (loud), k 4 — verified_fail stays on
+_DEV_SCOPE_FILE = "scope-dev.md"
 _AGENT_SCOPE_MAP: dict[str, str] = {
     # DEV scope
     "glass-atrium-dev-front": "scope-dev.md",
@@ -1205,7 +1254,7 @@ def _get_diff_header_pairs(diff: str) -> list[tuple[int, str, str]]:
     ``+++ `` is a header pair; inside a hunk the pair must also be followed by ``@@``,
     because ``git apply --recount`` applies any other ``--- ``/``+++ `` line as body.
     """
-    lines = (diff or "").splitlines()
+    lines = _get_diff_lines(diff)
     pairs: list[tuple[int, str, str]] = []
     in_hunk = False
     for idx, line in enumerate(lines):
@@ -1416,17 +1465,11 @@ def match_budget_family(pattern_label: str, target_file: str, diff: str) -> str 
     return f"site:{site}" if site else None
 
 
-# -- Promotion ladder config ------------------------------------------------
+# -- Promotion tier label ---------------------------------------------------
 #
-# Confidence-weighted learning loop — a Beta-Binomial posterior gate atop the
-# binary threshold (5+ occurrences → Tier-1 Auto), promoting mention → candidate
-# → proposal → instruction|skill. Wires in lib/confidence.py + lib/project_key.py.
-#
-# Thresholds:
-#   candidate : confidence_observed >= 0.7  AND n >= 10
-#   proposal  : confidence_observed >= 0.85 AND 7-day sustain
-#   terminal  : instruction-edit (Tier-1 Auto, body edit)
-#               OR skill-candidate (Tier-2 user_pending, frontmatter identity)
+# promotion_tier is a proposal-row label only: run_cycle stamps the 'mention' floor
+# → no tier gates generation or apply; a pre-registered row lands only on its live
+# trial's win.
 
 # Add lib/ to sys.path — the daemon runs from autoagent root, where lib/ may not
 # be on the path automatically.
@@ -1435,7 +1478,6 @@ if str(_AUTOAGENT_LIB_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_LIB_DIR))
 try:
     from confidence import (  # noqa: E402
-        OutcomeSignal,
         POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS,
         POST_APPLY_REGRESSION_RATE_DELTA,
         beta_smoothed_rate,
@@ -1457,6 +1499,13 @@ try:
 except Exception as _trial_design_import_exc:  # noqa: BLE001 — lib missing → unchecked, loudly
     _TRIAL_DESIGN_IMPORT_EXC = _trial_design_import_exc
 
+# Captured, not written: the trial gate refuses every candidate on it, naming the fault.
+_LANDING_ZONE_GUARD_IMPORT_EXC: Exception | None = None
+try:
+    import landing_zone_guard
+except Exception as _landing_zone_guard_import_exc:  # noqa: BLE001 — lib missing → trials refused, loudly
+    _LANDING_ZONE_GUARD_IMPORT_EXC = _landing_zone_guard_import_exc
+
 # Cooperative update pause-flag honor (T10) — the python twin of
 # scripts/lib/update-pause-flag.sh. While a Glass Atrium update swaps files it
 # holds a flag; the daemon cooperatively SUSPENDS its decision-to-run so a cycle
@@ -1473,22 +1522,6 @@ except Exception as _pause_import_exc:  # noqa: BLE001 — lib missing → grace
         f"[daemon-cycle] WARN: pause-flag lib import failed — update-pause gate "
         f"disabled: {type(_pause_import_exc).__name__}: {_pause_import_exc}\n"
     )
-
-# Promotion ladder thresholds. The n>=MIN_OBSERVATIONS candidate floor gates on
-# the TRUE qualifying-outcome count (_count_outcome_signals — uncapped COUNT(*)
-# over the lookback window), NOT on the capped posterior sample length: tying
-# n to a sample cap below the floor would silently disable candidate promotion
-# and with it every unattended auto-apply (user-approved to be live; the
-# apply-side quality floor — 'mention' excluded — still gates each apply).
-PROMOTION_CANDIDATE_CONFIDENCE = 0.7
-PROMOTION_CANDIDATE_MIN_OBSERVATIONS = 10
-PROMOTION_PROPOSAL_CONFIDENCE = 0.85
-PROMOTION_SUSTAIN_DAYS = 7
-
-# Promotion tier label — core.autoagent_proposals.promotion_tier column value.
-PromotionTier = Literal[
-    "mention", "candidate", "proposal", "instruction-edit", "skill-candidate"
-]
 
 # Rationale persisted on an auto candidate terminalized at generation (vs. emitted
 # as auto-pending limbo). Distinct from a quality reject so the board reads true.
@@ -1589,9 +1622,9 @@ def is_apply_eligible_patch_dict(patch: dict[str, object]) -> bool:
 
 @dataclass(frozen=True)
 class FloorTerminalization:
-    """Resolved status of a candidate while auto-apply is closed.
+    """Resolved status of a candidate at the floor.
 
-    `terminalized` is True only for an auto+pending candidate — in that case the
+    `terminalized` is True only for an unbound auto+pending candidate — in that case the
     routing fields carry the rewritten terminal-reject values; otherwise they echo
     the inputs unchanged. `promotion_tier` always echoes its input (a label).
     """
@@ -1610,17 +1643,19 @@ def resolve_floor_terminalization(
     status_value: str,
     promotion_tier: str,
     rationale: str,
+    *,
+    is_bound: bool = False,
 ) -> FloorTerminalization:
-    """Terminalize every auto candidate at the generation source.
+    """Terminalize every auto candidate the cycle bound to no live pre-registration.
 
-    Auto-apply is closed until live trials, so an auto+pending candidate would sit
-    pending forever — auto-apply never acts on it AND auto-tier is not a
-    safety-queue candidate. It is rewritten to a terminal 'unadjudicated' row here
-    instead — a closed-apply hold is not a gate verdict, so it never takes
-    'rejected'.
+    Only a bound candidate is stored pending auto, in trial; its trial's graduation is
+    its one apply path. Any other auto+pending candidate would sit pending forever —
+    nothing applies it AND auto-tier is not a safety-queue candidate. It is rewritten
+    to a terminal 'unadjudicated' row here instead — a hold is not a gate verdict, so
+    it never takes 'rejected'.
 
-    The posterior's promotion tier is a label only: it never decides the verdict
-    and passes through unchanged. Only the (approval_tier='auto',
+    The promotion tier is a label only: it never decides the verdict
+    and passes through unchanged. Only the unbound (approval_tier='auto',
     status='pending') shape is rewritten. Safety tier (approval_tier='safety') and
     already-terminal rows (rejected / snoozed) pass through unchanged — the human
     approval queue and the existing reject/back-off paths are preserved.
@@ -1631,12 +1666,13 @@ def resolve_floor_terminalization(
         status_value: 'pending' / 'rejected' / 'snoozed' as resolved upstream.
         promotion_tier: the candidate's promotion tier label (echoed unchanged).
         rationale: the candidate's current rationale.
+        is_bound: the cycle attached a live pre-registration payload to the candidate.
 
     Returns:
         FloorTerminalization — rewritten reject values when terminalized, else the
         inputs echoed unchanged.
     """
-    if approval_tier != "auto" or status_value != "pending":
+    if is_bound or approval_tier != "auto" or status_value != "pending":
         return FloorTerminalization(
             classification=classification,
             approval_tier=approval_tier,
@@ -1653,234 +1689,6 @@ def resolve_floor_terminalization(
         terminalized=True,
         promotion_tier=promotion_tier,
     )
-
-
-def _fetch_outcome_signals(
-    agent: str,
-    *,
-    limit: int = OUTCOME_SAMPLE_LIMIT,
-) -> list[OutcomeSignal]:
-    """PG core.outcomes → list[OutcomeSignal] (empirical signal tuple).
-
-    Input for the confidence.py posterior — the writer self-report ``confidence``
-    enum is deliberately excluded; only the PG row's revision_count / result /
-    evaluative_signal are used (read via the raw helper dict).
-
-    - PG unavailable → empty list → cold-start posterior 0.5 (fails the 0.7 gate
-      → stays at mention, safe).
-    - filesystem `.md` fallback has incomplete revision_count/evaluative_signal
-      frontmatter → PG-only path (empirical-signal integrity first).
-
-    Args:
-        agent: pattern target agent.
-        limit: most recent N records (default OUTCOME_SAMPLE_LIMIT).
-
-    Returns:
-        list[OutcomeSignal] (record_ts DESC, up to limit).
-    """
-    if not HAS_PG_OUTCOME_READ or not agent:
-        return []
-
-    since_epoch = time.time() - PG_OUTCOME_LOOKBACK_DAYS * 86400
-    try:
-        rows = _pg_read_outcomes_since(
-            since_epoch,
-            agent=agent,
-            task_type=None,
-            limit=limit,
-            order="DESC",
-        )
-    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: PG outcome-signal read failed "
-            f"(promotion gate degrades to cold-start): "
-            f"{type(exc).__name__}: {exc}\n"
-        )
-        return []
-
-    signals: list[OutcomeSignal] = []
-    for row in rows:
-        # Preserve record_ts (time-decay input). PG returns a tz-aware datetime;
-        # absent → None → compute treats as legacy.
-        signals.append(
-            OutcomeSignal(
-                revision_count=int(row.get("revision_count") or 0),
-                result=row.get("result", "") or "",
-                evaluative_signal=int(row.get("evaluative_signal") or 0),
-                record_ts=row.get("record_ts"),
-            )
-        )
-    return signals
-
-
-def _count_outcome_signals(agent: str) -> int | None:
-    """True qualifying-outcome count — the promotion ladder's observation_count.
-
-    Same window + filters as _fetch_outcome_signals (90-day lookback, agent
-    scope, learning-signal exclusions incl. poisoned_window — WHERE shared
-    inside the PG helper), with no LIMIT: OUTCOME_SAMPLE_LIMIT bounds the
-    posterior's sample, never the evidence volume the n>=10 floor gates on.
-
-    Returns:
-        int — qualifying-row count · None on PG-off / read failure (caller
-        degrades to the capped sample length → n stays below the candidate
-        floor → 'mention', fail-closed).
-    """
-    if not HAS_PG_OUTCOME_READ or not agent:
-        return None
-
-    since_epoch = time.time() - PG_OUTCOME_LOOKBACK_DAYS * 86400
-    try:
-        return _pg_count_outcomes_since(since_epoch, agent=agent, task_type=None)
-    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: PG outcome-count read failed "
-            f"(observation_count degrades to capped sample length): "
-            f"{type(exc).__name__}: {exc}\n"
-        )
-        return None
-
-
-def _fetch_promotion_stats(agent: str) -> tuple[list[OutcomeSignal], int]:
-    """(posterior sample, observation_count) for the promotion ladder — decoupled.
-
-    The sample (capped at OUTCOME_SAMPLE_LIMIT, most-recent-first) feeds the
-    Beta-Binomial posterior via α/β accumulation — compute_confidence_observed
-    never divides by the sample length, so a capped sample cannot corrupt the
-    posterior. observation_count is the uncapped COUNT(*) of the same window,
-    so the n>=10 candidate floor measures real evidence volume. Count
-    unavailable → degrade to the capped sample length (n<=cap stays below the
-    floor → 'mention', fail-closed).
-    """
-    signals = _fetch_outcome_signals(agent, limit=OUTCOME_SAMPLE_LIMIT)
-    true_count = _count_outcome_signals(agent)
-    if true_count is None:
-        return signals, len(signals)
-    return signals, true_count
-
-
-def _first_observation_ts(agent: str) -> datetime | None:
-    """Oldest qualifying core.outcomes record_ts for `agent` — the sustain signal.
-
-    core.learning_log.discovered_date CANNOT answer this question, which is why
-    this read exists. That column is a LAST-observed date (every writer restamps
-    it on re-emit), so reading it as first-observed
-    INVERTS the sustain gate: a pattern re-observed every cycle is restamped to
-    today and never sustains, while one whose evidence stopped arriving sustains
-    purely by ageing. The two gates now read two columns with one meaning each,
-    instead of one column with two.
-
-    ASC/limit-1 twin of _fetch_promotion_stats' read — same 90-day lookback, same
-    agent scope, same learning-signal exclusions — so the span is measured over
-    exactly the evidence the posterior scores. Uncapped by OUTCOME_SAMPLE_LIMIT
-    on purpose: the capped sample holds the 5 most RECENT rows, whose span
-    collapses toward zero precisely for the high-volume agents the ladder targets.
-
-    Returns:
-        datetime (tz-aware) of the oldest qualifying outcome · None on PG-off,
-        read failure, or an empty window → caller fails CLOSED (not sustained).
-    """
-    if not HAS_PG_OUTCOME_READ or not agent:
-        return None
-
-    since_epoch = time.time() - PG_OUTCOME_LOOKBACK_DAYS * 86400
-    try:
-        rows = _pg_read_outcomes_since(
-            since_epoch,
-            agent=agent,
-            task_type=None,
-            limit=1,
-            order="ASC",
-        )
-    except Exception as exc:  # noqa: BLE001 — read fallback is silent + safe
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: PG first-observation read failed "
-            f"(sustain gate fails closed): {type(exc).__name__}: {exc}\n"
-        )
-        return None
-    if not rows:
-        return None
-    record_ts = rows[0].get("record_ts")
-    return record_ts if isinstance(record_ts, datetime) else None
-
-
-def _is_sustained(
-    first_observed: datetime | None,
-    *,
-    sustain_days: int = PROMOTION_SUSTAIN_DAYS,
-) -> bool:
-    """7-day rolling sustain check — has this agent's evidence spanned the window?
-
-    - `first_observed` = oldest qualifying core.outcomes record_ts
-      (_first_observation_ts), NOT core.learning_log.discovered_date. The column
-      name reads first-observed; the value is last-observed. See
-      _first_observation_ts for why substituting it inverts this gate.
-    - now - first_observed >= sustain_days → sustained.
-    - None (PG off, read failure, empty window) → False (conservative — blocks
-      proposal promotion, same fail-closed posture as the observation_count floor).
-
-    Args:
-        first_observed: tz-aware datetime of the oldest qualifying outcome.
-        sustain_days: sustain threshold in days (default 7).
-
-    Returns:
-        bool — whether sustain is met.
-    """
-    if not isinstance(first_observed, datetime):
-        return False
-    observed = (
-        first_observed.replace(tzinfo=timezone.utc)
-        if first_observed.tzinfo is None
-        else first_observed
-    )
-    elapsed_days = (datetime.now(timezone.utc) - observed).days
-    return elapsed_days >= sustain_days
-
-
-def classify_promotion_tier(
-    *,
-    confidence_observed: float,
-    observation_count: int,
-    sustained: bool,
-    touches_frontmatter: bool,
-) -> PromotionTier:
-    """Beta-Binomial posterior + observation count + sustain → promotion tier.
-
-    Promotion ladder:
-      - mention   : default (observed only, raw log)
-      - candidate : confidence_observed >= 0.7  AND observation_count >= 10
-      - proposal  : (candidate) AND confidence_observed >= 0.85 AND sustained
-      - terminal  : on reaching proposal —
-          * touches_frontmatter=True  → skill-candidate (Tier-2 user_pending)
-          * touches_frontmatter=False → instruction-edit (Tier-1 Auto)
-
-    Skill graduation (frontmatter-identity change) is always Tier-2 user_pending
-    (the "frontmatter identity field change" safety trigger).
-
-    Args:
-        confidence_observed: posterior mean in (0,1).
-        observation_count: pattern outcome observation count (n).
-        sustained: whether 7-day sustain is met.
-        touches_frontmatter: whether the proposal diff touches frontmatter identity.
-
-    Returns:
-        PromotionTier — one of the 5 stages.
-    """
-    candidate_ok = (
-        confidence_observed >= PROMOTION_CANDIDATE_CONFIDENCE
-        and observation_count >= PROMOTION_CANDIDATE_MIN_OBSERVATIONS
-    )
-    if not candidate_ok:
-        return "mention"
-
-    proposal_ok = confidence_observed >= PROMOTION_PROPOSAL_CONFIDENCE and sustained
-    if not proposal_ok:
-        return "candidate"
-
-    # Reached proposal → terminal-stage branch.
-    if touches_frontmatter:
-        return "skill-candidate"
-    return "instruction-edit"
 
 
 # -- Data models ------------------------------------------------------------
@@ -1904,7 +1712,6 @@ class Pattern:
     # agent='dev-node'), so a "label|agent" reconstruction silently misses them.
     row_id: int = 0
     metric_key: str | None = None  # one of the helper's METRIC_KEYS; None = keyless row
-    last_transition_at: datetime | None = None  # latest lifecycle move; None = never moved
 
     @property
     def freq_int(self) -> int:
@@ -2046,9 +1853,9 @@ class PatchResult:
     # when pre-verify did not run, "auto" when verified, "user" when not.
     approval_tier: str = ""
     status: str = ""
-    # Confidence-weighted promotion ladder — run_cycle sets only promotion_tier
-    # (the 'mention' floor); the other two stay at their defaults.
-    #   confidence_observed: Beta-Binomial posterior mean.
+    # Proposal-row labels — run_cycle sets only promotion_tier (the 'mention'
+    # floor); the other two stay at their defaults.
+    #   confidence_observed: no producer → None, stored NULL.
     #   project_key: resolve_project_key().key (12 hex) for project isolation.
     #   promotion_tier: mention/candidate/proposal/instruction-edit/skill-candidate.
     confidence_observed: float | None = None
@@ -2077,6 +1884,9 @@ class PatchResult:
     learning_pattern_id: int | None = None
     # GENERATOR_INPUT_VERSION as build_patch_result stamps it; None on a row built elsewhere.
     generator_input_version: str | None = None
+    # bound candidate's pre-registration body — plain dicts only (asdict: NamedTuple → array)
+    # written by the push with the proposal, one transaction
+    preregistration_payload: dict | None = None
 
 
 @dataclass
@@ -2249,7 +2059,6 @@ def read_user_pending_patterns(
                 raw_line=f"pg:learning_log:{row['id']}:{signature}",
                 row_id=row["id"],
                 metric_key=row.get("metric_key"),
-                last_transition_at=row.get("last_transition_at"),
             )
         )
 
@@ -2348,10 +2157,9 @@ Propose a SMALL, targeted patch (≤ 5 added lines) to the BODY (after the YAML
 frontmatter, i.e. after the second '---') that addresses the observed failure
 pattern. The patch should add a concrete guardrail, work-rule, or pre-execution
 check that prevents recurrence. DO NOT touch the frontmatter (name/description/
-tools/skills/scope). Where the file ALREADY carries a rule addressing this
-signal, you MAY propose a diff that REPLACES that one rule in place (remove its
-lines and add the superseding lines in the same hunk); where it does not, the
-diff MUST be a pure ADD. Never rewrite unrelated rules.
+tools/skills/scope). The diff MUST be a pure ADD: it adds lines and removes or
+rewrites none, even where the file ALREADY carries a rule addressing this
+signal — a diff that removes or rewrites an existing line is refused.
 
 Output STRICT format. The DIFF section MUST be raw unified-diff text with the
 following exact headers (no ```diff fences, no ``` of any kind, no surrounding
@@ -2391,7 +2199,7 @@ TARGET AGENT: {pattern_agent}
 
 OBSERVED LEARNING SIGNALS (patterns flagged for this agent):
 {signals_block}
-{avoid_patterns_block}{landed_history_block}
+{avoid_patterns_block}{prior_attempts_block}{landed_history_block}
 CURRENT AGENT INSTRUCTION FILE (target for patch):
 path: {agent_path}
 ---
@@ -2405,10 +2213,10 @@ contain MULTIPLE hunks (one per distinct location/signal) — author them ALL in
 SINGLE unified diff computed against the file shown above, so every hunk applies
 atomically via one `git apply`. Each hunk adds a concrete guardrail, work-rule,
 or pre-execution check that prevents recurrence. DO NOT touch the frontmatter
-(name/description/tools/skills/scope). Where the file ALREADY carries a rule
-addressing a signal, you MAY propose a diff that REPLACES that one rule in place
-(remove its lines and add the superseding lines in the same hunk); where it does
-not, that hunk MUST be a pure ADD. Never rewrite unrelated rules.
+(name/description/tools/skills/scope). Every hunk MUST be a pure ADD: it adds
+lines and removes or rewrites none, even where the file ALREADY carries a rule
+addressing a signal — a diff that removes or rewrites an existing line is
+refused.
 Keep the TOTAL added lines small (≤ 5 across all hunks).
 
 Output STRICT format. The DIFF section MUST be raw unified-diff text with the
@@ -3055,71 +2863,93 @@ def generate_consolidated_proposal(
     """
     target_file = agents_dir / f"{agent}.md"
     if not target_file.exists():
-        return PatchProposal(
-            target_file=str(target_file),
-            rationale=f"target agent file not found: {target_file.name}",
-            proposed_diff="",
-            touched_frontmatter=False,
-            estimated_added_lines=0,
-            raw_response="",
-            parse_mode="skipped",
-        )
-
+        return _get_skipped_proposal(target_file, f"target agent file not found: {target_file.name}")
     if skip_haiku:
-        return PatchProposal(
-            target_file=str(target_file),
-            rationale="skip_haiku=True (test/preflight)",
-            proposed_diff="",
-            touched_frontmatter=False,
-            estimated_added_lines=0,
-            raw_response="",
-            parse_mode="skipped",
-        )
+        return _get_skipped_proposal(target_file, "skip_haiku=True (test/preflight)")
+    return _run_haiku_with_retry(
+        base_prompt=_build_consolidated_prompt(agent, patterns, target_file),
+        target_file=target_file,
+        label_hint=patterns[0].label if patterns else agent,
+        claude_bin=claude_bin,
+        timeout_sec=timeout_sec,
+    )
 
+
+def _get_skipped_proposal(target_file: Path, rationale: str) -> PatchProposal:
+    """An empty proposal no generator call authored."""
+    return PatchProposal(
+        target_file=str(target_file),
+        rationale=rationale,
+        proposed_diff="",
+        touched_frontmatter=False,
+        estimated_added_lines=0,
+        raw_response="",
+        parse_mode="skipped",
+    )
+
+
+def _build_consolidated_prompt(agent: str, patterns: list[Pattern], target_file: Path) -> str:
+    """The consolidated prompt: the agent's signals, its optimizer-side memory and its whole body."""
     # Whole body: a head slice hides the editable regions the model must edit into.
     agent_text = target_file.read_text(encoding="utf-8")
     signals_block = _render_signals_block(patterns, _fetch_pattern_evidence(agent))
+    avoid_patterns_block = _get_avoid_patterns_block(agent)
+    attempts = _fetch_prior_attempts(agent) or []
+    return _CONSOLIDATED_PROMPT_TEMPLATE.format(
+        pattern_agent=agent,
+        signals_block=signals_block,
+        avoid_patterns_block=avoid_patterns_block,
+        prior_attempts_block=_get_prior_attempts_block(attempts),
+        landed_history_block=_get_landed_history_block(agent, attempts),
+        agent_path=str(target_file),
+        agent_excerpt=agent_text,
+        agent_basename=target_file.name,
+    )
 
-    # Optimizer-side memory (SkillOpt R2): prepend this agent's known-bad
-    # diff shapes. PG-off / empty-history → "" → block omitted cleanly.
+
+def _get_avoid_patterns_block(agent: str) -> str:
+    """Optimizer-side memory (SkillOpt R2): this agent's known-bad diff shapes; PG-off or an
+    empty history → "" → block omitted cleanly."""
     failures = _fetch_pre_verify_failures(agent)
     failures_body = _render_pre_verify_failures_block(failures) if failures else ""
-    avoid_patterns_block = (
+    return (
         "diff types that previously failed pre_verify for this agent "
         "(patterns to avoid):\n" + failures_body + "\n"
         if failures_body
         else ""
     )
 
-    # Feedback half of that memory: what this agent already landed.
-    landed = _fetch_landed_proposals(agent)
-    landed_body = _render_landed_history_block(landed) if landed else ""
-    landed_history_block = (
+
+def _get_prior_attempts_block(attempts: list[PriorAttempt]) -> str:
+    """Feedback half: what this agent already trialled; "" when it trialled nothing."""
+    attempts_body = _render_prior_attempts_block(attempts)
+    return (
+        "prior trial attempts for this agent, with their measured effect from the trial "
+        "ledger (an entry marked LANDED is already in the body — build on it, never "
+        "re-propose it; an entry marked NOT LANDED was trialled and did not land — never "
+        "re-propose it unchanged):\n" + attempts_body + "\n"
+        if attempts_body
+        else ""
+    )
+
+
+def _get_landed_history_block(agent: str, attempts: list[PriorAttempt]) -> str:
+    """Feedback half: what this agent landed with no ledger row; "" when nothing landed."""
+    # SQL already drops trialled ids; this keeps one block per id whatever the reader returns
+    attempted = {attempt.proposal_id for attempt in attempts}
+    landed = [
+        (label, diff)
+        for proposal_id, label, diff in _fetch_landed_proposals(agent) or []
+        if proposal_id not in attempted
+    ]
+    landed_body = _render_landed_history_block(landed)
+    return (
         "rules that previously LANDED for this agent "
         "(already in the body — build on them, never re-propose them):\n"
         + landed_body
         + "\n"
         if landed_body
         else ""
-    )
-
-    base_prompt = _CONSOLIDATED_PROMPT_TEMPLATE.format(
-        pattern_agent=agent,
-        signals_block=signals_block,
-        avoid_patterns_block=avoid_patterns_block,
-        landed_history_block=landed_history_block,
-        agent_path=str(target_file),
-        agent_excerpt=agent_text,
-        agent_basename=target_file.name,
-    )
-
-    label_hint = patterns[0].label if patterns else agent
-    return _run_haiku_with_retry(
-        base_prompt=base_prompt,
-        target_file=target_file,
-        label_hint=label_hint,
-        claude_bin=claude_bin,
-        timeout_sec=timeout_sec,
     )
 
 
@@ -3460,7 +3290,7 @@ def _render_signals_block(
 
 
 # Stamped on every proposal row; bump whenever the generation prompt's input set changes.
-GENERATOR_INPUT_VERSION = "gen-inputs-1"
+GENERATOR_INPUT_VERSION = "gen-inputs-2"
 
 # Triggering spawns listed per pattern, newest first; the rest are counted.
 MACHINE_FACTS_SPAWN_LIMIT = 10
@@ -3524,7 +3354,6 @@ def _render_machine_facts(spawn: TriggeringSpawn) -> str:
 
 _HAIKU_RATIONALE_RE = re.compile(r"^RATIONALE:\s*(.+)$", re.MULTILINE)
 _HAIKU_TOUCHES_RE = re.compile(r"^TOUCHES_FRONTMATTER:\s*(\S+)", re.MULTILINE)
-_HAIKU_LINES_RE = re.compile(r"^ADDED_LINES:\s*(\d+)", re.MULTILINE)
 _HAIKU_DIFF_RE = re.compile(r"^DIFF:\s*\n(.+)\Z", re.MULTILINE | re.DOTALL)
 
 # Fuzzy fallback regex — case-insensitive + tolerant of partial markers.
@@ -3639,7 +3468,7 @@ def _recount_hunk_header(diff_text: str) -> str:
     if not diff_text:
         return diff_text
 
-    lines = diff_text.splitlines(keepends=True)
+    lines = _get_diff_lines(diff_text, keepends=True)
     kinds = _get_diff_line_kinds(diff_text)
     out: list[str] = []
     i = 0
@@ -3694,7 +3523,7 @@ def _stamp_implied_lengths(diff_text: str) -> str:
     if not diff_text:
         return diff_text
     out: list[str] = []
-    for line in diff_text.splitlines(keepends=True):
+    for line in _get_diff_lines(diff_text, keepends=True):
         m = _UNIFIED_HUNK_CAPTURE_RE.match(line.rstrip("\n"))
         if m is None:
             out.append(line)
@@ -4047,7 +3876,7 @@ def _get_declared_removals(diff_text: str) -> tuple[tuple[str, ...], bool]:
     declared: list[str] = []
     preamble_removal = False
     in_hunk = False
-    for raw in diff_text.splitlines():
+    for raw in _get_diff_lines(diff_text):
         if raw.startswith("@@"):
             in_hunk = True
             continue
@@ -4116,7 +3945,7 @@ def verify_removal_evidence(diff_text: str, target_text: str) -> RemovalEvidence
             False, REMOVAL_VERDICT_UNREADABLE, declared, "target body empty or unreadable"
         )
 
-    target_lines = target_text.splitlines()
+    target_lines = _get_diff_lines(target_text)
     spans = _editable_spans(target_lines)
     for removed in declared:
         protected = _get_protected_kind(removed)
@@ -4155,7 +3984,7 @@ def _emit_removal_evidence(diff_text: str, target_file: Path) -> int:
     verdict rather than raised — the caller fails closed on it either way.
     """
     try:
-        target_text = target_file.read_text(encoding="utf-8")
+        target_text = target_file.read_bytes().decode("utf-8")
     except OSError as exc:
         evidence = RemovalEvidence(
             False, REMOVAL_VERDICT_UNREADABLE, (), f"{type(exc).__name__}"
@@ -4575,7 +4404,7 @@ def _diff_header_target_basename(diff: str) -> str | None:
     new_header_texts = {
         idx + 1: new_text for idx, _old_text, new_text in _get_diff_header_pairs(diff)
     }
-    for idx, line in enumerate(diff.splitlines()):
+    for idx, line in enumerate(_get_diff_lines(diff)):
         if not line.startswith("+++"):
             continue
         if idx in new_header_texts:
@@ -4584,6 +4413,19 @@ def _diff_header_target_basename(diff: str) -> str | None:
             path = line[3:].strip().split("\t", 1)[0].strip()
             path = path[2:] if path.startswith(("a/", "b/")) else path
         return path.rsplit("/", 1)[-1] if path else None
+    return None
+
+
+def _get_foreign_header_basename(diff: str, name: str) -> str | None:
+    """A declared target other than ``name`` — the first ``+++`` line's, else a later header pair's."""
+    first = _diff_header_target_basename(diff)
+    if first is not None and first != name:
+        return first
+    for _idx, _old_text, new_text in _get_diff_header_pairs(diff):
+        path = _get_header_path(new_text, "b/")
+        basename = path.rsplit("/", 1)[-1] if path else None
+        if basename is not None and basename != name:
+            return basename
     return None
 
 
@@ -4639,14 +4481,14 @@ def _gate_validated_diff(
         )
         return ""
 
-    # Basename-match assertion — a '+++' header declares the file the diff
-    # targets. If its basename diverges from target_file, `git apply` (run under
+    # Basename-match assertion — every '+++' header declares a file the diff
+    # targets. If one basename diverges from target_file, `git apply` (run under
     # GIT_ROOT with --directory path resolution) could land the diff on ANOTHER
     # agent body; the apply-side before-image/verify (bound to target_file) would
     # neither catch nor restore that wrong-file mutation. Reject BEFORE any
     # repair/apply. A header-less fragment (None) asserts no target → passes.
-    declared = _diff_header_target_basename(diff)
-    if declared is not None and declared != target_file.name:
+    declared = _get_foreign_header_basename(diff, target_file.name)
+    if declared is not None:
         sys.stderr.write(
             f"[daemon-cycle] F2 GATE: diff '+++' header targets {declared!r} but "
             f"proposal target is {target_file.name!r} — wrong-file diff rejected "
@@ -4808,7 +4650,6 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
 
     rationale_m = _HAIKU_RATIONALE_RE.search(raw)
     touches_m = _HAIKU_TOUCHES_RE.search(raw)
-    lines_m = _HAIKU_LINES_RE.search(raw)
     diff_m = _HAIKU_DIFF_RE.search(raw)
 
     # parse_mode tracking — 'strict' if both rationale + diff parsed via canonical
@@ -4886,8 +4727,7 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
         is_removal_refused = (
             not diff.strip()
             and _diff_is_replace_shape(gate_input)
-            and _diff_header_target_basename(gate_input)
-            in (None, target_file.name)
+            and _get_foreign_header_basename(gate_input, target_file.name) is None
         )
 
     if is_removal_refused:
@@ -4900,8 +4740,6 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
     # A '+' line containing 'name:' or 'tools:' etc. at column ≤4 signals frontmatter.
     if not touches and diff:
         touches = _diff_touches_frontmatter(diff)
-
-    added = int(lines_m.group(1)) if lines_m else _count_added_lines(diff)
 
     # Storage entry -- REFUSE past the bound, never truncate (see
     # STORED_DIFF_CHAR_LIMIT for why a partial diff is the worse outcome). Stored
@@ -4924,7 +4762,7 @@ def _parse_haiku_response(stdout: str, target_file: Path) -> PatchProposal:
         rationale=rationale[:400],
         proposed_diff=stored_diff,
         touched_frontmatter=touches,
-        estimated_added_lines=added,
+        estimated_added_lines=_count_added_lines(diff),
         estimated_removed_lines=_count_removed_lines(diff),
         raw_response=raw[:4000],
         parse_mode=parse_mode,
@@ -4949,7 +4787,7 @@ def _diff_touches_frontmatter(diff: str) -> bool:
     pattern = re.compile(
         rf"^[+-]\s*({'|'.join(re.escape(k) for k in FRONTMATTER_IDENTITY_FIELDS)})\s*:"
     )
-    return any(pattern.match(line) for line in diff.splitlines())
+    return any(pattern.match(line) for line in _get_diff_lines(diff))
 
 
 # -- T3/T4: corpus-size telemetry + prose-only-add detection ----------------
@@ -5718,7 +5556,7 @@ def _diff_excerpt(diff: str, cap: int) -> str:
     if len(diff) <= cap:
         return diff
 
-    lines = diff.splitlines(keepends=True)
+    lines = _get_diff_lines(diff, keepends=True)
     kept: list[str] = []
     used = 0
     for line in lines:
@@ -6529,8 +6367,10 @@ def _days_since_last_applied(current_cycle_date: str | None) -> int:
     """Whole days between the most recent APPLIED proposal and the current cycle.
 
     Corroborating crit for the systemic-regression check: a large gap since
-    anything actually landed. Queries MAX(cycle_date) over status='applied' rows
-    in core.autoagent_proposals. No applied row ever (fresh DB) → 0 (fail-open:
+    anything actually landed. A row lands on its apply day — the UTC date of
+    reviewed_at, which the apply flip stamps — not its cycle_date, which a trialled
+    row keeps from its pre-registration weeks earlier; a row with no stamp falls
+    back to cycle_date. No applied row ever (fresh DB) → 0 (fail-open:
     absence of history must never fabricate a regression alert). PG unavailable
     / read error / no current date → 0 (same fail-open contract as
     _prior_all_reject_cycle_count).
@@ -6538,24 +6378,7 @@ def _days_since_last_applied(current_cycle_date: str | None) -> int:
     if not HAS_PG_LOOP_WRITE or not current_cycle_date:
         return 0
 
-    select_sql = (
-        "SELECT max(cycle_date) "
-        "FROM core.autoagent_proposals "
-        "WHERE status::text = 'applied' AND cycle_date <= %s::date"
-    )
-    try:
-        with _pg_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(select_sql, (current_cycle_date,))
-                row = cur.fetchone()
-    except Exception as exc:  # noqa: BLE001 — fail-OPEN: read error must not alert
-        sys.stderr.write(
-            f"[daemon-cycle] days-since-applied: PG read failed — "
-            f"fail-open (days=0): {type(exc).__name__}: {str(exc)[:200]}\n"
-        )
-        return 0
-
-    last_applied = row[0] if row else None
+    last_applied = _get_last_applied_date(current_cycle_date)
     if last_applied is None:
         return 0
     try:
@@ -6568,6 +6391,29 @@ def _days_since_last_applied(current_cycle_date: str | None) -> int:
     except (ValueError, TypeError):
         return 0
     return max((current - last).days, 0)
+
+
+def _get_last_applied_date(current_cycle_date: str) -> date | str | None:
+    """The latest applied row's landing day on or before `current_cycle_date`; None when no
+    row lands there or the read fails (fail-open, the failure on stderr)."""
+    landed_on = "coalesce((reviewed_at AT TIME ZONE 'UTC')::date, cycle_date)"
+    select_sql = (
+        f"SELECT max({landed_on}) "
+        "FROM core.autoagent_proposals "
+        f"WHERE status::text = 'applied' AND {landed_on} <= %s::date"
+    )
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(select_sql, (current_cycle_date,))
+                row = cur.fetchone()
+    except Exception as exc:  # noqa: BLE001 — fail-OPEN: read error must not alert
+        sys.stderr.write(
+            f"[daemon-cycle] days-since-applied: PG read failed — "
+            f"fail-open (days=0): {type(exc).__name__}: {str(exc)[:200]}\n"
+        )
+        return None
+    return row[0] if row else None
 
 
 def _all_rejected_this_cycle(report: CycleReport) -> bool:
@@ -6695,6 +6541,21 @@ def alert_auth_outage(report: CycleReport, *, skip_loop_emit: bool) -> None:
         )
 
 
+def alert_spend_cap(report: CycleReport) -> None:
+    """Spend-cap WARN — one stderr line per cap class (cost guard 'warn') among the patches.
+
+    Exit stays 0: a cap is a real spend signal, not a defect; printed beside an auth-outage CRIT too.
+    """
+    for failure_class in (FAILURE_CLASS_QUOTA, FAILURE_CLASS_BUDGET):
+        count = sum(1 for p in report.patches if p.failure_class == failure_class)
+        if count:
+            noun = "patch" if count == 1 else "patches"
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: spend cap — {failure_class} on {count} {noun}; "
+                "those patterns generated nothing this cycle\n"
+            )
+
+
 # -- post-apply regression watch (C1, detection-only) ------------------------
 
 
@@ -6717,9 +6578,8 @@ def _is_soft_negative_outcome(row: dict) -> bool:
 def _smoothed_soft_negative_rate(rows: list[dict]) -> float:
     """Beta(1,1)-smoothed posterior mean of a window's soft-negative rate.
 
-    Smoothing delegates to confidence.beta_smoothed_rate (prior parity with
-    compute_confidence_observed): an empty window degrades to the Beta(1,1)
-    mean 0.5 instead of 0-division.
+    Smoothing delegates to confidence.beta_smoothed_rate: an empty window
+    degrades to the Beta(1,1) mean 0.5 instead of 0-division.
     """
     negative_count = sum(1 for row in rows if _is_soft_negative_outcome(row))
     return beta_smoothed_rate(negative_count, len(rows))
@@ -6731,9 +6591,8 @@ def _split_outcome_windows(
 ) -> tuple[list[dict], list[dict]]:
     """Partition agent outcome rows into (pre, post) windows around the apply.
 
-    A naive record_ts borrows applied_ts's tzinfo (PG returns tz-aware —
-    mirrors confidence._decay_weight); a row without record_ts cannot be
-    placed on either side → skipped.
+    A naive record_ts borrows applied_ts's tzinfo (PG returns tz-aware); a
+    row without record_ts cannot be placed on either side → skipped.
     """
     pre_rows: list[dict] = []
     post_rows: list[dict] = []
@@ -6812,7 +6671,7 @@ def _is_applied_edit_gone(proposed_diff: str | None, target_file: str) -> bool:
     if not target_path.is_absolute():
         target_path = ga_paths.get_base_root() / target_path
     try:
-        body_lines = set(target_path.read_text(encoding="utf-8").splitlines())
+        body_lines = set(_get_diff_lines(target_path.read_bytes().decode("utf-8")))
     except (OSError, UnicodeDecodeError) as exc:
         sys.stderr.write(
             f"[daemon-cycle] post-apply watch: target body unreadable — {target_path} "
@@ -6853,8 +6712,8 @@ def alert_post_apply_regression() -> None:
     Next-cycle step: for each recently applied proposal, the target agent's
     Beta(1,1)-smoothed soft-negative outcome rate BEFORE the apply is compared
     to the rate AFTER it. Both windows read through _pg_read_outcomes_since —
-    the same shared learning-signal exclusion scope as _count_outcome_signals
-    (attribution failures + poisoned_window excluded inside the PG helper).
+    the shared learning-signal exclusion scope (attribution failures +
+    poisoned_window excluded inside the PG helper).
     Degradation (post rate exceeding pre by >= POST_APPLY_REGRESSION_RATE_DELTA
     with post n >= POST_APPLY_REGRESSION_MIN_POST_OBSERVATIONS) emits ONE WARN
     loop event whose stderr line names the proposal id + the agents-bak
@@ -6943,7 +6802,7 @@ def _diff_context_lines(diff_text: str) -> list[str]:
     anchor correctly — the staleness probe.
     """
     out: list[str] = []
-    for line in diff_text.splitlines():
+    for line in _get_diff_lines(diff_text):
         if line.startswith("--- ") or line.startswith("+++ "):
             continue
         if line.startswith("@@") or line.startswith("\\"):
@@ -7051,7 +6910,7 @@ def _proposal_diff_is_stale(diff_text: str, target_file: Path) -> bool:
         try:
             file_lines = {
                 ln.rstrip("\n")
-                for ln in target_file.read_text(encoding="utf-8").splitlines()
+                for ln in _get_diff_lines(target_file.read_bytes().decode("utf-8"))
             }
         except OSError:
             return True
@@ -7088,7 +6947,7 @@ def _diff_modifies_out_of_region(diff_text: str, target_file: Path) -> bool:
     if not target_file.exists():
         return False
     try:
-        target_lines = target_file.read_text(encoding="utf-8").splitlines(keepends=True)
+        target_lines = _get_diff_lines(target_file.read_bytes().decode("utf-8"))
     except OSError:
         return False
 
@@ -7097,7 +6956,7 @@ def _diff_modifies_out_of_region(diff_text: str, target_file: Path) -> bool:
         positions = [
             idx
             for idx, line in enumerate(target_lines, start=1)
-            if line.rstrip("\n") == needle
+            if line == needle
         ]
         if len(positions) != 1:
             continue  # ambiguous / absent → not decisive evidence
@@ -7191,9 +7050,14 @@ def regenerate_stale_proposals(
     re-derivation failures (file missing, unrecoverable diff) are logged and
     SKIPPED (row left pending) — one bad row must not abort the whole sweep.
 
+    A row a held live trial names keeps its diff — the trial runs on the stored
+    text — and is reported "skipped-in-trial"; once its trial is decided, the next
+    sweep takes it back.
+
     Returns a list of per-row result dicts:
         {id, target_file, action, ...}  where action ∈
-        {"regenerated", "skipped-fresh", "skipped-unrecoverable", "dry-run"}.
+        {"regenerated", "skipped-fresh", "skipped-unrecoverable", "skipped-in-trial",
+        "dry-run"}.
     """
     if not HAS_PG_LOOP_WRITE:
         # _pg_connect import rides on the same try-block as the loop-write helper.
@@ -7204,7 +7068,7 @@ def regenerate_stale_proposals(
         raise RuntimeError("FU-3 requires PG (psycopg.connect dbname=glass_atrium)")
 
     select_sql = (
-        "SELECT id, target_file, proposed_diff "
+        f"SELECT id, target_file, proposed_diff, {LIVE_TRIAL.IS_PROPOSAL_IN_TRIAL_SQL} "
         "FROM core.autoagent_proposals "
         "WHERE status = 'pending' AND proposed_diff IS NOT NULL "
         "ORDER BY id"
@@ -7217,10 +7081,16 @@ def regenerate_stale_proposals(
     try:
         with _pg_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(select_sql)
+                cur.execute(select_sql, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
                 rows = cur.fetchall()
             for row in rows:
                 proposal_id, target_file_str, stored_diff = row[0], row[1], row[2]
+                if row[3]:
+                    results.append(
+                        {"id": proposal_id, "target_file": target_file_str,
+                         "action": "skipped-in-trial", "reason": "held live trial"}
+                    )
+                    continue
                 if not stored_diff or not str(stored_diff).strip():
                     results.append(
                         {"id": proposal_id, "target_file": target_file_str,
@@ -7774,7 +7644,7 @@ def _stored_diff_already_applied(diff_text: str, target_file: Path) -> bool:
     try:
         file_lines = {
             ln.rstrip("\n")
-            for ln in target_file.read_text(encoding="utf-8").splitlines()
+            for ln in _get_diff_lines(target_file.read_bytes().decode("utf-8"))
         }
     except OSError:
         return False
@@ -7786,7 +7656,7 @@ class SingleRegenResult:
     """Single-proposal regen+validate result (source-of-truth for the stdout JSON)."""
 
     proposal_id: int
-    action: Literal["regenerated", "already_applied", "unrecoverable", "invalid"]
+    action: Literal["regenerated", "already_applied", "unrecoverable", "invalid", "in_trial"]
     preverify_passed: bool | None
     preverify_axes: dict[str, bool] | None
     reason: str
@@ -7911,8 +7781,9 @@ def regenerate_single_proposal(
     Steps:
       1. Fetch the id=N row from PG (id/target_file/target_agent/pattern_label/
          cycle_date/proposed_diff) — row absent → unrecoverable.
-      2. _classify_single_regen decides the action (already_applied/regenerated/
-         invalid/unrecoverable).
+      2. a row a held live trial names → in_trial, no UPDATE (the trial runs on
+         the stored diff); otherwise _classify_single_regen decides the action
+         (already_applied/regenerated/invalid/unrecoverable).
       3. action=regenerated AND not dry_run → UPDATE proposed_diff only
          (status/pattern_label/cycle_date unchanged — daemon-apply.sh drains the apply).
          already_applied/invalid/unrecoverable → no UPDATE.
@@ -7934,7 +7805,8 @@ def regenerate_single_proposal(
 
     select_sql = (
         "SELECT id, target_file, target_agent, pattern_label, cycle_date, "
-        "proposed_diff FROM core.autoagent_proposals WHERE id = %s"
+        f"proposed_diff, {LIVE_TRIAL.IS_PROPOSAL_IN_TRIAL_SQL} "
+        "FROM core.autoagent_proposals WHERE id = %s"
     )
     update_sql = (
         "UPDATE core.autoagent_proposals SET proposed_diff = %s WHERE id = %s"
@@ -7946,7 +7818,9 @@ def regenerate_single_proposal(
         # the SELECT's ACCESS SHARE lock / pinning the snapshot horizon.
         with _pg_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(select_sql, (proposal_id,))
+                cur.execute(
+                    select_sql, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION, proposal_id)
+                )
                 row = cur.fetchone()
 
         if row is None:
@@ -7959,6 +7833,19 @@ def regenerate_single_proposal(
                 preverify_passed=None,
                 preverify_axes=None,
                 reason=f"proposal id {proposal_id} not found in PG",
+            )
+
+        if row[6]:
+            sys.stderr.write(
+                f"[daemon-cycle] FU-3 single: id={proposal_id} action=in_trial "
+                "(no UPDATE) — a held live trial runs on the stored diff\n"
+            )
+            return SingleRegenResult(
+                proposal_id=proposal_id,
+                action="in_trial",
+                preverify_passed=None,
+                preverify_axes=None,
+                reason=f"proposal id {proposal_id} is in a held live trial",
             )
 
         target_file_str = row[1]
@@ -8046,6 +7933,7 @@ def supersede_prior_pending_for_agent(
     *,
     cycle_date: str,
     pattern_label: str,
+    candidate_tier: str = "",
 ) -> int:
     """Terminate the same agent's OTHER pending proposals → 'unadjudicated'.
 
@@ -8067,6 +7955,11 @@ def supersede_prior_pending_for_agent(
     per row: the run's own cycle date carries the same-cycle tail, an older row
     the cross-day tail.
 
+    A row a held live trial names is never terminated: the trial runs on that row.
+    An ``auto`` candidate (one bound to its own pre-registration) terminates only
+    ``auto`` rows, sparing the human queue and the ``llm`` rows; any other candidate
+    tier (safety, infra-pending's empty tier, the default) terminates every tier.
+
     Loud-fail: PG errors logged via named exception + re-raised. PG unavailable →
     return 0 (supersede skipped — the new proposal still emits normally).
 
@@ -8076,6 +7969,7 @@ def supersede_prior_pending_for_agent(
         cycle_date: the run's own cycle date (YYYY-MM-DD), date-cast in the
             statement because the column is date-typed.
         pattern_label: the consolidated label the run's own push will own.
+        candidate_tier: the new candidate's approval tier — the supersede's scope.
 
     Returns:
         count of other pending rows terminated.
@@ -8098,6 +7992,7 @@ def supersede_prior_pending_for_agent(
         )
         return 0
 
+    tier_clause = "AND approval_tier = 'auto' " if candidate_tier == "auto" else ""
     # The excluded triple IS the FU-1 dedup key — the identity the run's own push
     # will update, so it must survive its own supersede.
     update_sql = (
@@ -8107,8 +8002,10 @@ def supersede_prior_pending_for_agent(
         "reviewed_by = %s "
         "WHERE status = 'pending' "
         "AND target_agent = %s AND target_file = %s "
+        f"{tier_clause}"
         "AND NOT (cycle_date = %s::date AND pattern_label = %s "
         "AND target_file = %s) "
+        f"AND NOT {LIVE_TRIAL.IS_PROPOSAL_IN_TRIAL_SQL} "
         "RETURNING id"
     )
     update_params = (
@@ -8122,6 +8019,7 @@ def supersede_prior_pending_for_agent(
         cycle_date,
         pattern_label,
         target_file,
+        TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
     )
     try:
         with _pg_connect() as conn:
@@ -8145,69 +8043,102 @@ def supersede_prior_pending_for_agent(
     return len(superseded_ids)
 
 
-# Generation closed: stored pending auto rows
-
-
-# Head of every generation-closed rationale; classify_failure_rationale
-# prefix-tests against it, so the stored rationale follows it as a tail.
+# Head of every stored generation-closed rationale, a writer no cycle runs any more →
+# classify_failure_rationale still prefix-tests historical rows against it.
 _GENERATION_CLOSED_REASON = "generation closed until live trials"
 
-# Actor token from the closed set declared at monitor/prisma/schema.prisma →
-# AutoagentProposal.reviewedBy — a mechanical close, never a review.
-_GENERATION_CLOSED_ACTOR = "daemon-cycle-generation-closed"
 
-# Generation is closed until live trials: a constant, never read from a file, env or
-# config, so every install runs run_cycle's closed branch.
-IS_GENERATION_CLOSED = True
+# Live-trial decision: a decided-without-win trial's pending bound row → terminal, as is a won
+# one sized on an A/A start invalidated since
+_TRIAL_DECISION = SimpleNamespace(
+    # Head of every void rationale, a won row's on an invalidated A/A start included;
+    # classify_failure_rationale prefix-tests against it → a stored 'rejected' row of either
+    # (label-absent schema) never advances the reject streak.
+    VOID_REASON="voided live trial, never judged",
+    # Head of a harm / retire rationale — no classifier branch → advances the reject streak
+    REASON="live trial decided without a win",
+    # Actor token from the closed set declared at monitor/prisma/schema.prisma →
+    # AutoagentProposal.reviewedBy — the live trial's decision, its verdict or void.
+    ACTOR="daemon-cycle-trial-decision",
+)
 
 
-def update_generation_closed_proposals() -> int:
-    """Terminalize every stored pending auto proposal → 'unadjudicated'.
+def update_decided_trial_proposals() -> list[int]:
+    """Terminalize every pending bound row of a live trial decided without a win, or won on an
+    A/A start invalidated since → ids moved.
 
-    With generation closed no cycle re-decides a stored auto candidate, so it
-    would wait pending forever. One idempotent statement closes every such row
-    each cycle: the status fragment stores 'unadjudicated' ('rejected' on a
-    schema without that label, relabeled later by the backfill), the rationale
-    gains the closed reason as its head, the actor is the closed token, and
-    reviewed_at stays untouched — no verdict was made.
+    One idempotent statement, whatever cycle wrote the decision: a harm or retire key stores
+    'rejected' (the trial judged the change), a void key — and a win whose pre-registration's
+    aa_start_id holds an aa-invalidation row (that start sized nothing), its reason
+    LIVE_TRIAL.AA_INVALIDATED_REASON — 'unadjudicated' through the shared status fragment
+    ('rejected' on a schema without that label, its rationale head keeping it out of the reject
+    streak), the generator's rationale kept after that head. reviewed_at is stamped → the push
+    UPSERT's freeze keeps the row and its diff against a same-key push. Any other won trial's row
+    and a row no longer pending are never touched.
 
-    PG unavailable → named stderr line, returns 0, no connection. A PG error
-    propagates to the caller.
-
-    Returns:
-        count of rows terminalized.
+    Runs apart from the decision writer: a fault here is a named WARN and an empty list, the
+    landed decision stays reported as recorded, and the next writing cycle moves the row.
+    PG unavailable → named stderr line, no connection.
     """
     if not HAS_PG_LOOP_WRITE:
         sys.stderr.write(
-            "[daemon-cycle] generation-closed terminalization: PG unavailable "
-            "(psycopg/helper import failed) — skipped\n"
+            "[daemon-cycle] trial decision step: PG unavailable (psycopg/helper import failed) "
+            "— skipped\n"
         )
-        return 0
-    # ::text → the bound head and the stored text concatenate as text on PG.
-    update_sql = (
-        "UPDATE core.autoagent_proposals "
-        f"SET status = {_PG_PROPOSAL_STATUS_SQL}, "
-        "rationale = %s::text || COALESCE(rationale, ''), "
-        "reviewed_by = %s "
-        "WHERE status = 'pending' AND approval_tier = 'auto' "
-        "RETURNING id"
-    )
+        return []
+    try:
+        moved = _pg_update_decided_trials()
+    except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
+        sys.stderr.write(
+            "[daemon-cycle] WARN: trial decision step — decided trials' pending bound rows not "
+            f"terminalized: {_describe_fault(exc)}; the next writing cycle moves them\n"
+        )
+        return []
+    _log_decided_trial_moves(moved)
+    return [proposal_id for proposal_id, _status, _outcome, _reason in moved]
+
+
+def _pg_update_decided_trials() -> list[tuple]:
+    """(id, status, outcome, reason) of each row the one statement moved; raises on a PG fault."""
     update_params = (
         "unadjudicated",
-        f"{_GENERATION_CLOSED_REASON}: ",
-        _GENERATION_CLOSED_ACTOR,
+        _TRIAL_DECISION.VOID_REASON,
+        _TRIAL_DECISION.REASON,
+        _TRIAL_DECISION.ACTOR,
+        LIVE_TRIAL.AA_INVALIDATED_REASON,
+        TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
+        TRIAL_LEDGER.EVENT.AA_INVALIDATION,
     )
     with _pg_connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(update_sql, update_params)
-            closed_ids = [row[0] for row in cur.fetchall()]
+            cur.execute(_get_decided_trial_update_sql(), update_params)
+            moved = cur.fetchall()
         conn.commit()
-    if closed_ids:
+    return moved
+
+
+def _get_decided_trial_update_sql() -> str:
+    # built at call time → the status fragment is read only where the PG helper imported
+    return (
+        "UPDATE core.autoagent_proposals AS w "
+        f"SET status = CASE WHEN d.outcome IN ('void', 'win') THEN {_PG_PROPOSAL_STATUS_SQL} "
+        "ELSE 'rejected' END, "
+        "rationale = CASE WHEN d.outcome IN ('void', 'win') THEN %s::text ELSE %s::text END "
+        "|| ': ' || d.outcome || ' (' || COALESCE(d.reason, 'no reason') || ')' "
+        "|| COALESCE(': ' || NULLIF(w.rationale, ''), ''), "
+        "reviewed_at = now(), reviewed_by = %s "
+        f"FROM ({_DECIDED_TRIAL_SQL}) AS d "
+        "WHERE w.id = d.proposal_id AND w.status = 'pending' "
+        "RETURNING w.id, w.status::text, d.outcome, d.reason"
+    )
+
+
+def _log_decided_trial_moves(moved: list[tuple]) -> None:
+    for proposal_id, status, outcome, reason in moved:
         sys.stderr.write(
-            f"[daemon-cycle] generation closed: terminalized {len(closed_ids)} "
-            f"pending auto row(s) ids={closed_ids} → unadjudicated\n"
+            f"[daemon-cycle] INFO: trial decision step — proposal id={proposal_id} → {status} "
+            f"({outcome} {reason or 'no reason'}): reviewed, frozen against a same-key push\n"
         )
-    return len(closed_ids)
 
 
 # -- Chronic Haiku-timeout back-off (generation side) -----------------------
@@ -8438,8 +8369,8 @@ def drop_reject_streak_patterns(
     Args:
         agent: pattern target agent (group key).
         patterns: the agent's intake patterns (freq DESC).
-        rows: pre-fetched _fetch_proposal_history result — _run_generation_loop
-            shares one fetch across both proposal-history gates (read-only
+        rows: pre-fetched _fetch_proposal_history result — _drop_gated_patterns
+            shares one fetch across every proposal-history gate (read-only
             here). None → self-fetch (backward-compatible for direct callers).
 
     Returns:
@@ -8576,7 +8507,7 @@ def drop_apply_capped_patterns(
     Args:
         agent: pattern target agent (group key).
         patterns: the agent's intake patterns (freq DESC).
-        rows: pre-fetched _fetch_proposal_history result — _run_generation_loop
+        rows: pre-fetched _fetch_proposal_history result — _drop_gated_patterns
             shares one fetch across every proposal-history gate (read-only
             here). None → self-fetch (backward-compatible for direct callers).
 
@@ -8749,7 +8680,7 @@ POWER = SimpleNamespace(
     ),
     # eval_result = prefix + verdict; the longest fills the varchar(32) column exactly
     CHECK_EVAL_PREFIX="power-check-",
-    # latest design-effect row per agent and metric key among A/As whose aa-result passed, with
+    # latest design-effect row per agent and row key among A/As whose aa-result passed, with
     # its start id; the start id in the dedupe keys joins them → one join for whole-roster and
     # subset A/As alike. An invalidated start drops out in the join, before DISTINCT ON picks →
     # an older valid pass stays readable under it
@@ -8788,15 +8719,24 @@ class PowerCheck(NamedTuple):
     design_effect: float | None  # design effect the units were sized at; None = unmeasured
 
 
+class GuardrailDesignEffects(NamedTuple):
+    """The agent's guardrail rows from passed A/As; None = no row."""
+
+    no_stop: float | None  # the leg's own row: sizes its harm check
+    proxy: float | None  # the union-event emit_failure row: stated only, sizes and stops nothing
+
+
 class PowerPass(NamedTuple):
-    """One power-passing pattern with the evidence its shadow trial is pre-registered on."""
+    """One power-passing pattern with the evidence a bound candidate's live trial is sized on."""
 
     pattern: Pattern
     baseline: WindowCount
     design_effect: float
     required: float  # both arms' units at design_effect
     spawns: list[SpawnFacts]
+    provenance_start: datetime | None  # the floor's; None covers nothing
     aa_start_id: int | None  # the A/A start design_effect came from
+    guardrail_design_effects: GuardrailDesignEffects = GuardrailDesignEffects(None, None)
 
 
 class PowerResult(NamedTuple):
@@ -8814,11 +8754,18 @@ class PowerInputs(NamedTuple):
     unchecked_keys: frozenset[tuple[str, str]]
     # (agent, metric key) → the A/A start its design effect came from
     aa_start_ids: dict[tuple[str, str], int]
+    # agent → its union-event row's design effect; never read by the power check
+    proxy_design_effects: Mapping[str, float] = MappingProxyType({})
 
 
 class PowerSubject(NamedTuple):
     key: tuple[str, str]  # (agent, metric key) in the power inputs
     floor: FloorResult
+
+
+class CheckedSubject(NamedTuple):
+    subject: PowerSubject
+    check: PowerCheck
 
 
 def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> PowerResult:
@@ -8827,6 +8774,8 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> Pow
     The floor is get_floor_verdict over the spawn read the power inputs come from, so
     both judge one history. Each verdict is a stderr line plus a census loop event
     (none under skip_loop_emit); verdict only — no status write, no pattern parked or dropped.
+    A floor-failing keyed pattern gets no verdict and is not counted: it gets N49's named
+    stale-pattern-skip instead, the aggregator owning its move to 'dormant'.
     Each fault WARNs and never passes: an unreadable history or missing trial math counts
     every keyed pattern unchecked; an unreadable ledger counts every floor-passing one
     unchecked, an invalid stored design effect only the patterns on that agent's metric key.
@@ -8844,10 +8793,10 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> Pow
     event_ts = windows.end.strftime("%Y-%m-%dT00:00:00.000Z")
     inputs = _read_power_inputs(sorted({pattern.agent for pattern in keyed}), windows)
     for pattern in keyed:
-        judged = _get_pattern_power_verdict(pattern, inputs, windows)
-        if judged is None:
+        verdict, detail, power_pass = _get_pattern_power_verdict(pattern, inputs, windows)
+        if verdict is None:
+            _warn_floor_fail_skip(pattern, detail, event_ts, skip_loop_emit=skip_loop_emit)
             continue
-        verdict, detail, power_pass = judged
         counts[verdict] += 1
         if power_pass is not None:
             passes.append(power_pass)
@@ -8855,10 +8804,27 @@ def check_pattern_power(patterns: list[Pattern], *, skip_loop_emit: bool) -> Pow
     return PowerResult(counts, passes, windows)
 
 
+def _warn_floor_fail_skip(
+    pattern: Pattern, reason: str, event_ts: str, *, skip_loop_emit: bool
+) -> None:
+    """A floor-failing keyed pattern's named stale-pattern-skip, carrying PAIR_FAIL_EVAL."""
+    _warn_pattern_skip(
+        pattern.agent,
+        pattern.raw_line,
+        event_ts,
+        eval_result=PAIR_FAIL_EVAL,
+        reason=reason,
+        skip_loop_emit=skip_loop_emit,
+    )
+
+
 def _get_pattern_power_verdict(
     pattern: Pattern, inputs: PowerInputs | None, windows: PairWindows
-) -> tuple[str, str, PowerPass | None] | None:
-    """(verdict, detail, evidence when passing) of one keyed pattern; None when its floor does not pass."""
+) -> tuple[str | None, str, PowerPass | None]:
+    """(verdict, detail, evidence when passing) of one keyed pattern.
+
+    A floor that does not pass → no verdict (None) and the pair skip reason as detail.
+    """
     if inputs is None:
         return POWER.VERDICT.UNCHECKED, "power inputs unavailable", None
     spawns = inputs.spawns.get(pattern.agent, [])
@@ -8867,20 +8833,39 @@ def _get_pattern_power_verdict(
         spawns, pattern.metric_key, windows, inputs.provenance_start, windows.end
     )
     if floor.verdict != VERDICT_PASS:
-        return None
+        reason = _get_pair_skip_reason(pattern.metric_key, floor, windows.start.detection)
+        return None, reason, None
     subject = PowerSubject((pattern.agent, pattern.metric_key), floor)
     if subject.key in inputs.unchecked_keys:
         return POWER.VERDICT.UNCHECKED, "A/A design effect unusable", None
     check = get_power_check(subject, inputs, windows)
-    power_pass = None
-    design_effect, required = check.design_effect, check.units.required
-    if check.verdict == POWER.VERDICT.PASSING and design_effect is not None and required is not None:
-        aa_start_id = inputs.aa_start_ids.get(subject.key)
-        power_pass = PowerPass(
-            pattern, floor.baseline, design_effect, required, spawns, aa_start_id
-        )
+    power_pass = _get_power_pass(pattern, CheckedSubject(subject, check), inputs)
     method_b = _get_method_b_baseline(subject, inputs, windows)
-    return check.verdict, _get_pattern_power_detail(subject, check, method_b), power_pass
+    detail = _get_pattern_power_detail(subject, check, method_b)
+    return check.verdict, detail, power_pass
+
+
+def _get_power_pass(
+    pattern: Pattern, checked: CheckedSubject, inputs: PowerInputs
+) -> PowerPass | None:
+    """The pattern's live-trial evidence when its check passed with a finite size; else None."""
+    subject, check = checked
+    design_effect, required = check.design_effect, check.units.required
+    if check.verdict != POWER.VERDICT.PASSING or design_effect is None or required is None:
+        return None
+    return PowerPass(
+        pattern,
+        subject.floor.baseline,
+        design_effect,
+        required,
+        inputs.spawns.get(pattern.agent, []),
+        inputs.provenance_start,
+        inputs.aa_start_ids.get(subject.key),
+        GuardrailDesignEffects(
+            inputs.design_effects.get((pattern.agent, METRIC_NO_SUBAGENT_STOP)),
+            inputs.proxy_design_effects.get(pattern.agent),
+        ),
+    )
 
 
 def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWindows) -> PowerCheck:
@@ -8888,8 +8873,8 @@ def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWin
 
     Projected units = the agent's spawns per day over the 28 days before D × the 84-day
     horizon; NULL-agent_id spawns count nowhere. Bound = 2 × the trial_design per-arm
-    maximum — the larger of the efficacy and harm samples — at the floor-half baseline rate
-    × the key's design effect from a passed A/A.
+    maximum — the larger of the efficacy and harm samples, grown at the agent's own k — at
+    the floor-half baseline rate × the key's design effect from a passed A/A.
     In order: fewer than 28 provenance-covered days → insufficient-history; no design
     effect at the key → design-unmeasured; a rate with no finite size → underpowered.
     """
@@ -8901,7 +8886,9 @@ def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWin
     )
     design_effect = inputs.design_effects.get(subject.key)
     projected = trial_design.get_projected_units(units / BASELINE.MIN_COVERED.days)
-    required = _get_required_units(subject.floor.baseline, design_effect)
+    required = _get_required_units(
+        subject.floor.baseline, design_effect, get_guardrail_count(subject.key[0])
+    )
     if inputs.provenance_start is None or inputs.provenance_start > history_start:
         verdict = POWER.VERDICT.INSUFFICIENT_HISTORY
     elif design_effect is None:
@@ -8913,9 +8900,11 @@ def get_power_check(subject: PowerSubject, inputs: PowerInputs, windows: PairWin
     return PowerCheck(verdict, PowerUnits(projected, required), design_effect)
 
 
-def _get_required_units(baseline: WindowCount, design_effect: float | None) -> float | None:
+def _get_required_units(
+    baseline: WindowCount, design_effect: float | None, guardrail_count: int
+) -> float | None:
     """Both arms' units of the bound; None when the rate has no finite size or no design effect."""
-    maximum = _get_maximum_sample_size(baseline.events, baseline.spawns)
+    maximum = _get_maximum_sample_size(baseline.events, baseline.spawns, guardrail_count)
     if maximum is None or design_effect is None:
         return None
     return trial_design.get_required_units(maximum, design_effect=design_effect)
@@ -8964,10 +8953,13 @@ def _read_power_history(
 def _read_power_design_effects(
     agents: list[str],
 ) -> tuple[
-    dict[tuple[str, str], float], frozenset[tuple[str, str]], dict[tuple[str, str], int]
+    dict[tuple[str, str], float],
+    frozenset[tuple[str, str]],
+    dict[tuple[str, str], int],
+    dict[str, float],
 ]:
     """((agent, metric key) → design effect of its latest passed A/A's row, unchecked pairs,
-    pair → that row's start id).
+    pair → that row's start id, agent → its union-event row's proxy design effect).
 
     WARN per fault. A pair with no row from a passed, uninvalidated A/A is absent
     (design-unmeasured). A read fault — the table absent on a migrate-failed schema included —
@@ -8994,9 +8986,9 @@ def _read_power_design_effects(
         except Exception as exc:  # noqa: BLE001 — any read fault is an outage → fail closed
             cause = f"A/A design effect unreadable: {_describe_fault(exc)}"
         else:
-            return _get_design_effects(rows)
+            return (*_get_design_effects(rows), _get_proxy_design_effects(rows))
     _warn_power_unchecked(cause, "every floor-passing keyed intake pattern")
-    return {}, frozenset((agent, key) for agent in agents for key in METRIC_KEYS), {}
+    return {}, frozenset((agent, key) for agent in agents for key in METRIC_KEYS), {}, {}
 
 
 def _get_design_effects(
@@ -9032,6 +9024,22 @@ def _get_design_effects(
     return design_effects, frozenset(invalid_keys), aa_start_ids
 
 
+def _get_proxy_design_effects(rows: list[tuple[str, dict, int]]) -> dict[str, float]:
+    """agent → design effect of its pre-split union-event `emit_failure` row; an unreadable row → WARN, none."""
+    proxies: dict[str, float] = {}
+    for agent, payload, _ in rows:
+        if not isinstance(payload, dict) or payload.get("metric_key") != METRIC_EMIT_FAILURE:
+            continue
+        try:
+            proxies[agent] = _get_stored_design_effect(payload)
+        except (ArithmeticError, AttributeError, TypeError, ValueError) as exc:
+            sys.stderr.write(
+                f"[daemon-cycle] WARN: agent={agent}: union-event A/A row unreadable: "
+                f"{_describe_fault(exc)}; no proxy line on its pre-registration\n"
+            )
+    return proxies
+
+
 def _get_stored_design_effect(payload: dict) -> float:
     """One A/A row's value, a value below 1 read as 1; raises unless the declared keys carry a finite value.
 
@@ -9052,11 +9060,15 @@ def _warn_power_unchecked(cause: str, scope: str) -> None:
     )
 
 
-def _get_maximum_sample_size(events: int, spawns: int) -> int | None:
-    """trial_design per-arm trial maximum at rate events/spawns; None outside (0, 1) or unsized."""
+def _get_maximum_sample_size(events: int, spawns: int, guardrail_count: int) -> int | None:
+    """Per-arm trial maximum at rate events/spawns, grown to power at k guardrails; None if unsized."""
     if not 0 < events < spawns:
         return None
-    return trial_design.get_trial_sample_size(events / spawns)
+    rate = events / spawns
+    maximum = trial_design.get_trial_sample_size(rate)
+    if maximum is None:
+        return None
+    return trial_design.get_grown_sample_size(rate, maximum, guardrail_count=guardrail_count)
 
 
 def _get_method_b_baseline(
@@ -9109,33 +9121,111 @@ def _send_power_verdict(
 
 
 SHADOW = SimpleNamespace(
-    # latest pre-registration per (agent, pattern, metric key); DISTINCT ON keeps one row each.
-    # Dropped after the pick, as not current: one sized on an invalidated start, or one recording
-    # no start written at or after an invalidated start's passed aa-result
-    PREREGISTRATION_SQL=(
-        "SELECT agent, learning_pattern_id, metric_key, trial_key, payload, recorded_at FROM ("
-        "SELECT DISTINCT ON (agent, learning_pattern_id, payload->>'metric_key') "
-        "agent, learning_pattern_id, payload->>'metric_key' AS metric_key, trial_key, payload, "
-        "recorded_at FROM core.autoagent_trial_ledger WHERE event = %s AND agent = ANY(%s) "
-        "ORDER BY agent, learning_pattern_id, payload->>'metric_key', recorded_at DESC, id DESC"
-        ") AS latest WHERE NOT EXISTS (SELECT 1 FROM core.autoagent_trial_ledger AS invalidation "
-        "WHERE invalidation.event = %s AND ("
-        "invalidation.payload->>'start_id' = latest.payload->>'aa_start_id' "
-        "OR (latest.payload->>'aa_start_id' IS NULL AND EXISTS ("
-        "SELECT 1 FROM core.autoagent_trial_ledger AS aa_result "
-        "WHERE aa_result.dedupe_key = %s::text || (invalidation.payload->>'start_id') "
-        "AND aa_result.payload->>'overall' = %s "
-        "AND aa_result.recorded_at <= latest.recorded_at))))"
-    ),
     # W = 0 on every install → each spawn is its own task unit
     TASK_WINDOW=timedelta(0),
 )
 
 
-class ShadowTrial(NamedTuple):
-    key: str
-    payload: dict  # the pre-registration payload, as stored
-    recorded_at: datetime
+# open live trial = a live pre-registration with no <live trial key>:decision row; one statement
+_OPEN_LIVE_TRIAL_FROM = (
+    "FROM core.autoagent_trial_ledger p WHERE p.event = %s AND NOT EXISTS ("
+    "SELECT 1 FROM core.autoagent_trial_ledger d WHERE d.dedupe_key = p.trial_key || ':decision')"
+)
+# pre-registration p sized on an A/A start holding an aa-invalidation row (its rows size
+# nothing); binds the invalidation event as one parameter · text compare → a malformed id never
+# faults the read
+_AA_INVALIDATED_TRIAL_SQL = (
+    "p.payload->>'aa_start_id' IN (SELECT i.payload->>'start_id' "
+    "FROM core.autoagent_trial_ledger i WHERE i.event = %s)"
+)
+_OPEN_LIVE_TRIAL_SQL = (
+    "SELECT p.agent, (p.payload->>'proposal_id')::bigint AS proposal_id " + _OPEN_LIVE_TRIAL_FROM
+)
+# held live trial: open, or won with its row pending (leaving pending ends it) · binds the event
+_HELD_LIVE_TRIAL_SQL = (
+    "SELECT p.agent, (p.payload->>'proposal_id')::bigint AS proposal_id "
+    "FROM core.autoagent_trial_ledger p WHERE p.event = %s AND (NOT EXISTS ("
+    "SELECT 1 FROM core.autoagent_trial_ledger d WHERE d.dedupe_key = p.trial_key || ':decision') "
+    "OR EXISTS (SELECT 1 FROM core.autoagent_trial_ledger d, core.autoagent_proposals w "
+    "WHERE d.dedupe_key = p.trial_key || ':decision' AND d.payload->'win' IS NOT NULL "
+    "AND w.id = (p.payload->>'proposal_id')::bigint AND w.status = 'pending'))"
+)
+# per decided pre-registration: proposal id, outcome (one key per decision payload → min()), reason
+# binds the win's reason, the pre-registration event, then the invalidation event
+_DECIDED_TRIAL_SQL = (
+    "SELECT (p.payload->>'proposal_id')::bigint AS proposal_id, k.outcome, "
+    "CASE WHEN k.outcome = 'win' THEN %s::text "
+    "ELSE decision.payload -> k.outcome ->> 'reason' END AS reason "
+    "FROM core.autoagent_trial_ledger p "
+    "JOIN core.autoagent_trial_ledger decision "
+    "ON decision.dedupe_key = p.trial_key || ':decision' "
+    "CROSS JOIN LATERAL (SELECT min(key) AS outcome "
+    "FROM jsonb_object_keys(decision.payload) AS key) AS k "
+    "WHERE p.event = %s AND jsonb_typeof(decision.payload) = 'object' "
+    f"AND (NOT decision.payload ? 'win' OR {_AA_INVALIDATED_TRIAL_SQL})"
+)
+LIVE_TRIAL = SimpleNamespace(
+    OPEN_SQL=_OPEN_LIVE_TRIAL_SQL,
+    HELD_SQL=_HELD_LIVE_TRIAL_SQL,
+    # open trials' pre-registration rows: id (canary salt) · recorded_at (unstarted origin) · :start
+    CANARY_SQL=(
+        "SELECT p.id, p.agent, p.trial_key, p.learning_pattern_id, p.payload, p.recorded_at, "
+        "EXISTS ("
+        "SELECT 1 FROM core.autoagent_trial_ledger s WHERE s.dedupe_key = p.trial_key || ':start') "
+        + _OPEN_LIVE_TRIAL_FROM
+        + " ORDER BY p.id"
+    ),
+    # a proposals-row predicate over the held statement; binds the event as one parameter
+    IS_PROPOSAL_IN_TRIAL_SQL=(
+        f"EXISTS (SELECT 1 FROM ({_HELD_LIVE_TRIAL_SQL}) AS held_trial "
+        "WHERE held_trial.proposal_id = autoagent_proposals.id)"
+    ),
+    # an unstarted void's payload.void.reason; the doctor counts the void by this literal
+    UNSTARTED_REASON="unstarted",
+    # each held trial sized on an invalidated A/A start → its trial key; binds the
+    # pre-registration event, the invalidation event, then the pre-registration event again
+    INVALIDATED_SQL=(
+        "SELECT p.trial_key FROM core.autoagent_trial_ledger p WHERE p.event = %s AND "
+        + _AA_INVALIDATED_TRIAL_SQL
+        + " AND (p.payload->>'proposal_id')::bigint IN (SELECT proposal_id FROM ("
+        + _HELD_LIVE_TRIAL_SQL
+        + ") AS held_trial)"
+    ),
+    # the payload.void.reason of a trial voided because its A/A start is invalidated
+    AA_INVALIDATED_REASON="aa-invalidated",
+    # open trial binding row: agent, trial key, pattern id, canary hash, commit and start instants
+    BINDING_SQL=(
+        "SELECT p.agent, p.trial_key, p.learning_pattern_id, p.payload->'canary'->>'text_sha256', "
+        "p.recorded_at, (SELECT s.payload->>'started_at' FROM core.autoagent_trial_ledger s "
+        "WHERE s.dedupe_key = p.trial_key || ':start' LIMIT 1) "
+        + _OPEN_LIVE_TRIAL_FROM
+        + " ORDER BY p.id"
+    ),
+    # one trial's recorded look payloads; the look dedupe key holds one row per look number
+    LOOK_SQL=(
+        "SELECT payload FROM core.autoagent_trial_ledger WHERE event = %s AND trial_key = %s"
+    ),
+)
+
+
+def _pg_read_open_trials() -> dict[str, list[int]]:
+    """Agent → proposal ids of its open live trials; raises on any PG fault."""
+    return _pg_read_trials(LIVE_TRIAL.OPEN_SQL)
+
+
+def _pg_read_held_trials() -> dict[str, list[int]]:
+    """Agent → proposal ids of its held live trials; raises on any PG fault."""
+    return _pg_read_trials(LIVE_TRIAL.HELD_SQL)
+
+
+def _pg_read_trials(sql: str) -> dict[str, list[int]]:
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(sql, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
+        rows = cur.fetchall()
+    trials: dict[str, list[int]] = defaultdict(list)
+    for agent, proposal_id in rows:
+        trials[agent].append(proposal_id)
+    return dict(trials)
 
 
 class ArmCount(NamedTuple):
@@ -9150,13 +9240,9 @@ class TrialArms(NamedTuple):
 
 class ShadowRow(NamedTuple):
     event: str
+    actor: str
     payload: dict
     dedupe_key: str
-
-
-class TrialIdentity(NamedTuple):
-    key: str
-    pattern: Pattern
 
 
 class Look(NamedTuple):
@@ -9167,53 +9253,150 @@ class Look(NamedTuple):
 class LookAccrual(NamedTuple):
     tasks: int
     arms: TrialArms | None = None
+    z: float | None = None  # the primary's reduction over its independent-spawn standard error
 
 
-def run_shadow_stage(power: PowerResult, cycle_date: str) -> None:
-    """Shadow engine: count power verdicts, pre-register passing trials, record reached looks; decides nothing.
+class StartedTrial(NamedTuple):
+    """A judged, started live trial as its looks read it."""
 
-    - rows: one power-pass-count per cycle date · one pre-registration per trial key · one per reached look
-    - trial kept: pre-registration recorded at or after the row's last_transition_at (a NULL anchor keeps it);
-      otherwise the current pair starts a new one
-    - accrual: tasks from the pre-registration's recorded_at → none in its pre-registration cycle
-    - arms: no production arm source yet → look rows carry accrual only
-    - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
+    canary: TrialCanary  # its pre-registration row: identity, payload and the arm salt
+    started_at: datetime  # the start record's instant
+
+
+class CountInputs(NamedTuple):
+    """What the re-delegation count reads at one cycle's looks of a trial."""
+
+    spawns: Sequence[SpawnFacts]  # the trial agent's: every follow-up's source
+    evaluated_at: datetime  # the pair windows' end → a window closed at or before it is counted
+    recorded: Mapping[int, dict]  # the trial's recorded look payloads, by look number
+
+
+class LookReadings(NamedTuple):
+    """One cycle's readings of a trial, as each reached look's row carries them."""
+
+    accrual: LookAccrual
+    rises: Mapping[str, float | None]  # per harm check; None = undefined on this cycle's data
+    redelegation: dict | None  # the cycle's count; None = every reached look already recorded
+
+
+def run_shadow_stage(power: PowerResult, cycle_date: str, judged_trials: frozenset[str]) -> None:
+    """Shadow engine: count power verdicts, record reached looks of live trials, take their
+    look-time decisions.
+
+    - rows: one power-pass-count per cycle date · one live look per reached look · at most one
+      <live trial key>:decision per trial; no pre-registration — the push writes the live one
+      with its bound candidate
+    - judged_trials: the trial keys this cycle's trial stage judged and left open
+      (run_trial_stage) → each of them with a start record takes its looks, whatever this
+      cycle's power check said of its pattern; a trial outside the set — unjudged, voided or
+      decided — or with no start record takes no look and no decision
+    - decision: read at a look whose row landed in this cycle, looks in order on this
+      cycle's accrual → a crossed harm check: harm stop; else z at or over the look's boundary:
+      win; else the last registered look: retire, maximum-sample; the first decision ends the looks
+    - a decision whose row landed — win, harm stop, retire or void: the trial's canary file
+      removed in that cycle
+    - horizon: a trial with no decision recorded this cycle, at its start + the horizon its
+      pre-registration states → retire, horizon; no milestone needed
+    - validity: where a harm stop, a win or a retire is due — never at a landed look with none
+      of them — a void comes first, on the A/A's criteria over the trial's counted spawns: an
+      imbalanced split once its minimum spawns are counted → void, arm-imbalance; else delivery
+      under the floor on the treatment spawns, or to a control spawn → void, low-delivery; no
+      treatment spawn and nothing delivered to control → none
+    - a decision write fault: named WARN, the trial left open — of a recorded look only its
+      stored harm verdicts are read again: a crossed one → that look's harm stop at the next
+      cycle, a void first, ahead of every look; faulting again → WARN again, no look that
+      cycle · a win or a maximum-sample retire is not read again, so a lost win can end as a
+      retire
+    - trial: identity and payload from its pre-registration row
+    - units: the trial agent's spawns over the pair windows at this cycle's day anchor; units,
+      arms and milestones run from the start record's second, so a spawn started before it is
+      in no arm and no count
+    - arms: each counted spawn under its arm recomputed from the pre-registration row's id,
+      whatever the hook recorded; milestones on both arms' total, arms and z on the settled
+      spawns alone
+    - re-delegation count: on each look row, follow-ups per spawn at the pre-registered W over
+      the spawns from the start record whose window closed by the pair windows' end, each under
+      its recomputed arm; judged once per cycle for the reached looks no row records yet, by the
+      pre-registered randomization test at the alpha spent through the highest reached look, its
+      cut set on the crossings the latest recorded look's row carries; a crossed count: harm stop
+    - a recorded look row without readable crossings: named WARN, no crossing at that look or
+      any later one, labelled on the row · the recorded looks unreadable: named WARN, no look
+      and no horizon retire for that trial this cycle
+    - ledger or spawn read fault: named WARN, never a failed cycle; a faulted spawn read takes
+      no look and no horizon retire this cycle · --dry-run: the caller skips the stage
     """
     if not HAS_PG_LOOP_WRITE:
         _warn_shadow("trial ledger unwritable: PG helper import failed", "no shadow row this cycle")
         return
+    _write_power_pass_count(power, cycle_date)
+    trials = _read_started_trials(judged_trials)
+    if not trials:
+        return
+    windows = get_pair_windows(_get_utc_now())
+    spawns = _read_look_spawns(trials, windows)
+    if spawns is None:
+        return
+    for trial in trials:
+        _write_trial_decision(trial, spawns, windows)
+
+
+def _write_power_pass_count(power: PowerResult, cycle_date: str) -> None:
     _write_shadow_row(
         ShadowRow(
             TRIAL_LEDGER.EVENT.POWER_PASS_COUNT,
+            TRIAL_LEDGER.ACTOR.SHADOW,
             power.counts,
             dedupe_key=f"power-pass-count:{cycle_date}",
         )
     )
-    if not power.passes or power.windows is None:
-        return
-    trials = _read_shadow_trials(power.passes)
-    if trials is None:
-        return
-    for power_pass in power.passes:
-        pattern = power_pass.pattern
-        trial = trials.get((pattern.agent, pattern.row_id, pattern.metric_key))
-        _write_shadow_pass(power_pass, trial, power.windows)
 
 
-def _write_shadow_pass(
-    power_pass: PowerPass, trial: ShadowTrial | None, windows: PairWindows
+def _write_trial_decision(
+    trial: StartedTrial, spawns: Mapping[str, list[SpawnFacts]], windows: PairWindows
 ) -> None:
-    """Keep a current trial and record its reached looks; otherwise pre-register the current pair."""
-    if trial is None or not _is_trial_current(trial, power_pass.pattern.last_transition_at):
-        _write_shadow_preregistration(power_pass, windows.start.detection)
+    """One started trial's looks this cycle, else its horizon retire; unread looks → neither."""
+    recorded = _read_recorded_looks(trial.canary)
+    if recorded is None:
         return
+    agent_spawns = spawns.get(trial.canary.agent, [])
+    counted = _get_counted_spawns(trial, agent_spawns, windows.end)
+    count = CountInputs(agent_spawns, windows.end, recorded)
+    if not _write_trial_looks(trial, counted, count):
+        _write_horizon_decision(trial, counted)
+
+
+def _read_recorded_looks(canary: TrialCanary) -> dict[int, dict] | None:
+    """The trial's recorded look payloads by look number; None (WARN) on a fault."""
     try:
-        _write_shadow_looks(trial, power_pass, windows.end)
+        return _read_look_payloads(canary.key)
+    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
+        _warn_shadow(
+            f"trial {canary.key}: recorded looks unreadable: {_describe_fault(exc)}",
+            "no look for it this cycle",
+        )
+        return None
+
+
+def _read_look_payloads(trial_key: str) -> dict[int, dict]:
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(LIVE_TRIAL.LOOK_SQL, (TRIAL_LEDGER.EVENT.LIVE_LOOK, trial_key))
+        rows = cur.fetchall()
+    return {payload["look"]: payload for (payload,) in rows}
+
+
+def _write_trial_looks(
+    trial: StartedTrial, counted: Sequence[ArmedSpawn], count: CountInputs
+) -> bool:
+    """Record a judged, started trial's reached looks → True once a look-time decision is
+    recorded; an unusable stored pre-registration → named WARN, nothing written for it."""
+    try:
+        return _write_shadow_looks(trial, counted, count)
     except (KeyError, TypeError, ValueError) as exc:
         _warn_shadow(
-            f"trial {trial.key}: stored pre-registration unusable: {_describe_fault(exc)}",
+            f"trial {trial.canary.key}: stored pre-registration unusable: {_describe_fault(exc)}",
             "no look recorded for it this cycle",
         )
+        return False
 
 
 def get_trial_key(pattern: Pattern, detection_start: datetime) -> str:
@@ -9222,30 +9405,787 @@ def get_trial_key(pattern: Pattern, detection_start: datetime) -> str:
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
-def get_preregistration_payload(power_pass: PowerPass, detection_start: datetime) -> dict:
+class PreregistrationInputs(NamedTuple):
+    """A bound candidate's inputs beside its power pass."""
+
+    detection_start: datetime
+    canary_text: str
+    redelegation: dict  # the window row, get_redelegation_row
+
+
+def get_preregistration_payload(power_pass: PowerPass, inputs: PreregistrationInputs) -> dict:
     """The trial's frozen sizing: trial_design's maximum and boundaries, look milestones on the required units."""
     baseline = power_pass.baseline
     boundaries = trial_design.get_boundaries()
-    looks = [
-        {"fraction": fraction, "milestone": fraction * power_pass.required, "boundary": boundary}
-        for fraction, boundary in zip(trial_design.LOOK_FRACTIONS, boundaries)
-    ]
+    maximum = _get_maximum_sample_size(
+        baseline.events, baseline.spawns, get_guardrail_count(power_pass.pattern.agent)
+    )
     return {
         "metric_key": power_pass.pattern.metric_key,
-        "detection_start": detection_start.isoformat(),
+        "detection_start": inputs.detection_start.isoformat(),
         "baseline": {"events": baseline.events, "spawns": baseline.spawns},
-        "maximum_per_arm": _get_maximum_sample_size(baseline.events, baseline.spawns),
+        "maximum_per_arm": maximum,
         "design_effect": power_pass.design_effect,
         "aa_start_id": power_pass.aa_start_id,
         "required_units": power_pass.required,
         "boundaries": list(boundaries),
-        "looks": looks,
+        "looks": _get_looks(power_pass.required, boundaries),
         "task_window_seconds": SHADOW.TASK_WINDOW.total_seconds(),
+        **_get_trial_inputs_payload(inputs, maximum),
+        **_get_harm_payload(power_pass, inputs.detection_start, maximum),
     }
 
 
+def _get_trial_inputs_payload(inputs: PreregistrationInputs, maximum: int | None) -> dict:
+    """The proposal row's generator-input version: the ledger's mark of the trial's input set.
+
+    Beside it the canary text and its sha256 — the trial stage writes exactly that text — and
+    the re-delegation guardrail's window row beside its randomization test's parameters.
+    """
+    canary_text = inputs.canary_text
+    return {
+        "generator_input_version": GENERATOR_INPUT_VERSION,
+        "horizon_days": trial_design.HORIZON_DAYS,
+        "canary": {"text": canary_text, "text_sha256": _get_text_sha256(canary_text)},
+        "redelegation": {
+            **inputs.redelegation,
+            "rise": _get_follow_up_rise(inputs.redelegation["follow_ups"]["sd"], maximum),
+        },
+        "redelegation_test": get_redelegation_test(),
+    }
+
+
+def get_redelegation_test() -> dict:
+    """The count's randomization test as a trial pre-registers it: its re-draw count, its
+    re-draw salt namespace, and whether look 1 can cross at that count — by the library's own
+    budget for the first look."""
+    test = REDELEGATION_ROW.TEST
+    first_look = trial_design.get_randomization_look(
+        [],
+        get_arm=get_spawn_arm,
+        salt_namespace=test.SALT_NAMESPACE,
+        redraws=test.REDRAWS,
+        fraction=trial_design.LOOK_FRACTIONS[0],
+    )
+    return {
+        "redraws": test.REDRAWS,
+        "salt_namespace": test.SALT_NAMESPACE,
+        "is_first_look_reachable": first_look.budget > 0,
+    }
+
+
+def _get_follow_up_rise(sd: float | None, per_arm: int | None) -> dict:
+    """The count's minimum detectable rise in follow-ups per spawn at design effect 1 and 2.
+
+    None at both when the sd is None or 0 or the trial has no maximum: never 0, which would
+    read as any rise detectable.
+    """
+
+    def get_rise(design_effect: int) -> float | None:
+        if not sd or per_arm is None:
+            return None
+        return trial_design.get_follow_up_harm(sd, per_arm, design_effect=design_effect)
+
+    return {
+        "unit": "follow-ups per spawn",
+        **{f"design_effect_{value}": get_rise(value) for value in HARM_CHECK.DESIGN_EFFECTS},
+        "labels": list(REDELEGATION_ROW.RISE_LABELS),
+    }
+
+
+class RosterSpawns(NamedTuple):
+    """The installed roster's spawns from the baseline start, MANIFEST aliases folded onto stems."""
+
+    by_type: dict[str, list[SpawnFacts]]
+    tool_budget: int  # the one-spawn budget a gap's spawn is judged overran at
+
+
+class RosterSpawnRead:
+    """The cycle's one roster spawn read: run on the first request, its spawns or its fault kept.
+
+    Read only once a candidate reaches pre-registration; a failed read WARNs once and leaves
+    every candidate of the cycle without a pre-registration.
+    """
+
+    def __init__(self, agents_dir: Path, windows: PairWindows, tool_budget: int) -> None:
+        self._agents_dir = agents_dir
+        self._windows = windows
+        self._tool_budget = tool_budget
+        self._is_read = False
+        self._spawns: RosterSpawns | None = None
+
+    def get_spawns(self) -> RosterSpawns | None:
+        """The roster's spawns over [baseline start, D); None after a failed read."""
+        if not self._is_read:
+            self._is_read = True
+            self._spawns = self._read_spawns()
+        return self._spawns
+
+    def _read_spawns(self) -> RosterSpawns | None:
+        if not HAS_PG_PATTERN_READ:
+            cause = "PG pattern reads unavailable (helper import failed)"
+        else:
+            roster = _agent_roster(self._agents_dir)
+            start, end = self._windows.start.baseline, self._windows.end
+            try:
+                by_type = _read_aa_spawns(roster, _get_roster_names(roster), start, end)
+            except Exception as exc:  # noqa: BLE001 — any read fault → no pre-registration
+                cause = f"roster spawns unreadable: {_describe_fault(exc)}"
+            else:
+                return RosterSpawns(by_type, self._tool_budget)
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: re-delegation window — {cause}; "
+            "no live pre-registration this cycle\n"
+        )
+        return None
+
+
+class PreregistrationSource(NamedTuple):
+    """What a bound candidate's pre-registration is built from: the cycle's power, roster read."""
+
+    power: PowerResult
+    roster: RosterSpawnRead
+
+
+# the re-delegation count's remaining blind spots, stated on every window row
+REDELEGATION_ROW = SimpleNamespace(
+    BLIND_SPOTS=(
+        (
+            "capture: a re-delegation later than W is not counted, and W comes from overran gaps "
+            "that fan-out also feeds, so the true capture is unmeasured"
+        ),
+        (
+            "watch: fan-out drift between the reference window and the watch enters the contrast; "
+            "the reference install's watch calibration read the drift its history held, not its "
+            "distribution, on period pairs whose separation is shorter than the design's — a "
+            "horizon-long reference ending at the trial's start, a watch starting after the "
+            "trial's run to graduation — so its no-crossing reading is a lower bound, not a pass"
+        ),
+        "scope: a re-delegation to another agent type, or in a new parent session, is not counted",
+        (
+            "unobserved: a spawn with no SubagentStop or no parent session is outside the count; "
+            "the no-SubagentStop guardrail covers the first"
+        ),
+        "does less: a spawn that does less and is never re-delegated passes the count",
+    ),
+    RISE_LABELS=(
+        (
+            "unmeasured: no A/A writes a design-effect row for this guardrail, stated at design "
+            "effect 1 and 2"
+        ),
+        (
+            "model-based: the two-sample mean-shift formula, one-sided upward, at the trial's "
+            "maximum sample"
+        ),
+        (
+            "does not bound the randomization test's rise: the trial's test is the randomization "
+            "test, and on the reference install its rise fell outside this bracket"
+        ),
+    ),
+    # the reference install's read, shipped as a dated snapshot: both reference rows
+    REFERENCE=SimpleNamespace(
+        READ_DATE="2026-10-10",
+        LABELS=SimpleNamespace(
+            RISE=(
+                "on four looks",
+                "the reference install's, not the install's own",
+                "measured on budget_overage trials",
+                "on the calibration span's units",
+                "two of five deciding agents read through look 2 only",
+                "reference values only: no stop, size or power check reads them",
+            ),
+            STOP_SHIFT=(
+                (
+                    "the four-look false-stop share across the three agents read on four looks "
+                    "and both assumed shapes of a win"
+                ),
+                (
+                    "the shapes at the ends, both on one agent: 7.50 [6.38, 8.74] under a uniform "
+                    "shortening of a win, 3.55 under a concentrated one"
+                ),
+                "the reference install's, not the install's own, and no install measures its own",
+                (
+                    "measured on the metric key budget_overage, so a trial on another primary key "
+                    "carries these values labelled as that key's, not its own"
+                ),
+                (
+                    "the two shapes are assumptions: which one a real win resembles has no "
+                    "instrument before a live trial"
+                ),
+                "two of five deciding agents read through look 2 only",
+                "reference values only: no stop, size or power check reads them",
+            ),
+        ),
+    ),
+    # the count's randomization test, frozen on each pre-registration
+    TEST=SimpleNamespace(
+        # an 11,300-member reference: look 1 admits one member, the four looks 565 — alpha 0.05 exactly
+        REDRAWS=11_299,
+        # a re-draw's salt is "<namespace>:<index>:" → never a decimal arm salt
+        SALT_NAMESPACE="follow-up-redraw",
+    ),
+)
+
+
+class FollowUpBaseline(NamedTuple):
+    """The count's statistics: follow-ups per counted spawn; None = no reading."""
+
+    n: int  # counted spawns
+    mean: float | None
+    sd: float | None  # None under two counted spawns
+
+
+def get_redelegation_row(
+    spawns: RosterSpawns, power_pass: PowerPass, windows: PairWindows
+) -> dict:
+    """W with its tier and gap count by `get_redelegation_window`, over the covered baseline.
+
+    Spawns started at or after D are cut before the primitives, so no spawn from the trial's
+    start on moves the row; the pool is every roster type's gaps, the trial's agent included.
+    The gap window opens at the guardrail readings' covered start, so W reads no uncovered day.
+    """
+    cut = _get_spawns_before(spawns.by_type, windows.end)
+    detection_start = windows.start.detection
+    covered_start = _get_covered_start(detection_start, power_pass.provenance_start)
+    gaps = get_overran_gaps(
+        cut, Window(covered_start, detection_start), tool_budget=spawns.tool_budget
+    )
+    pooled_gaps = [gap for type_gaps in gaps.values() for gap in type_gaps]
+    own_gaps = gaps.get(power_pass.pattern.agent, [])
+    window = get_redelegation_window(own_gaps, pooled_gaps)
+    follow_ups = _get_follow_up_baseline(
+        cut, power_pass, windows, redelegation_window=timedelta(minutes=window.minutes)
+    )
+    return {
+        **window._asdict(),
+        "margin": _get_redelegation_margin(power_pass.baseline),
+        "follow_ups": follow_ups._asdict(),
+        **_get_baseline_coverage(windows.start, covered_start),
+        **get_reference_rows(),
+        "blind_spots": list(REDELEGATION_ROW.BLIND_SPOTS),
+    }
+
+
+def get_reference_rows() -> dict:
+    """The count's rise and the stop shift as the reference install read them, on every install."""
+    return {
+        "reference_rise": {
+            "unit": "multiple of the margin",
+            "margin_multiples": [11, 26, 36],
+            "mean_count_percent": [9, 19],
+            "read_date": REDELEGATION_ROW.REFERENCE.READ_DATE,
+            "labels": list(REDELEGATION_ROW.REFERENCE.LABELS.RISE),
+        },
+        "stop_shift": {
+            "unit": "percent of true wins stopped falsely",
+            "metric_key": "budget_overage",
+            "false_stop_percent": [3.55, 7.50],
+            "above_alpha_cell_percent": 7.50,
+            "above_alpha_cell_interval_percent": [6.38, 8.74],
+            "read_date": REDELEGATION_ROW.REFERENCE.READ_DATE,
+            "labels": list(REDELEGATION_ROW.REFERENCE.LABELS.STOP_SHIFT),
+        },
+    }
+
+
+def _get_spawns_before(
+    spawns_by_type: Mapping[str, list[SpawnFacts]], end: datetime
+) -> dict[str, list[SpawnFacts]]:
+    return {
+        agent_type: [spawn for spawn in agent_spawns if spawn.started_at < end]
+        for agent_type, agent_spawns in spawns_by_type.items()
+    }
+
+
+def _get_follow_up_baseline(
+    spawns_by_type: Mapping[str, list[SpawnFacts]],
+    power_pass: PowerPass,
+    windows: PairWindows,
+    *,
+    redelegation_window: timedelta,
+) -> FollowUpBaseline:
+    """Computed once, for the row and the count's rise: the guardrail readings' floor-half
+    members that `get_follow_up_counts` counts at W evaluated at D, their follow-ups from every
+    same-type spawn, whichever half."""
+    detection_start = windows.start.detection
+    member_ids = _get_member_ids(power_pass, detection_start)
+    counts = [
+        count
+        for spawn, count in get_follow_up_counts(
+            spawns_by_type,
+            power_pass.pattern.agent,
+            Window(windows.start.baseline, detection_start),
+            redelegation_window=redelegation_window,
+            evaluated_at=windows.end,
+        )
+        if spawn.agent_id in member_ids
+    ]
+    return FollowUpBaseline(
+        len(counts),
+        statistics.fmean(counts) if counts else None,
+        statistics.stdev(counts) if len(counts) > 1 else None,
+    )
+
+
+def _get_member_ids(power_pass: PowerPass, detection_start: datetime) -> set[str | None]:
+    """The guardrail readings' floor-half members, by agent id."""
+    return {
+        spawn.agent_id
+        for spawn in _get_guardrail_members(
+            power_pass.spawns, detection_start, power_pass.provenance_start
+        )
+    }
+
+
+def _get_redelegation_margin(baseline: WindowCount) -> float | None:
+    """D6's: the trial's absolute primary effect, read as follow-ups per spawn."""
+    primary_rate = _get_primary_rate(baseline)
+    if primary_rate is None:
+        return None
+    return trial_design.DEFAULT_RELATIVE_REDUCTION * primary_rate
+
+
+def _get_primary_rate(baseline: WindowCount) -> float | None:
+    return baseline.events / baseline.spawns if baseline.spawns else None
+
+
+def _get_baseline_coverage(start: WindowStarts, covered_start: datetime) -> dict:
+    """The baseline window and its covered part: the covered start, its days beside the span's."""
+    return {
+        "coverage": {
+            "start": covered_start.isoformat(),
+            "days": (start.detection - covered_start) / timedelta(days=1),
+            "span_days": BASELINE.SPAN.days,
+        },
+        "baseline_window": {
+            "start": start.baseline.isoformat(),
+            "end": start.detection.isoformat(),
+        },
+    }
+
+
+def _get_looks(required: float, boundaries: Sequence[float]) -> list[dict]:
+    """One look per LOOK_FRACTIONS share: its milestone on the required units and its boundary."""
+    return [
+        {"fraction": fraction, "milestone": fraction * required, "boundary": boundary}
+        for fraction, boundary in zip(trial_design.LOOK_FRACTIONS, boundaries)
+    ]
+
+
+def get_canary_text(diff: str) -> str:
+    """The rendered canary block: the diff's added lines, '+' stripped, each with its newline.
+
+    Removed and context lines are left out, so only an add-only diff's block is the bytes
+    graduation adds to the body; pre-registration refuses any other diff.
+    """
+    return "".join(
+        f"{line[1:]}\n" for kind, line in _get_diff_line_kinds(diff) if kind == "added"
+    )
+
+
+def _get_harm_payload(
+    power_pass: PowerPass, detection_start: datetime, maximum: int | None
+) -> dict:
+    """Both samples, k and the harm checks, on the agent's own baseline rates."""
+    baseline = power_pass.baseline
+    guardrail_count = get_guardrail_count(power_pass.pattern.agent)
+    primary_rate = _get_primary_rate(baseline)
+    readings = get_guardrail_baseline(
+        power_pass.spawns, detection_start, power_pass.provenance_start
+    )
+    checks = get_harm_checks(
+        power_pass.pattern.metric_key,
+        readings,
+        HarmSizing(
+            primary_rate, maximum, guardrail_count, power_pass.guardrail_design_effects
+        ),
+    )
+    samples = _get_samples(baseline.events, baseline.spawns)
+    return {
+        "samples": samples,
+        "guardrail_count": guardrail_count,
+        "harm_checks": checks,
+    }
+
+
+def _get_samples(events: int, spawns: int) -> dict:
+    """The efficacy and primary-harm per-arm samples the payload states; None outside (0, 1)."""
+    if not 0 < events < spawns:
+        return {"efficacy": None, "harm": None}
+    rate = events / spawns
+    return {
+        "efficacy": trial_design.get_maximum_sample_size(rate),
+        "harm": trial_design.get_harm_sample_size(rate),
+    }
+
+
+class GuardrailBaseline(NamedTuple):
+    """An agent's own baseline readings its guardrail harm checks are stated on; None = no reading."""
+
+    no_stop_rate: float | None  # spawns ending without a SubagentStop
+    verified_fail_rate: float | None  # over graded rows; None = no row graded
+    tool_use: ToolUseBaseline
+
+
+class ToolUseBaseline(NamedTuple):
+    """Recorded tool uses per spawn; None = no reading."""
+
+    mean: float | None
+    sd: float | None  # None under two recorded readings
+
+
+class HarmSizing(NamedTuple):
+    """What a trial's harm checks are sized on: the primary's rate, the per-arm sample, k and the
+    guardrail design effects the no-SubagentStop leg and its proxy line are stated at."""
+
+    primary_rate: float | None
+    per_arm: int | None
+    guardrail_count: int
+    design_effects: GuardrailDesignEffects = GuardrailDesignEffects(None, None)
+
+
+class HarmStage(NamedTuple):
+    """One check's per-stage inputs: the per-arm sample both stages size on, each stage's α, and
+    the design effect it is stated at — None states it at the unmeasured bracket."""
+
+    per_arm: int | None
+    alpha: StageAlpha
+    design_effect: float | None = None
+
+
+class StageAlpha(NamedTuple):
+    trial: float
+    watch: float  # a guardrail's family share 0.05/k; the primary's own trial α
+
+
+# harm-check constants: the design-effect bracket, k per family, reading labels, guardrail names
+HARM_CHECK = SimpleNamespace(
+    DESIGN_EFFECTS=(1, 2),  # an unmeasured design effect's bracket
+    DESIGN_EFFECT_LABEL=SimpleNamespace(
+        UNMEASURED="unmeasured: no design-effect row from a passed A/A, stated at design effect 1 and 2",
+        PROXY="proxy — union definition, not used for sizing or stopping",
+    ),
+    GUARDRAIL_COUNT=SimpleNamespace(CODE=4, OTHER=3),
+    # verified_fail's baseline label: unread ≠ a measured zero
+    READING=SimpleNamespace(
+        READ="read",
+        UNREAD="unread: no baseline outcome row carries a grader_verdict",
+    ),
+    GUARDRAIL=SimpleNamespace(
+        TOOL_USE="tool_use",
+        NO_STOP="no_subagent_stop",
+        VERIFIED_FAIL=GRADER_VERDICT_FAIL,
+        REDELEGATION="redelegation",
+    ),
+)
+
+
+def get_guardrail_count(agent: str) -> int:
+    """k of the agent's guardrail family: 3 where the scope map names a non-DEV scope file, else 4.
+
+    k decides the watch share 0.05/k, whether the verified_fail guardrail exists and the trial
+    maximum's growth; an agent the map does not name takes 4.
+    """
+    scope_file = _AGENT_SCOPE_MAP.get(agent)
+    if scope_file is not None and scope_file != _DEV_SCOPE_FILE:
+        return HARM_CHECK.GUARDRAIL_COUNT.OTHER
+    return HARM_CHECK.GUARDRAIL_COUNT.CODE
+
+
+def get_guardrail_baseline(
+    spawns: Iterable[SpawnFacts],
+    detection_start: datetime,
+    provenance_start: datetime | None,
+) -> GuardrailBaseline:
+    """Readings over the floor half of the provenance-covered baseline: the spawns the primary counts.
+
+    verified_fail counts only outcome rows with a non-None grader_verdict: a row the grader
+    has not reached sits in neither count, and none graded leaves it unread (None), never a
+    measured zero.
+    """
+    members = _get_guardrail_members(spawns, detection_start, provenance_start)
+    graded = [
+        row
+        for spawn in members
+        for row in spawn.outcomes
+        if row.get("grader_verdict") is not None
+    ]
+    return GuardrailBaseline(
+        _get_share(sum(not spawn.has_subagent_stop for spawn in members), len(members)),
+        _get_share(
+            sum(row["grader_verdict"] == GRADER_VERDICT_FAIL for row in graded),
+            len(graded),
+        ),
+        _get_tool_use_baseline(members),
+    )
+
+
+def _get_guardrail_members(
+    spawns: Iterable[SpawnFacts],
+    detection_start: datetime,
+    provenance_start: datetime | None,
+) -> list[SpawnFacts]:
+    """The floor half of the provenance-covered baseline."""
+    start = _get_covered_start(detection_start, provenance_start)
+    return [
+        spawn
+        for spawn in spawns
+        if spawn.agent_id is not None
+        and start <= spawn.started_at < detection_start
+        and is_floor_half(spawn.agent_id)
+    ]
+
+
+def _get_covered_start(detection_start: datetime, provenance_start: datetime | None) -> datetime:
+    """The baseline's provenance-covered start; no provenance start covers nothing."""
+    covered_start = detection_start if provenance_start is None else provenance_start
+    return max(detection_start - BASELINE.SPAN, covered_start)
+
+
+def _get_tool_use_baseline(spawns: list[SpawnFacts]) -> ToolUseBaseline:
+    tool_uses = [
+        spawn.tool_use_actual for spawn in spawns if spawn.tool_use_actual is not None
+    ]
+    return ToolUseBaseline(
+        statistics.fmean(tool_uses) if tool_uses else None,
+        statistics.stdev(tool_uses) if len(tool_uses) > 1 else None,
+    )
+
+
+def _get_share(count: int, total: int) -> float | None:
+    return count / total if total else None
+
+
+def get_harm_checks(
+    metric_key: str, readings: GuardrailBaseline, sizing: HarmSizing
+) -> dict:
+    """Per harm check its D6 margin, and per stage its R74 α and minimum detectable harm at that α.
+
+    Each guardrail also states the watch's widening over the trial (R226); verified_fail is a
+    guardrail only, present at k 4, its row labelled read or unread; re-delegation states its
+    α shares and model-based widening here, its margin elsewhere.
+    """
+    if metric_key not in METRIC_KEYS:
+        raise ValueError(f"harm checks: {metric_key!r} is not a primary metric key")
+    alpha = trial_design.DEFAULT_ALPHA
+    stage = HarmStage(sizing.per_arm, StageAlpha(alpha, alpha / sizing.guardrail_count))
+    names = HARM_CHECK.GUARDRAIL
+    guardrails = _get_rate_guardrails(readings, sizing, stage)
+    guardrails[names.TOOL_USE] = _get_tool_use_check(
+        readings.tool_use, stage, is_upward=metric_key == METRIC_BUDGET_OVERAGE
+    )
+    guardrails[names.REDELEGATION] = _get_redelegation_check(stage.alpha)
+    primary = _get_rate_row(
+        sizing.primary_rate,
+        1 + trial_design.DEFAULT_RELATIVE_RISE,
+        HarmStage(sizing.per_arm, StageAlpha(alpha, alpha)),
+    )
+    return {"primary": {"metric_key": metric_key, **primary}, "guardrails": guardrails}
+
+
+def _get_rate_guardrails(
+    readings: GuardrailBaseline, sizing: HarmSizing, stage: HarmStage
+) -> dict:
+    """The leg's check, and at k 4 verified_fail's, labelled read or unread."""
+    names = HARM_CHECK.GUARDRAIL
+    guardrails = {names.NO_STOP: _get_no_stop_check(readings, sizing, stage)}
+    if sizing.guardrail_count != HARM_CHECK.GUARDRAIL_COUNT.CODE:
+        return guardrails
+    row = _get_rate_check(
+        readings.verified_fail_rate, 1 + trial_design.DEFAULT_RELATIVE_RISE, stage
+    )
+    row["reading"] = (
+        HARM_CHECK.READING.UNREAD
+        if readings.verified_fail_rate is None
+        else HARM_CHECK.READING.READ
+    )
+    guardrails[names.VERIFIED_FAIL] = row
+    return guardrails
+
+
+def _get_no_stop_check(
+    readings: GuardrailBaseline, sizing: HarmSizing, stage: HarmStage
+) -> dict:
+    """The leg at its measured design effect, or at the bracket with the union row's proxy line."""
+    margin = _get_no_stop_margin(sizing.primary_rate, readings.no_stop_rate)
+    measured, proxy = sizing.design_effects
+    row = _get_rate_check(
+        readings.no_stop_rate, margin, stage._replace(design_effect=measured)
+    )
+    if measured is None and proxy is not None:
+        stated = _get_rate_row(
+            readings.no_stop_rate, margin, stage._replace(design_effect=proxy)
+        )
+        row["proxy"] = {
+            "label": HARM_CHECK.DESIGN_EFFECT_LABEL.PROXY,
+            "design_effect": proxy,
+            "minimum_detectable": {
+                name: stated[name]["minimum_detectable"]["design_effect_measured"]
+                for name in ("trial", "watch")
+            },
+        }
+    return row
+
+
+def _get_no_stop_margin(
+    primary_rate: float | None, no_stop_rate: float | None
+) -> float:
+    """The stricter of the 30% rise and the trial's absolute primary effect, a fold at the leg's own rate."""
+    relative = 1 + trial_design.DEFAULT_RELATIVE_RISE
+    if not primary_rate or not no_stop_rate:
+        return relative
+    absolute = trial_design.DEFAULT_RELATIVE_REDUCTION * primary_rate
+    return min(relative, 1 + absolute / no_stop_rate)
+
+
+def _get_rate_check(rate: float | None, margin: float, stage: HarmStage) -> dict:
+    row = _get_rate_row(rate, margin, stage)
+    row["widening"] = _get_widening(row, origin=1.0)
+    row["design_effect"] = _get_design_effect_line(stage.design_effect)
+    return row
+
+
+def _get_design_effect_line(design_effect: float | None) -> dict:
+    if design_effect is None:
+        return {"basis": "unmeasured", "label": HARM_CHECK.DESIGN_EFFECT_LABEL.UNMEASURED}
+    return {"basis": "measured", "value": design_effect}
+
+
+def _get_rate_row(rate: float | None, margin: float, stage: HarmStage) -> dict:
+    """Fold rise per stage at its α; None: no rate in (0, 1), no sample or no detectable rise."""
+
+    def get_harm(alpha: float, design_effect: float) -> float | None:
+        if rate is None or not 0 < rate < 1 or stage.per_arm is None:
+            return None
+        fold = trial_design.get_rate_harm(
+            rate, stage.per_arm, alpha=alpha, design_effect=design_effect
+        )
+        return None if math.isinf(fold) else fold
+
+    return {
+        "unit": "fold rise",
+        "baseline_rate": rate,
+        "margin": margin,
+        **_get_stages(stage, 1, get_harm),
+    }
+
+
+def _get_tool_use_check(
+    tool_use: ToolUseBaseline, stage: HarmStage, *, is_upward: bool
+) -> dict:
+    """Upward only on an overage-primary trial, either way otherwise, in both stages (D6)."""
+    sides, mean = (1 if is_upward else 2), tool_use.mean
+
+    def get_harm(alpha: float, design_effect: float) -> float | None:
+        if not tool_use.sd or stage.per_arm is None:
+            return None
+        return trial_design.get_tool_use_harm(
+            tool_use.sd,
+            stage.per_arm,
+            is_overage_primary=is_upward,
+            alpha=alpha,
+            design_effect=design_effect,
+        )
+
+    row = {
+        "unit": "tool uses",
+        "baseline_mean": mean,
+        "margin": None if mean is None else trial_design.DEFAULT_RELATIVE_RISE * mean,
+        **_get_stages(stage, sides, get_harm),
+    }
+    row["widening"] = _get_widening(row, origin=0.0)
+    row["design_effect"] = _get_design_effect_line(stage.design_effect)
+    return row
+
+
+def _get_redelegation_check(alpha: StageAlpha) -> dict:
+    drift = _get_drift_widening(alpha.watch, sides=1)
+    return {
+        "trial": {"alpha": alpha.trial},
+        "watch": {"alpha": alpha.watch},
+        # a mean shift like the band → widens by the drift ratio itself
+        "widening": {
+            "basis": "model-based",
+            "own_unit": {
+                f"design_effect_{value}": drift["fixed_sample"]
+                for value in HARM_CHECK.DESIGN_EFFECTS
+            },
+            "drift": drift,
+        },
+    }
+
+
+def _get_stages(
+    stage: HarmStage, sides: int, get_harm: Callable[[float, float], float | None]
+) -> dict:
+    """The trial and the watch stage, each at its own α and the stage's design effect."""
+    return {
+        name: _get_stage(
+            value,
+            sides,
+            _get_minimum_detectable(
+                lambda design_effect, value=value: get_harm(value, design_effect),
+                stage.design_effect,
+            ),
+        )
+        for name, value in stage.alpha._asdict().items()
+    }
+
+
+def _get_stage(alpha: float, sides: int, minimum_detectable: dict) -> dict:
+    return {
+        "alpha": alpha,
+        "sides": sides,
+        "alpha_per_side": alpha / sides,
+        "minimum_detectable": minimum_detectable,
+    }
+
+
+def _get_minimum_detectable(
+    get_harm: Callable[[float], float | None], design_effect: float | None
+) -> dict:
+    """A measured design effect alone, else the unmeasured bracket's values."""
+    if design_effect is None:
+        return {
+            f"design_effect_{value}": get_harm(value) for value in HARM_CHECK.DESIGN_EFFECTS
+        }
+    return {"design_effect_measured": get_harm(design_effect)}
+
+
+def _get_widening(row: dict, *, origin: float) -> dict:
+    """The watch over the trial at equal sample: in the check's own unit (excess over ``origin``), and on the drift scale."""
+    trial, watch = (
+        row["trial"]["minimum_detectable"],
+        row["watch"]["minimum_detectable"],
+    )
+    own_unit = {
+        key: None
+        if trial[key] is None or watch[key] is None
+        else (watch[key] - origin) / (trial[key] - origin)
+        for key in trial
+    }
+    drift = _get_drift_widening(row["watch"]["alpha"], row["watch"]["sides"])
+    return {"own_unit": own_unit, "drift": drift}
+
+
+def _get_drift_widening(watch_alpha: float, sides: int) -> dict:
+    """Shipped fixed-sample drift ratio, and the ratio with each α's four-look inflation (per side)."""
+    is_upward = sides == 1
+
+    def get_drift(alpha: float) -> float:
+        return trial_design.get_tool_use_harm(
+            1.0, 1.0, is_overage_primary=is_upward, alpha=alpha
+        )
+
+    fixed = get_drift(watch_alpha) / get_drift(trial_design.DEFAULT_ALPHA)
+    inflation = trial_design.get_inflation_factor(
+        alpha=watch_alpha / sides
+    ) / trial_design.get_inflation_factor(alpha=trial_design.DEFAULT_ALPHA / sides)
+    return {"fixed_sample": fixed, "four_look": fixed * math.sqrt(inflation)}
+
+
 def get_look_payload(look: Look, accrual: LookAccrual) -> dict:
-    """One reached look: accrual beside its boundary; with arm data, the pooled z too — never a decision."""
+    """One reached look: accrual beside its boundary; with arm data, the primary's z too."""
     payload: dict = {
         "look": look.number,
         "fraction": look.registration["fraction"],
@@ -9255,7 +10195,7 @@ def get_look_payload(look: Look, accrual: LookAccrual) -> dict:
     }
     if accrual.arms is not None:
         payload["arms"] = {name: arm._asdict() for name, arm in accrual.arms._asdict().items()}
-        payload["z"] = _get_pooled_z(accrual.arms)
+        payload["z"] = accrual.z
     return payload
 
 
@@ -9271,99 +10211,416 @@ def _get_pooled_z(arms: TrialArms) -> float | None:
     return (control.events / control.units - treatment.events / treatment.units) / math.sqrt(variance)
 
 
-def _is_trial_current(trial: ShadowTrial, last_transition_at: datetime | None) -> bool:
-    return last_transition_at is None or trial.recorded_at >= last_transition_at
-
-
-def _read_shadow_trials(
-    passes: list[PowerPass],
-) -> dict[tuple[str, int, str | None], ShadowTrial] | None:
-    """(agent, pattern id, metric key) → latest pre-registration; None (WARN) on a read fault."""
-    agents = sorted({power_pass.pattern.agent for power_pass in passes})
+def _read_started_trials(judged_trials: frozenset[str]) -> list[StartedTrial] | None:
+    """Each trial in ``judged_trials`` with a readable start record, from its pre-registration
+    row; none judged → no read; None (WARN) on a fault."""
+    if not judged_trials:
+        return []
     try:
-        with _pg_connect() as conn, conn.cursor() as cur:
-            event = TRIAL_LEDGER.EVENT
-            cur.execute(
-                SHADOW.PREREGISTRATION_SQL,
-                (
-                    event.SHADOW_PREREGISTRATION,
-                    agents,
-                    event.AA_INVALIDATION,
-                    f"{event.AA_RESULT}:",
-                    AA.VERDICT.PASS,
-                ),
-            )
-            rows = cur.fetchall()
+        canaries = {trial.key: trial for trial in _read_trial_canaries()}
+        bindings = list(_read_trial_bindings().values())
     except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
-        _warn_shadow(
-            f"pre-registrations unreadable: {_describe_fault(exc)}",
-            "no pre-registration or look this cycle",
-        )
+        _warn_shadow(f"trial starts unreadable: {_describe_fault(exc)}", "no look this cycle")
         return None
+    return [
+        StartedTrial(canaries[binding.key], binding.started_at)
+        for binding in bindings
+        if binding.key in judged_trials
+        and binding.key in canaries
+        and binding.started_at is not None
+    ]
+
+
+def _read_look_spawns(
+    trials: list[StartedTrial], windows: PairWindows
+) -> Mapping[str, list[SpawnFacts]] | None:
+    """Each trial agent's spawns over the pair windows; None (WARN) on a fault, or when the
+    trial_design import failed — the look's z reads that module."""
+    if _TRIAL_DESIGN_IMPORT_EXC is not None:
+        cause = f"trial_design import failed: {_describe_fault(_TRIAL_DESIGN_IMPORT_EXC)}"
+    else:
+        agents = sorted({trial.canary.agent for trial in trials})
+        try:
+            return _pg_read_spawn_facts(agents, windows)[1]
+        except Exception as exc:  # noqa: BLE001 — a spawn read fault never fails the cycle
+            cause = f"trial spawns unreadable: {_describe_fault(exc)}"
+    _warn_shadow(cause, "no look this cycle")
+    return None
+
+
+def _write_shadow_looks(
+    trial: StartedTrial, counted: Sequence[ArmedSpawn], inputs: CountInputs
+) -> bool:
+    """The harm stop a recorded look left unwritten, else the reached looks in order on this
+    cycle's accrual, each row with the cycle's re-delegation count and harm checks → True once
+    a decision is recorded: at a look whose row lands, a validity void ahead of its harm stop,
+    win or maximum-sample retire."""
+    canary = trial.canary
+    stop = _get_recorded_harm_stop(canary, inputs.recorded)
+    if stop is not None:
+        number, decision = stop
+        void = _get_validity_void(canary, counted)
+        # written or faulted, it ends the cycle's looks → no later look can win over a due stop
+        return _write_look_time_decision(canary, void or decision, f"look {number}")
+    accrual = _get_look_accrual(trial, counted)
+    looks = canary.payload["looks"]
+    reached = _get_reached_looks(looks, accrual)
+    count = _get_look_count(trial, reached, inputs)
+    readings = LookReadings(accrual, _get_harm_rises(counted, accrual), count)
+    for look in reached:
+        payload = _get_live_look_payload(canary, look, readings)
+        # read before the row lands → an unusable boundary or harm check records no look
+        decision = _get_look_decision(canary, payload, is_last=look.number == len(looks))
+        row = _get_live_look_row(canary, look, payload)
+        # 0 = a look already recorded, None = a faulted write → no decision on any later data
+        if _write_shadow_row(row, canary) != 1 or decision is None:
+            continue
+        void = _get_validity_void(canary, counted)
+        return _write_look_time_decision(canary, void or decision, f"look {look.number}")
+    return False
+
+
+def _get_reached_looks(looks: Sequence[Mapping[str, float]], accrual: LookAccrual) -> list[Look]:
+    """The pre-registered looks, in order, whose milestone the accrual's total tasks reach."""
+    return list(
+        takewhile(
+            lambda look: accrual.tasks >= look.registration["milestone"],
+            starmap(Look, enumerate(looks, start=1)),
+        )
+    )
+
+
+def _get_live_look_row(canary: TrialCanary, look: Look, payload: dict) -> ShadowRow:
+    return ShadowRow(
+        TRIAL_LEDGER.EVENT.LIVE_LOOK,
+        TRIAL_LEDGER.ACTOR.LIVE,
+        payload,
+        dedupe_key=f"{canary.key}:look:{look.number}",
+    )
+
+
+def _get_live_look_payload(canary: TrialCanary, look: Look, readings: LookReadings) -> dict:
+    """A live look's row: its accrual beside its boundary, the cycle's re-delegation count,
+    its harm checks."""
     return {
-        (agent, pattern_id, metric_key): ShadowTrial(key, payload, recorded_at)
-        for agent, pattern_id, metric_key, key, payload, recorded_at in rows
+        **get_look_payload(look, readings.accrual),
+        "redelegation": readings.redelegation,
+        "harm": _get_look_harm(canary, look, readings),
     }
 
 
-def _write_shadow_preregistration(power_pass: PowerPass, detection_start: datetime) -> None:
-    """Pre-register the current pair; a taken key (a lifecycle move on the earlier pre-registration's
-    UTC day, same detection start) lands 0 rows → named WARN, re-keyed on the next UTC day."""
-    key = get_trial_key(power_pass.pattern, detection_start)
-    landed = _write_shadow_row(
-        ShadowRow(
-            TRIAL_LEDGER.EVENT.SHADOW_PREREGISTRATION,
-            get_preregistration_payload(power_pass, detection_start),
-            dedupe_key=key,
-        ),
-        TrialIdentity(key, power_pass.pattern),
+def _get_look_decision(canary: TrialCanary, payload: dict, *, is_last: bool) -> dict | None:
+    """The decision a landing look takes, a validity void aside: the harm stop of its crossed
+    checks, else the win at or over the boundary, else the last look's maximum-sample retire;
+    None = none due."""
+    crossed = [name for name, check in payload["harm"].items() if check["is_crossed"]]
+    if crossed:
+        return _get_harm_stop(canary, crossed)
+    z = payload.get("z")
+    if z is not None and z >= payload["boundary"]:
+        return {"win": payload}
+    if is_last:
+        return {"retire": {"reason": "maximum-sample", "agent": canary.agent}}
+    return None
+
+
+def _get_harm_stop(canary: TrialCanary, crossed: Sequence[str]) -> dict:
+    """The harm stop naming one crossed check: the primary's ahead of a guardrail's, guardrails
+    by name."""
+    reason = min(crossed, key=lambda name: (name != "primary", name))
+    return {"harm": {"reason": reason, "agent": canary.agent}}
+
+
+def _get_recorded_harm_stop(
+    canary: TrialCanary, recorded: Mapping[int, dict]
+) -> tuple[int, dict] | None:
+    """The earliest recorded look whose row stores a crossed harm check, beside its harm stop:
+    the verdict judged once, at its landing, read as stored — never judged on later data. A row
+    whose harm, or a check in it, is no dict stores none, as a row without the key."""
+    for number in sorted(recorded):
+        harm = recorded[number].get("harm")
+        checks = harm.items() if isinstance(harm, dict) else ()
+        crossed = [
+            name
+            for name, check in checks
+            if isinstance(check, dict) and check.get("is_crossed") is True
+        ]
+        if crossed:
+            return number, _get_harm_stop(canary, crossed)
+    return None
+
+
+def _get_harm_rises(
+    counted: Sequence[ArmedSpawn], accrual: LookAccrual
+) -> dict[str, float | None]:
+    """Each harm check's treatment-minus-control difference over its independent-spawn standard
+    error, a rise positive, on the settled spawns the check reads: every one for the primary
+    and the no-SubagentStop leg, those with a recorded tool_use line, those with a graded
+    outcome row; None = undefined on this cycle's data."""
+    names = HARM_CHECK.GUARDRAIL
+    settled = _get_settled_spawns(counted)
+    reductions = {
+        "primary": accrual.z,
+        names.NO_STOP: _get_look_z(settled, lambda spawn: not spawn.has_subagent_stop),
+        names.TOOL_USE: _get_look_z(settled, lambda spawn: spawn.tool_use_actual),
+        names.VERIFIED_FAIL: _get_look_z(settled, _get_verified_fail),
+    }
+    return {name: None if z is None else -z for name, z in reductions.items()}
+
+
+def _get_verified_fail(spawn: SpawnFacts) -> bool | None:
+    """Whether a graded outcome row of the spawn failed verification; None = none graded, as
+    the baseline leaves an ungraded row in neither count."""
+    verdicts = [row.get("grader_verdict") for row in spawn.outcomes]
+    graded = [verdict for verdict in verdicts if verdict is not None]
+    return GRADER_VERDICT_FAIL in graded if graded else None
+
+
+def _get_look_harm(canary: TrialCanary, look: Look, readings: LookReadings) -> dict:
+    """Per harm check the pre-registration states, this look's verdict: its rise beside the
+    O'Brien-Fleming-type boundary of the check's per-side alpha over the registered looks,
+    crossed at or over it — either way on a two-sided band; the re-delegation count carries
+    the cycle's own verdict, a muted or absent count not crossed."""
+    stated = canary.payload["harm_checks"]
+    fractions = [registration["fraction"] for registration in canary.payload["looks"]]
+    count = readings.redelegation
+    harm = {HARM_CHECK.GUARDRAIL.REDELEGATION: {"is_crossed": bool(count and count["is_crossed"])}}
+    for name, check in {"primary": stated["primary"], **stated["guardrails"]}.items():
+        if name in harm:
+            continue
+        stage, rise = check["trial"], readings.rises[name]
+        boundary = trial_design.get_boundaries(
+            alpha=stage["alpha_per_side"], look_fractions=fractions
+        )[look.number - 1]
+        reach = rise if rise is None or stage["sides"] == 1 else abs(rise)
+        harm[name] = {
+            "z": rise,
+            "boundary": boundary,
+            "sides": stage["sides"],
+            "is_crossed": reach is not None and reach >= boundary,
+        }
+    return harm
+
+
+def _get_look_count(
+    trial: StartedTrial, reached: Sequence[Look], inputs: CountInputs
+) -> dict | None:
+    """The re-delegation count for the reached looks no row records yet: judged once, on this
+    cycle's data, at the alpha spent through the highest reached look, its cut set on the
+    crossings the latest recorded look carries; None when every reached look is recorded — a
+    recorded look is never judged again."""
+    if all(look.number in inputs.recorded for look in reached):
+        return None
+    payload = trial.canary.payload
+    test = payload["redelegation_test"]
+    clusters = _get_follow_up_clusters(trial, inputs)
+    carried = _get_carried_crossings(trial.canary, inputs.recorded)
+    judged = None if carried is None else trial_design.get_randomization_look(
+        clusters,
+        get_arm=get_spawn_arm,
+        salt_namespace=test["salt_namespace"],
+        redraws=test["redraws"],
+        fraction=reached[-1].registration["fraction"],
+        crossed=carried,
     )
-    if landed == 0:
+    return {
+        "window_minutes": payload["redelegation"]["minutes"],
+        "arms": _get_follow_up_arms(clusters),
+        "reference": test["redraws"] + 1,
+        **_get_crossing_payload(judged),
+    }
+
+
+def _get_follow_up_clusters(
+    trial: StartedTrial, inputs: CountInputs
+) -> list[list[tuple[str, int, float]]]:
+    """Per parent session, each closed-window spawn from the start record's second with its
+    recomputed arm and its follow-ups at the pre-registered W; an `unknown` id is in no arm."""
+    canary = trial.canary
+    counts = get_follow_up_counts(
+        {canary.agent: inputs.spawns},
+        canary.agent,
+        Window(trial.started_at.replace(microsecond=0), inputs.evaluated_at),
+        redelegation_window=timedelta(minutes=canary.payload["redelegation"]["minutes"]),
+        evaluated_at=inputs.evaluated_at,
+    )
+    clusters: dict[str | None, list[tuple[str, int, float]]] = defaultdict(list)
+    for spawn, follow_ups in counts:
+        if spawn.agent_id is not None:
+            arm = get_spawn_arm(canary.salt_id, spawn.agent_id)
+            clusters[spawn.session_id].append((spawn.agent_id, arm, float(follow_ups)))
+    return list(clusters.values())
+
+
+def _get_follow_up_arms(clusters: Sequence[Sequence[tuple[str, int, float]]]) -> dict:
+    """Per arm: its counted spawns, their follow-ups, and how many of them were followed at all."""
+    arms = {name: {"spawns": 0, "follow_ups": 0, "followed": 0} for name in TrialArms._fields}
+    for cluster in clusters:
+        for _, arm, follow_ups in cluster:
+            row = arms[TrialArms._fields[arm]]
+            row["spawns"] += 1
+            row["follow_ups"] += int(follow_ups)
+            row["followed"] += follow_ups > 0
+    return arms
+
+
+def _get_carried_crossings(canary: TrialCanary, recorded: Mapping[int, dict]) -> list[int] | None:
+    """The reference members crossed at or before the latest recorded look, as its row holds
+    them; no look recorded → none; None (WARN) when that row holds no readable set."""
+    if not recorded:
+        return []
+    latest = max(recorded)
+    count = recorded[latest].get("redelegation")
+    crossed = count.get("crossed") if isinstance(count, dict) else None
+    if isinstance(crossed, list) and all(type(member) is int for member in crossed):
+        return crossed
+    _warn_shadow(
+        f"trial {canary.key}: look {latest}'s row holds no readable crossings",
+        "no re-delegation crossing at this look",
+    )
+    return None
+
+
+def _get_crossing_payload(look: trial_design.RandomizationLook | None) -> dict:
+    """The count's verdict as the look row carries it; None = the carried crossings were
+    unreadable → no crossing, and none carried on."""
+    if look is None:
+        return {
+            "statistic": None,
+            "critical": None,
+            "crossed": None,
+            "is_crossed": False,
+            "label": "unreadable-earlier-look",
+        }
+    return {
+        "statistic": look.statistic,
+        "critical": look.critical,
+        "crossed": sorted(look.crossed),
+        "is_crossed": look.is_crossed,
+        "label": None if look.statistic is not None else "undefined",
+    }
+
+
+def _get_validity_void(canary: TrialCanary, counted: Sequence[ArmedSpawn]) -> dict | None:
+    """The void due ahead of a harm stop, a win or a retire, on the A/A's criteria over the
+    trial's counted spawns: an imbalanced split once BALANCE.MINIMUM_SPAWNS are counted, else
+    delivery under MINIMUM_DELIVERY_PERCENT of the treatment spawns or to a control spawn; no
+    treatment spawn and nothing delivered to control → None."""
+    armed = {canary.agent: counted}
+    delivery = get_aa_delivery_criterion(armed)
+    is_delivery_read = delivery.detail["treatment"] or delivery.detail["control_delivered"]
+    if canary.agent in get_aa_balance_criterion(armed).detail["failed"]:
+        reason = "arm-imbalance"
+    elif delivery.verdict == AA.VERDICT.FAIL and is_delivery_read:
+        reason = "low-delivery"
+    else:
+        return None
+    return {"void": {"reason": reason, "agent": canary.agent}}
+
+
+def _write_horizon_decision(trial: StartedTrial, counted: Sequence[ArmedSpawn]) -> None:
+    """At the start record + the horizon the pre-registration states: a validity void, else
+    its horizon retire; no readable horizon → named WARN, no decision."""
+    canary = trial.canary
+    horizon_days = canary.payload.get("horizon_days") if isinstance(canary.payload, dict) else None
+    try:
+        # parsed as _is_unstarted_past_bound parses it
+        if isinstance(horizon_days, bool) or not horizon_days > 0:
+            raise ValueError("not a positive day count")
+        bound = trial.started_at + timedelta(days=horizon_days)
+    except (TypeError, ValueError, OverflowError):
         _warn_shadow(
-            f"trial {key}: pre-registration landed 0 rows — key taken by this UTC day's "
-            "earlier pre-registration (lifecycle move since)",
-            "no look for the pattern until the next UTC day re-keys it",
+            f"trial {canary.key}: {canary.agent}'s pre-registration states no horizon "
+            f"({horizon_days!r})",
+            "no horizon retire",
         )
+        return
+    if _get_utc_now() >= bound:
+        retire = {"retire": {"reason": "horizon", "agent": canary.agent}}
+        void = _get_validity_void(canary, counted)
+        _write_look_time_decision(canary, void or retire, "its horizon")
 
 
-def _write_shadow_looks(trial: ShadowTrial, power_pass: PowerPass, window_end: datetime) -> None:
-    accrued = _get_accrued_task_count(trial, power_pass, window_end)
-    for number, registration in enumerate(trial.payload["looks"], start=1):
-        if accrued < registration["milestone"]:
-            return
-        _write_shadow_row(
-            ShadowRow(
-                TRIAL_LEDGER.EVENT.SHADOW_LOOK,
-                get_look_payload(Look(number, registration), LookAccrual(accrued)),
-                dedupe_key=f"{trial.key}:look:{number}",
-            ),
-            TrialIdentity(trial.key, power_pass.pattern),
+def _write_look_time_decision(canary: TrialCanary, payload: dict, occasion: str) -> bool:
+    """The trial's decision row, its one top-level key the outcome → True unless the write
+    faulted: named WARN, the trial left open. A decision whose row landed removes the trial's
+    canary file."""
+    (outcome,) = payload
+    try:
+        landed = _write_live_decision(canary.key, canary.agent, canary.pattern_id, payload)
+    except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
+        _warn_shadow(
+            f"trial {canary.key}: {outcome} decision at {occasion} not recorded: {_describe_fault(exc)}",
+            "the trial stays open",
         )
-
-
-def _get_accrued_task_count(trial: ShadowTrial, power_pass: PowerPass, window_end: datetime) -> int:
-    return len(
-        get_tasks(
-            (
-                spawn
-                for spawn in power_pass.spawns
-                if spawn.agent_id is not None and trial.recorded_at <= spawn.started_at < window_end
-            ),
-            SHADOW.TASK_WINDOW,
-        )
+        return False
+    result = "recorded" if landed else f"not written ({_DECISION_UNLANDED})"
+    sys.stderr.write(
+        f"[daemon-cycle] INFO: shadow stage — trial {canary.key}: {outcome} decision at {occasion} "
+        f"{result}\n"
     )
+    if landed:
+        path = _get_canary_path(canary.agent)
+        _delete_canaries(
+            [path], f"trial {canary.key}: {outcome} decided", STAGE_AREA.SHADOW
+        )
+    return True
 
 
-def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> int | None:
+def _get_counted_spawns(
+    trial: StartedTrial, spawns: list[SpawnFacts], window_end: datetime
+) -> list[ArmedSpawn]:
+    """The trial agent's spawns counted from the start record, each under its recomputed arm."""
+    # started_at is whole seconds → floored start keeps a first-second spawn, as _bind_to_open_aa
+    start = trial.started_at.replace(microsecond=0)
+    salt_id = trial.canary.salt_id
+    return [
+        ArmedSpawn(spawn, get_spawn_arm(salt_id, spawn.agent_id))
+        for spawn in spawns
+        if spawn.agent_id is not None and start <= spawn.started_at < window_end
+    ]
+
+
+def _get_look_accrual(trial: StartedTrial, counted: Sequence[ArmedSpawn]) -> LookAccrual:
+    """Both arms' total tasks over the counted spawns; of the settled ones, each arm with the
+    primary event per spawn, and the primary's z."""
+    payload = trial.canary.payload
+    is_event = _get_aa_event_test(payload["metric_key"], get_tool_budget(os.environ))
+    tasks = get_tasks((item.spawn for item in counted), SHADOW.TASK_WINDOW)
+    settled = _get_settled_spawns(counted)
+    return LookAccrual(len(tasks), _get_aa_arms(settled, is_event), _get_look_z(settled, is_event))
+
+
+def _get_settled_spawns(counted: Sequence[ArmedSpawn]) -> list[ArmedSpawn]:
+    """The counted spawns with an outcome to read: one that may still be running has none yet
+    → in no arm, as get_aa_looks."""
+    now = _get_utc_now()
+    return [item for item in counted if not is_pending(item.spawn, now)]
+
+
+def _get_look_z(
+    items: Sequence[ArmedSpawn], get_value: Callable[[SpawnFacts], float | None]
+) -> float | None:
+    """The reduction (control mean of a spawn's value above treatment's positive) over its
+    independent-spawn standard error, whatever the spawns' sessions; None when undefined. A
+    spawn whose value is None is in neither arm."""
+    values = [(item.arm, get_value(item.spawn)) for item in items]
+    z = trial_design.get_independent_z(
+        [(arm, float(value)) for arm, value in values if value is not None]
+    )
+    return None if z is None else -z
+
+
+def _write_shadow_row(row: ShadowRow, trial: TrialCanary | None = None) -> int | None:
     """Rows landed (0 = dedupe key taken or ledger absent); None after a WARNed fault."""
     try:
         return _pg_write_trial_ledger_row(
             row.event,
-            TRIAL_LEDGER.ACTOR.SHADOW,
+            row.actor,
             row.payload,
             trial_key=None if trial is None else trial.key,
-            agent=None if trial is None else trial.pattern.agent,
-            learning_pattern_id=None if trial is None else trial.pattern.row_id,
+            agent=None if trial is None else trial.agent,
+            learning_pattern_id=None if trial is None else trial.pattern_id,
             dedupe_key=row.dedupe_key,
         )
     except Exception as exc:  # noqa: BLE001 — a ledger write fault never fails the cycle
@@ -9375,7 +10632,503 @@ def _write_shadow_row(row: ShadowRow, trial: TrialIdentity | None = None) -> int
 
 
 def _warn_shadow(cause: str, scope: str) -> None:
-    sys.stderr.write(f"[daemon-cycle] WARN: shadow stage — {cause}; {scope}\n")
+    _warn_stage(STAGE_AREA.SHADOW, cause, scope)
+
+
+class TrialCanary(NamedTuple):
+    """An open live trial's canary source: its committed pre-registration row."""
+
+    salt_id: int  # the pre-registration row's id
+    agent: str
+    key: str  # the live trial key
+    pattern_id: int | None
+    payload: dict
+    recorded_at: datetime
+    is_started: bool  # its <live trial key>:start row landed
+
+
+def run_trial_stage() -> frozenset[str]:
+    """Judge each open live trial's stored rows, then write its canary from its committed
+    pre-registration; its decisions are the aa-invalidated void, the foreign-hash void and the
+    unstarted void — no look-time outcome.
+
+    - returns the trial keys it judged and left open — the only trials taking a look this cycle
+      (run_shadow_stage); never in it: an unjudged trial, and one whose aa-invalidated,
+      foreign-hash or unstarted void this stage wrote or was refused; empty when the stage is
+      refused or its open trials or their A/A starts' invalidations are unread
+    - no config.toml in the code tree declaring that tree as its [paths].root → refused before
+      any ledger read: no row read or written, no canary file changed
+    - open trial: a live pre-registration with no <live trial key>:decision row, read from the
+      ledger → a pre-registration the push has not committed gets no canary
+    - invalidated start: an open trial whose pre-registration's aa_start_id holds an
+      aa-invalidation row (that start's rows size nothing) → its void decision naming the
+      start, written ahead of every other judgment, its file removed whether or not the row
+      lands, nothing more for it this stage — never judged, no look, no graduation
+    - stored rows: each open trial's delivered rows in core.spawn_manifest judged by the ingest's
+      own rule at every stage, before any void or canary write (_judge_stored_rows) → a row an
+      ingest stored and left unjudged is judged by that cycle's stage; a foreign row → the
+      trial's void, its file removed, nothing more for it this stage; a void the ledger refuses
+      is not held — the next stage reads the row again
+    - the stored rows or their salts unreadable → named WARN, nothing voided; an unjudged
+      trial's canary is not written or renewed — a file in place runs to its lease unless its
+      unstarted void, still written, removes it
+    - core.spawn_manifest without the exposure columns → one WARN naming the migration, every
+      open trial unjudged under that same rule until it is applied
+    - text: exactly payload["canary"]["text"], salted with the pre-registration row id; a text
+      whose sha256 is not the pre-registered text_sha256 → named WARN, no file
+    - started trial (its :start row landed) → the file rewritten, its lease renewed
+    - first write: the instant taken immediately before the file becomes visible, then one
+      live-start row on <live trial key>:start carrying it and the hash; that row not landing →
+      the file removed, named WARN, the next writing cycle retries
+    - an unstarted trial's existing file (a kill between the write and its row) → unrecorded:
+      removed under the same rule
+    - unstarted at the pre-registration's recorded_at + the horizon it states → its unstarted
+      void decision row, any file it holds removed, no write; no stated horizon → named WARN;
+      checked for every open trial before any write → another trial's directory refusal never
+      holds a void back
+    - canary directory not a real one → named WARN, no further canary written this cycle
+    - ledger fault: named WARN, never a failed cycle · --dry-run: the caller skips the stage
+    """
+    refusal = _get_install_refusal(_INSTALL_ROOT)
+    if refusal is not None:
+        _warn_trial(refusal, "no ledger read or write and no canary file change this cycle")
+        return frozenset()
+    open_trials = _get_open_trial_canaries()
+    if open_trials is None:
+        return frozenset()
+    for trial in open_trials.invalidated:
+        _void_invalidated_trial(trial)
+    trials = open_trials.current
+    judgment = _judge_stored_rows(trials)
+    trials = [trial for trial in trials if trial.key not in judgment.voided]
+    past_bound = _get_unstarted_past_bound(trials, judgment.unjudged)
+    for trial in past_bound:
+        _void_unstarted_trial(trial)
+    unwritten = judgment.unjudged | {trial.key for trial in past_bound}
+    judged = [trial for trial in trials if trial.key not in unwritten]
+    _put_trial_canaries(judged)
+    return frozenset(trial.key for trial in judged)
+
+
+class OpenTrials(NamedTuple):
+    current: list[TrialCanary]
+    invalidated: list[TrialCanary]  # sized on an A/A start invalidated since → voided, unjudged
+
+
+def _get_unstarted_past_bound(
+    trials: list[TrialCanary], unjudged: frozenset[str]
+) -> list[TrialCanary]:
+    """The trials unstarted at or past their stated horizon (_is_unstarted_past_bound)."""
+    return [
+        trial
+        for trial in trials
+        if _is_unstarted_past_bound(trial, is_judged=trial.key not in unjudged)
+    ]
+
+
+def _get_open_trial_canaries() -> OpenTrials | None:
+    """The open live trials, split on their A/A start's invalidation; None = unreadable, WARNed."""
+    trials = _get_trial_canaries()
+    if trials is None:
+        return None
+    return _get_split_open_trials(trials)
+
+
+def _get_trial_canaries() -> list[TrialCanary] | None:
+    """The open live trials as read; None after a WARN naming the unreadable read."""
+    if not HAS_PG_LOOP_WRITE:
+        _warn_trial(
+            "open live trials unreadable: PG helper import failed", "no trial canary written"
+        )
+        return None
+    try:
+        return _read_trial_canaries()
+    except Exception as exc:  # noqa: BLE001 — a ledger read fault never fails the cycle
+        _warn_trial(
+            f"open live trials unreadable: {_describe_fault(exc)}",
+            "no trial canary written this cycle",
+        )
+        return None
+
+
+def _get_split_open_trials(trials: list[TrialCanary]) -> OpenTrials | None:
+    """`trials` split on their A/A start's invalidation; None when the invalidations are
+    unreadable, WARNed."""
+    invalidated = (
+        _get_invalidated_trial_keys(STAGE_AREA.TRIAL, "no trial canary written this cycle")
+        if trials
+        else frozenset()
+    )
+    if invalidated is None:
+        return None
+    return OpenTrials(
+        [trial for trial in trials if trial.key not in invalidated],
+        [trial for trial in trials if trial.key in invalidated],
+    )
+
+
+def _read_trial_canaries() -> list[TrialCanary]:
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(LIVE_TRIAL.CANARY_SQL, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
+        rows = cur.fetchall()
+    return [TrialCanary(*row) for row in rows]
+
+
+def _get_invalidated_trial_keys(area: str, scope: str) -> frozenset[str] | None:
+    """_read_invalidated_trial_keys; None, with a WARN naming that read under `area`, when it
+    faults."""
+    try:
+        return _read_invalidated_trial_keys()
+    except Exception as exc:  # noqa: BLE001 — a read fault holds the stage, never the cycle
+        _warn_stage(area, f"invalidated A/A starts unreadable: {_describe_fault(exc)}", scope)
+        return None
+
+
+def _read_invalidated_trial_keys() -> frozenset[str]:
+    """The held live trials sized on an invalidated A/A start → their keys; raises on a fault."""
+    event = TRIAL_LEDGER.EVENT
+    params = (event.LIVE_PREREGISTRATION, event.AA_INVALIDATION, event.LIVE_PREREGISTRATION)
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(LIVE_TRIAL.INVALIDATED_SQL, params)
+        return frozenset(key for (key,) in cur.fetchall())
+
+
+def _void_invalidated_trial(trial: TrialCanary) -> None:
+    """Its void naming the invalidated A/A start; the file it holds removed whether or not the
+    row lands — a void the ledger refuses is written by the next writing cycle."""
+    start_id = trial.payload.get("aa_start_id")
+    void = {
+        "reason": LIVE_TRIAL.AA_INVALIDATED_REASON,
+        "agent": trial.agent,
+        "aa_start_id": start_id,
+    }
+    cause = f"trial {trial.key}: {trial.agent}'s A/A start {start_id} is invalidated"
+    try:
+        landed = _write_live_decision(trial.key, trial.agent, trial.pattern_id, {"void": void})
+    except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
+        _warn_trial(
+            f"{cause}, its void not recorded: {_describe_fault(exc)}",
+            "no canary written; the next writing cycle retries",
+        )
+    else:
+        _log_invalidated_void(trial, cause, landed)
+    path = _get_canary_path(trial.agent)
+    if path in _get_canary_files(STAGE_AREA.TRIAL):
+        _delete_canaries([path], f"trial {trial.key} voided", STAGE_AREA.TRIAL)
+
+
+def _log_invalidated_void(trial: TrialCanary, cause: str, landed: int) -> None:
+    if landed == 1:
+        _warn_trial(f"{cause} → voided", f"no look and no graduation ({trial.key}:decision)")
+        return
+    sys.stderr.write(
+        f"[daemon-cycle] INFO: trial stage — {cause}: no void written ({_DECISION_UNLANDED})\n"
+    )
+
+
+class StageJudgment(NamedTuple):
+    """One trial stage's verdict on its open trials' stored rows, by trial key."""
+
+    voided: frozenset[str]  # a foreign row's void written or refused → out of this stage
+    unjudged: frozenset[str]  # a read fault left its rows unjudged → no canary written or renewed
+
+
+def _judge_stored_rows(trials: list[TrialCanary]) -> StageJudgment:
+    """Each open trial's stored delivered rows under the ingest's own rule; never raises.
+
+    - the mapping: this stage's open-trials read through the ingest's builder → per agent its
+      latest trial; an earlier trial of that agent is judged with no row
+    - no open trial → no statement
+    - the stored rows unreadable → every open trial unjudged, a named WARN, nothing voided
+    - core.spawn_manifest without the exposure columns → the same, its WARN naming the migration
+    """
+    if not trials:
+        return StageJudgment(frozenset(), frozenset())
+    # the ingest's rule reads binding.trials alone → the stage reads no roster and no A/A state
+    binding = DeliveryBinding(
+        DEFAULT_AGENTS_DIR, trials=_get_trial_bindings(map(_get_stage_binding, trials))
+    )
+    unjudged = StageJudgment(frozenset(), frozenset(trial.key for trial in trials))
+    try:
+        stored = _read_other_hash_rows(binding.trials)
+    except ManifestExposureAbsent as exc:
+        _warn_unjudged(str(exc), "until that migration is applied")
+        return unjudged
+    except Exception as exc:  # noqa: BLE001 — a read fault never fails the cycle
+        _warn_unjudged(f"stored manifest rows unreadable: {_describe_fault(exc)}", "this cycle")
+        return unjudged
+    return _judge_other_hash_rows(stored, binding)
+
+
+def _warn_unjudged(cause: str, span: str) -> None:
+    """The one canary rule of every fault that leaves all open trials unjudged."""
+    _warn_trial(
+        cause,
+        f"no open trial judged {span} — no canary written or renewed, a file in place left to "
+        "its lease unless its unstarted void removes it",
+    )
+
+
+def _get_stage_binding(trial: TrialCanary) -> TrialBinding:
+    """The open trial as the ingest's rule reads it: its canary hash when a text, its commit
+    instant, no start instant — the stage files no row."""
+    canary = trial.payload.get("canary") if isinstance(trial.payload, dict) else None
+    text_sha256 = canary.get("text_sha256") if isinstance(canary, dict) else None
+    return TrialBinding(
+        trial.agent,
+        trial.key,
+        trial.pattern_id,
+        text_sha256 if isinstance(text_sha256, str) else None,
+        trial.recorded_at,
+        None,
+    )
+
+
+def _judge_other_hash_rows(
+    stored: list[StoredManifestRow], binding: DeliveryBinding
+) -> StageJudgment:
+    """One salt read over the returned rows; unreadable → each trial holding a row unjudged, a
+    named WARN, nothing voided — a trial holding none is judged."""
+    in_trial = [
+        (item, trial)
+        for item in stored
+        if (trial := _get_row_trial(item.row, binding)) is not None
+    ]
+    salt_ids = frozenset(item.row.salt_id for item, _ in in_trial if item.row.salt_id is not None)
+    try:
+        salts = _read_salt_rows(salt_ids)
+    except Exception as exc:  # noqa: BLE001 — a read fault never fails the cycle
+        unjudged = frozenset(trial.key for _, trial in in_trial)
+        _warn_trial(
+            f"salt rows unreadable: {_describe_fault(exc)}",
+            f"trial(s) {', '.join(sorted(unjudged))} not judged this cycle — no canary written "
+            "or renewed for them, a file in place left to its lease unless its unstarted void "
+            "removes it",
+        )
+        return StageJudgment(frozenset(), unjudged)
+    return StageJudgment(_void_foreign_rows(in_trial, salts, binding), frozenset())
+
+
+def _void_foreign_rows(
+    in_trial: list[tuple[StoredManifestRow, TrialBinding]],
+    salts: SaltRows,
+    binding: DeliveryBinding,
+) -> frozenset[str]:
+    """Each trial's first foreign row in id order voids it → the trial keys voided."""
+    voided: set[str] = set()
+    for item, trial in in_trial:
+        is_foreign = not _is_trial_hash(item.row, binding) and not _is_racing_row(item.row, salts)
+        if is_foreign and trial.key not in voided:
+            voided.add(trial.key)
+            _void_stored_trial_row(item, trial)
+    return frozenset(voided)
+
+
+def _void_stored_trial_row(stored: StoredManifestRow, trial: TrialBinding) -> None:
+    """The trial's foreign-hash void by its stored row, its file removed whether or not the row
+    lands; a void the ledger refuses is not held — the next stage reads the row again."""
+    row = stored.row
+    void = TrialVoid(
+        trial.key, trial.agent, trial.pattern_id, row.delivered_hash, stored.spool, row.line_offset
+    )
+    _write_trial_void(void, STAGE_AREA.TRIAL)
+    _delete_canaries([_get_canary_path(trial.agent)], f"trial {trial.key} voided", STAGE_AREA.TRIAL)
+
+
+def _put_trial_canaries(trials: list[TrialCanary]) -> None:
+    for trial in trials:
+        try:
+            _put_trial_canary(trial)
+        except CanaryDirUnsafe as exc:
+            _warn_trial(str(exc), "no further trial canary written this cycle")
+            return
+
+
+def _put_trial_canary(trial: TrialCanary) -> None:
+    """Raises CanaryDirUnsafe when the canary directory is not a real one."""
+    text = _get_trial_canary_text(trial)
+    if text is None:
+        return
+    if trial.is_started:
+        _put_trial_file(trial, text, _get_utc_now())
+        return
+    path = _get_canary_path(trial.agent)
+    if path in _get_canary_files(STAGE_AREA.TRIAL):
+        _warn_trial(
+            f"trial {trial.key}: {trial.agent}'s canary file has no start record",
+            "removal attempted as unrecorded; a writing cycle after it is gone writes it again",
+        )
+        _delete_canaries([path], f"trial {trial.key} start not recorded", STAGE_AREA.TRIAL)
+        return
+    _create_trial_canary(trial, text, path)
+
+
+def _is_unstarted_past_bound(trial: TrialCanary, *, is_judged: bool) -> bool:
+    """Unstarted, and the cycle instant is at or past recorded_at + the horizon the
+    pre-registration states; no readable horizon → named WARN, False — a daemon default is not
+    the stated horizon. `is_judged` words that WARN's canary clause alone: the stage writes no
+    canary for a trial whose stored rows it left unjudged."""
+    if trial.is_started:
+        return False
+    horizon_days = trial.payload.get("horizon_days") if isinstance(trial.payload, dict) else None
+    try:
+        # a bool is an int · `not > 0` also refuses NaN · an unrepresentable bound overflows
+        if isinstance(horizon_days, bool) or not horizon_days > 0:
+            raise ValueError("not a positive day count")
+        bound = trial.recorded_at + timedelta(days=horizon_days)
+    except (TypeError, ValueError, OverflowError):
+        unjudged = "no canary written or renewed — its stored rows are unjudged this cycle"
+        _warn_trial(
+            f"trial {trial.key}: {trial.agent}'s pre-registration states no horizon "
+            f"({horizon_days!r})",
+            f"no unstarted void; {'its canary write is attempted' if is_judged else unjudged}",
+        )
+        return False
+    return _get_utc_now() >= bound
+
+
+def _void_unstarted_trial(trial: TrialCanary) -> None:
+    """Its unstarted void decision row; the file it holds removed whether or not the row lands."""
+    payload = {"void": {"reason": LIVE_TRIAL.UNSTARTED_REASON, "agent": trial.agent}}
+    try:
+        landed = _write_live_decision(trial.key, trial.agent, trial.pattern_id, payload)
+    except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
+        _warn_trial(
+            f"trial {trial.key}: {trial.agent}'s unstarted void not recorded: "
+            f"{_describe_fault(exc)}",
+            "no canary written; the next writing cycle retries",
+        )
+    else:
+        _log_unstarted_void(trial, landed)
+    path = _get_canary_path(trial.agent)
+    if path in _get_canary_files(STAGE_AREA.TRIAL):
+        _delete_canaries([path], f"trial {trial.key} unstarted", STAGE_AREA.TRIAL)
+
+
+def _log_unstarted_void(trial: TrialCanary, landed: int) -> None:
+    if landed == 1:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: trial stage — trial {trial.key} voided: {trial.agent}'s "
+            f"canary never started by its stated horizon ({trial.key}:decision)\n"
+        )
+        return
+    sys.stderr.write(
+        f"[daemon-cycle] INFO: trial stage — trial {trial.key}: no unstarted void written "
+        f"({_DECISION_UNLANDED})\n"
+    )
+
+
+def _write_live_decision(
+    trial_key: str, agent: str, pattern_id: int | None, payload: dict
+) -> int:
+    """The trial's one <live trial key>:decision row → rows landed (0 = already decided or the
+    ledger absent); raises on a PG fault."""
+    return _pg_write_trial_ledger_row(
+        TRIAL_LEDGER.EVENT.LIVE_DECISION,
+        TRIAL_LEDGER.ACTOR.LIVE,
+        payload,
+        trial_key=trial_key,
+        agent=agent,
+        learning_pattern_id=pattern_id,
+        dedupe_key=f"{trial_key}:decision",
+    )
+
+
+def _create_trial_canary(trial: TrialCanary, text: str, path: Path) -> None:
+    """First write: the file, then its start row; a row not landing removes the file."""
+    started_at = _get_utc_now()  # no later than the file becomes visible
+    if not _put_trial_file(trial, text, started_at):
+        return
+    fault = _write_trial_start(trial, started_at)
+    if fault is None:
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: trial stage — trial {trial.key} started: {trial.agent}'s "
+            f"canary first written at {started_at.isoformat()}\n"
+        )
+        return
+    _warn_trial(
+        f"trial {trial.key}: {trial.agent}'s start record not written ({fault})",
+        "removal attempted on its canary file; the next writing cycle retries",
+    )
+    _delete_canaries([path], f"trial {trial.key} start not recorded", STAGE_AREA.TRIAL)
+
+
+def _get_trial_canary_text(trial: TrialCanary) -> str | None:
+    """The pre-registered text when its sha256 is the pre-registered hash; else WARN, None."""
+    canary = trial.payload.get("canary") if isinstance(trial.payload, dict) else None
+    text = canary.get("text") if isinstance(canary, dict) else None
+    if not isinstance(text, str):
+        _warn_trial(
+            f"trial {trial.key}: {trial.agent}'s pre-registration carries no canary text",
+            "no canary file written",
+        )
+        return None
+    expected = canary.get("text_sha256")
+    # surrogatepass: a text no UTF-8 encodes hashes apart from every pre-registered hash
+    actual = _get_foreign_text_sha256(text)
+    if actual != expected:
+        _warn_trial(
+            f"trial {trial.key}: {trial.agent}'s canary text hashes to {actual}, not the "
+            f"pre-registered {expected}",
+            "no canary file written",
+        )
+        return None
+    return text
+
+
+def _put_trial_file(trial: TrialCanary, text: str, now: datetime) -> bool:
+    """True when the file landed; an OSError WARNs. Raises CanaryDirUnsafe."""
+    try:
+        put_canary_file(trial.agent, trial.salt_id, text, now)
+    except CanaryDirUnsafe:
+        raise
+    except OSError as exc:
+        _warn_trial(
+            f"trial {trial.key}: {trial.agent}'s canary not written: {_describe_fault(exc)}",
+            "its previous file, if any, stands until its lease ends",
+        )
+        return False
+    return True
+
+
+def _write_trial_start(trial: TrialCanary, started_at: datetime) -> str | None:
+    """None when the start row landed; otherwise why it did not."""
+    payload = {
+        "started_at": started_at.isoformat(),
+        "text_sha256": trial.payload["canary"]["text_sha256"],
+    }
+    try:
+        landed = _pg_write_trial_ledger_row(
+            TRIAL_LEDGER.EVENT.LIVE_START,
+            TRIAL_LEDGER.ACTOR.LIVE,
+            payload,
+            trial_key=trial.key,
+            agent=trial.agent,
+            learning_pattern_id=trial.pattern_id,
+            dedupe_key=f"{trial.key}:start",
+        )
+    except Exception as exc:  # noqa: BLE001 — a fault is a record fault, never a failed cycle
+        return _describe_fault(exc)
+    return None if landed == 1 else f"{landed} rows landed"
+
+
+# a once-only decision write's 0 return: the key taken by another decider, or the ledger absent
+_DECISION_UNLANDED = "already decided or the ledger absent"
+STAGE_AREA = SimpleNamespace(
+    AA="A/A harness",
+    TRIAL="trial stage",
+    SHADOW="shadow stage",
+    BINDING="manifest binding",
+    GRADUATION="graduation",
+)
+
+
+def _warn_stage(area: str, cause: str, scope: str) -> None:
+    sys.stderr.write(f"[daemon-cycle] WARN: {area} — {cause}; {scope}\n")
+
+
+def _warn_trial(cause: str, scope: str) -> None:
+    _warn_stage(STAGE_AREA.TRIAL, cause, scope)
 
 
 _INSTALL_ROOT = Path(__file__).resolve().parent.parent
@@ -9397,13 +11150,6 @@ AA = SimpleNamespace(
             "WHERE event = ANY(%(fingerprinted)s) AND id >= s.id ORDER BY id DESC LIMIT 1) f "
             "WHERE s.event = %(start)s ORDER BY s.id DESC LIMIT 1"
         ),
-        # roster outcomes in the window → (all, those carrying agent_id + session_id that join a spawn)
-        JOIN_COVERAGE=(
-            "SELECT count(*), count(*) FILTER (WHERE o.agent_id IS NOT NULL "
-            "AND o.session_id IS NOT NULL AND EXISTS (SELECT 1 FROM core.spawn_manifest m "
-            "WHERE m.agent_id = o.agent_id)) FROM core.outcomes o "
-            "WHERE o.agent = ANY(%(agents)s) AND o.record_ts >= %(start)s AND o.record_ts < %(end)s"
-        ),
         # whether an aa-start row carries the id → the cause its invalidation records, NULL = none
         INVALIDATION=(
             "SELECT EXISTS (SELECT 1 FROM core.autoagent_trial_ledger "
@@ -9411,10 +11157,20 @@ AA = SimpleNamespace(
             "(SELECT payload->>'cause' FROM core.autoagent_trial_ledger "
             "WHERE event = %(event)s AND dedupe_key = %(dedupe_key)s)"
         ),
-        # the given salt ids that name an aa-start or aa-restart row
+        # roster outcomes in the window → (all, those carrying agent_id + session_id that join a spawn)
+        JOIN_COVERAGE=(
+            "SELECT count(*), count(*) FILTER (WHERE o.agent_id IS NOT NULL "
+            "AND o.session_id IS NOT NULL AND EXISTS (SELECT 1 FROM core.spawn_manifest m "
+            "WHERE m.agent_id = o.agent_id)) FROM core.outcomes o "
+            "WHERE o.agent = ANY(%(agents)s) AND o.record_ts >= %(start)s AND o.record_ts < %(end)s"
+        ),
+        # given salt ids naming one of the events → id, event, agent, canary hash, decision row
         SALT_ROWS=(
-            "SELECT id FROM core.autoagent_trial_ledger "
-            "WHERE event = ANY(%(events)s) AND id = ANY(%(ids)s)"
+            "SELECT s.id, s.event, s.agent, s.payload->'canary'->>'text_sha256', EXISTS ("
+            "SELECT 1 FROM core.autoagent_trial_ledger d "
+            "WHERE d.dedupe_key = s.trial_key || ':decision') "
+            "FROM core.autoagent_trial_ledger s "
+            "WHERE s.event = ANY(%(events)s) AND s.id = ANY(%(ids)s)"
         ),
         # MANIFEST spool closes recorded from the window start → (spool, lines read, lines without a row)
         SPOOL_CLOSES=(
@@ -9457,7 +11213,6 @@ AA = SimpleNamespace(
             {
                 "hooks/inject-scope-rules.sh",
                 "hooks/hook-utils.sh",
-                "hooks/enforce-harness-critical.sh",
                 "hooks/track-outcome.sh",
                 "hooks/_outcome_signal.py",
                 "hooks/_pg_learning_dualwrite.py",
@@ -9477,9 +11232,9 @@ AA = SimpleNamespace(
                 "hooks/lib/styleref-roster.sh",
                 "hooks/lib/hook-utils.sh",
                 "hooks/lib/worktree-lock.sh",
-                "hooks/lib/claude-config-dirs.sh",
                 "hooks/lib/style_ref_match.py",
                 "hooks/_learning_log_limits.py",
+                "hooks/_pg_connect.py",
                 "hooks/ga_paths.py",
                 "hooks/daemon_config.py",
                 "hooks/compliance_telemetry.py",
@@ -9525,6 +11280,8 @@ CANARY = SimpleNamespace(
     AA_TEXT="",
     # = the hook's CANARY_FILE_MAX_BYTES: a larger file is refused, so never delivered
     FILE_MAX_BYTES=16384,
+    # = the hook's CANARY_MAX_BYTES: a longer text is refused, so pre-registration refuses it too
+    MAX_BYTES=1200,
     # hook_path_safe_key: every byte outside A-Za-z0-9_- dropped
     UNSAFE_KEY=re.compile(r"[^A-Za-z0-9_-]"),
     VOID_REASON="foreign-canary-hash",
@@ -9710,10 +11467,11 @@ def start_aa(agents_dir: Path = DEFAULT_AGENTS_DIR) -> int:
         return _refuse_aa_start(
             AA.REFUSAL.ALREADY_OPEN, f"A/A {latest.id} has no aa-result"
         )
-    code = _write_aa_start(fingerprint, previous=0 if latest is None else latest.id)
-    if code == 0:
-        _start_aa_canaries(_agent_roster(agents_dir))
-    return code
+    refusal = _write_aa_start(fingerprint, previous=0 if latest is None else latest.id)
+    if refusal is not None:
+        return _refuse_aa_start(*refusal)
+    _start_aa_canaries(_agent_roster(agents_dir))
+    return 0
 
 
 def _start_aa_canaries(roster: frozenset[str]) -> None:
@@ -9730,7 +11488,8 @@ def _start_aa_canaries(roster: frozenset[str]) -> None:
         _put_aa_canaries(latest, roster)
 
 
-def _write_aa_start(fingerprint: dict[str, str], *, previous: int) -> int:
+def _write_aa_start(fingerprint: dict[str, str], *, previous: int) -> tuple[str, str] | None:
+    """Write the aa-start row → None; refused → (AA.REFUSAL reason, detail), nothing written."""
     # keyed on the start it follows → of two racing starts only one lands
     dedupe_key = f"{TRIAL_LEDGER.EVENT.AA_START}:after:{previous}"
     payload = {
@@ -9746,17 +11505,14 @@ def _write_aa_start(fingerprint: dict[str, str], *, previous: int) -> int:
             dedupe_key=dedupe_key,
         )
     except Exception as exc:  # noqa: BLE001 — refused by name, never a traceback
-        return _refuse_aa_start(AA.REFUSAL.LEDGER_UNWRITABLE, _describe_fault(exc))
+        return AA.REFUSAL.LEDGER_UNWRITABLE, _describe_fault(exc)
     if landed != 1:
-        return _refuse_aa_start(
-            AA.REFUSAL.ALREADY_OPEN,
-            f"start key {dedupe_key} taken by a concurrent --aa-start",
-        )
+        return AA.REFUSAL.ALREADY_OPEN, f"start key {dedupe_key} taken by a concurrent start"
     sys.stderr.write(
         f"[daemon-cycle] INFO: A/A started ({dedupe_key}) on {len(fingerprint)} fingerprint "
         "entries; each writing cycle evaluates it until its aa-result\n"
     )
-    return 0
+    return None
 
 
 def _refuse_aa_start(reason: str, detail: str) -> int:
@@ -9764,6 +11520,22 @@ def _refuse_aa_start(reason: str, detail: str) -> int:
         f"[daemon-cycle] --aa-start refused: {reason} — {detail}; nothing written\n"
     )
     return ExitCode.AA_START_REFUSED
+
+
+def _start_first_aa(agents_dir: Path) -> None:
+    """A writing cycle's start on a ledger holding no aa-start row, on start_aa's path. Refused →
+    one WARN naming the AA.REFUSAL cause, nothing written — never an exit code or a raise."""
+    try:
+        fingerprint = get_aa_fingerprint(_INSTALL_ROOT)
+    except AaFingerprintUnreadable as exc:
+        refusal: tuple[str, str] | None = (AA.REFUSAL.MANIFEST_UNREADABLE, str(exc))
+    else:
+        refusal = _write_aa_start(fingerprint, previous=0)
+    if refusal is None:
+        _start_aa_canaries(_agent_roster(agents_dir))
+        return
+    reason, detail = refusal
+    _warn_aa(f"A/A not started: {reason} — {detail}", "nothing written this cycle")
 
 
 def invalidate_aa(start_id: int, cause: str, *, is_confirmed: bool = False) -> int:
@@ -9774,6 +11546,10 @@ def invalidate_aa(start_id: int, cause: str, *, is_confirmed: bool = False) -> i
     start carries the running A/A and its closure is irreversible (the ledger is append-only), so
     it needs is_confirmed — unconfirmed → ExitCode.AA_INVALIDATION_UNCONFIRMED; a closed start
     needs none. Readers honour the record only on installed code that carries them.
+    Closing the open start removes every canary file but an open live trial's at once, as the
+    cycle's closed-A/A step does; a closed start's invalidation removes none. Either way the next
+    writing cycle voids every held live trial sized on the start, open or won with its row
+    pending, and ends its bound row unadjudicated — irreversible too (once-only :decision key).
     """
     cause = cause.strip()
     if not cause:
@@ -9815,6 +11591,9 @@ def _write_aa_invalidation(start_id: int, cause: str, *, is_open: bool) -> int:
         return _refuse_aa_invalidation(AA.REFUSAL.LEDGER_UNWRITABLE, _describe_fault(exc))
     if landed != 1:
         return _report_aa_invalidation(start_id)
+    if is_open:
+        # the hook delivers a file by its lease, not by ledger state → removed now, not next cycle
+        _delete_aa_canaries("the A/A is invalidated")
     closure = "it was the open A/A, now closed irreversibly" if is_open else "it reads as closed"
     sys.stderr.write(
         f"[daemon-cycle] INFO: A/A {start_id} invalidated (cause: {cause!r}); {closure}, "
@@ -9872,12 +11651,16 @@ def run_aa_stage(
     manifest_ingest: ManifestIngest | None = None,
     agents_dir: Path = DEFAULT_AGENTS_DIR,
 ) -> None:
-    """Advance the open A/A one writing cycle and keep the canary files in step with it.
+    """Open the install's first A/A, or advance the open one a writing cycle, and keep the
+    canary files in step with it.
 
     Canary files live under `${GA_DATA_ROOT:-$HOME/.glass-atrium}/data/learning/canary`.
     - No config.toml in the code tree declaring that tree as its [paths].root → refused before
       any ledger read: no row read or written, no canary file deleted or written.
-    - No open A/A → every entry in the canary directory is deleted.
+    - No aa-start row on the ledger → one A/A is opened as --aa-start opens it: the aa-start
+      row, then each roster agent's canary; a refused start WARNs and changes nothing. No other
+      state opens one.
+    - A closed A/A → every entry in the canary directory but an open live trial's is deleted.
     - Open A/A with a void an earlier ingest or sweep detected and the ledger did not take → that
       void is retried before anything else, and the stage ends: until it lands no canary is
       renewed and no result is decided, so the A/A cannot pass.
@@ -9887,12 +11670,13 @@ def run_aa_stage(
     - Then one aa-restart row per cycle date when the installed fingerprint moved or cannot be
       read, with every canary rewritten on the restart row's salt; otherwise each roster
       agent's canary lease is renewed, and once the window's duration has ended the result
-      lands — the instrument verdict row, then one design-effect row per agent and metric key,
-      then the aa-result row — and every canary file is deleted. A landed verdict is read back,
-      never decided again.
+      lands — the instrument verdict row, then one design-effect row per agent and row key,
+      then the aa-result row — and every canary file but an open live trial's is deleted. A
+      landed verdict is read back, never decided again.
     - A verdict straddling at the duration end writes the window's extension row instead, once
       per window; the A/A stays open and the result lands at the extended duration.
-    - Open state unreadable → no file is deleted or renewed; each runs to its lease.
+    - A/A state unreadable → no A/A is opened and no file is deleted or renewed; each runs to
+      its lease. Open live trials unreadable at a deletion → none deleted.
     A ledger or evidence fault WARNs by name and never fails the cycle; the caller skips the
     stage in no-write mode (--dry-run).
     """
@@ -9901,17 +11685,24 @@ def run_aa_stage(
         _warn_aa(refusal, "no ledger read or write and no canary file change this cycle")
         return
     try:
-        latest = _read_open_aa_start()
+        latest = _read_aa_state()
     except AaStateUnreadable as exc:
         # canary files are left to their lease: an unread state deletes and renews nothing
         _warn_aa(f"open state unreadable: {exc}", "no A/A evaluation this cycle")
         return
     if latest is None:
-        _delete_canaries(_get_canary_files(), "no open A/A or trial")
-        return
+        _start_first_aa(agents_dir)
+    elif latest.is_closed:
+        _delete_aa_canaries("no open A/A or trial")
+    else:
+        _advance_open_aa(latest, cycle_date, AaSource(manifest_ingest, agents_dir))
+
+
+def _advance_open_aa(latest: AaStart, cycle_date: str, source: AaSource) -> None:
+    """The open A/A's cycle: pending void, sweep, restart, else lease renewal and the result."""
     if _retry_pending_void(latest):
         return
-    roster = _agent_roster(agents_dir)
+    roster = _agent_roster(source.agents_dir)
     if _sweep_aa_canaries(latest, roster):
         return
     restart = _get_aa_restart(latest)
@@ -9920,9 +11711,23 @@ def run_aa_stage(
         _restart_aa_canaries(latest, roster)
         return  # the restart row starts a new window
     _put_aa_canaries(latest, roster)
-    source = AaSource(manifest_ingest, agents_dir)
     if _evaluate_aa(latest, source):
-        _delete_canaries(_get_canary_files(), "the A/A has its result")
+        _delete_aa_canaries("the A/A has its result")
+
+
+def _delete_aa_canaries(reason: str) -> None:
+    """Remove every canary file but an open live trial's — the trial stage owns that one. Open
+    trials unreadable → WARN, none removed."""
+    try:
+        open_trials = _pg_read_open_trials()
+    except Exception as exc:  # noqa: BLE001 — an unread trial state removes no file
+        _warn_aa(
+            f"open live trials unreadable: {_describe_fault(exc)}",
+            "no canary file is removed; the next writing cycle retries",
+        )
+        return
+    kept = {_get_canary_path(agent).name for agent in open_trials}
+    _delete_canaries([path for path in _get_canary_files() if path.name not in kept], reason)
 
 
 class InstallRefusedError(RuntimeError):
@@ -9932,14 +11737,16 @@ class InstallRefusedError(RuntimeError):
 def _get_install_refusal(root: Path) -> str | None:
     """None when root passes _is_install_tree; otherwise the refusal, naming only that check.
 
-    Guards exactly three entries, each as its first check:
+    Guards exactly four entries, each as its first check:
     - run_cycle when it writes (skip_loop_emit False): the whole cycle, reads included,
       by raising InstallRefusedError, which _main ends with
       ExitCode.CYCLE_INSTALL_REFUSED;
-    - run_aa_stage and ingest_manifest_log, whose own checks cover a direct call.
+    - run_aa_stage, run_trial_stage and ingest_manifest_log, whose own checks cover a
+      direct call.
     Not guarded: run_cycle in no-write mode (--dry-run, --skip-loop-emit), start_aa
-    (--aa-start, the owner's explicit command to open an A/A, never run by a cycle),
-    and a direct call to any other writing stage — run_shadow_stage among them.
+    (--aa-start, the explicit command to open an A/A; a cycle opens its first one inside
+    run_aa_stage, behind that entry's check), and a direct call to any other writing stage —
+    run_shadow_stage among them.
     """
     if _is_install_tree(root):
         return None
@@ -9979,14 +11786,20 @@ def _get_config_root(config: Path) -> str | None:
     return None
 
 
-def _read_open_aa_start() -> AaStart | None:
-    """The open A/A; None when none is open. Raises AaStateUnreadable on a ledger read fault."""
+def _read_aa_state() -> AaStart | None:
+    """The latest A/A, open or closed; None when the ledger holds no aa-start row. Raises
+    AaStateUnreadable on a ledger read fault."""
     if not HAS_PG_LOOP_WRITE:
         raise AaStateUnreadable("PG helper import failed")
     try:
-        latest = _read_latest_aa_start()
+        return _read_latest_aa_start()
     except Exception as exc:  # any read fault → the one state run_aa_stage WARNs on
         raise AaStateUnreadable(_describe_fault(exc)) from exc
+
+
+def _read_open_aa_start() -> AaStart | None:
+    """The open A/A; None when none is open. Raises AaStateUnreadable on a ledger read fault."""
+    latest = _read_aa_state()
     return None if latest is None or latest.is_closed else latest
 
 
@@ -10066,10 +11879,10 @@ def _get_canary_path(agent: str) -> Path:
     return _get_canary_dir() / f"{CANARY.UNSAFE_KEY.sub('', agent)}.json"
 
 
-def _get_canary_files() -> list[Path]:
+def _get_canary_files(area: str = STAGE_AREA.AA) -> list[Path]:
     """Every entry in the canary directory, any name or extension case — the hook decides delivery
     by an exact listed name, so the daemon lists by name too. Not listable, or not a real
-    directory → WARN, none."""
+    directory → WARN under `area`, the calling stage; none."""
     try:
         with _open_canary_dir() as dir_fd, os.scandir(dir_fd) as entries:
             # a real directory cannot be unlinked; a symlink to one can, and the hook refuses it
@@ -10079,12 +11892,13 @@ def _get_canary_files() -> list[Path]:
     except FileNotFoundError:
         return []
     except CanaryDirUnsafe as exc:
-        _warn_aa(str(exc), "no canary file is swept or removed this cycle")
+        _warn_stage(area, str(exc), "no canary file is swept or removed")
         return []
     except OSError as exc:
-        _warn_aa(
+        _warn_stage(
+            area,
             f"canary directory not listed: {_describe_fault(exc)}",
-            "no canary file is swept or removed this cycle",
+            "no canary file is swept or removed; the next writing cycle retries",
         )
         return []
     canary_dir = _get_canary_dir()
@@ -10289,37 +12103,46 @@ def _delete_pending_void() -> None:
         )
 
 
-def _delete_canaries(paths: list[Path], reason: str) -> None:
+class CanaryRemoval(NamedTuple):
+    """Why an entry is removed, and the stage a removal fault is named under."""
+
+    reason: str
+    area: str
+
+
+def _delete_canaries(paths: list[Path], reason: str, area: str = STAGE_AREA.AA) -> None:
     """Remove each canary entry by name through a descriptor on the canary directory; not a real
-    directory → WARN, none removed."""
+    directory → WARN, none removed. A fault is named under `area`, the calling stage."""
     if not paths:
         return
     try:
         with _open_canary_dir() as dir_fd:
             for path in paths:
-                _delete_canary(dir_fd, path, reason)
+                _delete_canary(dir_fd, path, CanaryRemoval(reason, area))
     except FileNotFoundError:
         return  # no canary directory → no entry to remove
     except CanaryDirUnsafe as exc:
-        _warn_aa(str(exc), "no canary file is removed this cycle")
+        _warn_stage(area, str(exc), "no canary file is removed this cycle")
     except OSError as exc:
-        _warn_aa(
+        _warn_stage(
+            area,
             f"canary directory not opened: {_describe_fault(exc)}",
             "the next writing cycle retries",
         )
 
 
-def _delete_canary(dir_fd: int, path: Path, reason: str) -> None:
+def _delete_canary(dir_fd: int, path: Path, removal: CanaryRemoval) -> None:
     try:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(path.name, dir_fd=dir_fd)
     except OSError as exc:
-        _warn_aa(
+        _warn_stage(
+            removal.area,
             f"canary {path} not removed: {_describe_fault(exc)}",
             "the next writing cycle retries",
         )
         return
-    sys.stderr.write(f"[daemon-cycle] INFO: canary {path} removed — {reason}\n")
+    sys.stderr.write(f"[daemon-cycle] INFO: canary {path} removed — {removal.reason}\n")
 
 
 def _get_aa_restart(latest: AaStart) -> AaRestart | None:
@@ -10633,14 +12456,14 @@ def _get_arm_design_effect(
 def _write_aa_design_effects(
     start_id: int, effects: Mapping[tuple[str, str], trial_design.ArmDesignEffect]
 ) -> bool:
-    """One row per agent and metric key (a taken key = written earlier); False after a WARNed fault."""
+    """One row per agent and row key (a taken key = written earlier); False after a WARNed fault."""
     event = TRIAL_LEDGER.EVENT.AA_ARM_DESIGN_EFFECT
     is_complete = True
-    for (agent, metric_key), reading in effects.items():
+    for (agent, row_key), reading in effects.items():
         landed = _write_aa_row(
             event,
-            {"metric_key": metric_key, **reading._asdict()},
-            f"{event}:{start_id}:{agent}:{metric_key}",
+            {"metric_key": row_key, **reading._asdict()},
+            f"{event}:{start_id}:{agent}:{row_key}",
             agent=agent,
         )
         is_complete = is_complete and landed is not None
@@ -10684,10 +12507,11 @@ def _get_instrument_verdict_payload(
 ) -> dict | None:
     """The D1 verdict row's payload on INSTRUMENT.METRIC_KEY; None after a WARNed break-even
     history fault, the result deferred."""
+    instrument_row_key = DESIGN_EFFECT_ROW_KEYS[INSTRUMENT.METRIC_KEY]
     readings = {
         agent: reading
-        for (agent, metric_key), reading in effects.items()
-        if metric_key == INSTRUMENT.METRIC_KEY
+        for (agent, row_key), reading in effects.items()
+        if row_key == instrument_row_key
     }
     try:
         recomputed = _read_recomputed_break_evens(sorted(readings), now)
@@ -10888,8 +12712,9 @@ def _get_aa_arm_criteria(
     }
 
 
-def get_spawn_arm(salt_id: int, agent_id: str) -> int:
-    """sha256 over the decimal salt then the MANIFEST agent_id (the hook's `printf '%s%s'` bytes), mod 2."""
+def get_spawn_arm(salt_id: int | str, agent_id: str) -> int:
+    """sha256 over the salt — a trial's decimal row id, or a re-draw's namespaced text — then
+    the MANIFEST agent_id (the hook's `printf '%s%s'` bytes), mod 2."""
     digest = hashlib.sha256(f"{salt_id}{agent_id}".encode("utf-8")).hexdigest()
     return int(digest, 16) % 2
 
@@ -11184,7 +13009,7 @@ def _describe_fault(exc: Exception) -> str:
 
 
 def _warn_aa(cause: str, scope: str) -> None:
-    sys.stderr.write(f"[daemon-cycle] WARN: A/A harness — {cause}; {scope}\n")
+    _warn_stage(STAGE_AREA.AA, cause, scope)
 
 
 def classify_failure_rationale(rationale: str) -> str:
@@ -11220,6 +13045,9 @@ def classify_failure_rationale(rationale: str) -> str:
         return FAILURE_CLASS_PARKED_PATTERN
     if text.startswith(_GENERATION_CLOSED_REASON):
         # Closed before any review side saw it — no verdict.
+        return FAILURE_CLASS_SKIPPED
+    if text.startswith(_TRIAL_DECISION.VOID_REASON):
+        # A void trial never judged the change — no verdict.
         return FAILURE_CLASS_SKIPPED
     # Back-off marker ran no Haiku call → no verdict, as a timeout.
     if text.startswith(
@@ -11600,35 +13428,144 @@ def _render_pre_verify_failures_block(
 def _fetch_landed_proposals(
     target_agent: str,
     limit: int = LANDED_HISTORY_LIMIT,
-) -> list[tuple[str, str]] | None:
-    """Recently APPLIED proposals for one agent, newest-first.
+) -> list[tuple[int, str, str]] | None:
+    """Recently APPLIED proposals with no live pre-registration, newest-first.
 
     The feedback half of the optimizer-side memory: the generator is told what it
     already landed so it builds on those rules instead of re-proposing them.
     SEPARATE projection from the sibling readers (do NOT widen theirs) — this one
-    SELECTs the patch text and filters on the terminal ``applied`` status.
+    SELECTs the patch text and filters on the terminal ``applied`` status. A trialled
+    proposal renders in the prior-attempts block instead; it is dropped in SQL,
+    before the limit, so trialled rows never crowd out legacy ones.
 
     Mirrors the sibling fail-OPEN discipline: PG off / read error → ``None``
     (a memory miss must never block generation).
 
     Returns:
-        ``[(pattern_label, proposed_diff), ...]`` newest-first (≤ ``limit``),
-        ``[]`` when PG holds no applied rows, ``None`` on PG-off / read error.
+        ``[(proposal_id, pattern_label, proposed_diff), ...]`` newest-first
+        (≤ ``limit``), ``[]`` when PG holds no such rows, ``None`` on PG-off / read error.
     """
+    if not HAS_PG_LOOP_WRITE:
+        return None
     select_sql = (
-        "SELECT pattern_label, proposed_diff "
+        "SELECT id, pattern_label, proposed_diff "
         "FROM core.autoagent_proposals "
         "WHERE target_agent = %s AND status::text = 'applied' "
         "AND proposed_diff IS NOT NULL "
+        "AND NOT EXISTS (SELECT 1 FROM core.autoagent_trial_ledger t "
+        "WHERE t.event = %s AND (t.payload->>'proposal_id')::bigint = autoagent_proposals.id) "
         "ORDER BY cycle_date DESC, id DESC "
         "LIMIT %s"
     )
-    rows = _fetch_proposal_rows(
-        target_agent, select_sql, (target_agent, limit), "landed-history"
-    )
+    params = (target_agent, TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION, limit)
+    rows = _fetch_proposal_rows(target_agent, select_sql, params, "landed-history")
     if rows is None:
         return None
-    return [(label or "", diff or "") for label, diff in rows]
+    return [(proposal_id, label or "", diff or "") for proposal_id, label, diff in rows]
+
+
+class PriorAttempt(NamedTuple):
+    proposal_id: int
+    label: str
+    status: str
+    diff: str
+    look: dict | None  # the trial's latest live look payload
+    decision: dict | None  # its live decision payload
+
+
+def _fetch_prior_attempts(
+    target_agent: str,
+    limit: int = PRIOR_ATTEMPTS.LIMIT,
+) -> list[PriorAttempt] | None:
+    """The agent's trialled proposals, newest pre-registration first, with their ledger effect.
+
+    Joined by the proposal id the live pre-registration payload carries. Fail-OPEN as
+    the sibling readers: PG off / read error → ``None``.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        return None
+    event = TRIAL_LEDGER.EVENT
+    params = (event.LIVE_LOOK, event.LIVE_PREREGISTRATION, target_agent, limit)
+    rows = _fetch_proposal_rows(target_agent, PRIOR_ATTEMPTS.SQL, params, "prior-attempts")
+    if rows is None:
+        return None
+    return [
+        PriorAttempt(
+            proposal_id,
+            label or "",
+            status or "",
+            diff or "",
+            look if isinstance(look, dict) else None,
+            decision if isinstance(decision, dict) else None,
+        )
+        for proposal_id, label, status, diff, look, decision in rows
+    ]
+
+
+def _render_prior_attempts_block(
+    attempts: list[PriorAttempt],
+    *,
+    char_cap: int = PRIOR_ATTEMPTS.CHAR_CAP,
+) -> str:
+    """Render the 'already trialled for this agent' block, HARD char-capped.
+
+    Each attempt → its label, its LANDED marker or status, its measured effect and
+    the lines its patch ADDED. Ledger and patch text re-enter a prompt, so every field
+    goes through ``_neutralize_field`` (LLM01). ``""`` for empty input.
+    """
+    if not attempts:
+        return ""
+    lines: list[str] = []
+    for attempt in attempts:
+        # status is the proposal_status enum's text, a closed set
+        marker = "LANDED" if attempt.status == "applied" else f"NOT LANDED (status {attempt.status})"
+        lines.append(
+            f"- [{_neutralize_field(attempt.label)}] {marker} · effect: "
+            f"{_get_effect_text(attempt)} · added: {_get_added_text(attempt.diff)}"
+        )
+    block = "\n".join(lines)
+    if len(block) > char_cap:
+        marker = f"\n[TRUNCATED: prior-attempts memory capped at {char_cap} chars]"
+        block = block[: char_cap - len(marker)] + marker
+    return block
+
+
+def _get_effect_text(attempt: PriorAttempt) -> str:
+    """The decision when one is recorded — its kind, then its fields — else the latest look,
+    else none reached."""
+    if attempt.decision is not None:
+        kind = next(iter(attempt.decision), "")
+        lead, fields = "decision: ", [kind, *_get_effect_fields(attempt.decision.get(kind))]
+    elif attempt.look is not None:
+        lead, fields = "latest look: ", _get_effect_fields(attempt.look)
+    else:
+        return "no look reached"
+    return _neutralize_field(lead + ", ".join(fields), cap=LANDED_HISTORY_ENTRY_CHAR_CAP)
+
+
+def _get_effect_fields(row: object) -> list[str]:
+    """``key=value`` for each of PRIOR_ATTEMPTS.EFFECT_FIELDS the row holds as a scalar, in
+    that order; no other key on the row is rendered."""
+    fields: list[str] = []
+    for name in PRIOR_ATTEMPTS.EFFECT_FIELDS:
+        value = row
+        for key in name.split("."):
+            if not isinstance(value, dict) or key not in value:
+                break
+            value = value[key]
+        else:
+            if not isinstance(value, (dict, list)):
+                fields.append(f"{name}={value}")
+    return fields
+
+
+def _get_added_text(diff: str) -> str:
+    """The lines a patch ADDED, sanitized and capped; a placeholder when it added none."""
+    added = [line[1:].strip() for kind, line in _get_diff_line_kinds(diff) if kind == "added"]
+    added_text = " / ".join(text for text in added if text)
+    if not added_text:
+        return "(no added lines recorded)"
+    return _neutralize_field(added_text, cap=LANDED_HISTORY_ENTRY_CHAR_CAP)
 
 
 def _render_landed_history_block(
@@ -11649,20 +13586,7 @@ def _render_landed_history_block(
     if not rows:
         return ""
 
-    lines: list[str] = []
-    for label, diff in rows:
-        added = [
-            line[1:].strip()
-            for kind, line in _get_diff_line_kinds(diff)
-            if kind == "added"
-        ]
-        added_text = " / ".join(text for text in added if text)
-        rendered = (
-            _neutralize_field(added_text, cap=LANDED_HISTORY_ENTRY_CHAR_CAP)
-            if added_text
-            else "(no added lines recorded)"
-        )
-        lines.append(f"- [{_neutralize_field(label)}] {rendered}")
+    lines = [f"- [{_neutralize_field(label)}] {_get_added_text(diff)}" for label, diff in rows]
 
     block = "\n".join(lines)
     if len(block) > char_cap:
@@ -11699,18 +13623,21 @@ def _warn_pattern_skip(
     *,
     eval_result: str,
     reason: str,
+    skip_loop_emit: bool = False,
 ) -> None:
     """Skipped/snoozed pattern → stderr WARN + loop-event emit, never silent.
 
     Same observability contract as _warn_roster_mismatch (Precondition
     Loud-Fail): eval_result rows in core.autoagent_loop_events surface the drop
     to the monitor; the stderr line carries the recompute / streak detail.
+    skip_loop_emit (no-write cycle) keeps the WARN and writes no loop event.
     """
     sys.stderr.write(
         f"[daemon-cycle] WARN: pattern {eval_result} — agent={agent} "
         f"({signature[:80]!r}): {reason}\n"
     )
-    _emit_gate_loop_event(agent, event_ts, eval_result)
+    if not skip_loop_emit:
+        _emit_gate_loop_event(agent, event_ts, eval_result)
 
 
 def _emit_gate_loop_event(
@@ -12841,12 +14768,12 @@ def _group_patterns_by_agent(
     """Group patterns by .agent → list of (agent, [patterns]), agent cap applied.
 
     Group order = each agent's first-appearance order (input is freq DESC, so the
-    highest-frequency agent comes first — high-freq priority when agent_cap < total
+    highest-frequency agent comes first — high-freq priority when agent_cap < passing
     agents). Within-group pattern order also preserves the input (freq DESC).
 
     Args:
-        patterns: read_user_pending_patterns result (freq DESC).
-        agent_cap: max agents to process (UNLIMITED_AGENTS = unlimited).
+        patterns: the power check's passing patterns (freq DESC).
+        agent_cap: max passing agents to process (UNLIMITED_AGENTS = unlimited).
 
     Returns:
         list of (agent, patterns) tuples — at most agent_cap.
@@ -12948,6 +14875,20 @@ MANIFEST = SimpleNamespace(
     # PostgreSQL column types: ctx_bytes INTEGER, salt_id BIGINT.
     COLUMN_MAX=SimpleNamespace(INTEGER=2**31 - 1, BIGINT=2**63 - 1),
     STORED_OFFSETS_SQL="SELECT line_offset FROM core.spawn_manifest WHERE spool = %(spool)s",
+    # The migration adding arm, salt_id, delivered and delivered_hash.
+    EXPOSURE_MIGRATION="20261009000000_add_spawn_manifest_arm_fields",
+    # every open trial's stored delivered rows of another canary text, in one statement
+    # three parallel arrays, one element per trial: agent (hook_path_safe_key form), commit, hash
+    # IS DISTINCT FROM: a delivered row with no hash is another text's row, which <> would drop
+    OTHER_HASH_ROWS_SQL=(
+        "SELECT m.spool, m.line_offset, m.agent_id, m.agent_type, m.session_id, m.started_at, "
+        "m.ctx_bytes, m.blocks, m.arm, m.salt_id, m.delivered, m.delivered_hash "
+        "FROM core.spawn_manifest m JOIN unnest("
+        "%(agents)s::text[], %(floors)s::timestamptz[], %(hashes)s::text[]"
+        ") AS trial(agent, floor, text_sha256) ON m.agent_type = trial.agent "
+        "WHERE m.delivered AND m.started_at >= trial.floor "
+        "AND m.delivered_hash IS DISTINCT FROM trial.text_sha256 ORDER BY m.id"
+    ),
 )
 MANIFEST_SPOOL_CLOSED_EVAL_RESULT = "manifest-spool-closed"
 
@@ -12972,6 +14913,23 @@ class ManifestRow(NamedTuple):
     delivered_hash: str | None
 
 
+class StoredManifestRow(NamedTuple):
+    """A row read back from core.spawn_manifest, with the spool that names its line."""
+
+    spool: str
+    row: ManifestRow
+
+
+class ManifestExposureAbsent(Exception):
+    """core.spawn_manifest has no exposure columns: no stored row says what was delivered."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "core.spawn_manifest has no exposure columns "
+            f"(apply migration {MANIFEST.EXPOSURE_MIGRATION})"
+        )
+
+
 @dataclass
 class ManifestSpoolClose:
     """One spool's final re-read, recorded at its unlink."""
@@ -12991,6 +14949,37 @@ class DeliveryBinding:
     latest: AaStart | None = None
     fault: str | None = None  # set → no row is bound this ingest
     is_voided: bool = False
+    trials: dict[str, TrialBinding] = field(default_factory=dict)  # agent → its open live trial
+    voided: set[str] = field(default_factory=set)  # trial keys voided this ingest
+
+
+class TrialBinding(NamedTuple):
+    """An open live trial as the ingest binds to it."""
+
+    agent: str
+    key: str
+    pattern_id: int | None
+    text_sha256: str | None
+    committed_at: datetime  # the pre-registration's recorded_at
+    started_at: datetime | None  # None = no start record readable
+
+
+class SaltRows(NamedTuple):
+    """One salt read: the A/A salt ids, and each decided live pre-registration's (agent, hash)."""
+
+    aa_ids: frozenset[int]
+    decided: dict[int, tuple[str, str | None]]
+
+
+class TrialVoid(NamedTuple):
+    """A trial-leg foreign-hash void, named by the delivered row that voids the trial."""
+
+    key: str
+    agent: str
+    pattern_id: int | None
+    text_sha256: str | None  # None = no hash the hook recorded
+    spool: str
+    line_offset: int
 
 
 @dataclass
@@ -13026,8 +15015,9 @@ def ingest_manifest_log(
     (spool, line_offset) is the only position, so a crash at any step re-reads without
     a duplicate row. PG unreachable, a table-absent schema, an insert failure or a
     held lock → named WARN, every spool kept and the live log not renamed; the hook's
-    backstop bounds the live log meanwhile. Each delivered row binds to a trial once, at
-    the ingest that first stores it (bind_manifest_deliveries).
+    backstop bounds the live log meanwhile. Each delivered row binds once, at the ingest
+    that first stores it (bind_manifest_deliveries); an open live trial's stored rows are
+    judged again at each trial stage (run_trial_stage).
     No config.toml in the code tree declaring that tree as its [paths].root → named WARN before
     any other check, whether or not the PG layer imports: no read, no lock file, no rename, no
     binding.
@@ -13198,13 +15188,27 @@ def bind_manifest_deliveries(
 ) -> None:
     """Bind each delivered row to a trial (plan → Read-side binding); never raises.
 
-    - A roster agent's row started in the open A/A's window binds to it: a delivered hash other
+    - A row of an agent with an open live trial, started at or after its pre-registration's
+      commit: the trial's canary hash binds — filed at the start when started at or after the
+      start record's second, else in no arm; a racing row is neither bound nor foreign; any
+      other hash voids the trial through its <live trial key>:decision row and the file is
+      removed — once per trial and ingest; a void the ledger does not take is not held: that
+      cycle's trial stage reads the stored row again (run_trial_stage).
+    - Any other roster row started in the open A/A's window binds to it: a delivered hash other
       than the A/A text's voids the A/A, whatever salt the row carries.
-    - Any other row is a delivery with no open trial, and its agent's canary file is removed —
-      unless its salt names an aa-start or aa-restart row and its hash is the A/A text: the
-      racing row of an A/A closed or restarted since.
-    - The open state or the salt rows unreadable → no row bound, a named WARN with the count;
-      those rows are never bound later.
+    - Any other row is a delivery with no open trial: its unbound row, a named WARN, and its
+      agent's canary file removed unless the agent has an open trial — no racing row gets any.
+    - A racing row: its salt names an aa-start or aa-restart row and its hash is the A/A text's,
+      or its salt names a decided live pre-registration of its own agent and its hash is that
+      pre-registration's canary hash.
+    - The open state unreadable → no row bound, a named WARN with the count; on the A/A leg and
+      the no-trial branch those rows are never bound later — an open live trial's are judged
+      from the store at that cycle's trial stage (run_trial_stage).
+    - The salt rows unreadable → the rows the racing predicate judges (a trial row of another
+      hash, a row bound to no open trial or A/A) stay unbound, a named WARN with the count: no
+      trial voided, no file removed; trial-hash and A/A rows still bind. A row bound to no open
+      trial or A/A is never bound later; a trial row of another hash is judged from the store
+      at that cycle's trial stage.
     """
     delivered = [row for row in rows if row.delivered]
     if not delivered:
@@ -13213,9 +15217,16 @@ def bind_manifest_deliveries(
     if binding.fault is not None:
         _warn_unbound(spool, len(delivered), binding.fault)
         return
-    outside = [row for row in delivered if not _bind_to_open_aa(row, binding)]
-    if outside:
-        _bind_outside_window(spool, outside)
+    in_trial = [row for row in delivered if _get_row_trial(row, binding) is not None]
+    trial_offsets = {row.line_offset for row in in_trial}
+    outside = [
+        row
+        for row in delivered
+        if row.line_offset not in trial_offsets and not _bind_to_open_aa(row, binding)
+    ]
+    foreign = [row for row in in_trial if not _is_trial_hash(row, binding)]
+    _log_trial_filing(spool, [row for row in in_trial if row not in foreign], binding)
+    _bind_unjudged(spool, UnjudgedRows(foreign, outside), binding)
 
 
 def _read_binding_state(binding: DeliveryBinding) -> None:
@@ -13229,6 +15240,104 @@ def _read_binding_state(binding: DeliveryBinding) -> None:
         binding.latest = _read_open_aa_start()
     except AaStateUnreadable as exc:
         binding.fault = f"open A/A state unreadable: {exc}"
+        return
+    try:
+        binding.trials = _read_trial_bindings()
+    except Exception as exc:  # noqa: BLE001 — any read fault leaves the rows unbound, named
+        binding.fault = f"open trial state unreadable: {_describe_fault(exc)}"
+
+
+def _read_trial_bindings() -> dict[str, TrialBinding]:
+    """Agent (hook_path_safe_key form) → its open live trial, the latest when several; raises on a
+    PG fault."""
+    with _pg_connect() as conn, conn.cursor() as cur:
+        cur.execute(LIVE_TRIAL.BINDING_SQL, (TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,))
+        rows = cur.fetchall()
+    return _get_trial_bindings(
+        TrialBinding(
+            agent, key, pattern_id, text_sha256, committed_at, _get_start_instant(started_at)
+        )
+        for agent, key, pattern_id, text_sha256, committed_at, started_at in rows
+    )
+
+
+def _get_trial_bindings(trials: Iterable[TrialBinding]) -> dict[str, TrialBinding]:
+    """The one mapping rule of the ingest and the trial stage: agent (hook_path_safe_key form) →
+    its open live trial; trials given in id order → the latest when several."""
+    return {CANARY.UNSAFE_KEY.sub("", trial.agent): trial for trial in trials}
+
+
+def _get_start_instant(value: str | None) -> datetime | None:
+    """The start record's started_at; unreadable → None, so no row is filed at a guessed start."""
+    try:
+        return datetime.fromisoformat(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+
+
+def _get_row_trial(row: ManifestRow, binding: DeliveryBinding) -> TrialBinding | None:
+    """The agent's open trial when the row started at or after its commit's second."""
+    trial = binding.trials.get(row.agent_type)
+    if trial is None or row.started_at < _get_trial_floor(trial):
+        return None
+    return trial
+
+
+def _get_trial_floor(trial: TrialBinding) -> datetime:
+    """The commit's second: a MANIFEST started_at carries whole seconds, recorded_at finer."""
+    return trial.committed_at.replace(microsecond=0)
+
+
+def _is_trial_hash(row: ManifestRow, binding: DeliveryBinding) -> bool:
+    return row.delivered_hash == binding.trials[row.agent_type].text_sha256
+
+
+def _log_trial_filing(spool: str, rows: list[ManifestRow], binding: DeliveryBinding) -> None:
+    """One INFO line per trial: its rows bound, and how many are filed at its start."""
+    by_trial: dict[str, list[ManifestRow]] = defaultdict(list)
+    for row in rows:
+        by_trial[row.agent_type].append(row)
+    for agent, bound in by_trial.items():
+        trial = binding.trials[agent]
+        start = trial.started_at.replace(microsecond=0) if trial.started_at else None
+        filed = sum(1 for row in bound if start is not None and row.started_at >= start)
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: manifest binding — trial {trial.key}: {len(bound)} delivered "
+            f"row(s) of {spool} bound, {filed} filed at its start, {len(bound) - filed} in no arm\n"
+        )
+
+
+class UnjudgedRows(NamedTuple):
+    """An ingest's delivered rows the racing predicate judges."""
+
+    foreign: list[ManifestRow]  # in an open trial, another hash than the trial's
+    outside: list[ManifestRow]  # bound to no open trial or A/A
+
+
+def _bind_unjudged(spool: str, unjudged: UnjudgedRows, binding: DeliveryBinding) -> None:
+    """The rows the racing predicate judges: one salt read; a fault leaves them unbound, named."""
+    foreign, outside = unjudged
+    rows = foreign + outside
+    if not rows:
+        return
+    try:
+        salts = _read_salt_rows(frozenset(row.salt_id for row in rows if row.salt_id is not None))
+    except Exception as exc:  # noqa: BLE001 — any read fault leaves the rows unbound, named
+        _warn_unbound(spool, len(rows), f"salt rows unreadable: {_describe_fault(exc)}")
+        return
+    for row in foreign:
+        if not _is_racing_row(row, salts):
+            _void_trial_row(spool, row, binding)
+    for row in outside:
+        if not _is_racing_row(row, salts):
+            _bind_outside_window(spool, row, binding)
+
+
+def _is_racing_row(row: ManifestRow, salts: SaltRows) -> bool:
+    if row.salt_id in salts.aa_ids:
+        return row.delivered_hash == _get_text_sha256(CANARY.AA_TEXT)
+    decided = salts.decided.get(row.salt_id) if row.salt_id is not None else None
+    return decided == (row.agent_type, row.delivered_hash)
 
 
 def _bind_to_open_aa(row: ManifestRow, binding: DeliveryBinding) -> bool:
@@ -13245,24 +15354,73 @@ def _bind_to_open_aa(row: ManifestRow, binding: DeliveryBinding) -> bool:
     return True
 
 
-def _bind_outside_window(spool: str, rows: list[ManifestRow]) -> None:
-    salt_ids = frozenset(row.salt_id for row in rows if row.salt_id is not None)
-    try:
-        aa_salt_ids = _read_aa_salt_ids(salt_ids) if salt_ids else frozenset()
-    except Exception as exc:  # noqa: BLE001 — any read fault leaves the rows unbound, named
-        _warn_unbound(spool, len(rows), f"salt rows unreadable: {_describe_fault(exc)}")
-        return
-    aa_sha256 = _get_text_sha256(CANARY.AA_TEXT)
-    for row in rows:
-        if row.salt_id in aa_salt_ids and row.delivered_hash == aa_sha256:
-            continue
-        _write_unbound_delivery(spool, row)
-        sys.stderr.write(
-            f"[daemon-cycle] WARN: manifest binding — {row.agent_type} canary delivered with no "
-            f"open trial ({spool} line {row.line_offset}, salt_id={row.salt_id}, "
-            f"delivered_hash={row.delivered_hash})\n"
+def _bind_outside_window(spool: str, row: ManifestRow, binding: DeliveryBinding) -> None:
+    """A delivery with no open trial: its unbound row and WARN; the file removed unless the agent
+    has an open trial, which owns it."""
+    _write_unbound_delivery(spool, row)
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: manifest binding — {row.agent_type} canary delivered with no "
+        f"open trial ({spool} line {row.line_offset}, salt_id={row.salt_id}, "
+        f"delivered_hash={row.delivered_hash})\n"
+    )
+    if row.agent_type not in binding.trials:
+        _delete_canaries(
+            [_get_canary_path(row.agent_type)], "delivered with no open trial", STAGE_AREA.BINDING
         )
-        _delete_canaries([_get_canary_path(row.agent_type)], "delivered with no open trial")
+
+
+def _void_trial_row(spool: str, row: ManifestRow, binding: DeliveryBinding) -> None:
+    """The trial's first foreign row voids it and removes its file whether or not the row lands;
+    a later one binds silently."""
+    trial = binding.trials[row.agent_type]
+    if trial.key in binding.voided:
+        return
+    binding.voided.add(trial.key)
+    void = TrialVoid(
+        trial.key, trial.agent, trial.pattern_id, row.delivered_hash, spool, row.line_offset
+    )
+    _write_trial_void(void, STAGE_AREA.BINDING)
+    _delete_canaries(
+        [_get_canary_path(trial.agent)], f"trial {trial.key} voided", STAGE_AREA.BINDING
+    )
+
+
+def _write_trial_void(void: TrialVoid, area: str) -> None:
+    """Its <live trial key>:decision row; a void the ledger did not take WARNs and is not held —
+    the next trial stage reads the stored row again."""
+    detail = {"reason": CANARY.VOID_REASON, "agent": void.agent, "text_sha256": void.text_sha256}
+    try:
+        landed = _write_live_decision(void.key, void.agent, void.pattern_id, {"void": detail})
+    except Exception as exc:  # noqa: BLE001 — a record fault, never a failed cycle
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: {area} — trial {void.key} void not recorded: "
+            f"{_get_void_cause(void)}): "
+            f"{_describe_fault(exc)}; not held — the next trial stage reads its stored row "
+            "again; no canary is written or renewed for that trial at this cycle's trial stage\n"
+        )
+        return
+    _log_trial_void(void, area, landed)
+
+
+def _get_void_cause(void: TrialVoid) -> str:
+    label = void.text_sha256 or "(unrecorded)"
+    return (
+        f"{void.agent}'s canary text {label} is not the pre-registered one "
+        f"({void.spool} line {void.line_offset}"
+    )
+
+
+def _log_trial_void(void: TrialVoid, area: str, landed: int) -> None:
+    if landed == 1:
+        sys.stderr.write(
+            f"[daemon-cycle] WARN: {area} — trial {void.key} voided: {_get_void_cause(void)}, "
+            f"{void.key}:decision)\n"
+        )
+    else:
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: {area} — trial {void.key}: no foreign-hash void written "
+            f"({_DECISION_UNLANDED})\n"
+        )
 
 
 def _write_unbound_delivery(spool: str, row: ManifestRow) -> None:
@@ -13366,15 +15524,51 @@ def _read_stored_manifest_offsets(spool: str) -> frozenset[int]:
         return frozenset(offset for (offset,) in cur.fetchall())
 
 
-def _read_aa_salt_ids(salt_ids: frozenset[int]) -> frozenset[int]:
-    """The given salt ids that name an aa-start or aa-restart row. Raises on a PG fault."""
+def _read_salt_rows(salt_ids: frozenset[int]) -> SaltRows:
+    """The given salt ids naming an aa-start or aa-restart row, and those naming a decided live
+    pre-registration with its agent (hook_path_safe_key form) and canary hash. Raises on a PG
+    fault."""
+    if not salt_ids:
+        return SaltRows(frozenset(), {})
+    events = TRIAL_LEDGER.EVENT
     params = {
-        "events": [TRIAL_LEDGER.EVENT.AA_START, TRIAL_LEDGER.EVENT.AA_RESTART],
+        "events": [events.AA_START, events.AA_RESTART, events.LIVE_PREREGISTRATION],
         "ids": sorted(salt_ids),
     }
     with _pg_connect() as conn, conn.cursor() as cur:
         cur.execute(AA.SQL.SALT_ROWS, params)
-        return frozenset(row_id for (row_id,) in cur.fetchall())
+        rows = cur.fetchall()
+    aa_ids = frozenset(row_id for row_id, event, *_ in rows if event != events.LIVE_PREREGISTRATION)
+    decided = {
+        row_id: (CANARY.UNSAFE_KEY.sub("", agent), text_sha256)
+        for row_id, event, agent, text_sha256, is_decided in rows
+        if event == events.LIVE_PREREGISTRATION and is_decided
+    }
+    return SaltRows(aa_ids, decided)
+
+
+def _read_other_hash_rows(trials: Mapping[str, TrialBinding]) -> list[StoredManifestRow]:
+    """Each mapped agent's stored delivered rows from its trial's commit second whose hash is not
+    that trial's canary hash — a row with no hash included — in id order.
+
+    Raises ManifestExposureAbsent on a schema without the exposure columns, never an empty
+    result: 'no row' there would read as 'no other text delivered'. Raises on any other PG fault.
+    """
+    agents = sorted(trials)
+    params = {
+        "agents": agents,
+        "floors": [_get_trial_floor(trials[agent]) for agent in agents],
+        "hashes": [trials[agent].text_sha256 for agent in agents],
+    }
+    try:
+        with _pg_connect() as conn, conn.cursor() as cur:
+            cur.execute(MANIFEST.OTHER_HASH_ROWS_SQL, params)
+            rows = cur.fetchall()
+    except Exception as exc:
+        if getattr(exc, "sqlstate", None) != AA.UNDEFINED_COLUMN_SQLSTATE:
+            raise
+        raise ManifestExposureAbsent from exc
+    return [StoredManifestRow(spool, ManifestRow(*columns)) for spool, *columns in rows]
 
 
 def run_cycle(
@@ -13386,15 +15580,29 @@ def run_cycle(
     skip_pre_verify: bool = False,
     skip_loop_emit: bool = False,
 ) -> CycleReport:
-    """One daemon cycle — intake, gates and report; generation closed until live trials.
+    """One daemon cycle — intake, power check, generation, gates and report.
 
-    While IS_GENERATION_CLOSED: no generator call, no pre-verify, no patch; stored
-    pending auto rows terminalize unless skip_loop_emit; every post-loop step runs.
-    Once lifted, _run_generation_loop runs the per-agent flow — pattern → patch
-    proposal → classification → pre-verify (4-axis) → routing hints.
+    Only a power-passing pattern reaches generation: any other verdict parks it for
+    this cycle, counted and re-checked next cycle; a floor-failing keyed pattern gets
+    no verdict, so it is not counted but skipped by name (N49's stale-pattern-skip).
+    _run_generation_loop runs the
+    per-agent flow — pattern → patch proposal → classification → pre-verify as a
+    compliance filter → safety routing; a verified non-safety candidate gets its live
+    pre-registration payload, and the floor terminalizes every other auto candidate.
+
+    A writing cycle calls the apply for each won trial's still-pending row after the
+    stages and ahead of generation (run_graduation_stage). The agent of a called row gets
+    no generator call that cycle, whatever the call's outcome — its intake was read before
+    the apply; its generation resumes at the first writing cycle whose stage makes no call
+    for it and whose one-running-trial gate finds no held trial.
 
     A writing cycle (skip_loop_emit False) from a code tree that is not its install
     raises InstallRefusedError before any stage, reads included.
+
+    The trial, shadow and A/A stages are each contained: a raise is a named WARN under its
+    stage area and the stages after it still run; a trial-stage raise hands the looks no
+    trial. Graduation is not: a raise there ends the cycle ahead of generation, so no agent
+    whose row an apply may have reached gets a generator call.
 
     Returns the in-memory CycleReport. Caller decides where to persist it.
     """
@@ -13437,8 +15645,9 @@ def run_cycle(
         )
 
     # per-TARGET (agent) flow: 1) read all user-pending patterns (agent cap applies
-    # to agents, not patterns, so no slicing here) → 2) group by .agent → 3) apply
-    # agent cap → 4) one consolidated multi-hunk proposal per agent.
+    # to agents, not patterns, so no slicing here) → 2) power check → 3) group its
+    # passes (freq DESC) by .agent → 4) agent cap on passing agents → 5) one
+    # consolidated multi-hunk proposal per agent.
     # Discharge first: a pattern whose patch already landed must not seed this
     # cycle's intake. One untruncated pattern read serves the discharge's intake
     # check and the regression gate's coverage question.
@@ -13453,21 +15662,22 @@ def run_cycle(
         log_path, UNLIMITED_AGENTS, agents_dir=agents_dir, live=not skip_loop_emit
     )
     report.patterns_processed = len(patterns)
-    agent_groups = _group_patterns_by_agent(patterns, agent_cap=agent_cap)
-    # Both generation branches: verdict only; no pattern is parked or dropped.
     power = check_pattern_power(patterns, skip_loop_emit=skip_loop_emit)
     report.power_check = power.counts
+    agent_groups = _group_patterns_by_agent(
+        [power_pass.pattern for power_pass in power.passes], agent_cap=agent_cap
+    )
     if not skip_loop_emit:  # no-write mode (--dry-run) writes no ledger row
-        run_shadow_stage(power, report.cycle_date)
-        run_aa_stage(
-            report.cycle_date, manifest_ingest=report.manifest_ingest, agents_dir=agents_dir
+        # the trial stage ahead of the looks → a trial takes one only when that stage judged it
+        judged_trials = _run_contained_stage(
+            STAGE_AREA.TRIAL,
+            lambda: run_trial_stage(),
+            frozenset[str](),
+            "no trial takes a look this cycle",
         )
-
-    if IS_GENERATION_CLOSED:
-        sys.stderr.write(
-            "[daemon-cycle] INFO: generation closed until live trials — no generator "
-            "call and no auto-apply this cycle\n"
-        )
+        _run_post_trial_stages(power, report, agents_dir, judged_trials)
+        # the intake above was read before the apply → a called row's agent sits this cycle out
+        agent_groups = _drop_graduating_agents(agent_groups, run_graduation_stage())
 
     # T3 corpus/compliance telemetry — DETECTION-ONLY, fired ONCE per cycle.
     # Fully wrapped: any failure is swallowed so it can NEVER block or raise into
@@ -13491,30 +15701,18 @@ def run_cycle(
             # cycle continues.
             emit_corpus_audit(corpus_signal, report.cycle_date)
 
-    if IS_GENERATION_CLOSED:
-        if skip_loop_emit:
-            sys.stderr.write(
-                "[daemon-cycle] INFO: generation-closed terminalization skipped — "
-                "no-write mode (skip_loop_emit)\n"
-            )
-        else:
-            try:
-                update_generation_closed_proposals()
-            except Exception as exc:  # noqa: BLE001 — fail-loud-and-skip; next cycle retries
-                sys.stderr.write(
-                    "[daemon-cycle] WARN: update_generation_closed_proposals raised — "
-                    f"pending auto rows left open: {_describe_fault(exc)}\n"
-                )
-    else:
-        _run_generation_loop(
-            report,
-            agent_groups,
-            regression_gate,
+    _run_generation_loop(
+        report,
+        agent_groups,
+        GenerationRun(
+            regression_gate=regression_gate,
             agents_dir=agents_dir,
             skip_haiku=skip_haiku,
             skip_pre_verify=skip_pre_verify,
             skip_loop_emit=skip_loop_emit,
-        )
+            power=power,
+        ),
+    )
 
     # Just before cycle end, UPSERT the loop_event row directly to PG.
     # skip_loop_emit=True → block the PG call in unit-test / preflight paths.
@@ -13603,59 +15801,77 @@ def run_cycle(
     return report
 
 
+def _run_post_trial_stages(
+    power: PowerResult,
+    report: CycleReport,
+    agents_dir: Path,
+    judged_trials: frozenset[str],
+) -> None:
+    """The shadow and A/A stages, each contained, around the decided-proposal update."""
+    _run_contained_stage(
+        STAGE_AREA.SHADOW,
+        lambda: run_shadow_stage(power, report.cycle_date, judged_trials),
+        None,
+        "the cycle runs on to the A/A stage",
+    )
+    # after every decision writer, before graduation, generation and the push
+    update_decided_trial_proposals()
+    _run_contained_stage(
+        STAGE_AREA.AA,
+        lambda: run_aa_stage(
+            report.cycle_date,
+            manifest_ingest=report.manifest_ingest,
+            agents_dir=agents_dir,
+        ),
+        None,
+        "the cycle runs on to graduation",
+    )
+
+
+class GenerationRun(NamedTuple):
+    """One cycle's generation settings, shared by every agent group."""
+
+    regression_gate: RegressionGateReport
+    agents_dir: Path
+    skip_haiku: bool
+    skip_pre_verify: bool
+    skip_loop_emit: bool
+    power: PowerResult | None = None  # the passes a candidate's pre-registration is sized on
+
+
+_StageResult = TypeVar("_StageResult")
+
+
+def _run_contained_stage(
+    area: str, stage: Callable[[], _StageResult], fallback: _StageResult, scope: str
+) -> _StageResult:
+    """One run_cycle stage: a raise → named WARN under `area`, `fallback` returned."""
+    try:
+        return stage()
+    except Exception as exc:  # noqa: BLE001 — a stage fault never ends the cycle before the next
+        _warn_stage(area, f"the stage raised: {_describe_fault(exc)}", scope)
+        return fallback
+
+
 def _run_generation_loop(
     report: CycleReport,
     agent_groups: list[tuple[str, list[Pattern]]],
-    regression_gate: RegressionGateReport,
-    *,
-    agents_dir: Path,
-    skip_haiku: bool,
-    skip_pre_verify: bool,
-    skip_loop_emit: bool,
+    run: GenerationRun,
 ) -> None:
     """Per-agent generation loop — gates, then one routed row per agent.
 
-    Reached only once IS_GENERATION_CLOSED is lifted.
-    Appends each row to ``report.patches``. The promotion tier is a label only and
-    resolve_floor_terminalization terminalizes every auto candidate.
+    Appends each row to ``report.patches``. The promotion tier is a label only; a
+    candidate bound to a live pre-registration stays pending auto, and
+    resolve_floor_terminalization terminalizes every other auto candidate.
     """
     seen_targets: set[str] = set()
+    preregistration = _get_preregistration_source(run)
+    # PG gates in full-real mode only — skipped under skip_haiku and skip_loop_emit (test/preflight)
+    if not run.skip_haiku and not run.skip_loop_emit:
+        agent_groups = _drop_trial_held_agents(agent_groups)
     for agent, agent_patterns in agent_groups:
-        # Anti-fossil lifecycle gates — BEFORE any Haiku spend.
-        # All five gates write PG (learning_log transition + skip loop events),
-        # so they run only in full-real mode: skip_haiku (test/preflight) bypasses
-        # them like the timeout back-off below, skip_loop_emit (no-PG-write
-        # mode) bypasses them like the supersede. Order matters — the four
-        # terminalizing gates (reverted, reject-streak, repeat-apply-cap,
-        # non-auto-fixable) run before the transient pair re-check; reverted
-        # runs FIRST (a human back-out outranks every generation-side verdict).
-        # repeat-apply-cap follows reject-streak because an 'applied' row RESETS
-        # that streak: the alternating apply/reject fossil is invisible to the
-        # streak gate and is exactly what the cap exists to catch.
-        if not skip_haiku and not skip_loop_emit:
-            # One shared fetch serves both proposal-history gates (neither
-            # mutates rows). None (PG off / read error) → skip both, matching
-            # each gate's own fail-open branch without a doomed re-fetch.
-            history_rows = _fetch_proposal_history(agent)
-            if history_rows is not None:
-                agent_patterns = drop_reverted_patterns(
-                    agent, agent_patterns, rows=history_rows
-                )
-                agent_patterns = drop_reject_streak_patterns(
-                    agent, agent_patterns, rows=history_rows
-                )
-                agent_patterns = drop_apply_capped_patterns(
-                    agent, agent_patterns, rows=history_rows
-                )
-            agent_patterns = drop_non_auto_fixable_patterns(agent, agent_patterns)
-            agent_patterns = drop_pair_failing_patterns(agent, agent_patterns)
-            # Non-terminalizing and reversible: the block lapses with the warning.
-            agent_patterns = drop_regression_blocked_patterns(
-                agent,
-                agent_patterns,
-                regression_gate,
-                live=regression_gate_live_enabled(),
-            )
+        if not run.skip_haiku and not run.skip_loop_emit:
+            agent_patterns = _drop_gated_patterns(agent, agent_patterns, run.regression_gate)
             if not agent_patterns:
                 continue
         report.patches.append(
@@ -13663,13 +15879,194 @@ def _run_generation_loop(
                 agent,
                 agent_patterns,
                 cycle_date=report.cycle_date,
-                agents_dir=agents_dir,
+                agents_dir=run.agents_dir,
                 seen_targets=seen_targets,
-                skip_haiku=skip_haiku,
-                skip_pre_verify=skip_pre_verify,
-                skip_loop_emit=skip_loop_emit,
+                skip_haiku=run.skip_haiku,
+                skip_pre_verify=run.skip_pre_verify,
+                skip_loop_emit=run.skip_loop_emit,
+                preregistration=preregistration,
             )
         )
+
+
+def _get_preregistration_source(run: GenerationRun) -> PreregistrationSource | None:
+    """The cycle's power with its unread roster read; None when no windows were judged."""
+    if run.power is None or run.power.windows is None:
+        return None
+    read = RosterSpawnRead(run.agents_dir, run.power.windows, get_tool_budget(os.environ))
+    return PreregistrationSource(run.power, read)
+
+
+def _drop_trial_held_agents(
+    agent_groups: list[tuple[str, list[Pattern]]],
+) -> list[tuple[str, list[Pattern]]]:
+    """One-running-trial gate — no generator call for an agent holding a held live trial.
+
+    Held = open, or won with its proposal row still pending. Reads the held trials once per
+    cycle. A read fault holds every agent this cycle (named WARN; the cycle continues). No PG
+    layer → nothing readable, so no hold.
+    """
+    if not agent_groups or not HAS_PG_LOOP_WRITE:
+        return agent_groups
+    try:
+        held_trials = _pg_read_held_trials()
+    except Exception as exc:  # noqa: BLE001 — a read fault holds generation, never the cycle
+        sys.stderr.write(
+            "[daemon-cycle] WARN: one-running-trial gate — held live trials unreadable: "
+            f"{_describe_fault(exc)} — no generator call this cycle\n"
+        )
+        return []
+    for agent, _ in agent_groups:
+        if agent in held_trials:
+            sys.stderr.write(
+                f"[daemon-cycle] INFO: one-running-trial gate — agent={agent} holds a live "
+                "trial, open or won with its row pending (proposal ids "
+                f"{held_trials[agent]}) — no generator call this cycle\n"
+            )
+    return [group for group in agent_groups if group[0] not in held_trials]
+
+
+def _drop_graduating_agents(
+    agent_groups: list[tuple[str, list[Pattern]]], graduating_agents: frozenset[str]
+) -> list[tuple[str, list[Pattern]]]:
+    """No generator call this cycle for an agent whose graduation apply the cycle called."""
+    for agent, _ in agent_groups:
+        if agent in graduating_agents:
+            sys.stderr.write(
+                f"[daemon-cycle] INFO: graduation — agent={agent}: apply called this cycle "
+                "— no generator call this cycle\n"
+            )
+    return [group for group in agent_groups if group[0] not in graduating_agents]
+
+
+def run_graduation_stage() -> frozenset[str]:
+    """Graduation — one apply call for each won trial whose proposal row is still pending.
+
+    Derived every writing cycle from stored rows: the win row is the decision, the apply its
+    effect. A row still pending after its call → a named WARN, whatever the exit; the next
+    writing cycle calls again, and the apply path's stale drain ends a diff that never lands.
+    A win whose A/A start is invalidated since gets no call, with a named WARN — the trial
+    decision step ends its row unadjudicated; that read faulting → named WARN, no call at all.
+
+    Returns the agents of the rows it called the apply for, whatever each call's outcome:
+    run_cycle makes no generator call for them this cycle.
+    """
+    won_agents = _get_graduating_agents(_read_won_pending_agents("no apply call this cycle"))
+    if not won_agents:
+        return frozenset()
+    outcomes = {proposal_id: _call_graduation_apply(proposal_id) for proposal_id in won_agents}
+    still_pending = _read_won_pending_agents(
+        "the apply outcomes go unreported, a row still pending is called again next writing cycle"
+    )
+    for proposal_id in still_pending or ():
+        if proposal_id in outcomes:
+            _warn_stage(
+                STAGE_AREA.GRADUATION,
+                f"trial {get_live_trial_key(proposal_id)}: proposal {proposal_id} still pending "
+                f"after its apply call ({outcomes[proposal_id]})",
+                "the next writing cycle calls again",
+            )
+    return frozenset(won_agents.values())
+
+
+def _get_graduating_agents(won_agents: dict[int, str] | None) -> dict[int, str] | None:
+    """The won pending rows less each one whose trial's A/A start is invalidated, WARNed by name;
+    None, with a named WARN, when that read faults."""
+    if not won_agents:
+        return won_agents
+    invalidated = _get_invalidated_trial_keys(STAGE_AREA.GRADUATION, "no apply call this cycle")
+    if invalidated is None:
+        return None
+    for proposal_id in won_agents:
+        if (key := get_live_trial_key(proposal_id)) in invalidated:
+            _warn_stage(
+                STAGE_AREA.GRADUATION,
+                f"trial {key}: proposal {proposal_id} won on an A/A start invalidated since",
+                "no apply call; the trial decision step ends its row unadjudicated",
+            )
+    return {
+        proposal_id: agent
+        for proposal_id, agent in won_agents.items()
+        if get_live_trial_key(proposal_id) not in invalidated
+    }
+
+
+def _read_won_pending_agents(fault_scope: str) -> dict[int, str] | None:
+    """Proposal id → agent of the won trials whose row is still pending: held and not open.
+
+    None, with a named WARN, on a read fault. No PG layer → nothing readable. The open read
+    follows the held one, so a trial decided between them is not taken for a won one only while
+    the cycle is the sole decider.
+    """
+    if not HAS_PG_LOOP_WRITE:
+        return {}
+    try:
+        held_trials = _pg_read_held_trials()
+        open_trials = _pg_read_open_trials() if held_trials else {}
+    except Exception as exc:  # noqa: BLE001 — a read fault holds the apply, never the cycle
+        _warn_stage(
+            STAGE_AREA.GRADUATION, f"won trials unreadable: {_describe_fault(exc)}", fault_scope
+        )
+        return None
+    return dict(
+        sorted(
+            (proposal_id, agent)
+            for agent, proposal_ids in held_trials.items()
+            for proposal_id in proposal_ids
+            if proposal_id not in open_trials.get(agent, [])
+        )
+    )
+
+
+def _call_graduation_apply(proposal_id: int) -> str:
+    """The single-proposal apply with the daemon actor, never the regenerating path → its
+    outcome as the WARN names it. No timeout: a killed apply could stop between its file write
+    and its status write."""
+    script = _INSTALL_ROOT / "autoagent" / "daemon-apply.sh"
+    try:
+        # stdout dropped, stderr inherited: the script's own refusal line reaches the cycle log
+        # argv inline → the A/A scope closure walk resolves this run edge
+        completed = subprocess.run(  # nosec — list form, no shell=True
+            # the daemon's flip token — autoagent/daemon-apply.sh → REVIEW_ACTOR_FLIP
+            ["bash", str(script), "--proposal-id", str(proposal_id), "--actor", "daemon-apply-flip"],
+            stdout=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError as exc:
+        return f"not started: {_describe_fault(exc)}"
+    return f"exit {completed.returncode}"
+
+
+def _drop_gated_patterns(
+    agent: str,
+    agent_patterns: list[Pattern],
+    regression_gate: RegressionGateReport,
+) -> list[Pattern]:
+    """Anti-fossil lifecycle gates for one agent's patterns — BEFORE any Haiku spend.
+
+    The four terminalizing gates (reverted, reject-streak, repeat-apply-cap,
+    non-auto-fixable) run before the transient pair re-check; reverted runs FIRST
+    (a human back-out outranks every generation-side verdict). repeat-apply-cap
+    follows reject-streak because an 'applied' row RESETS that streak: the
+    alternating apply/reject fossil is invisible to the streak gate and is exactly
+    what the cap exists to catch.
+    """
+    # one shared fetch serves every proposal-history gate (none mutates rows)
+    # None (PG off / read error) → every gate skipped, each gate's own fail-open, no doomed re-fetch
+    history_rows = _fetch_proposal_history(agent)
+    if history_rows is not None:
+        agent_patterns = drop_reverted_patterns(agent, agent_patterns, rows=history_rows)
+        agent_patterns = drop_reject_streak_patterns(agent, agent_patterns, rows=history_rows)
+        agent_patterns = drop_apply_capped_patterns(agent, agent_patterns, rows=history_rows)
+    agent_patterns = drop_non_auto_fixable_patterns(agent, agent_patterns)
+    agent_patterns = drop_pair_failing_patterns(agent, agent_patterns)
+    # Non-terminalizing and reversible: the block lapses with the warning.
+    return drop_regression_blocked_patterns(
+        agent,
+        agent_patterns,
+        regression_gate,
+        live=regression_gate_live_enabled(),
+    )
 
 
 def build_patch_result(
@@ -13682,13 +16079,15 @@ def build_patch_result(
     skip_haiku: bool,
     skip_pre_verify: bool,
     skip_loop_emit: bool,
+    preregistration: PreregistrationSource | None = None,
 ) -> PatchResult:
     """Generation unit — one agent's gated patterns → one routed proposal row.
 
     Runs the timeout back-off, the Haiku generation, classification, pre-verify
-    routing, closed-apply terminalization and the same-agent supersede.
+    routing, the live pre-registration payload, the floor and the same-agent supersede.
     ``seen_targets`` is the cycle's conflict set: read, then extended in place.
-    ``cycle_date`` is the identity the supersede spares.
+    ``cycle_date`` is the identity the supersede spares; ``preregistration`` sizes the payload —
+    None, no payload.
     """
     # Chronic Haiku-timeout back-off (generation side) — BEFORE the Haiku call.
     # A target that already timed out TIMEOUT_BACKOFF_THRESHOLD consecutive
@@ -13840,17 +16239,27 @@ def build_patch_result(
 
     promotion_tier = "mention"
 
-    # Closed-apply terminalization — close the auto+pending limbo at the SOURCE
-    # so every auto-tier candidate reaches a terminal state this cycle; it would
-    # otherwise sit pending forever, fossilizing as a standing "New
-    # suggestions" pile. Safety tier is untouched (the gate is auto-only) — the
-    # human queue is preserved.
+    # bound: a verified non-safety candidate of a passing lead pattern, writing cycle → trial opens
+    # off-map agents: no code-side stop, pre-verify's C3 directive the only one
+    preregistration_payload = _get_bound_preregistration_payload(
+        preregistration,
+        TrialCandidate(
+            lead_pattern,
+            (approval_tier, status_value),
+            proposal.proposed_diff,
+            Path(proposal.target_file),
+        ),
+        skip_loop_emit=skip_loop_emit,
+    )
+    # floor: every unbound auto candidate terminal this cycle — pending it has no apply path
+    # safety tier untouched (auto-only floor) → the human queue kept
     terminalize = resolve_floor_terminalization(
         classification=classification,
         approval_tier=approval_tier,
         status_value=status_value,
         promotion_tier=promotion_tier,
         rationale=proposal.rationale,
+        is_bound=preregistration_payload is not None,
     )
     classification = terminalize.classification
     approval_tier = terminalize.approval_tier
@@ -13862,6 +16271,12 @@ def build_patch_result(
             f"agent={agent} target={proposal.target_file} "
             f"(promotion_tier='{promotion_tier}', label only); "
             "persisted status='unadjudicated' instead of auto-pending limbo\n"
+        )
+    elif preregistration_payload is not None:
+        sys.stderr.write(
+            f"[daemon-cycle] INFO: live trial opening — auto candidate for agent={agent} "
+            f"target={proposal.target_file} bound to a live pre-registration; "
+            "stored pending auto, in trial\n"
         )
 
     # T4 prose-only-add detection — DETECTION-ONLY WARNING per candidate patch
@@ -13894,19 +16309,18 @@ def build_patch_result(
                 f"resolution lost: {type(exc).__name__}: {str(exc)[:160]}\n"
             )
 
-    # Same-agent supersede — only when the new proposal is an actual emit
-    # target (pending), terminate the agent's OTHER pending rows (block
-    # backlog re-accumulation). The skip_loop_emit (test/preflight) path does
-    # not touch PG → supersede also skipped. A floor-terminalized row is not
-    # pending → never a fresh emit → never triggers supersede.
-    # The cycle date + consolidated label are the identity this run's own push
-    # will update, so they are what the supersede must spare.
+    # same-agent supersede on a pending emit → the agent's OTHER pending rows closed (no backlog)
+    # skip_loop_emit (test/preflight) touches no PG → no supersede
+    # scope = the candidate's tier: auto closes auto rows, safety / infra-pending every tier
+    # never closed: a row a held live trial names
+    # spared: the cycle date + consolidated label this run's own push updates
     if status_value == "pending" and not skip_loop_emit:
         supersede_prior_pending_for_agent(
             agent,
             proposal.target_file,
             cycle_date=cycle_date,
             pattern_label=consolidated_label,
+            candidate_tier=approval_tier,
         )
 
     return PatchResult(
@@ -13965,7 +16379,107 @@ def build_patch_result(
         # Lead pattern only: the column holds one link per proposal row.
         learning_pattern_id=lead_pattern.row_id or None,
         generator_input_version=GENERATOR_INPUT_VERSION,
+        preregistration_payload=preregistration_payload,
     )
+
+
+class TrialCandidate(NamedTuple):
+    """A routed candidate's inputs to its live pre-registration."""
+
+    lead_pattern: Pattern
+    route: tuple[str, str]  # (approval tier, status)
+    diff: str
+    target: Path  # the agent body the apply lands the diff on
+
+
+def _get_bound_preregistration_payload(
+    source: PreregistrationSource | None, candidate: TrialCandidate, *, skip_loop_emit: bool
+) -> dict | None:
+    """The live pre-registration payload of a bound candidate; None leaves it to the floor.
+
+    Bound: routed (approval tier, status) = ('auto', 'pending') in a writing cycle, its lead
+    pattern among the cycle's power passes — sized on that pass at the cycle's detection start,
+    its window row from the cycle's roster read; a failed read binds nothing.
+    """
+    lead_pattern, route, diff, target = candidate
+    if skip_loop_emit or route != ("auto", "pending") or source is None:
+        return None
+    windows = source.power.windows
+    power_pass = _get_lead_pass(source.power, lead_pattern)
+    if windows is None or power_pass is None:
+        return None
+    canary_text = _get_trialable_canary_text(diff, power_pass.pattern, target)
+    spawns = None if canary_text is None else source.roster.get_spawns()
+    if spawns is None:
+        return None
+    row = get_redelegation_row(spawns, power_pass, windows)
+    inputs = PreregistrationInputs(windows.start.detection, canary_text, row)
+    return get_preregistration_payload(power_pass, inputs)
+
+
+def _get_lead_pass(power: PowerResult, lead_pattern: Pattern) -> PowerPass | None:
+    """The cycle's power pass of the candidate's own lead pattern; None when it has none."""
+    lead_key = (lead_pattern.agent, lead_pattern.row_id, lead_pattern.metric_key)
+    for power_pass in power.passes:
+        pattern = power_pass.pattern
+        if (pattern.agent, pattern.row_id, pattern.metric_key) == lead_key:
+            return power_pass
+    return None
+
+
+def _get_trialable_canary_text(diff: str, pattern: Pattern, target: Path) -> str | None:
+    """The diff's rendered canary block; None, with a named WARN, when the diff is untrialable."""
+    canary_text = get_canary_text(diff)
+    refusal = _get_canary_refusal(diff, canary_text, target)
+    if refusal is None:
+        return canary_text
+    sys.stderr.write(
+        f"[daemon-cycle] WARN: live trial refused — agent={pattern.agent} "
+        f"pattern={pattern.row_id}: {refusal}; no pre-registration, the floor closes "
+        "the candidate\n"
+    )
+    return None
+
+
+def _get_canary_refusal(diff: str, canary_text: str, target: Path) -> str | None:
+    """Why the diff cannot be trialled; None when it can.
+
+    - more than one file header: the canary renders one body's block — named ahead of the
+      removed-line reading, which takes a later header for body
+    - a removed line: injection can only add, so the canary never carries what graduation removes
+    - no added line: the empty block is the A/A's own text, so its delivery reads as the A/A's
+    - over the hook's cap: refused, never truncated — truncated text was never pre-registered,
+      so a win would describe text that never graduates
+    - outside the landing zone: the apply's own guard refuses it on the current target, so a
+      win would never land — checked last, through the apply's own guard module
+    """
+    if len(_get_diff_header_pairs(diff)) > 1:
+        return "the diff carries more than one file header"
+    if _count_removed_lines(diff):
+        return "the diff removes a line"
+    if not _count_added_lines(diff):
+        return "the diff adds no line"
+    size = len(canary_text.encode("utf-8"))
+    if size > CANARY.MAX_BYTES:
+        return f"rendered canary block {size} B exceeds the {CANARY.MAX_BYTES} B cap"
+    try:
+        verdict = _get_landing_zone_verdict(diff, target)
+    except (ImportError, ValueError) as exc:
+        return f"the apply's landing-zone verdict is unavailable ({_describe_fault(exc)})"
+    if verdict != "ok":
+        return f"the apply's landing-zone guard reads {verdict} on {target.name}"
+    return None
+
+
+def _get_landing_zone_verdict(diff: str, target: Path) -> str:
+    """The apply's landing-zone verdict on the current target, from the guard module it runs.
+
+    Raises ImportError (the guard module did not import) or ValueError (a target that is
+    not UTF-8 text, on which the apply's guard process fails too).
+    """
+    if _LANDING_ZONE_GUARD_IMPORT_EXC is not None:
+        raise ImportError(_describe_fault(_LANDING_ZONE_GUARD_IMPORT_EXC))
+    return landing_zone_guard.get_verdict(diff, str(target))
 
 
 def _get_haiku_status(
@@ -14075,7 +16589,7 @@ def _main(argv: list[str]) -> int:
         help="FU-3 single-proposal mode (requires --regenerate-stale): regen + "
         "pre-verify ONLY this proposal id. Emits a single-result JSON to stdout "
         "and routes the verdict (regenerated/already_applied/invalid/"
-        "unrecoverable) for the accept-path. Honors --dry-run.",
+        "unrecoverable/in_trial) for the accept-path. Honors --dry-run.",
     )
     parser.add_argument(
         "--skip-pre-verify-single",
@@ -14143,9 +16657,12 @@ def _main(argv: list[str]) -> int:
         default=None,
         metavar="START_ID",
         help="Record the A/A of START_ID void-by-defect (one aa-invalidation ledger row naming "
-        "--cause), then exit (no cycle): an open start reads as closed, and its result's design "
-        "effects size nothing. Refused with exit 16 and a named reason; the open start without "
-        "--confirm-open-aa refused with exit 17; takes no --dry-run.",
+        "--cause), then exit (no cycle): an open start reads as closed, its canary files but an "
+        "open live trial's are removed, and its result's design effects size nothing; the next "
+        "writing cycle voids every live trial sized on it (open, or won with its row pending), "
+        "irreversibly, open start or closed. Refused "
+        "with exit 16 and a named reason; the open start without --confirm-open-aa refused "
+        "with exit 17; takes no --dry-run.",
     )
     parser.add_argument(
         "--cause",
@@ -14229,7 +16746,8 @@ def _main(argv: list[str]) -> int:
         # Single-proposal: one structured JSON object to stdout (machine),
         # human text already went to stderr. Exit code: 0 on a clean
         # determination (regenerated/already_applied), 1 on
-        # invalid/unrecoverable, ExitCode.DAEMON_CONFIG_INVALID on a rejected
+        # invalid/unrecoverable/in_trial (a refusal, no UPDATE),
+        # ExitCode.DAEMON_CONFIG_INVALID on a rejected
         # pre_verify_* knob — checked before any PG read and still answered with
         # the one stdout object, because the caller reads `.action`, not the code.
         knob_errors = _get_knob_errors("pre_verify")
@@ -14296,6 +16814,7 @@ def _main(argv: list[str]) -> int:
     else:
         sys.stdout.write(payload + "\n")
 
+    alert_spend_cap(report)
     # Outage code wins: an auth outage rejects every patch → a co-occurring regression is its consequence
     if derive_cost_guard_state(report) == "infra_fault":
         alert_auth_outage(report, skip_loop_emit=skip_loop_emit)

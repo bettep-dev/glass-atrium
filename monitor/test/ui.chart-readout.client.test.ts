@@ -189,6 +189,20 @@ describe("edge ticks anchor by visible order, so neither end label spills past t
     }
   });
 
+  test("on a bar axis the end labels line up with their bar's outer edge, not its centre", () => {
+    // the Agents review-flags capture: band 68.75px (Recharts offset = half of it), bar inset 10% a side → bar 89–144 around centre 116.5
+    const band = { coordinate: 116.5, offset: 34.375 };
+    const rows = [
+      { name: "first bar: label starts on the bar's left edge", index: 0, x: 89 },
+      { name: "last bar: label ends on the bar's right edge", index: 13, x: 144 },
+      { name: "interior bar: label centred on Recharts' x", index: 6, x: 40 },
+    ];
+    for (const row of rows) {
+      const text = render("ChartAxisTick", { x: 40, y: 8, payload: { value: "11-01", ...band }, index: row.index, visibleTicksCount: 14 });
+      assert.equal(text.props.x, row.x, row.name);
+    }
+  });
+
   test("the shared x-axis gap adds half the widest label to the minimum gap", () => {
     for (const labels of [["09-01", "09-30"], ["2026-09-01", "09-30"], []]) {
       const props = getChartXAxisProps(labels);
@@ -201,12 +215,20 @@ describe("edge ticks anchor by visible order, so neither end label spills past t
 });
 
 describe("tick labels thin out before they collide", () => {
-  // a JetBrains Mono glyph advances 0.6em, so the estimate must cover 0.6 × the meta step ticks render at
-  test("the per-character label estimate is never narrower than a mono glyph at the meta step", () => {
+  // a Pretendard tabular digit advances 1258/2048 em (0.614em, v1.3.9 font metrics), the widest glyph a day label holds
+  const SANS_TNUM_DIGIT_EM = 1258 / 2048;
+  test("the per-character label estimate is never narrower than a sans tabular digit at the meta step", () => {
     const tokens = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8");
     const metaPx = Number(tokens.match(/--fs-meta\s*:\s*(\d+)px/)?.[1]);
     assert.ok(metaPx > 0, "tokens.css declares --fs-meta in px");
-    assert.ok(CHART_TICK_CHAR_PX >= metaPx * 0.6, `${CHART_TICK_CHAR_PX}px per char under a ${metaPx * 0.6}px glyph`);
+    assert.ok(CHART_TICK_CHAR_PX >= metaPx * SANS_TNUM_DIGIT_EM, `${CHART_TICK_CHAR_PX}px per char under a ${metaPx * SANS_TNUM_DIGIT_EM}px digit`);
+  });
+
+  test("a tick inherits the sans face and sets tabular figures, so the digit estimate holds", () => {
+    const tick = render("ChartAxisTick", { x: 10, y: 4, payload: { value: "09-18", coordinate: 10 }, index: 0, visibleTicksCount: 2 });
+    const style = tick.props.style as Record<string, unknown>;
+    assert.equal(style.fontFamily, undefined, "no face of its own");
+    assert.equal(style.fontVariantNumeric, "tabular-nums");
   });
 
   const dayLabels = (count: number): string[] => Array.from({ length: count }, (_, i) => `09-${String(i + 1).padStart(2, "0")}`);
@@ -251,6 +273,87 @@ describe("tick labels thin out before they collide", () => {
       }
     }
   });
+});
+
+describe("a bar plot draws only the days that carry a quantity, over one baseline", () => {
+  const rows: Array<{ name: string; values: Array<number | null> }> = [
+    { name: "zero and missing days among filled ones draw no bar", values: [3, 0, 5, null, 2, 0, 7] },
+    { name: "a range of only zero days draws no bar at all", values: [0, 0, 0, 0] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const points = row.values.map((value, i) => ({ label: `09-${String(i + 1).padStart(2, "0")}`, value }));
+      const tree = render("TrendChart", { label: "Runs", points, kind: "bars" });
+      const slotWidth = 100 / points.length;
+      const barDays = findNodes(tree, (n) => n.type === "rect").map((n) => Math.floor(Number(n.props.x) / slotWidth));
+      const filledDays = row.values.flatMap((value, i) => (value ? [i] : []));
+      assert.deepEqual(barDays, filledDays, "one bar per day with a non-zero value, in its own slot");
+      const baselines = findNodes(tree, (n) => n.props["data-chart-baseline"] !== undefined);
+      assert.equal(baselines.length, 1, "one baseline under the bars");
+      assert.equal(baselines[0].props.stroke, "rgb(var(--line))");
+    });
+  }
+
+  for (const count of [7, 30]) {
+    test(`${count} bars: the end tick labels sit on the outer edges of the first and last bars, measured or not`, () => {
+      const points = Array.from({ length: count }, (_, i) => ({ label: `09-${String(i + 1).padStart(2, "0")}`, value: i + 1 }));
+      const tree = render("TrendChart", { label: "Runs", points, kind: "bars" });
+      const bars = findNodes(tree, (n) => n.type === "rect");
+      const lastBar = bars[bars.length - 1];
+      const edges = { first: Number(bars[0].props.x), last: Number(lastBar.props.x) + Number(lastBar.props.width) };
+      const ticks = findNodes(tree, (n) => n.props["data-chart-tick"] !== undefined);
+      const tickLeft = (tick: RenderedNode) => parseFloat((tick.props.style as { left: string }).left);
+      assert.deepEqual({ first: tickLeft(ticks[0]), last: tickLeft(ticks[ticks.length - 1]) }, edges, "unmeasured row");
+      const measured = getChartTickLayout(points.map((point) => point.label), "bars", 480);
+      assert.deepEqual({ first: measured[0].left, last: measured[measured.length - 1].left }, edges, "measured row");
+    });
+  }
+});
+
+describe("a series mark carries the data colour, never a tone or the accent", () => {
+  const getMarkPaints = (tree: RenderedNode): string[] =>
+    findNodes(tree, (n) => n.type === "rect" || n.type === "path").map((n) => String(n.props.fill === "none" ? n.props.stroke : n.props.fill));
+
+  for (const kind of ["line", "bars"]) {
+    test(`${kind}: every mark paints --data at full strength, whatever tone a caller still passes`, () => {
+      const tree = render("TrendChart", { label: "Runs", points: WEEK, kind, tone: "warn" });
+      const paints = getMarkPaints(tree);
+      assert.ok(paints.length > 0, "the plot draws marks");
+      assert.deepEqual([...new Set(paints)], ["rgb(var(--data))"]);
+      assert.ok(findNodes(tree, (n) => n.type === "rect").every((n) => n.props.opacity === undefined), "no bar is faded below the token");
+    });
+  }
+
+  test("the hovered bar takes ink and the other days keep the data colour", () => {
+    const points = WEEK.map((point) => ({ ...point }));
+    const svg = render("ChartPlot", { points, kind: "bars", h: 64, activeIndex: 2 });
+    const fills = findNodes(svg, (n) => n.type === "rect").map((n) => n.props.fill);
+    assert.deepEqual(fills, points.map((_, i) => (i === 2 ? "rgb(var(--ink))" : "rgb(var(--data))")));
+  });
+
+  test("a bullet bar asked for the data colour fills with --data", () => {
+    const tree = render("BulletBar", { value: 0.6, target: 0.5, tone: "data", ariaLabel: "Peak 60/day" });
+    const fills = findNodes(tree, (n) => /^rgb\(var\(--/.test(String((n.props.style as Record<string, unknown> | undefined)?.background ?? "")))
+      .map((n) => String((n.props.style as Record<string, unknown>).background));
+    assert.equal(fills[0], "rgb(var(--data) / 0.75)", "the value fill; the target marker after it is not a series mark");
+  });
+});
+
+// a bar marks a position; its number is the stat's own value in the stat's own form, never a second 0.91 beside it
+describe("a bar is a named image that draws no number", () => {
+  const rows = [
+    { name: "a bar", atom: "Bar", props: { value: 0.86, tone: "crit", ariaLabel: "pair success rate 86%" } },
+    { name: "a bullet bar with zones and a target", atom: "BulletBar",
+      props: { value: 0.913, target: 0.5, zones: [{ upTo: 0.5, tone: "crit" }, { upTo: 1, tone: "ok" }], ariaLabel: "Reported rate 91% (graduation target 50%)" } },
+    { name: "a bullet bar with neither", atom: "BulletBar", props: { value: 0.29, ariaLabel: "finished 29 of started 100 (29%)" } },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = render(row.atom, row.props);
+      assert.deepEqual({ role: tree.props.role, name: tree.props["aria-label"] }, { role: "img", name: row.props.ariaLabel });
+      assert.equal(collectText(tree).trim(), "", "collectText joins sibling nodes with a space");
+    });
+  }
 });
 
 describe("the optional y-scale states the plotted extent", () => {

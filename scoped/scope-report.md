@@ -29,13 +29,12 @@ Canonical rule text for the REPORT scope (glass-atrium-intel-reporter). A sectio
 Canonical in `agents/glass-atrium-intel-reporter.md`: the baseline requirement list at `### Visual-Maximization Floor`, the content-driven escalation at `### Content-driven escalation`, the d8 validator-safe color rule at `### d8 validator-safe color contract`.
 
 - **Residual anti-slop patterns (a supplement to the SoT, not a mirror of it)**:
-  - purple/indigo/lavender AI-brand gradients
-  - gradient text on headings (`background-clip:text`)
   - equal `grid-cols-3` (prefer asymmetric 1fr/3fr)
   - `rgba(0,0,0,X)` shadows on dark surfaces
-  - at most 1 gradient per layer, 2 stops max
+  - at most 1 gradient per layer, 2 stops max, within one hue
   - decoration stacking (one treatment per element)
-- **SoT**: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`, which carries none of these patterns.
+- **SoT**: `agents/glass-atrium-design-designer.md` → `## Red Flags` → `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)`; the residual list holds only what the SoT lacks.
+  - Hue-to-hue gradients (the purple/indigo/lavender AI-brand case included) and gradient text on headings are not on the residual list: they are the SoT's **Canvas/color tropes** entry, which binds document HTML too.
   - Glassmorphism is not on the residual list: the over-text readability case is a baseline item, and the broader blur+gradient+shadow case is the SoT's **Glassmorphism overuse** entry.
 
 ### Dark base default
@@ -59,7 +58,9 @@ Canonical in `agents/glass-atrium-intel-reporter.md`: the dark canvas and light 
 - Delegation phrasing does not override this routing.
 - **The one sanctioned carve-out is the delegation-side stamp** `log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>')`, attesting that the user explicitly asked for that local destination.
   - Absent the stamp, the author bodies' turn-0 refusal of an orchestrator-supplied local target stands.
-- On a user-requested HTML generation failure, halt for scope clarification — an automatic non-HTML fallback is forbidden.
+- A user-requested HTML generation failure is an ordinary obstacle first: diagnose it, fix the request and retry (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
+  - Still failing → halt for scope clarification.
+  - Never fall back to non-HTML on your own: the user asked for HTML by name.
 - **Sensitivity self-check before the POST of an exposed HTML primary** — exposed by either HTML request test signal, including an explicit format request without share intent.
   - Record one line before POSTing: `sensitivity_scan: clear` or `sensitivity_scan: N items (category §locator, …)`.
   - Any finding blocks the POST until the user confirms; zero findings is a silent pass, and a generic "may contain sensitive data" caveat is forbidden.
@@ -141,7 +142,7 @@ Apply the order below to every Mermaid block in a user-requested HTML primary, n
    - `doc-diagram-full` — zones (subgraphs) ≥ 3.
 5. **Semantic-role `classDef`** — the closed role-class set, nothing outside it: `focal` · `external` · `store` · `optional` · `security`.
    - `focal` is the accent: assigned to ≤ 2 nodes.
-   - Values are hex only, derived from the `monitor/public/styles/tokens.css` dark block — a parenthesized value such as `rgb(` matches the node-census opener and inflates the node count.
+   - Values are hex only, derived from the `monitor/public/styles/tokens.css` `:root` block — a parenthesized value such as `rgb(` matches the node-census opener and inflates the node count.
    - Hex-only is scoped to mermaid `classDef` / `themeVariables` values, which sit in the diagram source outside the d8 `inline-color-literal` scan surface; the d8 no-hex rule keeps governing every CSS surface.
 6. **Layout** — ELK is the global layout default from the shared mermaid init; a diagram carries no layout configuration of its own.
    - Never a YAML frontmatter block in a mermaid source: each `---` line is counted as an edge (Budget step).
@@ -179,9 +180,11 @@ Every user-requested report is navigable in skim-only mode through the layers be
 An agent-only record is not required to carry any layer or the summary table: add a layer or a table only where the record would otherwise be hard to understand.
 
 - **Skim layer**: summary table + 3-line conclusion, decision-ready without further reading.
+  - It stands on its own for a reader of only that layer: what was found, what was done, what comes next.
+  - A part the report has nothing to say on is left out, never padded.
 - **Scan layer**: per-section digest + recommendation list.
 - **Read layer**: full analysis + complete source list.
-- Burying the conclusion in body paragraphs is FORBIDDEN.
+- A user-requested report never leaves its conclusion only in body paragraphs: a skim-only reader stops before them.
 
 ## Self-Evaluation Obligation [REPORT]
 

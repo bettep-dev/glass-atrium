@@ -1,8 +1,8 @@
 // 공용 UI atoms — window.UI 로 export, screens/*.jsx 가 destructure 임포트
 const { useEffect, useLayoutEffect, useRef, useState } = React;
 
-// 포커스 가능 요소 셀렉터 SoT — focus-trap 진입/순환 공용 (DetailSurface).
-const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea, input, select, summary, iframe, [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
+// 포커스 가능 요소 셀렉터 SoT — focus-trap 진입/순환 공용 (DetailSurface) · :disabled → disabled fieldset 하위 컨트롤까지 제외.
+const FOCUSABLE_SELECTOR = 'a[href], button:not(:disabled), textarea:not(:disabled), input:not(:disabled), select:not(:disabled), summary, iframe, [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
 
 // 짧은 별칭(레거시 call-site 이름) → Lucide UMD PascalCase 키. 손수 관리하던 36개 글리프의 모든
 //   호출 이름을 Lucide 정식 이름으로 매핑 → 기존 <Icon name>/SymI/TONE_ICON 호출 전부 무회귀 +
@@ -15,7 +15,7 @@ const LUCIDE_ALIAS = {
   chevD: 'ChevronDown', arrowU: 'ArrowUp', arrowD: 'ArrowDown', minus: 'Minus',
   check: 'Check', x: 'X', play: 'Play', refresh: 'RefreshCw', download: 'Download', filter: 'Filter',
   search: 'Search', moon: 'Moon', sun: 'Sun', cog: 'Settings', info: 'Info', warn: 'TriangleAlert',
-  crit: 'CircleAlert', user: 'User', db: 'Database', chip: 'Cpu', git: 'GitFork', flame: 'Flame',
+  crit: 'CircleAlert', user: 'User', db: 'Database', chip: 'Cpu', flame: 'Flame',
   ban: 'Ban', pause: 'Pause', plus: 'Plus', circle: 'Circle',
 };
 
@@ -86,10 +86,13 @@ function Icon({ name, size=16, className='', stroke=1.6, ariaHidden=true }) {
 // Hard rules (DESIGN.md §4.2/§7.3 neutral shell):
 //   · shell neutral in every tone (--sunken/--dim/--line) — no tone fill on the .pill shell.
 //   · tone only on the inner symbol (Icon/glyph) via text-{tone} → dual-encode = shape (glyph) + color + adjacent label (DESIGN.md §8).
-//   · label text stays --dim (AA-safe: light warn/ok/info tones on --sunken read 3.15–3.45:1, sub-AA at --fs-meta) — a glyph=false status keeps a neutral label too.
+//   · label text stays --dim — a glyph=false status keeps a neutral label too.
 //   · metadata/count stay neutral even when given a tone (color ≠ metadata/count).
 // Variants: absent=true → .pill--absent (dashed/faint) · interactive=true → <button> + .pill--interactive (WCAG 2.2 §2.5.8 target)
-function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=true, icon=false, interactive=false, title, onClick, className='' }) {
+// fill (DESIGN.md §7.3): quiet = the neutral shell above · solid = waits for the owner · tag = a fact worth a glance · warn = did not arrive.
+//   A filled shell carries ink (or surface on solid) text, never a tone label; warn leads with ⚠ in that ink. A filled count takes the round count shape.
+function Badge({ children, role='metadata', tone='neutral', fill='quiet', absent=false, glyph=true, icon=false, interactive=false, title, onClick, className='' }) {
+  if (fill !== 'quiet') return <FilledBadge role={role} fill={fill} title={title} className={className}>{children}</FilledBadge>;
   const isStatus = role === 'status';
   const hasTone = isStatus && tone !== 'neutral';
   const toneTextClass = hasTone ? `text-${tone}` : '';   // tone → 내부 심볼/텍스트 color (shell 아님)
@@ -108,38 +111,36 @@ function Badge({ children, role='metadata', tone='neutral', absent=false, glyph=
     : <span className={cls} {...a11y}>{content}</span>;
 }
 
-// 기존 Pill 호출부 호환 — Badge styling layer 로 routing (두 번째 status idiom 방지).
-// neutral 톤은 metadata role, 그 외(ok/warn/crit/info)는 status role 로 자동 매핑 (color=status 규칙 정합).
-function Pill({ children, tone='neutral', title, className }) {
-  return tone === 'neutral'
-    ? <Badge role="metadata" glyph={false} title={title} className={className}>{children}</Badge>
-    : <Badge role="status" tone={tone} title={title} className={className}>{children}</Badge>;
+const BADGE_COUNT_CAP = 99;
+
+function FilledBadge({ children, role, fill, title, className }) {
+  const isCount = role === 'count';
+  const cls = ['pill', `pill--${fill}`, isCount ? 'pill--num' : '', className].filter(Boolean).join(' ');
+  const lead = fill === 'warn' ? <span aria-hidden="true">{`${TONE_GLYPH.warn} `}</span> : null;
+  return <span className={cls} title={title}>{lead}{isCount ? getBadgeCount(children) : children}</span>;
+}
+
+/** A count badge's text: a whole number above the cap reads `99+`; any other content passes through. */
+function getBadgeCount(value) {
+  return Number.isInteger(value) && value > BADGE_COUNT_CAP ? `${BADGE_COUNT_CAP}+` : value;
 }
 
 // 공용 빈-상태 atom (canonical) — 화면별 EmptyState* 복제 + 보드 dashed-col idiom 의 단일 SoT.
-//   .placeholder(base.css) dashed 관용구 재사용 → repo 전역 단일 빈-상태 표기.
+//   .placeholder(base.css) 무테두리·무배경 폼 재사용 → repo 전역 단일 빈-상태 표기.
 //   message = 핵심 원인 한 줄 · hint = 다음 단계/부연(선택) · action = 슬롯(재시도 버튼 등, 선택).
-//   타입은 스케일 토큰(fs-meta)로 고정 — 화면별 off-scale px 리터럴 제거.
-function EmptyState({ message, hint, action, className='' }) {
-  return (
-    <div className={`placeholder ${className}`.trim()}>
-      <div className="fs-meta"><DayTokens>{message}</DayTokens></div>
-      {hint && <div className="fs-meta text-faint mt-1"><DayTokens>{hint}</DayTokens></div>}
-      {action && <div className="mt-2 flex">{action}</div>}
-    </div>
-  );
-}
+//   타입은 atom 소유 — message 14 ink(.placeholder) · hint 13 dim(.placeholder-hint), 유틸 클래스로 덮지 않음.
+//   kind 'no-results' → 고정 문장 한 줄 + 조용한 reset(onReset 있을 때만) · 'first-use' → 호출자 message.
+const NO_RESULTS_MESSAGE = 'No records match these filters.';
 
-// 공용 sub-card primitive — 중첩 섹션/메트릭 타일용 작은 면. ring-1 + rounded-lg + 일정 padding.
-//   발산하던 idiom(드로어 1px-hairline · DetailMetric ring 타일 · .i-card-shadow)이 후속 wave 에서 여기로 수렴.
-//   sunken=true → bg-sunken(더 들어간 면) · 기본 bg-elev(떠오른 면). label 지정 시 uppercase --dim 섹션 라벨.
-// label sits under a card/dialog h2 → h3 by default
-function SubCard({ children, sunken=false, label, labelLevel=3, className='' }) {
-  const surface = sunken ? 'bg-sunken' : 'bg-elev';
+function EmptyState({ kind = 'first-use', message, hint, action, onReset, role, className='' }) {
+  const isNoResults = kind === 'no-results';
+  const text = isNoResults ? NO_RESULTS_MESSAGE : message;
+  const slot = isNoResults && onReset ? <QuietButton onClick={onReset}>Reset filters</QuietButton> : action;
   return (
-    <div className={`sub-card ${surface} ${className}`.trim()}>
-      {label && <SectionLabel level={labelLevel} className="sub-card-label">{label}</SectionLabel>}
-      {children}
+    <div role={role} className={`placeholder ${className}`.trim()}>
+      <div><DayTokens>{text}</DayTokens></div>
+      {hint && <div className="placeholder-hint"><DayTokens>{hint}</DayTokens></div>}
+      {slot && <div className="mt-2 flex">{slot}</div>}
     </div>
   );
 }
@@ -163,18 +164,6 @@ function TypeScaleStyle() {
     }
     .tnum { font-variant-numeric: tabular-nums; }
   `}</style>;
-}
-
-// Change indicator — default up=bad (crit)/down=good (ok), inverse=true flips it (metrics where a rise is good); tone on the arrow only, value neutral
-function Delta({ value, inverse=false }) {
-  const sign = value > 0 ? 'up' : value < 0 ? 'down' : 'flat';
-  const isBad = inverse ? sign === 'down' : sign === 'up';
-  const tone = sign === 'flat' ? 'faint' : isBad ? 'crit' : 'ok';
-  const iconName = sign === 'up' ? 'arrowU' : sign === 'down' ? 'arrowD' : 'minus';
-  return <span className="kpi-delta">
-    <Icon name={iconName} size={11} stroke={2.2} className={`text-${tone}`} />
-    {Math.abs(value).toFixed(1)}%
-  </span>;
 }
 
 // label → named image · no label → decorative, hidden from assistive tech
@@ -210,9 +199,12 @@ function MiniBars({ data, w=60, h=22, color='currentColor', label }) {
 const CHART_VIEW_W = 100;
 const CHART_MAX_TICKS = 7;
 const CHART_PLOT_FILL = 0.85;
+// bar inset per side, in slot widths → a bar fills the rest of its slot
+const CHART_BAR_INSET = 0.1;
+const CHART_BAR_FILL = 1 - 2 * CHART_BAR_INSET;
 /** Minimum px between tick labels; Recharts axes get it through getChartXAxisProps. */
 const CHART_TICK_MIN_GAP_PX = 8;
-// ponytail: fixed per-char estimate of a --fs-meta mono day label (13px × 0.6em ≈ 7.8px, rounded up for fallback faces) → measure with canvas if labels grow wide
+// ponytail: fixed per-char estimate of a --fs-meta sans tnum day label (Pretendard digit 0.614em × 13px ≈ 7.98px) → measure with canvas if labels grow wide or --fs-meta grows
 const CHART_TICK_CHAR_PX = 8;
 const CHART_TICK_SHIFT = { start: '0', middle: '-50%', end: '-100%' };
 
@@ -250,7 +242,17 @@ function getChartTickLayout(labels, kind, widthPx, maxTicks = CHART_MAX_TICKS) {
   const ticks = widthPx > 0 ? getFittingTicks(labels, kind, widthPx, maxTicks) : getChartTicks(count, maxTicks);
   // a lone survivor of a crowded row is the latest day, which sits on the right edge
   const getAnchor = (order) => (ticks.length === 1 && count > 1 ? 'end' : getChartTickAnchor(order, ticks.length));
-  return ticks.map((index, order) => ({ index, left: getChartX(index, count, kind), anchor: getAnchor(order) }));
+  return ticks.map((index, order) => {
+    const anchor = getAnchor(order);
+    return { index, left: getChartTickLeft(index, count, kind, anchor), anchor };
+  });
+}
+
+// an edge-anchored bar label sits on its bar's outer edge, not mid-bar → each end date stays under its own bar, as ChartAxisTick does
+function getChartTickLeft(index, count, kind, anchor) {
+  if (kind !== 'bars' || anchor === 'middle') return getChartX(index, count, kind);
+  const barLeft = getChartBarLeft(index, count);
+  return anchor === 'start' ? barLeft : barLeft + getChartBarWidth(count);
 }
 
 function getFittingTicks(labels, kind, widthPx, maxTicks) {
@@ -270,8 +272,8 @@ function getFittingTicks(labels, kind, widthPx, maxTicks) {
 function isTickRowClear(ticks, labels, kind, widthPx) {
   const boxes = ticks.map((index, order) => {
     const width = labels[index].length * CHART_TICK_CHAR_PX;
-    const x = (getChartX(index, labels.length, kind) / CHART_VIEW_W) * widthPx;
     const anchor = getChartTickAnchor(order, ticks.length);
+    const x = (getChartTickLeft(index, labels.length, kind, anchor) / CHART_VIEW_W) * widthPx;
     const start = anchor === 'start' ? x : anchor === 'end' ? x - width : x - width / 2;
     return { start, end: start + width };
   });
@@ -291,7 +293,8 @@ function getChartImageProps(name, points, formatValue = String) {
   return { role: 'img', tabIndex: 0, 'aria-label': getChartSummary(name, points, formatValue) };
 }
 
-const CHART_AXIS_TICK_STYLE = { fontSize: 'var(--fs-meta)', fill: 'rgb(var(--faint))', fontFamily: "'JetBrains Mono', monospace" };
+// sans by inheritance; tabular figures keep every digit at the width CHART_TICK_CHAR_PX assumes
+const CHART_AXIS_TICK_STYLE = { fontSize: 'var(--fs-meta)', fill: 'rgb(var(--faint))', fontVariantNumeric: 'tabular-nums' };
 
 /**
  * Recharts XAxis props for a day axis: shared tick, both ends kept, and a gap that holds with edge anchoring.
@@ -306,8 +309,10 @@ function getChartXAxisProps(labels) {
 /** Recharts XAxis `tick` renderer — ends anchored by visible order, like the HTML tick row. */
 function ChartAxisTick({ x, y, payload, index, visibleTicksCount }) {
   const anchor = getChartTickAnchor(index, visibleTicksCount);
-  // Recharts clamps end labels to the whole chart box, not the plot → an edge label pins to its own point instead
-  const labelX = anchor === 'middle' ? x : payload.coordinate;
+  // Recharts clamps end labels to the whole chart box, not the plot → an edge label pins to its own point instead;
+  // a band axis carries offset = half the band → the edge label sits on the bar's outer edge (Recharts' default 10% gap = CHART_BAR_INSET)
+  const barHalf = (payload.offset ?? 0) * CHART_BAR_FILL;
+  const labelX = anchor === 'middle' ? x : payload.coordinate + (anchor === 'start' ? -barHalf : barHalf);
   return <text x={labelX} y={y} dy="0.71em" textAnchor={anchor} style={CHART_AXIS_TICK_STYLE}>
     {payload.value}
   </text>;
@@ -332,6 +337,15 @@ function getChartX(index, count, kind) {
   return count > 1 ? (index / (count - 1)) * CHART_VIEW_W : CHART_VIEW_W / 2;
 }
 
+function getChartBarLeft(index, count) {
+  const slot = CHART_VIEW_W / count;
+  return index * slot + slot * CHART_BAR_INSET;
+}
+
+function getChartBarWidth(count) {
+  return (CHART_VIEW_W / count) * CHART_BAR_FILL;
+}
+
 // null values lift the pen → a gap, never a line drawn through a missing day
 function getChartLinePath(values, getY) {
   let isPenDown = false;
@@ -343,7 +357,13 @@ function getChartLinePath(values, getY) {
   }).join(' ');
 }
 
-function ChartPlot({ points, kind, h, color, activeIndex }) {
+/** Chart paint roles (design.md §4.3) the shared plot reads — a quantity series takes `data`, the hovered mark `hover`. */
+const CHART_COLOR = Object.freeze({
+  data: 'rgb(var(--data))',
+  hover: 'rgb(var(--ink))',
+});
+
+function ChartPlot({ points, kind, h, activeIndex }) {
   const values = points.map((point) => (Number.isFinite(point.value) ? point.value : null));
   const finite = values.filter((value) => value !== null);
   const min = kind === 'bars' || finite.length === 0 ? 0 : Math.min(...finite);
@@ -351,21 +371,23 @@ function ChartPlot({ points, kind, h, color, activeIndex }) {
   const getY = (value) => h - ((value - min) / range) * h * CHART_PLOT_FILL - 1;
   const crossX = activeIndex === null ? null : getChartX(activeIndex, points.length, kind);
   return <svg width="100%" height={h} viewBox={`0 0 ${CHART_VIEW_W} ${h}`} preserveAspectRatio="none" aria-hidden="true" style={{ display: 'block' }}>
+    {kind === 'bars' && <line data-chart-baseline="" x1={0} x2={CHART_VIEW_W} y1={h - 0.5} y2={h - 0.5} stroke="rgb(var(--line))" strokeWidth="1" vectorEffect="non-scaling-stroke"/>}
     {kind === 'bars'
-      ? <ChartBars values={values} h={h} getY={getY} color={color} activeIndex={activeIndex}/>
-      : <path d={getChartLinePath(values, getY)} fill="none" stroke={color} strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>}
+      ? <ChartBars values={values} h={h} getY={getY} activeIndex={activeIndex}/>
+      : <path d={getChartLinePath(values, getY)} fill="none" stroke={CHART_COLOR.data} strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>}
     {crossX !== null && <line x1={crossX} x2={crossX} y1={0} y2={h} stroke={toneVarColor('neutral')} strokeDasharray="3 3" vectorEffect="non-scaling-stroke"/>}
   </svg>;
 }
 
-function ChartBars({ values, h, getY, color, activeIndex }) {
-  const slot = CHART_VIEW_W / values.length;
-  return values.map((value, i) => {
-    if (value === null) return null;
+// a zero day draws nothing — a 1px stub would read as a measured sliver; the baseline already marks zero
+function ChartBars({ values, h, getY, activeIndex }) {
+  const width = getChartBarWidth(values.length);
+  return <>{values.map((value, i) => {
+    if (value === null || value === 0) return null;
     const y = getY(value);
-    const opacity = activeIndex === null || activeIndex === i ? 0.85 : 0.45;
-    return <rect key={i} x={i * slot + slot * 0.1} y={y} width={slot * 0.8} height={h - y} fill={color} opacity={opacity}/>;
-  });
+    const fill = activeIndex === i ? CHART_COLOR.hover : CHART_COLOR.data;
+    return <rect key={i} x={getChartBarLeft(i, values.length)} y={y} width={width} height={h - y} fill={fill}/>;
+  })}</>;
 }
 
 function ChartTicks({ points, kind, maxTicks }) {
@@ -425,14 +447,14 @@ function useChartReadout(count, kind) {
  * @param formatValue - formats values in the readout, the accessible summary and the y-scale
  * @param yScale - true adds a max/min label column beside the plot
  */
-function TrendChart({ label, points, kind = 'line', h = 64, tone = 'info', formatValue = String, maxTicks = CHART_MAX_TICKS, yScale = false }) {
+function TrendChart({ label, points, kind = 'line', h = 64, formatValue = String, maxTicks = CHART_MAX_TICKS, yScale = false }) {
   const count = points ? points.length : 0;
   const { activeIndex, handlers } = useChartReadout(count, kind);
   if (count === 0) return <p className="text-faint" style={{ fontSize: 'var(--fs-meta)', margin: 0 }}>No data in range</p>;
   const readout = activeIndex === null ? '' : getChartReadout(points[activeIndex], formatValue);
   const scale = yScale ? getChartYScale(points, kind, formatValue) : null;
   const plot = <div {...getChartImageProps(label, points, formatValue)} style={{ cursor: 'crosshair', minWidth: 0 }} {...handlers}>
-    <ChartPlot points={points} kind={kind} h={h} color={toneVarColor(tone)} activeIndex={activeIndex}/>
+    <ChartPlot points={points} kind={kind} h={h} activeIndex={activeIndex}/>
   </div>;
   const ticks = <ChartTicks points={points} kind={kind} maxTicks={maxTicks}/>;
   return <figure className="trend-chart" style={{ margin: 0, minWidth: 0 }}>
@@ -447,17 +469,18 @@ function TrendChart({ label, points, kind = 'line', h = 64, tone = 'info', forma
 
 // tone KEY → 색상 토큰 var 명. neutral 은 비측정/중립 막대용 muted line(--faint).
 // rgb(var(--token) / opacity) 소비 — 하우스 비례막대 관용구(cost.jsx TurnStopReasonTable) 그대로.
-const BAR_TONE_VAR = { ok:'--ok', warn:'--warn', crit:'--crit', info:'--info', neutral:'--faint' };
+// data = the chart data colour (design.md §4.3), not a tone — a quantity bar that carries no severity
+const BAR_TONE_VAR = { ok:'--ok', warn:'--warn', crit:'--crit', info:'--info', neutral:'--faint', data:'--data' };
 
 // tone KEY → 인라인 CSS 색 문자열 `rgb(var(--tone))` — SVG fill/stroke 등 하드코딩 rgb 리터럴 대체.
-//   테마/토큰 변경 시 자동 리페인트 (색 SoT = tokens.css). 미정의 tone → neutral(--faint).
+//   토큰 값 변경 시 자동 리페인트 (색 SoT = tokens.css). 미정의 tone → neutral(--faint).
 function toneVarColor(tone) {
   return `rgb(var(${BAR_TONE_VAR[tone] || BAR_TONE_VAR.neutral}))`;
 }
 
 // CSS width:% 가로 막대. tone 은 CSS class 가 아닌 KEY 를 받아 내부에서 토큰으로 매핑.
-// 색은 단독 인코딩 금지 — 길이가 크기를, showValue/aria 가 수치를 전달(dual-encoding a11y).
-function Bar({ value, tone='neutral', max=1, ariaLabel, showValue=false }) {
+// 색은 단독 인코딩 금지 — 길이가 크기를, aria-label 이 수치를 전달(dual-encoding a11y). 막대는 위치만 — 눈에 보이는 수치는 stat 자신의 값.
+function Bar({ value, tone='neutral', max=1, ariaLabel }) {
   const ratio = Math.min(Math.max((value ?? 0) / (max || 1), 0), 1);
   const pct = ratio * 100;
   const toneVar = BAR_TONE_VAR[tone] || BAR_TONE_VAR.neutral;
@@ -468,11 +491,10 @@ function Bar({ value, tone='neutral', max=1, ariaLabel, showValue=false }) {
     ? { minWidth: '3px', width: `${pct}%`, background: `rgb(var(${toneVar}) / 0.7)` }
     : { width: '0%' };
   return (
-    <div className="flex items-center gap-2" role="img" aria-label={label}>
+    <div className="bar-line flex items-center" role="img" aria-label={label}>
       <div className="flex-1 h-1.5 bg-sunken rounded-sm overflow-hidden">
         <div className="h-full rounded-sm" style={fillStyle} />
       </div>
-      {showValue && <span className="tnum fs-meta text-dim shrink-0">{(value ?? 0).toFixed(2)}</span>}
     </div>
   );
 }
@@ -480,7 +502,7 @@ function Bar({ value, tone='neutral', max=1, ariaLabel, showValue=false }) {
 // Bar 합성 — 측정값 fill + 선택적 zone 밴드(배경) + 선택적 target 마커.
 // zones 는 CONFIGURABLE — 동일 atom 이 0-1 건강지수와 rate-vs-target 둘 다 담당.
 // fill tone = value 가 속한 zone(else tone prop). zone 밴드는 prev.upTo→upTo 구간을 저opacity 로.
-function BulletBar({ value, target, zones, tone='neutral', ariaLabel, showValue=true }) {
+function BulletBar({ value, target, zones, tone='neutral', ariaLabel }) {
   const v = Math.min(Math.max(value ?? 0, 0), 1);
   let prev = 0;
   const bands = (zones || []).map((z) => {
@@ -496,8 +518,9 @@ function BulletBar({ value, target, zones, tone='neutral', ariaLabel, showValue=
   const fillVar = BAR_TONE_VAR[fillTone] || BAR_TONE_VAR.neutral;
   const label = ariaLabel
     || (target != null ? `${(v*100).toFixed(0)}% (target ${(target*100).toFixed(0)}%)` : `${(v*100).toFixed(0)}%`);
+  // one meta text line tall, the bar centred on it → the block under a stat keeps its line rhythm
   return (
-    <div className="flex items-center gap-2" role="img" aria-label={label}>
+    <div className="flex items-center fs-meta" style={{ minHeight: '1lh' }} role="img" aria-label={label}>
       <div className="relative flex-1 h-2 bg-sunken rounded-sm overflow-hidden">
         {bands.map((b, i) => (
           <div
@@ -517,7 +540,6 @@ function BulletBar({ value, target, zones, tone='neutral', ariaLabel, showValue=
           />
         )}
       </div>
-      {showValue && <span className="tnum fs-meta text-dim shrink-0">{v.toFixed(2)}</span>}
     </div>
   );
 }
@@ -525,16 +547,20 @@ function BulletBar({ value, target, zones, tone='neutral', ariaLabel, showValue=
 // tone = TONE_GLYPH shape + colour + a word for AT → state survives without colour. Unknown status gets its own mark, not info's.
 const STATUS_DOT_WORD = { ok: 'OK', warn: 'Warning', crit: 'Critical', info: 'Info' };
 
-function StatusDot({ status }) {
+/**
+ * @param word - the state's word for AT in place of the tone's own (a procedure's "Done:")
+ * @param isInText - set inside a line of text → the line's own size and spacing, and the line's words name the state, so no tooltip
+ */
+function StatusDot({ status, word, isInText = false }) {
   const isKnown = Object.hasOwn(STATUS_DOT_WORD, status);
   const glyph = isKnown ? TONE_GLYPH[status] : '–';
-  const word = isKnown ? STATUS_DOT_WORD[status] : 'Unknown';
+  const text = word ?? (isKnown ? STATUS_DOT_WORD[status] : 'Unknown');
   const toneClass = isKnown ? `text-${status}` : 'text-faint';
 
   return (
-    <span className={`inline-block fs-meta leading-none mr-1.5 align-middle ${toneClass}`} title={word}>
+    <span className={isInText ? toneClass : `inline-block fs-meta leading-none mr-1.5 align-middle ${toneClass}`} title={isInText ? undefined : text}>
       <span aria-hidden="true">{glyph}</span>
-      <span className="sr-only">{word}</span>
+      <span className="sr-only">{text}</span>
     </span>
   );
 }
@@ -564,110 +590,91 @@ function AgentName({ name, className = '' }) {
   );
 }
 
-// Headline figure on the .kpi-value scale — tone rides a decorative glyph, the figure stays neutral ink.
-// isWord → a word value at --fs-stat sans on the same baseline · isFaint → the unknown dash of a non-ready state.
-// A word rides its own span inside the figure's line box → the box (and its baseline) is the figure's, whatever the word's size.
-function KpiValue({ children, unit, tone, isWord = false, isFaint = false }) {
-  const className = `kpi-value${isWord ? ' kpi-value--word' : ''}${isFaint ? ' text-faint' : ''}`;
-  const glyph = tone && <span className={`text-${tone}`} aria-hidden="true">{TONE_GLYPH[tone]} </span>;
-  return <div className={className}>
-    {isWord ? <span className="kpi-value-word">{glyph}{children}</span> : <>{glyph}{children}</>}
-    {unit && <span className="unit">{unit}</span>}
-  </div>;
+const EMPTY_VALUE_TEXT = 'None';
+const NOT_LOADED_TEXT = 'Not loaded';
+
+/** The word for a kind of nothing — 'none' = known and empty · anything else (never read) = Not loaded, never claimed empty. */
+function getAbsentText(kind) {
+  return kind === 'none' ? EMPTY_VALUE_TEXT : NOT_LOADED_TEXT;
 }
 
-const KPI_UNKNOWN_STATES = new Set(['error', 'empty']);
-const KPI_SPARK = { w: 68, h: 26 };
+/**
+ * The look of "nothing" in a value slot — never a dash, a dot or a blank (spec 44084 §2.2).
+ * @param kind - 'none' = known and empty · 'not-loaded' = never read; required → a missing kind reads Not loaded, never claims empty
+ * @param title - the cause, on hover
+ */
+function AbsentValue({ kind, title }) {
+  return <span className="text-faint" title={title}>{getAbsentText(kind)}</span>;
+}
 
 /**
- * One KPI anatomy — every tile row sits in one place, whatever its state:
- *   1 label row  label (one line, ellipsis) · optional aside window tag · ⓘ placed on the row, never pushing the value
- *   2 value row  value + unit · optional badge, baseline-aligned; loading holds the row with a strut + placeholder
- *   3 delta      number → the shared Delta; a node renders as the caller wrote it
- *   4 hint       after the value, always; the caller's own face (hintFace) is kept; ≤2 lines + title for a plain hint,
- *                or a node hint passing isHintClamped with its whole text in hintTitle
- *   5 foot       drill link / Retry, pinned to the tile bottom
- * state: 'ready' | 'loading' | 'error' | 'empty' — error and empty show the faint unknown dash, never a 0.
- * onClick → the tile is a button (no info or foot inside it then); otherwise a group labelled by its label row.
- * aria-label → the tile's own accessible name (a sentence the label row cannot carry), on the button or the group.
- * hasValue=false → a fact-list tile: no value row, the hint carries the facts; the label row and states stay.
- * isSplit → value + delta | hint as the shared TileSplit columns between 641px and xl.
+ * One card's top-line numbers, a hairline between stats — never a tile per stat.
+ * @param stats - each { label, value, unit?, context?, href?, isLoading?, source?, key? }: context = the one period or delta line,
+ *   href → the value is a Link to its drill-down; an absent value reads None; a 0 stays 0;
+ *   isLoading → the shared loading value in place of value, unit, link and context, read "Loading {source}…"
  */
-function KPI({
-  id, label, labelId, labelAs = 'div', labelClassName = 'fs-meta text-dim font-medium', labelTitle,
-  aside, asideClassName = 'fs-meta text-dim', info,
-  value, unit, tone, isWord = false, badge, hasValue = true,
-  delta, deltaInverse = false,
-  hint, hintClassName = 'fs-meta', hintFace = 'text-faint font-mono', hintTitle, isHintClamped,
-  foot, sparkData, sparkColor = 'currentColor', onClick,
-  state = 'ready', loadingLabel, isBusy = false, isSplit = false, className = '', 'aria-label': ariaLabel,
-}) {
-  const isLoading = state === 'loading';
-  const isUnknown = KPI_UNKNOWN_STATES.has(state);
-  const headId = labelId ?? (id ? `${id}-label` : undefined);
-  const LabelTag = labelAs;
-  const isTextLabel = typeof label === 'string';
+function StatRow({ stats, className = '' }) {
+  return <dl className={`stat-row ${className}`.trim()}>
+    {stats.map((stat) => {
+      if (stat.isLoading) return <LoadingStat key={stat.key ?? stat.label} label={stat.label} source={stat.source}/>;
+      const isAbsent = stat.value == null;
+      const value = <>{isAbsent ? EMPTY_VALUE_TEXT : stat.value}{!isAbsent && stat.unit && <span className="unit">{stat.unit}</span>}</>;
+      return <div key={stat.key ?? stat.label} className="stat">
+        <dt className="stat-label">{stat.label}</dt>
+        <dd className={`stat-value${isAbsent ? ' text-faint' : ''}`}>{stat.href ? <Link href={stat.href}>{value}</Link> : value}</dd>
+        {stat.context && <dd className="stat-context">{stat.context}</dd>}
+      </div>;
+    })}
+  </dl>;
+}
 
-  const head = (
-    <LabelTag id={headId} className="kpi-head">
-      <span className={`kpi-label-text ${labelClassName}`.trim()} title={labelTitle ?? (isTextLabel ? label : undefined)}>{label}</span>
-      {aside != null && aside !== false && <span className={`kpi-aside ${asideClassName}`.trim()}>{aside}</span>}
-    </LabelTag>
-  );
-  // a zero-width .kpi-value strut holds the loaded row's line box → the tile keeps its height when the value lands
-  const main = isLoading ? (
-    <div className="kpi-main kpi-main--loading">
-      <span className="kpi-value" aria-hidden="true">{'\u200b'}</span>
-      <LoadingPlaceholder label={loadingLabel}/>
-    </div>
-  ) : !hasValue ? null : (
-    <div className="kpi-main">
-      <KpiValue unit={unit} tone={isUnknown ? undefined : tone} isWord={isWord} isFaint={isUnknown}>
-        {isUnknown ? (value ?? '—') : value}
-      </KpiValue>
-      {badge}
-    </div>
-  );
-  const isPlainHint = typeof hint === 'string' || typeof hint === 'number';
-  // a node hint clamps only when its caller asks and hands its whole text in hintTitle → a block-built hint keeps its own layout
-  const isClamped = isHintClamped ?? isPlainHint;
-  const row = {
-    delta: typeof delta === 'number'
-      ? <div className="kpi-delta-row"><Delta value={delta} inverse={deltaInverse}/></div>
-      : delta != null && delta !== false && <div className="kpi-delta-row">{delta}</div>,
-    hint: hint != null && hint !== false && (
-      <div className={`kpi-hint ${hintClassName} ${hintFace}${isClamped ? ' clamp-2' : ''}`.trim()}
-        title={hintTitle ?? (isPlainHint ? String(hint) : undefined)}>{hint}</div>
-    ),
-  };
-  const body = isSplit ? (
-    <TileSplit className="kpi-split" lead={<>{main}{row.delta}</>} detail={row.hint || null}/>
-  ) : <>{main}{row.delta}{row.hint}</>;
+/**
+ * A stat card's one ⓘ drawer body: the detail past each stat's context line, each note led by its stat label in ink.
+ * @param stats - each { label, info, key? }, only the stats that carry a note; info = a string or a node (a note kept whole through `DayTokens`)
+ */
+function StatNotes({ stats }) {
+  return <Stack gap="list">
+    {stats.map((stat) => <p key={stat.key ?? stat.label}>
+      <strong className="font-medium text-ink">{stat.label}</strong>
+      {' — '}{stat.info}
+    </p>)}
+  </Stack>;
+}
 
-  const rootClass = ['kpi kpi-tile', info && 'kpi--info', sparkData && 'kpi--spark', !hasValue && 'kpi--facts', className]
-    .filter(Boolean).join(' ');
-  const children = <>
-    {head}
-    {info && <div className="kpi-info">{info}</div>}
-    {body}
-    {foot && <div className="kpi-foot">{foot}</div>}
-    {sparkData && <div className="kpi-spark"><Sparkline data={sparkData} w={KPI_SPARK.w} h={KPI_SPARK.h} color={sparkColor}/></div>}
+/**
+ * The alarm-size tone mark: the alarm row's glyph in a one-line box, hidden from assistive tech, its word read before what follows.
+ * @param tone - a severity tone · 'unknown' = a check that could not run (dim minus, read Unknown) · null = an empty glyph-size slot, nothing read
+ * @param label - the word a screen reader hears first; defaults to the tone's severity word
+ * @param title - hover text on the glyph
+ */
+function ToneGlyph({ tone, label = ALERT_SEVERITY_WORD[tone], title }) {
+  if (tone === null) return <span className="one-line-box tone-glyph" aria-hidden="true" style={EMPTY_GLYPH_SLOT_STYLE}/>;
+  return <>
+    <span className={`one-line-box tone-glyph text-${TONE_TEXT[tone] ?? tone}`} aria-hidden="true" title={title}><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
+    <span className="sr-only">{`${label}: `}</span>
   </>;
-  const busy = isLoading || isBusy ? 'true' : undefined;
-  // the spark's width has one home (KPI_SPARK) → the tile hands it to CSS, which reserves the hint's room from it
-  const sparkStyle = sparkData ? { '--kpi-spark-w': `${KPI_SPARK.w}px` } : undefined;
-  if (onClick) {
-    return <button type="button" id={id} onClick={onClick} className={`${rootClass} text-left`} aria-label={ariaLabel}
-      aria-busy={busy} style={sparkStyle}>{children}</button>;
-  }
-  // an own name outranks the label row (aria-labelledby would win over aria-label otherwise)
-  return (
-    <div id={id} role="group" aria-labelledby={ariaLabel ? undefined : headId}
-      aria-label={ariaLabel ?? (headId ? undefined : (isTextLabel ? label : undefined))}
-      className={rootClass} aria-busy={busy} style={sparkStyle}>
-      {children}
-    </div>
-  );
+}
+
+/**
+ * Status glyph + words at meta size — card-head sub, drawer field, row verdict (System map `System parts` head and rows).
+ * Top-aligned → the glyph-borne baseline never grows the line it sits in.
+ * The words alone take part in baseline alignment → a baseline-aligned row reads the atom's baseline off the words, not the glyph's foot.
+ * @param className - the spacing between glyph and words; defaults to the label gap
+ */
+function HeadStatus({ tone, className = 'gap-label-inline', children }) {
+  return <span data-role="head-status" data-tone={tone} className={`inline-flex items-center align-top fs-meta text-dim ${className}`}>
+    <ToneGlyph tone={tone}/><span className="self-baseline">{children}</span>
+  </span>;
+}
+
+// the figure's 600 is not the placeholder's → regular weight; the empty context line keeps the settled height (design.md §3.3)
+// source = the noun the read fetches; a caller that passes none still reads its label
+function LoadingStat({ label, source = label.toLowerCase() }) {
+  return <div className="stat">
+    <dt className="stat-label">{label}</dt>
+    <dd className="stat-value"><span className="inline-flex"><LoadingPlaceholder label={source} className="font-normal"/></span></dd>
+    <dd className="stat-context"><span aria-hidden="true">{'\u00a0'}</span></dd>
+  </div>;
 }
 
 // 공용 오버레이 surface — variant 로 배치만 전환, 상호작용 계약은 단일 (presentation-only).
@@ -679,10 +686,19 @@ function KPI({
 // 토큰 재사용 — z-index/모션/면 색상은 tokens.css · base.css 단일 SoT (ad-hoc 금지).
 // id sequence for element-title aria-labelledby targets — works without useId (render-harness React stub).
 let detailTitleSeq = 0;
-// open surfaces in mount order — the last one owns the keyboard (a confirm over a drawer).
+// open surfaces in mount order — the last one owns the keyboard (a confirm over a drawer); a modal one locks body scroll.
 const openSurfaces = [];
+// body overflow before the first modal surface opened; null while no modal surface is open
+let unlockedOverflow = null;
+// background node → how many open modal surfaces hold it inert; a node leaves inert only when its last holder closes
+const inertHolds = new Map();
 
-function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, children, labelledBy, suppressOutsideClose, nav, bare = false, panelClassName = '', bodyClassName = '' }) {
+// the panel mounts only while open → a closed surface (a page at rest) never locks, traps or registers
+function DetailSurface({ open, ...props }) {
+  return open ? <DetailSurfacePanel {...props}/> : null;
+}
+
+function DetailSurfacePanel({ onClose, variant = 'drawer', title, sub, footer, children, labelledBy, suppressOutsideClose, nav, bare = false, panelClassName = '', bodyClassName = '' }) {
   const overlayRef = useRef(null);
   const panelRef = useRef(null);
   const titleIdRef = useRef(null);
@@ -690,26 +706,19 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
 
   // 마운트 전용 — 포커스 캡처/복원 + scroll-lock 은 surface 생애주기(열림→닫힘)에만 묶임.
   // onClose/nav 의존 금지 — 부모 re-render(인라인 onClose 신규 생성)에 캡처/복원이 재실행돼
-  // triggerRef 가 상호작용 중 덮어쓰이고 포커스가 트리거로 튀는 회귀 차단. surface 는 open 시에만 마운트.
+  // triggerRef 가 상호작용 중 덮어쓰이고 포커스가 트리거로 튀는 회귀 차단.
   useEffect(() => {
-    setSurfaceOpen(panelRef, true);
+    setSurfaceOpen(panelRef, true, true);
 
-    const panel = panelRef.current;
-    const focusables = panel ? Array.from(panel.querySelectorAll(FOCUSABLE_SELECTOR)) : [];
-    const initialTarget = panel ? getTrapFocusTarget({ focusables, active: null, panel, shiftKey: false }) : null;
-    if (initialTarget) initialTarget.focus();
+    // opens on the panel, never a control → a mouse open rings nothing; Tab enters at the first control
+    panelRef.current?.focus();
 
     const inertTargets = overlayRef.current ? getInertTargets(overlayRef.current) : [];
-    for (const node of inertTargets) node.inert = true;
-
-    // body scroll-lock — 언마운트/닫힘 시 복원 (현 오버레이엔 부재 → 여기서 단일 추가).
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    setInertHeld(inertTargets, true);
 
     return () => {
       setSurfaceOpen(panelRef, false);
-      document.body.style.overflow = prevOverflow;
-      for (const node of inertTargets) node.inert = false;
+      setInertHeld(inertTargets, false);
     };
   }, []);
 
@@ -740,8 +749,6 @@ function DetailSurface({ open, onClose, variant = 'drawer', title, sub, footer, 
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose, nav]);
-
-  if (!open) return null;
 
   // confirm 만 click-outside 차단 옵션 — destructive 다이얼로그 오작동 방지.
   const onBackdrop = (variant === 'confirm' && suppressOutsideClose) ? undefined : onClose;
@@ -854,16 +861,21 @@ function PopoverPanel({ id, title, rootRef, onClose, children }) {
   // joins the surface stack → one Esc closes one layer, whichever of popover and modal is on top
   useEffect(() => {
     setSurfaceOpen(panelRef, true);
-    const panel = panelRef.current;
-    const target = panel ? (panel.querySelectorAll(FOCUSABLE_SELECTOR)[0] || panel) : null;
-    if (target) target.focus();
+    // opens on the panel, never a control → a mouse open rings nothing; Tab enters at the first control
+    panelRef.current?.focus();
 
     return () => setSurfaceOpen(panelRef, false);
   }, []);
 
   useDismissFocus({ onDismiss: onClose, isKeyOwner: () => getTopSurface() === panelRef, panelRef });
 
-  // press, not click — closes before the pressed control takes focus; the trigger (inside root) keeps its own toggle.
+  useOutsidePress(rootRef, onClose);
+
+  return <div ref={panelRef} id={id} role="dialog" aria-label={title} tabIndex={-1} className="popover-panel">{children}</div>;
+}
+
+// press, not click — closes before the pressed control takes focus; the trigger (inside root) keeps its own toggle.
+function useOutsidePress(rootRef, onClose) {
   useEffect(() => {
     const onPointerDown = (e) => {
       const root = rootRef.current;
@@ -873,13 +885,11 @@ function PopoverPanel({ id, title, rootRef, onClose, children }) {
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [onClose, rootRef]);
-
-  return <div ref={panelRef} id={id} role="dialog" aria-label={title} tabIndex={-1} className="popover-panel">{children}</div>;
 }
 
 /**
  * Focus target that keeps Tab inside a modal panel; null leaves the move to the browser.
- * @param active - focused element, or null on open (initial focus)
+ * @param active - element holding focus at the Tab press
  * @param panel - dialog node, the fallback target when it holds no control
  */
 function getTrapFocusTarget({ focusables, active, panel, shiftKey }) {
@@ -895,29 +905,55 @@ function getTrapFocusTarget({ focusables, active, panel, shiftKey }) {
   return null;
 }
 
-// modal background = every sibling along the overlay's ancestor path up to <body>; already-inert nodes excluded → restore never revives them.
+// modal background = every sibling along the overlay's ancestor path up to <body>; a node inert by another owner excluded → restore never revives it.
 function getInertTargets(overlay) {
   const targets = [];
   let node = overlay;
   while (node.parentElement && node.tagName !== 'BODY') {
     for (const sibling of Array.from(node.parentElement.children)) {
-      if (sibling !== node && !sibling.inert) targets.push(sibling);
+      if (sibling !== node && (!sibling.inert || inertHolds.has(sibling))) targets.push(sibling);
     }
     node = node.parentElement;
   }
   return targets;
 }
 
-/** Registers or releases a surface; a repeated open never stacks the same surface twice. */
-function setSurfaceOpen(entry, isOpen) {
-  const index = openSurfaces.indexOf(entry);
+// one hold per open modal surface → any close order keeps the background inert until the last holder releases it
+function setInertHeld(nodes, isHeld) {
+  for (const node of nodes) {
+    const count = (inertHolds.get(node) ?? 0) + (isHeld ? 1 : -1);
+    if (count > 0) inertHolds.set(node, count);
+    else inertHolds.delete(node);
+    node.inert = count > 0;
+  }
+}
+
+/**
+ * Registers or releases a surface; a repeated open never stacks the same surface twice.
+ * @param isModal - the surface locks body scroll while it is open
+ */
+function setSurfaceOpen(entry, isOpen, isModal = false) {
+  const index = openSurfaces.findIndex((surface) => surface.entry === entry);
   if (index !== -1) openSurfaces.splice(index, 1);
-  if (isOpen) openSurfaces.push(entry);
+  if (isOpen) openSurfaces.push({ entry, isModal });
+  setBodyLock(openSurfaces.some((surface) => surface.isModal));
+}
+
+// one saved value for the whole stack → any release order restores the overflow from before the first lock
+function setBodyLock(isLocked) {
+  if (isLocked === (unlockedOverflow !== null)) return;
+  if (isLocked) {
+    unlockedOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return;
+  }
+  document.body.style.overflow = unlockedOverflow;
+  unlockedOverflow = null;
 }
 
 /** Surface that owns Tab/Esc/Arrow handling, or null when none is open. */
 function getTopSurface() {
-  return openSurfaces.length > 0 ? openSurfaces[openSurfaces.length - 1] : null;
+  return openSurfaces.length > 0 ? openSurfaces[openSurfaces.length - 1].entry : null;
 }
 
 // 하위호환 별칭 — 기존 Modal API(title/onClose/children/footer) 유지, confirm variant 위임.
@@ -934,29 +970,31 @@ let cardTitleSeq = 0;
  * One-line card header: title + meta, then the ⓘ trigger and actions on the right.
  * @param info - long explanation moved off the card; opens in the detail drawer
  * @param infoLabel - trigger name and drawer title
+ * @param infoTitle - the trigger's tooltip; unset → no tooltip
+ * @param isCompact - a viewer's thin header: the title at the control size
  */
-function CardHead({ title, sub, info, infoLabel = 'How this is counted', right }) {
+function CardHead({ title, sub, info, infoLabel = 'How this is counted', infoTitle, right, isCompact = false }) {
   const titleIdRef = useRef(null);
   if (titleIdRef.current === null) titleIdRef.current = `card-title-${++cardTitleSeq}`;
 
-  return <div className="card-head">
+  return <div className={isCompact ? 'card-head card-head--compact' : 'card-head'}>
     <div className="card-head-text">
       <h2 id={titleIdRef.current} className="card-title">{title}</h2>
       {sub && <span className="card-sub" title={window.UI.titleOf(sub)}>{sub}</span>}
     </div>
     {(info || right) && <div className="ml-auto flex items-center gap-2 shrink-0">
-      {info && <CardInfo label={infoLabel} describedBy={titleIdRef.current}>{info}</CardInfo>}
+      {info && <CardInfo label={infoLabel} title={infoTitle} describedBy={titleIdRef.current}>{info}</CardInfo>}
       {right}
     </div>}
   </div>;
 }
 
 // ⓘ trigger: a real button (click + keyboard), named by `label`, described by the card title → opens the detail drawer.
-function CardInfo({ label, describedBy, children }) {
+function CardInfo({ label, title, describedBy, children }) {
   const [isOpen, setOpen] = useState(false);
 
   return <>
-    <button type="button" className="btn ghost sm icon" aria-label={label} aria-describedby={describedBy}
+    <button type="button" className="btn ghost sm icon" aria-label={label} title={title} aria-describedby={describedBy}
       aria-haspopup="dialog" aria-expanded={isOpen} onClick={() => setOpen(true)}>
       <Icon name="info" size={16} />
     </button>
@@ -980,13 +1018,15 @@ function getSlotRows(items, size = 'M') {
 /**
  * Card anatomy: one-line header, a body that fills the card, an optional foot pinned to the bottom edge.
  * @param size - 'S' | 'M' | 'L' slot; S/M bodies never scroll inside the card
+ * @param bar - filter bar or toolbar between the head and the body
  * @param foot - "Show all N" / "Other" / one footnote
  */
-function Card({ size, title, sub, info, infoLabel, right, foot, isFlush = false, children, className = '' }) {
+function Card({ size, title, sub, info, infoLabel, infoTitle, right, bar, foot, isFlush = false, children, className = '' }) {
   const sizeClass = CARD_SLOTS[size] ? `card--${size.toLowerCase()}` : '';
 
   return <div className={`card ${sizeClass} ${className}`.replace(/\s+/g, ' ').trim()}>
-    {title && <CardHead title={title} sub={sub} info={info} infoLabel={infoLabel} right={right} />}
+    {title && <CardHead title={title} sub={sub} info={info} infoLabel={infoLabel} infoTitle={infoTitle} right={right} />}
+    {bar && <div className="card-bar">{bar}</div>}
     <div className={`card-body ${isFlush ? 'flush' : ''}`.trim()}>{children}</div>
     {foot && <div className="card-foot">{foot}</div>}
   </div>;
@@ -1007,18 +1047,107 @@ function TableHead({ children, isNumeric = false, isSticky = false, className = 
 }
 
 /**
- * Data table named by its caption (visually hidden unless isCaptionShown) with scoped column headers.
- * @param columns - `{ key, label, isNumeric }` per column; omit to compose the thead yourself.
- * @param children - tbody rows.
+ * Data table named by its caption (visually hidden unless isCaptionShown), inside its own measured wrapper.
+ * The wrapper is one node in both modes → useElementWidth observes it once; a measured width below stackBelowPx stacks the rows.
+ * Rows, bodies and foot take a node or `(view) => rows`; view `{ isStacked, columnCount }` feeds TableRow and TableCell.
+ * @param columns - `{ key, label, isNumeric, sort }` per column, sort → aria-sort; omit to render no thead.
+ * @param widths - CSS width per column → a colgroup, dropped when stacked.
+ * @param bodies - `{ key, rows, isBusy, onKeyDown, className }` per tbody; omit to render children as the one body.
+ * @param foot - tfoot rows, after the last body.
+ * @param isNested - a ledger inside a padded card body → its caption, edge cells and stacked rows sit on that body's column, no inset of their own
  */
-function Table({ caption, isCaptionShown = false, isHeadSticky = false, columns, children, className = '' }) {
-  return <table className={`tbl ${className}`.trim()}>
-    <caption className={isCaptionShown ? 'section-label text-left pb-2' : 'sr-only'}>{caption}</caption>
-    {columns && <thead><tr>
-      {columns.map((c) => <TableHead key={c.key} isNumeric={c.isNumeric} isSticky={isHeadSticky}>{c.label}</TableHead>)}
-    </tr></thead>}
-    <tbody>{children}</tbody>
-  </table>;
+function Table({ caption, isCaptionShown = false, isHeadSticky = false, isNested = false, columns, widths, stackBelowPx, bodies, foot, children, className = '' }) {
+  const [wrapRef, widthPx] = useElementWidth();
+  const mode = getTableMode(widthPx, stackBelowPx);
+  const view = { isStacked: mode === 'stacked', columnCount: columns?.length ?? widths?.length ?? 0 };
+  const groupRole = view.isStacked ? 'rowgroup' : undefined;
+  const sections = bodies ?? [{ key: 'body', rows: children }];
+  const tableClass = `tbl ${isNested ? 'tbl--nested' : ''} ${view.isStacked ? 'tbl--stacked' : ''} ${className}`.replace(/\s+/g, ' ').trim();
+  return <div ref={wrapRef} className="tbl-wrap" data-table-mode={mode}>
+    <table role={view.isStacked ? 'table' : undefined} className={tableClass}>
+      <caption className={isCaptionShown ? 'tbl-caption section-label' : 'sr-only'}>{caption}</caption>
+      {widths && !view.isStacked && <colgroup>{widths.map((width, i) => <col key={i} style={{ width }} />)}</colgroup>}
+      {columns && <TableColumns columns={columns} view={view} isSticky={isHeadSticky} />}
+      {sections.map((body) => <tbody key={body.key} role={groupRole} aria-busy={body.isBusy ? 'true' : undefined}
+        onKeyDown={body.onKeyDown} className={body.className}>{getTableRows(body.rows, view)}</tbody>)}
+      {foot && <tfoot role={groupRole}>{getTableRows(foot, view)}</tfoot>}
+    </table>
+  </div>;
+}
+
+// Stacked only for a positive measured width below the threshold → unmeasured (0, absent, non-number) and every non-DOM render stay wide.
+function getTableMode(widthPx, stackBelowPx) {
+  const isMeasured = Number.isFinite(widthPx) && widthPx > 0;
+  return isMeasured && Number.isFinite(stackBelowPx) && widthPx < stackBelowPx ? 'stacked' : 'wide';
+}
+
+function getTableRows(rows, view) {
+  return typeof rows === 'function' ? rows(view) : rows;
+}
+
+function TableColumns({ columns, view, isSticky }) {
+  const role = view.isStacked ? 'columnheader' : undefined;
+  return <thead role={view.isStacked ? 'rowgroup' : undefined} className={isSticky ? 'is-sticky' : undefined}><TableRow view={view}>
+    {columns.map((c) => <TableHead key={c.key} isNumeric={c.isNumeric} isSticky={isSticky} role={role} aria-sort={c.sort}>{c.label}</TableHead>)}
+  </TableRow></thead>;
+}
+
+// Stacked mode restates the row role: table display changes can drop native table semantics.
+function TableRow({ view, children, ...rest }) {
+  return <tr {...rest} role={view?.isStacked ? 'row' : undefined}>{children}</tr>;
+}
+
+/**
+ * One cell of four kinds; stacked mode restates its role and prefixes a meta cell with its column label, aria-hidden.
+ * @param kind - 'data' (textRole 'label' | 'primary' | 'meta') · 'span' (start → rest of the row) · 'row-header' · 'group-header' (heading anchor at level, id)
+ * @param start - columns before a span or group-header cell; the row's width is view.columnCount, from Table columns or widths → a table with neither spans one column
+ * @param rest - cell attributes only (title, aria-label)
+ */
+function TableCell({ view, kind = 'data', textRole = 'primary', label, start = 0, level = 3, id, isNumeric = false, className = '', children, ...rest }) {
+  const isStacked = view?.isStacked ?? false;
+  const span = Math.max(1, (view?.columnCount ?? 0) - start);
+  const cellClass = `tbl-cell tbl-cell--${kind === 'data' ? textRole : kind} ${isNumeric ? 'num' : ''} ${className}`.replace(/\s+/g, ' ').trim();
+  if (kind === 'row-header') return <th {...rest} scope="row" role={isStacked ? 'rowheader' : undefined} className={cellClass}>{children}</th>;
+  if (kind === 'group-header') {
+    return <th {...rest} scope="colgroup" colSpan={span} role="heading" aria-level={level} id={id} tabIndex={-1} className={cellClass}>{children}</th>;
+  }
+  const isPrefixed = isStacked && kind === 'data' && textRole === 'meta' && Boolean(label);
+  return <td {...rest} colSpan={kind === 'span' ? span : undefined} role={isStacked ? 'cell' : undefined} className={cellClass}>
+    {isPrefixed && <span aria-hidden="true" className="tbl-cell-label">{label}</span>}
+    {children}
+  </td>;
+}
+
+/**
+ * A row's actions, two at most: the visible action, then the S2a overflow menu only when items exist.
+ * The trigger's menu-button keys and every key inside the open menu stop here → a row or body key handler never acts on them.
+ * @param label - accessible name of the overflow trigger, naming its row
+ * @param items - MenuPanel action items
+ * @param isRowControl - the row is a getRowFocusProps row → the trigger leaves the Tab order and ArrowRight reaches it
+ */
+function RowActions({ label, action, items = [], onPick, isRowControl = false }) {
+  const menu = useMenuButton();
+  return <div ref={menu.rootRef} className="row-actions" onKeyDown={(event) => putRowActionsKey(event, menu.close)}>
+    {action}
+    {items.length > 0 && <button type="button" className="btn ghost icon row-actions-more" aria-label={label} {...menu.triggerProps}
+      {...(isRowControl ? ROW_CONTROL_PROPS : null)}>
+      <Icon name="ellipsis" size={16} />
+    </button>}
+    {menu.isOpen && <MenuPanel id={menu.menuId} label={label} kind="action" items={items}
+      rootRef={menu.rootRef} onPick={onPick} onClose={menu.close} />}
+  </div>;
+}
+
+const MENU_TRIGGER_KEYS = Object.freeze(['Enter', ' ', 'ArrowDown']);
+
+function putRowActionsKey(event, onClose) {
+  const isInMenu = event.target.closest('[role="menu"]') !== null;
+  const isTriggerKey = event.target.getAttribute('aria-haspopup') === 'menu' && MENU_TRIGGER_KEYS.includes(event.key);
+
+  if (!isInMenu && !isTriggerKey) return;
+  event.stopPropagation();
+  // stopped → the document dismiss listener never hears this Escape, so the menu closes here
+  if (isInMenu && event.key === 'Escape') onClose();
 }
 
 const DISCLOSURE_CHEVRON_PX = 14;
@@ -1051,33 +1180,37 @@ function getDisclosureOpen(kind, tone) {
  * kind 'status' — headline state, starts open · kind 'detail' — per-row lists / history / breakdowns, starts collapsed.
  * A detail fold opens itself when `tone` escalates to warn/crit; a later recovery never force-closes it.
  * @param isFlush - unpadded body, for a table whose edge cells carry the card padding; other content insets itself
+ * @param isInline - a fold nested in a card body: trigger row + body on the host's inset, no card box of its own
  */
-function Disclosure({ kind = 'detail', title, sub, tone, level = 2, isFlush = false, children, className = '' }) {
+function Disclosure({ kind = 'detail', title, sub, tone, level = 2, isFlush = false, isInline = false, children, className = '' }) {
   const [isOpen, setOpen] = useState(() => getDisclosureOpen(kind, tone));
   const idRef = useRef(null);
   const isAlerting = DISCLOSURE_ALERT_TONES.has(tone);
   const Heading = `h${level}`;
+  const box = isInline ? '' : `card ${isOpen ? '' : 'is-collapsed'}`;
 
   if (idRef.current === null) idRef.current = `disclosure-${++disclosureSeq}`;
   useEffect(() => { if (isAlerting) setOpen(true); }, [isAlerting]);
 
-  return <div className={`card ${isOpen ? '' : 'is-collapsed'} ${className}`.replace(/\s+/g, ' ').trim()}>
-    <Heading className="m-0 px-4 py-1 fs-body font-normal">
+  return <div className={`${box} ${className}`.replace(/\s+/g, ' ').trim() || undefined}>
+    <Heading className={`m-0 py-1 fs-body font-normal ${isInline ? '' : 'px-4'}`.trim()}>
       <DisclosureButton isOpen={isOpen} onToggle={() => setOpen((v) => !v)} controls={isOpen ? idRef.current : undefined}
         className="w-full text-left gap-2"
         label={<><span className="font-medium text-ink">{title}</span>{sub && <span className="text-faint fs-meta ml-2">{sub}</span>}</>} />
     </Heading>
-    {isOpen && <div id={idRef.current} className={isFlush ? undefined : 'px-4 pb-4'}>{children}</div>}
+    {isOpen && <div id={idRef.current} className={isFlush || isInline ? undefined : 'px-4 pb-4'}>{children}</div>}
   </div>;
 }
 
-// ratio preset → base.css modifier; stacked below xl, side by side at xl.
-const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '2:1': '2-1' });
+// ratio preset → base.css modifier; stacked below xl, side by side at xl · rest:content = the second column at its content width.
+// '1:1-wide' pairs only from 1920 → each half then holds a five-column table
+const SPLIT_ROW_RATIOS = Object.freeze({ '1:1': '1-1', '1:1-wide': '1-1-wide', '2:1': '2-1', 'rest:content': 'rest-content' });
 
-// layout → base.css modifier: equal = peer cards match heights · content = each column its own height (rails, non-peer rows).
-const SPLIT_ROW_LAYOUTS = Object.freeze({ content: 'content', equal: 'equal' });
+// layout → base.css modifier: equal = peer cards match heights · content = each column its own height (rails, non-peer rows)
+// · divided = two in-card blocks parted by one hairline · aligned = peer cards share the row's tracks, so head, body and foot sit on one y.
+const SPLIT_ROW_LAYOUTS = Object.freeze({ aligned: 'aligned', content: 'content', divided: 'divided', equal: 'equal' });
 
-// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'equal' (default) | 'content'.
+// Two cards (or two in-card columns) side by side at xl in a ratio preset · layout: 'equal' (default) | 'content' | 'divided' | 'aligned'.
 function SplitRow({ ratio = '1:1', layout = 'equal', children, className = '' }) {
   const modifier = SPLIT_ROW_RATIOS[ratio] || SPLIT_ROW_RATIOS['1:1'];
   const layoutModifier = SPLIT_ROW_LAYOUTS[layout] || SPLIT_ROW_LAYOUTS.equal;
@@ -1088,14 +1221,6 @@ function SplitRow({ ratio = '1:1', layout = 'equal', children, className = '' })
 // One SplitRow column holding a card stack (16px apart) · isRail → sticky 24px from the top at xl.
 function SplitColumn({ isRail = false, children, className = '' }) {
   return <div className={`split-col ${isRail ? 'split-col--rail' : ''} ${className}`.replace(/\s+/g, ' ').trim()}>{children}</div>;
-}
-
-// Tile-internal columns below xl: value + badge (lead) left, detail + hint + drill link right.
-function TileSplit({ lead, detail, className = '' }) {
-  return <div className={`tile-split ${className}`.trim()}>
-    <div className="tile-split-lead">{lead}</div>
-    {detail && <div className="tile-split-detail">{detail}</div>}
-  </div>;
 }
 
 const ROVING_KEY_STEP = {
@@ -1178,25 +1303,703 @@ function putRowKeyFocus(event, { index, count, onActivate, onActiveChange }) {
   onActiveChange?.(action.focus === 'row' ? action.index : index);
 }
 
-// Filter chips: one Tab stop for the group, arrows move between chips, state rides aria-pressed.
-function ChipGroup({ label, chips, onToggle, className = '' }) {
-  const [activeIndex, setActiveIndex] = useState(0);
-  const onKeyDown = (event) => {
-    const buttons = [...event.currentTarget.querySelectorAll('button')];
-    const index = buttons.indexOf(event.target);
-    const next = getRovingIndex(event.key, index < 0 ? null : index, buttons.length);
+/**
+ * Arrow press inside a roving single-choice set (segmented range, tabs) → chooses and focuses the next item.
+ * Choice follows focus, so the set keeps one Tab stop on its chosen item.
+ */
+function putRovingChoice(event, keys, onChange) {
+  const items = [...event.currentTarget.querySelectorAll('[data-choice]')];
+  const index = items.indexOf(event.target);
+  const next = getRovingIndex(event.key, index < 0 ? null : index, items.length);
 
-    if (next === undefined) return;
-    event.preventDefault();
-    buttons[next].focus();
-    setActiveIndex(next);
+  if (next === undefined) return;
+  event.preventDefault();
+  items[next].focus();
+  onChange(keys[next]);
+}
+
+// A page-wide window (range 7d/30d/90d), never a list filter.
+function Segmented({ label, options, value, onChange, className = '' }) {
+  const chosenIndex = options.findIndex((option) => option.key === value);
+  const keys = options.map((option) => option.key);
+
+  return <div role="radiogroup" aria-label={label} className={`seg ${className}`.trim()}
+    onKeyDown={(event) => putRovingChoice(event, keys, onChange)}>
+    {options.map((option, i) => <button key={option.key} type="button" role="radio" data-choice=""
+      aria-checked={i === chosenIndex} tabIndex={getRovingTabIndex(i, chosenIndex, options.length)}
+      onClick={() => onChange(option.key)}>{option.label}</button>)}
+  </div>;
+}
+
+const getTabId = (id, key) => `${id}-tab-${key}`;
+const getTabPanelId = (id, key) => `${id}-panel-${key}`;
+
+// Switch between distinct views; the caller renders the one panel through getTabPanelProps.
+function Tabs({ id, label, tabs, value, onChange, className = '' }) {
+  const chosenIndex = tabs.findIndex((tab) => tab.key === value);
+  const keys = tabs.map((tab) => tab.key);
+
+  return <div role="tablist" aria-label={label} className={`tabs ${className}`.trim()}
+    onKeyDown={(event) => putRovingChoice(event, keys, onChange)}>
+    {tabs.map((tab, i) => <button key={tab.key} type="button" role="tab" data-choice="" id={getTabId(id, tab.key)}
+      aria-selected={i === chosenIndex} aria-controls={getTabPanelId(id, tab.key)}
+      tabIndex={getRovingTabIndex(i, chosenIndex, tabs.length)} onClick={() => onChange(tab.key)}>{tab.label}</button>)}
+  </div>;
+}
+
+function getTabPanelProps(id, key) {
+  return { role: 'tabpanel', id: getTabPanelId(id, key), 'aria-labelledby': getTabId(id, key), tabIndex: 0 };
+}
+
+const MENU_ITEM_ROLES = Object.freeze({ radio: 'menuitemradio', checkbox: 'menuitemcheckbox', action: 'menuitem' });
+
+/**
+ * Key inside an open menu → { focus: index } or { leave: true } on Tab; undefined = left to the browser.
+ * Escape is the surface stack's (useDismissFocus), Enter and Space click the focused item natively.
+ */
+function getMenuKeyAction(key, index, count) {
+  if (key === 'Tab') return { leave: true };
+  const next = getRovingIndex(key, index, count, 'vertical');
+  return next === undefined ? undefined : { focus: next };
+}
+
+let menuSeq = 0;
+
+/**
+ * Open state + trigger props of a menu button; Enter and Space open through the button's native click, ArrowDown opens too.
+ * Wrap trigger and MenuPanel in an element carrying rootRef → a press on the trigger is never an outside press.
+ */
+function useMenuButton() {
+  const [isOpen, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const idRef = useRef(null);
+
+  if (idRef.current === null) idRef.current = `menu-${++menuSeq}`;
+  const triggerProps = {
+    'aria-haspopup': 'menu',
+    'aria-expanded': isOpen,
+    'aria-controls': isOpen ? idRef.current : undefined,
+    onClick: () => setOpen((v) => !v),
+    onKeyDown: (event) => {
+      if (event.key !== 'ArrowDown' || isOpen) return;
+      event.preventDefault();
+      setOpen(true);
+    },
   };
-  return <div role="toolbar" aria-label={label} onKeyDown={onKeyDown} className={`flex flex-wrap items-center gap-1 ${className}`.trim()}>
-    {chips.map((chip, i) => <button key={chip.key} type="button" className="pill pill--interactive" aria-pressed={chip.isPressed}
-      tabIndex={getRovingTabIndex(i, activeIndex, chips.length)} onFocus={() => setActiveIndex(i)} onClick={() => onToggle(chip.key)}>
-      {chip.label}
+  return { isOpen, close: () => setOpen(false), rootRef, menuId: idRef.current, triggerProps };
+}
+
+/**
+ * Menu surface of a menu button, mounted only while open: focus lands on the first checked item (else the first),
+ * a radio or action pick closes it and focus returns to the trigger, a checkbox pick keeps it open.
+ * @param items - { key, label, isChecked } — isChecked read for the radio and checkbox kinds only
+ */
+function MenuPanel({ id, label, kind = 'action', items, rootRef, onPick, onClose }) {
+  const panelRef = useRef(null);
+  const role = MENU_ITEM_ROLES[kind];
+  const isCheckable = kind !== 'action';
+
+  const openIndex = Math.max(0, isCheckable ? items.findIndex((item) => item.isChecked) : -1);
+
+  useEffect(() => {
+    setSurfaceOpen(panelRef, true);
+    panelRef.current.querySelectorAll('[role^="menuitem"]')[openIndex]?.focus();
+
+    return () => setSurfaceOpen(panelRef, false);
+  }, []);
+
+  useDismissFocus({ onDismiss: onClose, isKeyOwner: () => getTopSurface() === panelRef, panelRef });
+
+  useOutsidePress(rootRef, onClose);
+
+  const onItemClick = (key) => {
+    onPick(key);
+    if (kind !== 'checkbox') onClose();
+  };
+
+  return <div ref={panelRef} id={id} role="menu" aria-label={label} className="menu" onKeyDown={(event) => putMenuKeyFocus(event, onClose)}>
+    {items.map((item) => <button key={item.key} type="button" role={role} tabIndex={-1} className="menu-item"
+      aria-checked={isCheckable ? Boolean(item.isChecked) : undefined} onClick={() => onItemClick(item.key)}>
+      {isCheckable && item.isChecked && <span aria-hidden="true" className="menu-item-check">✓</span>}
+      {item.label}
     </button>)}
   </div>;
+}
+
+function putMenuKeyFocus(event, onClose) {
+  const nodes = [...event.currentTarget.querySelectorAll('[role^="menuitem"]')];
+  const action = getMenuKeyAction(event.key, nodes.indexOf(event.target), nodes.length);
+
+  if (!action) return;
+  // Tab keeps its default → focus leaves from the trigger the closed menu hands it back to
+  if (action.leave) {
+    onClose();
+    return;
+  }
+  event.preventDefault();
+  nodes[action.focus].focus();
+}
+
+/**
+ * One filter axis on a bar: dim axis name + ink value, no colon; the menu checks the chosen value(s).
+ * @param kind - 'radio' (one value, a pick closes) | 'checkbox' (several, the menu stays open)
+ * @param chosenKeys - keys of the chosen options
+ */
+function FilterTrigger({ axis, value, kind = 'radio', options, chosenKeys, onPick }) {
+  const menu = useMenuButton();
+  const items = options.map((option) => ({ ...option, isChecked: chosenKeys.includes(option.key) }));
+
+  return <div ref={menu.rootRef} className="filter-trigger-root">
+    <button type="button" className="filter-trigger" {...menu.triggerProps}>
+      <span className="filter-trigger-axis">{axis}</span>
+      <span className="filter-trigger-value">{value}</span>
+      {/* points at the menu it opens and never turns — aria-expanded and the sunken fill carry the open state */}
+      <Icon name="chevD" size={DISCLOSURE_CHEVRON_PX} className="filter-trigger-chevron text-dim" />
+    </button>
+    {menu.isOpen && <MenuPanel id={menu.menuId} label={axis} kind={kind} items={items}
+      rootRef={menu.rootRef} onPick={onPick} onClose={menu.close} />}
+  </div>;
+}
+
+const RESET_HIDDEN_STYLE = Object.freeze({ visibility: 'hidden' });
+
+/**
+ * Filter triggers in one bar; the quiet reset shows only while a filter is applied and holds its slot at defaults.
+ * A reset moves focus to the bar's first control — the hidden reset would otherwise drop it to the page.
+ */
+function FilterBar({ label, isApplied, onReset, children, className = '' }) {
+  const barRef = useRef(null);
+  const onResetClick = () => {
+    onReset();
+    barRef.current?.querySelector('[aria-haspopup]')?.focus();
+  };
+
+  return <div ref={barRef} role="group" aria-label={label} className={`filter-bar ${className}`.trim()}>
+    {children}
+    <QuietButton className="filter-bar-reset" style={isApplied ? undefined : RESET_HIDDEN_STYLE}
+      onClick={onResetClick}>Reset filters</QuietButton>
+  </div>;
+}
+
+// An action inside a bar or header line: no edge or fill at rest, dim label + optional icon.
+function QuietButton({ icon, className = '', children, ...props }) {
+  return <button type="button" className={`btn ghost ${className}`.trim()} {...props}>
+    {icon && <Icon name={icon} size={14} />}{children}
+  </button>;
+}
+
+// Navigation to another page or document: ink text + a trailing arrow the accessible name leaves out.
+function Link({ href, className = '', children, ...props }) {
+  return <a href={href} className={`link ${className}`.trim()} {...props}>
+    {children}<span aria-hidden="true" className="link-arrow">→</span>
+  </a>;
+}
+
+// Free-text filter on a bar: the sunken fill carries the field's focus ring; a <label> fill → a press on the icon or padding focuses the field.
+function BarSearch({ label, value, onChange, placeholder, className = '' }) {
+  return <label className={`bar-search ${className}`.trim()}>
+    <Icon name="search" size={14} />
+    <input type="search" className="bar-search-field" aria-label={label} value={value} placeholder={placeholder}
+      onChange={(event) => onChange(event.target.value)} />
+  </label>;
+}
+
+/**
+ * The one checkbox: the 16 .ctl-checkbox box, its check or minus mark over it, and its 24 hit area.
+ * @param id - the input's id → a `<label for>` elsewhere in the row names it
+ * @param isMixed - the DOM's indeterminate state, a property no attribute sets → written by ref; draws the minus
+ * @param isInLabel - the caller already draws the enclosing <label> (a whole row) → the hit area is a span, never a nested label
+ * @param isRowControl - a control inside a roving row: out of the tab order, reached by the row's arrows
+ */
+function Checkbox({ id, isChecked = false, isMixed = false, isDisabled = false, isInLabel = false, isRowControl = false, onChange, ariaLabel, describedBy }) {
+  const Hit = isInLabel ? 'span' : 'label';
+  const setMixed = (input) => { if (input) input.indeterminate = isMixed; };
+  return <Hit className="inline-target ctl-checkbox-hit">
+    <input ref={setMixed} id={id} type="checkbox" className="ctl-checkbox" checked={isChecked} disabled={isDisabled} onChange={onChange}
+      aria-label={ariaLabel} aria-describedby={describedBy} {...(isRowControl ? ROW_CONTROL_PROPS : null)} />
+    {(isChecked || isMixed) && <Icon name={isMixed ? 'minus' : 'check'} size={12} stroke={3} className="ctl-checkbox-mark pointer-events-none absolute" />}
+  </Hit>;
+}
+
+/**
+ * Form select with its label above it; extra props (title, aria-describedby) land on the <select>.
+ * @param options - { key, label, title? } — `title` = that option's tooltip
+ * @param isLabelHidden - a row header already names the field on screen → the label stays for assistive tech only, on no line of its own
+ * @param isError - crit edge + aria-invalid; the caller renders the worded message
+ * @param children - entry slot under the select (e.g. a custom-value field), inside the same field group
+ */
+function Select({ id, label, value, options, onChange, isLabelHidden = false, isError = false, className = '', children, ...props }) {
+  return <Stack gap="label" className={className}>
+    <label htmlFor={id} className={isLabelHidden ? 'sr-only' : 'field-label'}>{label}</label>
+    <select id={id} className={`field field-select${isError ? ' is-error' : ''}`} value={value} aria-invalid={isError ? 'true' : undefined}
+      onChange={(event) => onChange(event.target.value)} {...props}>
+      {options.map((option) => <option key={option.key} value={option.key} title={option.title}>{option.label}</option>)}
+    </select>
+    {children}
+  </Stack>;
+}
+
+const STACK_GAPS = Object.freeze(['block', 'label', 'stack', 'list']);
+const CLUSTER_GAPS = Object.freeze(['control', 'control-group']);
+
+// Vertical flow spaced by a role name: 'block' | 'label' | 'stack' | 'list'.
+function Stack({ gap = 'block', className = '', children }) {
+  return <div className={`${getGapClass('stack', STACK_GAPS, gap)} ${className}`.trim()}>{children}</div>;
+}
+
+// Wrapping row of controls: 'control' inside a group | 'control-group' between groups.
+function Cluster({ gap = 'control', className = '', children }) {
+  return <div className={`${getGapClass('cluster', CLUSTER_GAPS, gap)} ${className}`.trim()}>{children}</div>;
+}
+
+// a number or an unknown role throws → a screen never spaces by value
+function getGapClass(base, gaps, gap) {
+  if (!gaps.includes(gap)) throw new Error(`${base}: "${gap}" is not a gap role (${gaps.join(' | ')})`);
+  return `${base} ${base}--${gap}`;
+}
+
+/**
+ * Text a program wrote that a person copies or matches character by character — the one mono use.
+ * Kinds: id · hash · path · config key · config pattern · command line or CLI flag · model id · version stamp.
+ * Never a number, amount, date, time, count, label, status word, sentence or error line → those stay sans.
+ * @param isBlock - multi-line machine text (a patch, a payload) as its own wrapping block
+ */
+function MachineString({ isBlock = false, className = '', children }) {
+  const Tag = isBlock ? 'pre' : 'code';
+  return <Tag className={`machine${isBlock ? ' machine--block' : ''} ${className}`.trim()}>{children}</Tag>;
+}
+
+/**
+ * Agent-written Markdown → headings, paragraphs, lists, tables, quotes, rules, code and document links, built as React elements — never set as HTML.
+ * Unlike the document viewer's markdown pipeline: no images, no author links and no HTML, so queue text stays text.
+ * @param linkedDocIds - the item's declared document ids; a digit run equal to one becomes a link
+ * @param isCompact - the 14 / 22 form inside an order bubble
+ * @param canFoldCode - a fence over PROSE_FOLD_LINES shows its head under a disclosure; off → every line, as a decision's text needs
+ */
+function ProseText({ text, linkedDocIds = [], isCompact = false, canFoldCode = false, className = '' }) {
+  const { blocks } = getProseBlocks(text, linkedDocIds);
+  const classes = `prose-text${isCompact ? ' prose-text--compact' : ''} ${className}`.trim();
+  return <div className={classes}>{blocks.map((block, index) => <ProseBlock key={index} block={block} canFoldCode={canFoldCode} />)}</div>;
+}
+
+// every block and table cell takes dir="auto" → a bidi control in one block never reorders its neighbour
+function ProseBlock({ block, canFoldCode }) {
+  if (block.kind === 'code') return canFoldCode && block.lineCount > PROSE_FOLD_LINES ? <ProseFoldedCode block={block} /> : <pre className="prose-pre" dir="auto">{block.text}</pre>;
+  if (block.kind === 'heading') return block.level === 1 ? <h4 dir="auto">{block.inlines.map(renderProseInline)}</h4> : <h5 dir="auto">{block.inlines.map(renderProseInline)}</h5>;
+  if (block.kind === 'list') return <ProseList list={block} />;
+  if (block.kind === 'table') return <ProseTable table={block} />;
+  if (block.kind === 'quote') return <blockquote dir="auto">{renderProseLines(block.lines)}</blockquote>;
+  if (block.kind === 'rule') return <hr />;
+  return <p dir="auto">{renderProseLines(block.lines)}</p>;
+}
+
+// only the frame scrolls sideways, so it is a named, focusable region under the global focus ring
+function ProseTable({ table }) {
+  const getClass = (index) => PROSE_ALIGN_CLASSES[table.aligns[index]];
+  return <div className="prose-table-frame" tabIndex={0} role="region" aria-label={PROSE_TABLE_LABEL}>
+    <table className="prose-table">
+      <thead><tr>{table.head.map((inlines, index) => <th key={index} scope="col" className={getClass(index)} dir="auto">{inlines.map(renderProseInline)}</th>)}</tr></thead>
+      <tbody>{table.rows.map((cells, rowIndex) => <tr key={rowIndex}>
+        {cells.map((inlines, index) => <td key={index} className={getClass(index)} dir="auto">{inlines.map(renderProseInline)}</td>)}
+      </tr>)}</tbody>
+    </table>
+  </div>;
+}
+
+// the thread's own `Show all N lines` control; open → every line
+function ProseFoldedCode({ block }) {
+  const [isOpen, setOpen] = useState(false);
+  const text = isOpen ? block.text : block.text.split('\n', PROSE_FOLD_LINES).join('\n');
+  return <>
+    <pre className="prose-pre" dir="auto">{text}</pre>
+    <details className="prose-fold" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="group disclosure fs-meta"><DisclosureChevron /><span>{`Show all ${block.lineCount} lines`}</span></summary>
+    </details>
+  </>;
+}
+
+function ProseList({ list }) {
+  const items = list.items.map((item, index) => <li key={index} value={list.isOrdered ? item.value : undefined} dir="auto">
+    {renderProseLines(item.lines)}
+    {item.lists.map((child, childIndex) => <ProseList key={childIndex} list={child} />)}
+  </li>);
+  return list.isOrdered ? <ol dir="auto">{items}</ol> : <ul dir="auto">{items}</ul>;
+}
+
+function renderProseLines(lines) {
+  return lines.map((inlines, index) => <React.Fragment key={index}>
+    {index > 0 && <br />}{inlines.map(renderProseInline)}
+  </React.Fragment>);
+}
+
+function renderProseInline(node, index) {
+  if (typeof node === 'string') return node;
+  if (node.kind === 'code') return <MachineString key={index}>{node.text}</MachineString>;
+  if (node.kind === 'link') return <a key={index} className="prose-link" href={`${PROSE_DOC_ROUTE}${node.id}`}>{node.text}</a>;
+  return <strong key={index}>{node.children.map(renderProseInline)}</strong>;
+}
+
+// every pattern is line-anchored with no nested quantifier; inline scans only move forward → linear in the text
+const PROSE_BULLET = /^( *)[-*•] (.*)$/;
+const PROSE_NUMBER = /^( *)(\d{1,9})[.)] (.*)$/;
+const PROSE_HEADING = /^(#{1,6}) (.*)$/;
+const PROSE_HEADING_TOP_MARKS = 2;
+const PROSE_QUOTE = /^>(?: (.*))?$/;
+const PROSE_RULES = Object.freeze(new Set(['---', '***', '___']));
+const PROSE_FENCE = '```';
+const PROSE_TABLE_DELIMITER = /^:?-+:?$/;
+const PROSE_TABLE_COLUMNS_MAX = 12;
+const PROSE_TABLE_LABEL = 'Table, scrolls sideways';
+const PROSE_ALIGN_CLASSES = Object.freeze({ start: undefined, center: 'prose-cell--center', end: 'prose-cell--end' });
+const PROSE_FOLD_LINES = 20;
+const PROSE_NEST_INDENT = 2;
+const PROSE_LIST_DEPTH = 3;
+const PROSE_STAR = Object.freeze({ kind: 'star' });
+const PROSE_DOC_ROUTE = '#clauded-docs?doc=';
+const PROSE_DOC_PATH = 'clauded-docs';
+const PROSE_DOC_FORMS = Object.freeze(['/', '?doc=']);
+const PROSE_DOC_DIGITS_MAX = 9;
+// the texts the open sheet and its rows show → a 15 s re-read finds its texts still parsed
+const PROSE_PARSED_MAX = 32;
+const PROSE_PARSED = new Map();
+
+/**
+ * Body-text parser: text → blocks, plus the declared ids the text itself turned into links.
+ * Parsed once per text and id list (spec §5 → A long body): an equal pair returns the same result, which no caller mutates.
+ * @param linkedDocIds - declared ids; only these link as a bare digit run, and only these are returned
+ * @returns `linkedIds` — the declared ids linked in either form, in `linkedDocIds` order → the caller lists the rest separately
+ */
+function getProseBlocks(text, linkedDocIds = []) {
+  const key = `${linkedDocIds.join(',')}\n${text ?? ''}`;
+  const parsed = PROSE_PARSED.get(key) ?? buildProseBlocks(text, linkedDocIds);
+  PROSE_PARSED.delete(key);
+  PROSE_PARSED.set(key, parsed);
+  if (PROSE_PARSED.size > PROSE_PARSED_MAX) PROSE_PARSED.delete(PROSE_PARSED.keys().next().value);
+  return parsed;
+}
+
+function buildProseBlocks(text, linkedDocIds) {
+  const state = { blocks: [], open: null, item: null, levels: [], declared: new Set(linkedDocIds.map(String)), linked: new Set() };
+  const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
+  for (let index = 0; index < lines.length; index += 1) index = putProseLine(state, lines, index);
+  return { blocks: state.blocks, linkedIds: linkedDocIds.filter((id) => state.linked.has(String(id))) };
+}
+
+// returns the index of the last line consumed; block precedence: fence · table · rule · heading · quote · list item · continuation · paragraph
+function putProseLine(state, lines, index) {
+  const line = lines[index];
+  if (line.trimStart().startsWith(PROSE_FENCE)) return putProseFence(state, lines, index);
+  const head = getProseTableHead(line, lines[index + 1]);
+  if (head) return putProseTable(state, lines, index, head);
+  if (line.trim() === '') state.open = null;
+  else if (PROSE_RULES.has(line.trim())) putProseBlock(state, { kind: 'rule' }, false);
+  else putProseMarked(state, line);
+  return index;
+}
+
+function putProseMarked(state, line) {
+  const heading = PROSE_HEADING.exec(line);
+  const quote = heading ? null : PROSE_QUOTE.exec(line);
+  const item = heading || quote ? null : getProseItem(line);
+  if (heading) putProseBlock(state, { kind: 'heading', level: heading[1].length <= PROSE_HEADING_TOP_MARKS ? 1 : 2, inlines: getProseInlines(heading[2], state) }, false);
+  else if (quote) putProseQuote(state, quote[1] ?? '');
+  else if (item) putProseItem(state, item);
+  else putProseText(state, line);
+}
+
+// a quote's lines take inline rules only → a quote never holds a block
+function putProseQuote(state, line) {
+  const quote = state.open?.kind === 'quote' ? state.open : putProseBlock(state, { kind: 'quote', lines: [] }, true);
+  quote.lines.push(getProseInlines(line, state));
+}
+
+// a fence with no closing line runs to the end of the text; the opening line's info string is dropped
+function putProseFence(state, lines, index) {
+  let close = index + 1;
+  while (close < lines.length && !lines[close].trimStart().startsWith(PROSE_FENCE)) close += 1;
+  const content = lines.slice(index + 1, close);
+  putProseBlock(state, { kind: 'code', text: content.join('\n'), lineCount: content.length }, false);
+  return Math.min(close, lines.length - 1);
+}
+
+// a header line over a delimiter line of as many cells, both holding a bar, at most PROSE_TABLE_COLUMNS_MAX → over the cap stays text
+function getProseTableHead(line, next) {
+  if (!line.includes('|') || !next?.includes('|')) return null;
+  const cells = getProseCells(line);
+  const delimiters = getProseCells(next);
+  if (cells.length > PROSE_TABLE_COLUMNS_MAX || delimiters.length !== cells.length) return null;
+  if (!delimiters.every((cell) => PROSE_TABLE_DELIMITER.test(cell))) return null;
+  return { cells, aligns: delimiters.map(getProseAlign) };
+}
+
+function getProseAlign(delimiter) {
+  if (!delimiter.endsWith(':')) return 'start';
+  return delimiter.startsWith(':') ? 'center' : 'end';
+}
+
+// body lines run to a blank line or a line with no bar
+function putProseTable(state, lines, index, head) {
+  const getRow = (cells) => getProseRowCells(cells, head.cells.length).map((cell) => getProseInlines(cell, state));
+  const table = putProseBlock(state, { kind: 'table', aligns: head.aligns, head: getRow(head.cells), rows: [] }, false);
+  let last = index + 1;
+  while (last + 1 < lines.length && lines[last + 1].trim() !== '' && lines[last + 1].includes('|')) {
+    last += 1;
+    table.rows.push(getRow(getProseCells(lines[last])));
+  }
+  return last;
+}
+
+// a short row ends in empty cells; a long row's extra cells join its last one → no text dropped
+function getProseRowCells(cells, count) {
+  if (cells.length <= count) return [...cells, ...Array(count - cells.length).fill('')];
+  return [...cells.slice(0, count - 1), cells.slice(count - 1).join(' | ')];
+}
+
+// cells split on `|` outside code spans, `\|` a literal bar; a bar at either end of the line opens or closes the row
+function getProseCells(line) {
+  const row = line.trim();
+  const cells = [''];
+  for (const span of getProseSpans(row)) {
+    if (typeof span === 'string') putProseCellText(cells, span);
+    else cells[cells.length - 1] += `\`${span.text}\``;
+  }
+  if (row.startsWith('|')) cells.shift();
+  if (cells.length > 1 && cells.at(-1) === '') cells.pop();
+  return cells.map((cell) => cell.trim());
+}
+
+function putProseCellText(cells, text) {
+  text.split('\\|').forEach((piece, index) => {
+    if (index > 0) cells[cells.length - 1] += '|';
+    piece.split('|').forEach((part, partIndex) => {
+      if (partIndex > 0) cells.push('');
+      cells[cells.length - 1] += part;
+    });
+  });
+}
+
+function putProseBlock(state, block, isOpen) {
+  state.blocks.push(block);
+  state.open = isOpen ? block : null;
+  state.item = null;
+  return block;
+}
+
+function getProseItem(line) {
+  const bullet = PROSE_BULLET.exec(line);
+  if (bullet) return { isOrdered: false, indent: bullet[1].length, value: null, text: bullet[2] };
+  const number = PROSE_NUMBER.exec(line);
+  if (number) return { isOrdered: true, indent: number[1].length, value: Number.parseInt(number[2], 10), text: number[3] };
+  return null;
+}
+
+function putProseItem(state, item) {
+  const entry = { value: item.value, lines: [getProseInlines(item.text, state)], lists: [] };
+  getProseItemList(state, item).items.push(entry);
+  state.item = entry;
+}
+
+// further indented than the item above → nested under it, to PROSE_LIST_DEPTH; shallower → the level whose indent it reaches
+function getProseItemList(state, item) {
+  const levels = state.open?.kind === 'list' ? state.levels : [];
+  const top = levels.at(-1);
+  if (!top) return putProseTopList(state, item);
+  if (item.indent > top.indent && levels.length < PROSE_LIST_DEPTH) {
+    const list = getProseChildList(top.list.items.at(-1).lists, item.isOrdered);
+    levels.push({ indent: item.indent, list });
+    return list;
+  }
+  while (levels.length > 1 && levels.at(-2).indent >= item.indent) levels.pop();
+  const level = levels.at(-1);
+  if (level.list.isOrdered === item.isOrdered) return level.list;
+  if (levels.length === 1) return putProseTopList(state, item);
+  level.list = getProseChildList(levels.at(-2).list.items.at(-1).lists, item.isOrdered);
+  return level.list;
+}
+
+function putProseTopList(state, item) {
+  const list = putProseBlock(state, { kind: 'list', isOrdered: item.isOrdered, items: [] }, true);
+  state.levels = [{ indent: item.indent, list }];
+  return list;
+}
+
+function getProseChildList(lists, isOrdered) {
+  const last = lists.at(-1);
+  if (last?.isOrdered === isOrdered) return last;
+  const list = { kind: 'list', isOrdered, items: [] };
+  lists.push(list);
+  return list;
+}
+
+// an indented line after an item continues it; any other line joins the open paragraph or starts one
+function putProseText(state, line) {
+  if (state.open?.kind === 'list' && line.startsWith(' '.repeat(PROSE_NEST_INDENT))) {
+    state.item.lines.push(getProseInlines(line.trimStart(), state));
+    return;
+  }
+  const paragraph = state.open?.kind === 'paragraph' ? state.open : putProseBlock(state, { kind: 'paragraph', lines: [] }, true);
+  paragraph.lines.push(getProseInlines(line, state));
+}
+
+// code spans first (opaque), then link and image syntax, then `**` pairs over the rest, then document links inside text — an unpaired marker stays literal
+function getProseInlines(line, state) {
+  const tokens = getProseSpans(line).flatMap(getProseMdLinkTokens).flatMap(getProseStarTokens);
+  let starsLeft = tokens.filter((token) => token === PROSE_STAR).length;
+  const nodes = [];
+  let strong = null;
+  for (const token of tokens) {
+    if (token !== PROSE_STAR) {
+      putProseToken(strong ? strong.children : nodes, token, state);
+      continue;
+    }
+    starsLeft -= 1;
+    if (strong) {
+      nodes.push(strong.children.length ? strong : '****');
+      strong = null;
+    } else if (starsLeft > 0) strong = { kind: 'strong', children: [] };
+    else nodes.push('**');
+  }
+  return nodes;
+}
+
+// text strings and `{ kind: 'code' }` spans; an empty or unclosed backtick pair stays literal
+function getProseSpans(line) {
+  const spans = [];
+  let start = 0;
+  let open = line.indexOf('`');
+  while (open !== -1) {
+    const close = line.indexOf('`', open + 1);
+    if (close === -1) break;
+    if (close > open + 1) {
+      spans.push(line.slice(start, open), { kind: 'code', text: line.slice(open + 1, close) });
+      start = close + 1;
+    }
+    open = line.indexOf('`', close + 1);
+  }
+  spans.push(line.slice(start));
+  return spans.filter((span) => span !== '');
+}
+
+// `[label](target)` and `![label](target)` → one token; every scan moves forward past the last match → linear
+function getProseMdLinkTokens(span) {
+  if (typeof span !== 'string') return [span];
+  const tokens = [];
+  let start = 0;
+  let open = span.indexOf('[');
+  while (open !== -1) {
+    const middle = span.indexOf('](', open + 1);
+    const close = middle === -1 ? -1 : span.indexOf(')', middle + 2);
+    if (close === -1) break;
+    const labelStart = span.lastIndexOf('[', middle);
+    const markStart = labelStart > start && span[labelStart - 1] === '!' ? labelStart - 1 : labelStart;
+    tokens.push(span.slice(start, markStart), { kind: 'mdLink', label: span.slice(labelStart + 1, middle), target: span.slice(middle + 2, close) });
+    start = close + 1;
+    open = span.indexOf('[', start);
+  }
+  tokens.push(span.slice(start));
+  return tokens.filter((token) => token !== '');
+}
+
+function getProseStarTokens(span) {
+  if (typeof span !== 'string') return [span];
+  return span.split('**').flatMap((piece, index) => (index === 0 ? [piece] : [PROSE_STAR, piece])).filter((token) => token !== '');
+}
+
+function putProseToken(nodes, token, state) {
+  if (typeof token === 'string') putProseLinks(nodes, token, state);
+  else if (token.kind === 'mdLink') putProseMdLink(nodes, token, state);
+  else nodes.push(token);
+}
+
+// `label (target)`: the label never becomes a link's words; only a document address inside the target links
+function putProseMdLink(nodes, token, state) {
+  nodes.push(token.label ? `${token.label} (` : '(');
+  putProseLinks(nodes, token.target, state);
+  nodes.push(')');
+}
+
+function putProseLinks(nodes, text, state) {
+  let literalStart = 0;
+  let index = 0;
+  while (index < text.length) {
+    const ref = getProseRef(text, index, state);
+    if (!ref) {
+      index += 1;
+      continue;
+    }
+    if (ref.isLink) {
+      if (ref.start > literalStart) nodes.push(text.slice(literalStart, ref.start));
+      nodes.push(getProseLink(text.slice(ref.start, ref.end), state));
+      literalStart = ref.end;
+    }
+    index = ref.end;
+  }
+  if (text.length > literalStart) nodes.push(text.slice(literalStart));
+}
+
+// the one generated href value: a digit run re-serialized as an integer
+function getProseLink(digits, state) {
+  const id = String(Number.parseInt(digits, 10));
+  state.linked.add(id);
+  return { kind: 'link', text: digits, id };
+}
+
+// a whole digit run is consumed at once, linked or not → no position is scanned twice
+function getProseRef(text, index, state) {
+  if (text.startsWith(PROSE_DOC_PATH, index)) return getProseAddressRef(text, index);
+  if (!isProseDigit(text[index])) return null;
+  const end = getProseDigitEnd(text, index);
+  const isLink = end - index <= PROSE_DOC_DIGITS_MAX && state.declared.has(text.slice(index, end)) && !isProseLatin(text[index - 1]) && !isProseLatin(text[end]);
+  return { start: index, end, isLink };
+}
+
+function getProseAddressRef(text, index) {
+  if (isProseLatin(text[index - 1])) return null;
+  const formStart = index + PROSE_DOC_PATH.length;
+  const form = PROSE_DOC_FORMS.find((candidate) => text.startsWith(candidate, formStart));
+  if (!form) return null;
+  const start = formStart + form.length;
+  const end = getProseDigitEnd(text, start);
+  return end > start && end - start <= PROSE_DOC_DIGITS_MAX ? { start, end, isLink: true } : null;
+}
+
+function getProseDigitEnd(text, index) {
+  let end = index;
+  while (isProseDigit(text[end])) end += 1;
+  return end;
+}
+
+function isProseDigit(char) {
+  return char !== undefined && char >= '0' && char <= '9';
+}
+
+function isProseLatin(char) {
+  return char !== undefined && /[A-Za-z]/.test(char);
+}
+
+/**
+ * Pagination bar: the row range left, Previous · current page · Next right; nothing renders for an empty result.
+ * An end step stays focusable (aria-disabled + click guard) → pressing Next onto the last page never drops focus to the body.
+ * @param page - 0-based page index; caller clamps its own held page to `ceil(total / pageSize) - 1` when total shrinks → the rows it slices match the range shown
+ * @param total - matched row count
+ */
+function Pagination({ page, pageSize, total, onPageChange, label = 'Pages', className = '' }) {
+  if (!(total > 0)) return null;
+  const pageCount = Math.ceil(total / pageSize);
+  const current = Math.min(page, pageCount - 1); // a total that shrank under a held page → read the last page, never a start past the end
+  const last = Math.min((current + 1) * pageSize, total);
+  const hasPrev = current > 0;
+  const hasNext = last < total;
+  const getStepHandler = (isEnabled, next) => () => { if (isEnabled) onPageChange(next); };
+
+  return <nav className={`pagination ${className}`.trim()} aria-label={label}>
+    <span className="pagination-range">{`${formatInt(current * pageSize + 1)}–${formatInt(last)} of ${formatInt(total)}`}</span>
+    <div className="pagination-steps">
+      <QuietButton aria-label="Previous page" aria-disabled={hasPrev ? undefined : 'true'} onClick={getStepHandler(hasPrev, current - 1)}>Previous</QuietButton>
+      <span className="pagination-current" aria-current="page"><span className="sr-only">Page </span>{current + 1}<span className="sr-only">{` of ${pageCount}`}</span></span>
+      <QuietButton aria-label="Next page" aria-disabled={hasNext ? undefined : 'true'} onClick={getStepHandler(hasNext, current + 1)}>Next</QuietButton>
+    </div>
+  </nav>;
 }
 
 const BLANK_FIELD_TEXT = new Set(['', '—', '-', 'unknown', 'n/a', 'null', 'undefined']);
@@ -1240,13 +2043,14 @@ function getDisplayName(kind, value) {
   return format ? format(text) : text;
 }
 
-// Label + value pair that renders nothing for an empty or placeholder value.
-function DetailField({ label, value, mono = false }) {
+// One drawer fact as a one-pair dl (valid without a caller's dl wrapper); an empty or placeholder value renders nothing.
+// isStacked → label above value on the start edge, for a prose value (a description) that would wrap ragged on the right.
+function DetailField({ label, value, mono = false, isStacked = false }) {
   if (!hasFieldValue(value)) return null;
-  return <div>
-    <div className="fs-meta font-mono text-faint uppercase tracking-wider mb-1">{label}</div>
-    <div className={`fs-body ${mono ? 'font-mono text-dim' : 'text-ink'} break-words`}>{value}</div>
-  </div>;
+  return <dl className={isStacked ? 'detail-fact detail-fact--stacked' : 'detail-fact'}>
+    <dt className="detail-fact-label">{label}</dt>
+    <dd className="detail-fact-value">{mono ? <MachineString>{value}</MachineString> : value}</dd>
+  </dl>;
 }
 
 /**
@@ -1255,19 +2059,23 @@ function DetailField({ label, value, mono = false }) {
  * @param freshness - the status group: the FreshnessStamp and any status token read beside it
  * @param range - the time-range control · @param refresh - the RefreshButton
  * @param actions - optional page actions, set apart from the status group
+ * @param back - back link of a detail page, before the h1 · @param status - the record's status pill, after the h1
+ * @param primary - the page's one primary button, right-most
  */
-function PageHeader({ title, sub, actions, freshness, range, refresh }) {
-  const hasSub = sub && sub !== title;
+// O5 one line box: back · h1 · status left, the cluster right; no sub-line (a caller's `sub` renders nothing)
+function PageHeader({ title, back, status, actions, freshness, range, refresh, primary }) {
   const hasStatus = Boolean(freshness || range || refresh);
-  const hasCluster = Boolean(actions || hasStatus);
+  const hasCluster = Boolean(actions || hasStatus || primary);
   return <div className="page-head">
-    <div className="min-w-0">
+    <div className="page-head-lead">
+      {back}
       <h1 className="page-head-title fs-display font-semibold">{title}</h1>
-      {hasSub && <div className="page-head-sub fs-meta font-mono text-faint tracking-wider uppercase">{sub}</div>}
+      {status}
     </div>
     {hasCluster && <div className="page-head-cluster">
       {actions && <div className="page-head-group">{actions}</div>}
       {hasStatus && <div className="page-head-group">{freshness}{range}{refresh}</div>}
+      {primary}
     </div>}
   </div>;
 }
@@ -1336,7 +2144,7 @@ function tzShortLabel(tz) {
   }
 }
 
-// formatToParts 채택 — locale 문자열 quirk 무관하게 MM/DD HH:mm 레이아웃 직접 조립
+// formatToParts 채택 — locale 문자열 quirk 무관하게 MM-DD HH:mm 레이아웃 직접 조립
 function kstParts(iso) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
@@ -1351,11 +2159,21 @@ function kstParts(iso) {
   return { year: pick('year'), month: pick('month'), day: pick('day'), hour, minute: pick('minute'), second: pick('second') };
 }
 
-// UTC ISO → "MM/DD HH:mm" (표시 tz)
+// UTC ISO → "MM-DD HH:mm" (표시 tz)
 function formatKstDateTime(iso) {
   const p = kstParts(iso);
   if (!p) return iso || '—';
-  return `${p.month}/${p.day} ${p.hour}:${p.minute}`;
+  return `${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
+
+const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// UTC ISO → "MM-DD" (표시 tz) · a bare YYYY-MM-DD day key is already a display-zone day → no zone shift
+function formatKstDay(iso) {
+  if (DAY_KEY_PATTERN.test(String(iso))) return String(iso).slice(5);
+  const p = kstParts(iso);
+  if (!p) return iso || '—';
+  return `${p.month}-${p.day}`;
 }
 
 // UTC ISO → "HH:mm" (표시 tz)
@@ -1427,15 +2245,16 @@ function getDayTokenNodes(children, place) {
 }
 
 /**
- * A plain sentence with every day-count token kept whole in its own NoWrap; text content stays the sentence.
+ * A plain sentence with every day-count token kept whole in its own NoWrap, all in one inline span; text content stays the sentence.
  * @param children - the sentence; a list of children (nested lists too) and a Fragment (nested too) are read part by part,
  *   and any other non-string part (an element, null) renders as is
  */
 function DayTokens({ children }) {
   const parts = getDayTokenNodes(children, '');
   if (parts.length <= 1) return parts[0] ?? null;
+  // one inline span, not a Fragment → in a flex parent with a gap the sentence stays one item instead of one per part;
   // spread, not a list → a caller's own unkeyed element part needs no key
-  return React.createElement(React.Fragment, null, ...parts);
+  return React.createElement('span', null, ...parts);
 }
 
 /**
@@ -1498,23 +2317,34 @@ const FRESHNESS_STALE_MS = 5 * 60_000;
 const FRESHNESS_TICK_MS = 30_000;
 
 // glyph carries the tone, text stays neutral → state survives without colour
+// a refresh borrows the tone of the state it settles to → its entry carries the word only
 const FRESHNESS_META = {
-  loading:    { tone: null, word: 'Loading' },
-  refreshing: { tone: null, word: 'Refreshing' },
+  refreshing: { word: 'Refreshing' },
   'not-read': { tone: 'crit', word: 'Not read' },
   partial:    { tone: 'warn', word: 'Partial' },
   stale:      { tone: 'warn', word: 'Stale' },
   fresh:      { tone: 'ok', word: 'Fresh' },
 };
 
-/** Busy and failed tallies over region states (INITIAL_REGION_STATE shape) — one input for the stamp and the Refresh atom. */
+/**
+ * Busy, failed and data-holding tallies over region states (INITIAL_REGION_STATE shape) — one input for the stamp, the verdict and the Refresh atom.
+ * A region holds data while its status is 'ready', a failed refresh over held data included.
+ */
 function getRegionSummary(regions) {
   const list = Array.isArray(regions) ? regions.filter(Boolean) : [];
+  const held = list.filter((region) => region.status === 'ready');
   return {
     isBusy: list.some((region) => region.busy === true),
     failedCount: list.filter((region) => region.error != null).length,
     regionCount: list.length,
+    heldCount: held.length,
+    heldFailedCount: held.filter((region) => region.error != null).length,
   };
+}
+
+/** Region states with every in-flight bit cleared → the state the page settles to once its reads land. */
+function getSettledRegions(regions) {
+  return Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
 }
 
 /**
@@ -1535,36 +2365,44 @@ function getFreshnessState({ at, loading = false, failed = false, regions, stale
 }
 
 /**
- * Page verdict over the getFreshnessState inputs → { state, tone, label, note, isBusy } for PageVerdict, KPI tones and all-clear lines.
+ * Page verdict over the getFreshnessState inputs → { state, tone, label, note, isBusy } for a screen's status word and all-clear lines.
  * Unread → neutral "No signal" · stale/partial → "Last known", ok drops to neutral, warn/crit kept · refreshing → the settled verdict, busy.
  * @param tone - tone the page derives from its data
  * @param label - page word for that tone; defaults to the tone's canonical word
  */
 function getFreshnessVerdict({ tone = 'neutral', label, at, loading = false, failed = false, regions, staleAfterMs = FRESHNESS_STALE_MS, now = Date.now() }) {
   const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
-  const settledRegions = Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
+  const settledRegions = getSettledRegions(regions);
   const settled = getFreshnessState({ at, failed, regions: settledRegions, staleAfterMs, now });
   const isBusy = state === 'loading' || state === 'refreshing';
   const pageLabel = label || VERDICT_TONE_LABEL[tone] || VERDICT_TONE_LABEL.neutral;
 
-  const { failedCount, regionCount } = getRegionSummary(settledRegions);
+  const { failedCount, regionCount, heldCount } = getRegionSummary(settledRegions);
 
   if (settled === 'not-read') {
-    const note = getUnreadNote({ isBusy, hasFailed: failed || failedCount > 0 });
+    // a region already on screen makes a page-wide unread note false
+    const note = heldCount > 0 ? null : getUnreadNote({ isBusy, failed, failedCount, regionCount });
     return { state, tone: 'neutral', label: VERDICT_TONE_LABEL.neutral, note, isBusy };
   }
   if (settled === 'fresh') return { state, tone, label: pageLabel, note: null, isBusy };
 
   const isAlarm = tone === 'warn' || tone === 'crit';
-  const ageNote = `Read ${formatRelativeTime(at, now)}`;
+  const ageNote = `Read ${getReadAge(at, now)}`;
   const note = settled === 'partial' ? `${ageNote} · ${failedCount} of ${regionCount} sources failed` : ageNote;
-  return { state, tone: isAlarm ? tone : 'neutral', label: isAlarm ? `Last known: ${pageLabel}` : 'Last known', note, isBusy };
+  return { state, tone: isAlarm ? tone : 'neutral', label: isAlarm ? `${LAST_KNOWN_TEXT}: ${pageLabel}` : LAST_KNOWN_TEXT, note, isBusy };
 }
 
-// a tried-and-failed first read must never read as one that was never tried
-function getUnreadNote({ isBusy, hasFailed }) {
+// a tried-and-failed first read must never read as one that was never tried; some sources failed → the failed share, no age
+function getUnreadNote({ isBusy, failed, failedCount, regionCount }) {
   if (isBusy) return 'Checking the first read…';
-  return hasFailed ? 'The first read failed — nothing to show yet.' : 'Nothing has been read yet.';
+  if (!failed && failedCount > 0 && failedCount < regionCount) return `${failedCount} of ${regionCount} failed`;
+  return failed || failedCount > 0 ? 'First read failed' : 'Nothing has been read yet.';
+}
+
+// a read's age in a stamp or note — under a minute reads "just now", never "0s ago"
+function getReadAge(at, now = Date.now()) {
+  const ageSec = Math.round((now - new Date(at).getTime()) / 1000);
+  return ageSec >= 0 && ageSec < 60 ? 'just now' : formatRelativeTime(at, now);
 }
 
 /** Re-renders the caller every FRESHNESS_TICK_MS while enabled → age-based staleness holds on screens that never poll. */
@@ -1578,14 +2416,12 @@ function useFreshnessTick(isEnabled) {
   }, [isEnabled]);
 }
 
-// shell ↔ page bridge — app.jsx registers the sink and the harness reader; pageState is replayed on register (child effects run first)
-const shellBridge = { putPageState: null, readHarness: null, pageState: null, owner: null };
+// shell ↔ page bridge — app.jsx registers its harness reader
+const shellBridge = { readHarness: null };
 
-/** Shell side: registers the sidebar's page-state sink and its coalesced harness read; call with no argument to detach. */
-function setShellBridge({ putPageState = null, readHarness = null } = {}) {
-  shellBridge.putPageState = putPageState;
+/** Shell side: registers its coalesced harness read; call with no argument to detach. */
+function setShellBridge({ readHarness = null } = {}) {
   shellBridge.readHarness = readHarness;
-  putPageState?.(shellBridge.pageState);
 }
 
 /** One shell harness re-read, joined to any read already in flight; never rejects (every source settles). */
@@ -1593,73 +2429,101 @@ function getHarnessRead() {
   return Promise.resolve(shellBridge.readHarness?.());
 }
 
-/**
- * Page read state the shell shows → { state, at }: 'loading' only for a first read in flight, else the settled stamp state.
- * A refresh over held data reports its settled state, so the sidebar never flickers to Checking.
- */
-function getShellPageState({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
-  const settledRegions = Array.isArray(regions) ? regions.filter(Boolean).map((region) => ({ ...region, busy: false })) : regions;
-  const settled = getFreshnessState({ at, failed, regions: settledRegions, staleAfterMs, now });
-  const isInFlight = loading || getRegionSummary(regions).isBusy;
+// remote device page (remote listener only) — the device routes and the header its gate checks on every mutation
+const REMOTE_PAGE = {
+  SESSION_URL: "/api/remote/session",
+  LOGOUT_URL: "/api/remote/logout",
+  OFF_URL: "/api/remote/off",
+  SIGN_IN_URL: "/sign-in.html",
+  CSRF_HEADER: "x-csrf-token",
+};
+const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+// the remote page's session read, joined by every mutation and the shell banner; null on the loopback page
+let remoteSession = null;
 
-  if (settled === 'not-read') return { state: isInFlight ? 'loading' : 'not-read', at: null };
-  return { state: settled, at };
+/** TLS is remote-only → an https page is the remote listener; the Mac's loopback page is plain http. */
+function isRemotePage(location = window.location) {
+  return location.protocol === "https:";
 }
 
 /**
- * Hands the page's read state to the shell sidebar and clears it on unmount, so the next page never inherits it.
- * FreshnessStamp calls it; a page whose stamp is gated calls it directly with the stamp's inputs. One caller per page.
+ * Remote page only: wraps the window's fetch so every same-origin mutation carries the device's CSRF value → no screen sends it itself.
+ * The value is read once from the session route; a failed read sends no mutation and is retried by the next one.
  */
-function useShellPageState(input) {
-  const ownerRef = useRef({});
-  const { state, at } = getShellPageState(input);
-  const atMs = at ? new Date(at).getTime() : null;
+function installRemoteFetch(win = window) {
+  if (!isRemotePage(win.location)) return;
+  const browserFetch = win.fetch.bind(win);
+  remoteSession = createRemoteSession(browserFetch);
+  win.fetch = async (input, init = {}) => {
+    const method = String(init.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+    const url = new URL(input instanceof Request ? input.url : String(input), win.location.origin);
+    if (!MUTATION_METHODS.has(method) || url.origin !== win.location.origin) return browserFetch(input, init);
+    const { csrf } = await remoteSession.read();
+    const headers = new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined));
+    headers.set(REMOTE_PAGE.CSRF_HEADER, csrf);
+    return browserFetch(input, { ...init, headers });
+  };
+}
 
-  useEffect(() => {
-    shellBridge.owner = ownerRef.current;
-    shellBridge.pageState = { state, at };
-    shellBridge.putPageState?.(shellBridge.pageState);
-  }, [state, atMs]);
-  useEffect(() => () => {
-    if (shellBridge.owner !== ownerRef.current) return;
-    shellBridge.owner = null;
-    shellBridge.pageState = null;
-    shellBridge.putPageState?.(null);
-  }, []);
+function createRemoteSession(browserFetch) {
+  let sessionRead = null;
+  return {
+    read() {
+      sessionRead ??= browserFetch(REMOTE_PAGE.SESSION_URL, { headers: { Accept: "application/json" } })
+        .then((res) => (res.ok ? res.json() : Promise.reject(Object.assign(new Error(`remote session read failed: HTTP ${res.status}`), { status: res.status }))))
+        .catch((error) => {
+          sessionRead = null;
+          throw error;
+        });
+      return sessionRead;
+    },
+  };
 }
 
 /**
- * Shared "as of HH:MM" stamp — a refresh in flight keeps the last stamp and sets aria-busy.
- * A read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
- * @param shellRegions - regions handed to the shell when they differ from the rendered set (a region the shell already owns is left out)
+ * The remote device's own session `{ csrf, device: { id, label } }`, joined to the read the fetch wrapper shares.
+ * @returns null on the loopback page; rejects with `status` on a failed read (401 → the device is no longer registered)
  */
-function FreshnessStamp({ at, loading = false, failed = false, regions, shellRegions, staleAfterMs, now }) {
+function readRemoteSession() {
+  return remoteSession === null ? Promise.resolve(null) : remoteSession.read();
+}
+
+/**
+ * Shared freshness stamp — hidden while the settled read is fresh or a first read is in flight (the paired Refresh label reads "Loading…");
+ * otherwise the unread note or the read's age, "Last known" only over data still held.
+ * A refresh in flight keeps the settled glyph and text and sets aria-busy; a read stamp re-renders on its own tick, so age-based staleness holds on screens that never poll.
+ */
+function FreshnessStamp({ at, loading = false, failed = false, regions, staleAfterMs, now }) {
   const state = getFreshnessState({ at, loading, failed, regions, staleAfterMs, now });
-  useShellPageState({ at, loading, failed, regions: shellRegions ?? regions, staleAfterMs, now });
-  const meta = FRESHNESS_META[state];
-  const glyph = meta.tone ? TONE_GLYPH[meta.tone] : '…';
-  const toneClass = meta.tone ? `text-${meta.tone}` : 'text-faint';
-  const isRead = state !== 'loading' && state !== 'not-read';
-  const isBusy = state === 'loading' || state === 'refreshing';
-  const { failedCount, regionCount } = getRegionSummary(regions);
-  const failedNote = state === 'partial' ? `${failedCount} of ${regionCount} failed` : '';
-  const word = failedNote ? `${meta.word}, ${failedNote}` : meta.word;
-  useFreshnessTick(isRead && now === undefined);
+  const settled = getFreshnessState({ at, failed, regions: getSettledRegions(regions), staleAfterMs, now });
+  useFreshnessTick(settled !== 'not-read' && now === undefined);
+  if (state === 'loading' || settled === 'fresh') return null;
 
-  const readText = `as of ${formatKstTime(at)}`;
-  const text = !isRead ? word : failedNote ? `${readText} · ${failedNote}` : readText;
-  // unread → the visible text is the word itself; first read → no text, the paired Refresh label already reads "Loading…"
-  const hasSrWord = isRead || state === 'loading';
-  const title = isRead ? `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at)})` : word;
+  const { failedCount, regionCount, heldFailedCount } = getRegionSummary(regions);
+  const failedNote = settled === 'partial' ? `${failedCount} of ${regionCount} failed` : '';
+  const word = state === 'partial' ? `${FRESHNESS_META.partial.word}, ${failedNote}` : FRESHNESS_META[state].word;
+  // no failed region → the read is held by definition (age-stale, or a failed flag over a read)
+  const isHeld = failedCount === 0 || heldFailedCount > 0;
+  const text = getStampText({ settled, at, now, failedNote, failed, failedCount, regionCount, isHeld });
+  // a first read that failed, whole or in part, warns like a held read gone stale; a never-tried one keeps its own mark
+  const tone = settled === 'not-read' && (failed || failedCount > 0) ? 'warn' : FRESHNESS_META[settled].tone;
+  const title = settled === 'not-read' ? word : `${word} — read ${formatKstFull(at)} (${formatRelativeTime(at, now)})`;
 
   return (
-    <span className="fs-meta font-mono text-faint whitespace-nowrap" title={title} aria-busy={isBusy ? 'true' : undefined}>
-      <span aria-hidden="true" className={`mr-1 ${toneClass}`}>{glyph}</span>
-      {hasSrWord && <span className="sr-only">{word}</span>}
-      {/* the clock time never breaks from "as of", whatever the header cluster around the stamp does */}
-      {state !== 'loading' && <span data-stamp-text="true" className="whitespace-nowrap">{text}</span>}
+    <span className="fs-meta text-faint tabular-nums whitespace-nowrap" title={title} aria-busy={state === 'refreshing' ? 'true' : undefined}>
+      <span aria-hidden="true" className={`mr-1 text-${tone}`}>{TONE_GLYPH[tone]}</span>
+      <span className="sr-only">{word}</span>
+      <span data-stamp-text="true" className="whitespace-nowrap">{text}</span>
     </span>
   );
+}
+
+// visible stamp line for a settled state that is not fresh — the unread note, or the read's age led by "Last known" only over held data
+function getStampText({ settled, at, now, failedNote, failed, failedCount, regionCount, isHeld }) {
+  if (settled === 'not-read') return getUnreadNote({ isBusy: false, failed, failedCount, regionCount });
+  const readText = `read ${getReadAge(at, now)}`;
+  const heldText = isHeld ? `${LAST_KNOWN_TEXT} · ${readText}` : readText;
+  return failedNote ? `${heldText} · ${failedNote}` : heldText;
 }
 
 /**
@@ -1709,23 +2573,125 @@ async function getErrorBody(res) {
   }
 }
 
+/**
+ * The saved-file name a download's Content-Disposition names: RFC 5987 `filename*` first, the plain `filename` as fallback.
+ * @returns null when the header names no file
+ */
+function getAttachmentName(headerValue) {
+  if (!headerValue) return null;
+  const star = headerValue.match(/filename\*=(?:UTF-8'')?([^;]+)/i);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ''));
+    } catch (_err) {
+      // malformed percent-encoding → the plain filename below
+    }
+  }
+  const plain = headerValue.match(/filename="?([^";]+)"?/i);
+  return plain ? plain[1].trim() : null;
+}
+
+/**
+ * DOMPurify config for agent- or session-written markup a viewer renders as HTML; anything outside it is dropped.
+ * Form controls + formaction/ping → no same-origin request from one click (markdown bodies reach the client unsanitized).
+ * ALLOW_UNKNOWN_PROTOCOLS false → no javascript:/data: URLs · KEEP_CONTENT → a dropped tag's text stays.
+ * WHOLE_DOCUMENT → <html>/<body> kept, so the document viewer can lift the body's class.
+ */
+const SANITIZE_CONFIG = {
+  FORBID_TAGS: [
+    'script',
+    'iframe',
+    'object',
+    'embed',
+    'base',
+    'meta',
+    'link',
+    'form',
+    'input',
+    'button',
+    'select',
+    'textarea',
+  ],
+  FORBID_ATTR: [
+    'onerror',
+    'onload',
+    'onclick',
+    'onmouseover',
+    'onfocus',
+    'onblur',
+    'onchange',
+    'oninput',
+    'onsubmit',
+    'onreset',
+    'onselect',
+    'onkeydown',
+    'onkeyup',
+    'onkeypress',
+    'onabort',
+    'oncanplay',
+    'oncanplaythrough',
+    'ondurationchange',
+    'onemptied',
+    'onended',
+    'onloadeddata',
+    'onloadedmetadata',
+    'onloadstart',
+    'onpause',
+    'onplay',
+    'onplaying',
+    'onprogress',
+    'onratechange',
+    'onseeked',
+    'onseeking',
+    'onstalled',
+    'onsuspend',
+    'ontimeupdate',
+    'onvolumechange',
+    'onwaiting',
+    'onanimationstart',
+    'onanimationend',
+    'onanimationiteration',
+    'ontransitionend',
+    'formaction',
+    'ping',
+  ],
+  ALLOW_UNKNOWN_PROTOCOLS: false,
+  KEEP_CONTENT: true,
+  WHOLE_DOCUMENT: true,
+};
+
 const FETCH_ERROR_NEXT_STEP = {
   network: 'The monitor server did not answer. Check that it is running, then retry.',
+  database: "The monitor's database is unavailable. Retry in a moment.",
   server: 'The server hit an error. Retry in a moment.',
   client: 'The server refused this request. Open Details for its answer.',
   unknown: 'Retry in a moment, or open Details for more.',
 };
 
-// browser fetch rejections: Chromium "Failed to fetch" · Firefox "NetworkError…" · WebKit "Load failed"
-const NETWORK_FAILURE_PATTERN = /failed to fetch|networkerror|load failed/i;
+// a failed stat's context line (spec 44084 §2.2) → its own cause, never a pointer; the next step stays with the notice
+const READ_FAILURE_CAUSE = {
+  server: 'Server error, not read.',
+  network: 'No answer, not read.',
+  database: 'Database down, not read.',
+  client: 'Request refused, not read.',
+  unknown: 'Unknown error, not read.',
+};
+
+const FAILURE_PATTERN = {
+  // browser fetch rejections: Chromium "Failed to fetch" · Firefox "NetworkError…" · WebKit "Load failed"
+  NETWORK: /failed to fetch|networkerror|load failed/i,
+  // a route's database outage body (`db-failure.ts` → DbFailureBody) in the 503 message
+  DATABASE: /\bdatabase_unavailable\b/,
+};
 
 function getErrorCause(error) {
   const detail = typeof error?.message === 'string' ? error.message : String(error ?? '');
   const status = Number(/^HTTP (\d{3})\b/.exec(detail)?.[1]) || null;
 
+  if (status === 503 && FAILURE_PATTERN.DATABASE.test(detail)) return { kind: 'database', status, detail };
   if (status >= 500) return { kind: 'server', status, detail };
   if (status >= 400) return { kind: 'client', status, detail };
-  if (NETWORK_FAILURE_PATTERN.test(detail)) return { kind: 'network', status, detail };
+  if (FAILURE_PATTERN.NETWORK.test(detail)) return { kind: 'network', status, detail };
   return { kind: 'unknown', status, detail };
 }
 
@@ -1733,6 +2699,10 @@ function getErrorCause(error) {
 function getErrorCopy(error, source) {
   const { kind, detail } = getErrorCause(error);
   return { sentence: `Couldn't load ${source}.`, next: FETCH_ERROR_NEXT_STEP[kind], detail, kind };
+}
+
+function getReadFailureCause(error) {
+  return READ_FAILURE_CAUSE[getErrorCause(error).kind];
 }
 
 /**
@@ -1815,8 +2785,11 @@ function useFocusHandoff(targetId) {
   return controlRef;
 }
 
-// focusable while busy (aria-disabled + click guard) → keyboard focus survives the request
-function RetryButton({ onRetry, isBusy = false, focusTargetId }) {
+/**
+ * Retry for a failed read — focusable while busy (aria-disabled + click guard) → keyboard focus survives the request.
+ * @param isInline - a quiet text action on a context line (no border or box, 24 hit area) instead of the boxed `.btn.sm`
+ */
+function RetryButton({ onRetry, isBusy = false, isInline = false, focusTargetId }) {
   const controlRef = useFocusHandoff(focusTargetId);
   const handleClick = (event) => {
     if (isBusy) return;
@@ -1825,7 +2798,7 @@ function RetryButton({ onRetry, isBusy = false, focusTargetId }) {
   };
 
   return (
-    <button ref={controlRef} type="button" className="btn sm self-start" onClick={handleClick}
+    <button ref={controlRef} type="button" className={isInline ? 'retry-inline inline-target' : 'btn sm self-start'} onClick={handleClick}
       aria-disabled={isBusy ? 'true' : undefined} aria-busy={isBusy ? 'true' : undefined}>
       {isBusy ? 'Retrying…' : 'Retry'}
     </button>
@@ -1833,45 +2806,53 @@ function RetryButton({ onRetry, isBusy = false, focusTargetId }) {
 }
 
 /**
- * Quiet per-region failure on a neutral surface; keeps the grid slot and shows the raw answer behind Details.
+ * Quiet per-region failure inline in its card on the alarm-row geometry, no surface of its own: glyph on the card column, sentence and
+ * next step after it, the raw answer behind Details, Retry at the row end; keeps the grid slot.
  * @param onRetry - omit when a PageErrorBanner already carries the one Retry for this outage
  * @param isBusy - a Retry is in flight; keep rendering this card (see getRegionView) so its Retry keeps focus
  * @param focusTargetId - region card id that takes focus if this card unmounts while its Retry is focused
  * @param minHeight - reserved slot height so the grid keeps its shape
  */
-function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTargetId, minHeight, className = '' }) {
+function RegionUnavailable({ source, error, onRetry, isBusy = false, focusTargetId, minHeight, role, className = '' }) {
   const copy = getErrorCopy(error, source);
+  const retry = onRetry && <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId}/>;
   return (
-    <div className={`sub-card bg-sunken flex flex-col gap-1.5 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}>
-      <div className="fs-body flex items-center gap-1.5">
-        <Icon name={TONE_ICON.crit} size={14} className="text-crit"/>
-        <span>{copy.sentence}</span>
-      </div>
-      <div className="fs-meta text-dim">{copy.next}</div>
+    <AlarmRow tone="crit" title={copy.sentence} detail={copy.next} actions={retry} role={role} minHeight={minHeight} className={`region-unavailable ${className}`.trim()}>
       <ErrorDetails detail={copy.detail}/>
-      {onRetry && <RetryButton onRetry={onRetry} isBusy={isBusy} focusTargetId={focusTargetId}/>}
-    </div>
+    </AlarmRow>
   );
 }
 
-const REGION_COVERED_NOTE = 'Not loaded — see the notice above';
+const NOTICE_POINTER = 'the notice above';
+
+// the word for loaded data standing beside a failed refresh — stamp, alarm row and stat alike
+const LAST_KNOWN_TEXT = 'Last known';
+
+// a held reading's cause, on hover and in ⓘ — the stat label already names the source, the word stays alone on the line
+function getHeldCause(source) {
+  return `${LAST_KNOWN_TEXT} — couldn't refresh ${source}`;
+}
 
 /**
- * Quiet slot for a region another surface speaks for: its name + a pointer to that surface, no sentence, no Retry.
- * @param region - slot name shown; defaults to source
+ * The one pointer sentence to the surface that states a cause — alone when the value already reads Not loaded, else after its lead.
+ * @param target - that surface, read after "see"; the page notice by default
+ */
+function getNoticePointer(lead, target = NOTICE_POINTER) {
+  return lead ? `${lead} — see ${target}.` : `See ${target}.`;
+}
+
+/**
+ * Quiet slot for a region another surface speaks for: one pointer line to that surface, no name (its card already titles it), no sentence, no Retry.
  * @param speaker - failed source whose card (not the page banner) speaks for this slot
  * @param focusTargetId - the region's card id; the banner's Retry hands focus to the first banner-covered card on recovery
  * @param minHeight - reserved slot height so the grid keeps its shape
  */
-function RegionCovered({ source, region, speaker, focusTargetId, minHeight, className = '' }) {
-  const label = region ?? source;
-  const name = label ? label.charAt(0).toUpperCase() + label.slice(1) : '';
+function RegionCovered({ speaker, focusTargetId, minHeight, className = '' }) {
   return (
-    <div className={`sub-card bg-sunken flex flex-col gap-1 ${className}`.trim()} style={minHeight ? { minHeight } : undefined}
+    <p className={`fs-meta text-dim ${className}`.trim()} style={minHeight ? { minHeight } : undefined}
       data-covered-card-id={speaker ? undefined : focusTargetId}>
-      <span className="fs-body text-dim">{name}</span>
-      <span className="fs-meta text-faint">{speaker ? `Not loaded — see the ${speaker} notice` : REGION_COVERED_NOTE}</span>
-    </div>
+      {getNoticePointer(NOT_LOADED_TEXT, speaker ? `the ${speaker} notice` : undefined)}
+    </p>
   );
 }
 
@@ -1915,11 +2896,18 @@ function PageErrorBanner({ sources, error, onRetry, isBusy = false, focusTargetI
   );
 }
 
-const ALERT_SEVERITY_WORD = { crit: 'Critical', warn: 'Warning', info: 'Notice', ok: 'Resolved', neutral: 'Notice' };
+const ALERT_SEVERITY_WORD = { crit: 'Critical', warn: 'Warning', info: 'Notice', ok: 'Resolved', neutral: 'Notice', unknown: 'Unknown' };
+
+// at 13 the 1.6 stroke paints under a pixel and the worst state reads faintest → every alarm mark, a firing stat's included
+const ALARM_GLYPH_SIZE = 16;
+// a ToneGlyph slot with no tone keeps the glyph's width → a lead column of glyphs holds its names on one x
+const EMPTY_GLYPH_SLOT_STYLE = Object.freeze({ width: ALARM_GLYPH_SIZE });
+
+const ALERT_CARD_SHELLS = Object.freeze({ raised: 'card alert-card', inset: 'sub-card bg-sunken alert-card', bare: 'alert-card alert-card--bare' });
 
 /**
- * The one conditional-alert card: tone rides only on the glyph well, the shell stays neutral.
- * @param surface - 'raised' page-level card · 'inset' inside an existing card or panel
+ * The one conditional-alert card, drawn as the alarm row: tone rides only on the bare glyph, the shell stays neutral.
+ * @param surface - 'raised' page-level card · 'inset' inside an existing card or panel · 'bare' no shell, fill or radius: one line, actions at the row end
  * @param subjects - names of affected parts, shown as neutral chips
  * @param details - raw error kept behind a collapsed Details
  * @param actions - up to two secondary `.btn.sm` controls
@@ -1927,14 +2915,14 @@ const ALERT_SEVERITY_WORD = { crit: 'Critical', warn: 'Warning', info: 'Notice',
  */
 function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, details, actions, hasLiveHost = false, onFocus, className = '' }) {
   const role = hasLiveHost ? undefined : tone === 'crit' ? 'alert' : 'status';
-  const isInset = surface === 'inset';
-  const shell = isInset ? 'sub-card bg-sunken alert-card is-inset' : 'card alert-card';
+  const shell = ALERT_CARD_SHELLS[surface] ?? ALERT_CARD_SHELLS.raised;
+  const isRaised = shell === ALERT_CARD_SHELLS.raised;
 
   return (
     <div role={role} className={`${shell} ${className}`.trim()} data-tone={tone} onFocus={onFocus}>
       <div className="alert-card-grid">
-        <span className="alert-card-well" aria-hidden="true">
-          <Icon name={TONE_ICON[tone]} size={isInset ? 14 : 16}/>
+        <span className="alert-card-glyph" aria-hidden="true">
+          <Icon name={TONE_ICON[tone]} size={isRaised ? ALARM_GLYPH_SIZE : 14}/>
         </span>
         <div className="alert-card-content">
           {/* title and body ride DayTokens → a "7-day" / "30 days" token in any alert stays on one line */}
@@ -1949,6 +2937,32 @@ function AlertCard({ tone = 'crit', surface = 'raised', title, body, subjects, d
         </div>
         {actions && <div className="alert-card-actions">{actions}</div>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The hairline alarm row — AlertCard's anatomy without a card shell, for a list of alarms inside one card.
+ * @param isHeld - the row's source failed its latest read → plain "Last known" after the title, never a badge
+ * @param actions - a Link to the owning page or the row's own control
+ * @param role - 'alert' when no live container announces the row
+ * @param minHeight - reserved slot height so a grid keeps its shape
+ * @param children - more on the content column under the detail line (a failed read's raw answer behind Details)
+ */
+function AlarmRow({ tone, title, detail, isHeld = false, actions, role, minHeight, className = '', children }) {
+  return (
+    <div role={role} className={`alarm-row ${className}`.trim()} data-tone={tone} style={minHeight ? { minHeight } : undefined}>
+      <span className="alarm-row-glyph" aria-hidden="true"><Icon name={TONE_ICON[tone]} size={ALARM_GLYPH_SIZE}/></span>
+      {/* fs-body on the content cell itself → base.css holds its line at the 20 row line; a child .fs-body would set 21.75 */}
+      <div className="min-w-0 fs-body text-ink">
+        <span className="font-medium">
+          <span className="sr-only">{`${ALERT_SEVERITY_WORD[tone]}: `}</span><DayTokens>{title}</DayTokens>
+        </span>
+        {isHeld && <> <span className="fs-meta text-dim">{LAST_KNOWN_TEXT}</span></>}
+        {detail && <span className="alarm-row-detail fs-meta text-dim"><DayTokens>{detail}</DayTokens></span>}
+        {children}
+      </div>
+      {actions && <div className="alarm-row-actions">{actions}</div>}
     </div>
   );
 }
@@ -2066,6 +3080,43 @@ function formatUsdCompact(value) {
   const v = Number(value) || 0;
   const decimals = Math.abs(v) >= 100 ? 0 : 2;
   return '$' + v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+/**
+ * The one formatter for a set of amounts (a column, a range's bounds, a strip's labels) — spec 44084 §2.1.
+ * Any amount under $100 → cents on every amount, so the set reads in one precision and a total checks against its rows.
+ */
+function getMoneyColumnFormat(values) {
+  return values.some((v) => Math.abs(v) < 100) ? formatUsd : formatUsdCompact;
+}
+
+// the spend alarm's two shared clauses (spec 44084 §3.4) — the pace clause that may follow the amount stays per screen
+function formatSpendSoFar(amount) {
+  return `${formatUsdCompact(amount)} so far today`;
+}
+
+function formatSpendMultiple(ratio, basis) {
+  return `${ratio.toFixed(1)}\u00d7 the 7-day average (${formatUsdCompact(basis)}/day)`;
+}
+
+/**
+ * A percentage (value already in percent) — at most one decimal, `.0` dropped; never rounds a non-zero to 0% or a part to 100%.
+ * @param fixedDigits - a table column's fixed decimals, so every cell of the column has one precision
+ */
+function formatPct(value, fixedDigits) {
+  const n = Number(value);
+  if (value == null || !Number.isFinite(n)) return '—';
+  const unit = 10 ** -(fixedDigits ?? 1);
+  if (n !== 0 && Math.abs(n) < unit / 2) return `<${formatDecimal(unit, fixedDigits)}%`;
+  if (n < 100 && n >= 100 - unit / 2) return `>${formatDecimal(100 - unit, fixedDigits)}%`;
+  return `${formatDecimal(n, fixedDigits)}%`;
+}
+
+/** An average or ratio — at most one decimal, `.0` dropped, thousands separators; fixedDigits as formatPct. */
+function formatDecimal(value, fixedDigits) {
+  const n = Number(value);
+  if (value == null || !Number.isFinite(n)) return '—';
+  return n.toLocaleString('en-US', { minimumFractionDigits: fixedDigits ?? 0, maximumFractionDigits: fixedDigits ?? 1 });
 }
 
 // 콤마 정수 (1,234,567) — 비숫자/NaN/음수 → '—' (가짜 0 금지, wiki 가드 승격)
@@ -2227,42 +3278,12 @@ function getWorstTone(tones) {
 // tone → Icon 이름 lookup (신규) — Badge/보드의 Icon 렌더 경로 전용. TONE_GLYPH(문자열 SoT)와 병존:
 // 문자열 직접 소비부는 TONE_GLYPH 를 그대로 쓰고, Icon 렌더 경로만 여기서 아이콘명을 얻는다(FIX-A 분리).
 // crit 은 DESIGN.md §4.2 severity 표준(✕)에 맞춰 'x' — ⛔(ban)이 아님(ban 은 별도 semantic).
-const TONE_ICON = { ok: 'check', warn: 'warn', crit: 'x', info: 'info', neutral: 'info' };
+const TONE_ICON = { ok: 'check', warn: 'warn', crit: 'x', info: 'info', neutral: 'info', unknown: 'minus' };
+// a tone with no colour of its own → its ink class
+const TONE_TEXT = { unknown: 'dim' };
 
 // default verdict word per tone — the glyph never stands alone.
 const VERDICT_TONE_LABEL = { ok: 'Healthy', warn: 'Needs attention', crit: 'Action needed', info: 'Info', neutral: 'No signal' };
-
-/**
- * One-line page headline: tone glyph + word, one sentence (children), optional chips.
- * A chip with `href` drills to another view; one with `targetId` scrolls to that card and focuses it.
- * @param id - focus target for a page banner's Retry once the page recovers
- * @param freshness - optional getFreshnessState inputs; the verdict then follows getFreshnessVerdict, and an unread page swaps its sentence for the checking note
- */
-function PageVerdict({ tone = 'neutral', label, children, chips = [], freshness, id, className = '' }) {
-  const verdict = freshness ? getFreshnessVerdict({ ...freshness, tone, label }) : { tone, label, note: null, isBusy: false };
-  const toneKey = VERDICT_TONE_LABEL[verdict.tone] ? verdict.tone : 'neutral';
-  const isUnread = verdict.state === 'loading' || verdict.state === 'not-read';
-  const sentence = isUnread ? null : children;
-  // re-derived on the stamp's own cadence → a verdict never stays green over a read the stamp calls Stale
-  useFreshnessTick(Boolean(freshness) && !isUnread && freshness.now === undefined);
-
-  return <div id={id} className={`page-verdict page-verdict--${toneKey} ${className}`.trim()} aria-busy={verdict.isBusy ? 'true' : undefined}>
-    <span className="page-verdict-tone">
-      <span className="page-verdict-glyph" aria-hidden="true">{TONE_GLYPH[toneKey]}</span>
-      {verdict.label || VERDICT_TONE_LABEL[toneKey]}
-    </span>
-    {sentence && <span className="page-verdict-text"><DayTokens>{sentence}</DayTokens></span>}
-    {verdict.note && <span className="page-verdict-text fs-meta text-dim">{verdict.note}</span>}
-    {chips.length > 0 && <span className="page-verdict-chips">
-      {chips.map((chip) => <VerdictChip key={chip.key || chip.label} chip={chip} />)}
-    </span>}
-  </div>;
-}
-
-function VerdictChip({ chip }) {
-  if (chip.href) return <a className="btn ghost sm" href={chip.href}>{chip.label}</a>;
-  return <button type="button" className="btn ghost sm" onClick={() => putCardFocus(chip.targetId)}>{chip.label}</button>;
-}
 
 // instant nearest scroll → no jump when the card is already in view, nothing to reduce under prefers-reduced-motion; tabindex -1 lets a plain card take focus.
 function putCardFocus(id) {
@@ -2270,9 +3291,6 @@ function putCardFocus(id) {
   if (!card) return;
 
   if (!card.hasAttribute('tabindex')) card.setAttribute('tabindex', '-1');
-  // programmatic focus after a mouse Retry misses :focus-visible → the marker draws the ring until the card blurs
-  card.setAttribute('data-focus-handoff', 'true');
-  card.addEventListener('blur', () => card.removeAttribute('data-focus-handoff'), { once: true });
   card.scrollIntoView({ block: 'nearest' });
   card.focus({ preventScroll: true });
 }
@@ -2364,26 +3382,28 @@ function resolveOutcomeRate(data) {
 }
 
 window.UI = {
-  Icon, Pill, Badge, EmptyState, SubCard, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, KPI, KpiValue, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
-  SectionLabel, Table, TableHead, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone,
-  Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn, TileSplit,
-  getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps, ChipGroup,
-  getDisplayName, hasFieldValue, DetailField,
+  Icon, Badge, getBadgeCount, EmptyState, Sparkline, MiniBars, Bar, BulletBar, StatusDot, AgentName, getAgentDisplayName, StatRow, StatNotes, DetailSurface, useDismissFocus, Popover, PopoverPanel, getTrapFocusTarget, getInertTargets, setSurfaceOpen, getTopSurface, Modal, CardHead, CardInfo, Card, CARD_SLOTS, getSlotRows, PageHeader,
+  SectionLabel, Table, TableHead, TableRow, TableCell, RowActions, getTableMode, DisclosureChevron, DisclosureButton, getSeverityTone, getWorstTone, SEVERITY_RANK,
+  Disclosure, getDisclosureOpen, SplitRow, SPLIT_ROW_RATIOS, SPLIT_ROW_LAYOUTS, SplitColumn,
+  getRovingIndex, getRovingTabIndex, ROW_CONTROL_PROPS, getRowKeyAction, getRowFocusProps,
+  Segmented, Tabs, getTabPanelProps, useMenuButton, MenuPanel, FilterTrigger, FilterBar, QuietButton, Link, BarSearch, Checkbox, Select, Stack, Cluster, MachineString, ProseText, getProseBlocks, Pagination,
+  getDisplayName, hasFieldValue, DetailField, ToneGlyph, HeadStatus, AbsentValue, EMPTY_VALUE_TEXT, NOT_LOADED_TEXT,
   TrendChart, getChartTicks, getChartIndexAtRatio, getChartReadout, getChartSummary,
   getChartTickAnchor, getChartTickLayout, getChartYScale, getChartImageProps, getChartXAxisProps, ChartAxisTick, CHART_TICK_MIN_GAP_PX, CHART_TICK_CHAR_PX,
   TypeScaleStyle, toneVarColor,
   titleOf, stripHtmlTags, formatRelativeTime,
   FreshnessStamp, getFreshnessState, getFreshnessVerdict, getRegionSummary, getRegionView, hasRegionRows, RefreshButton,
-  setShellBridge, getHarnessRead, getShellPageState, useShellPageState,
-  getFetchError, getErrorCopy, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, RegionFailure, PageErrorBanner, AlertCard, RetryButton, LoadingPlaceholder, SkeletonRows,
+  setShellBridge, getHarnessRead,
+  REMOTE_PAGE, isRemotePage, installRemoteFetch, readRemoteSession,
+  getFetchError, getAttachmentName, SANITIZE_CONFIG, ErrorDetails, getErrorCopy, FETCH_ERROR_NEXT_STEP, getReadFailureCause, getSharedFailure, getSourceFailures, RegionUnavailable, RegionCovered, getNoticePointer, LAST_KNOWN_TEXT, getHeldCause, RegionFailure, PageErrorBanner, AlertCard, AlarmRow, RetryButton, LoadingPlaceholder, SkeletonRows,
   INITIAL_REGION_STATE, putRegionRequest, putRegionData, putRegionFailure,
   setDisplayTimezone, getDisplayTimezone, tzShortLabel,
-  formatKstDateTime, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,
-  formatUsd, formatUsdCompact, formatInt, formatTokenCompact, formatDuration,
+  formatKstDateTime, formatKstDay, formatKstTime, formatKstDate, formatKstFull, formatDayRange, NoWrap, DayTokens, DateRange,
+  formatUsd, formatUsdCompact, getMoneyColumnFormat, formatSpendSoFar, formatSpendMultiple, formatInt, formatTokenCompact, formatDuration, formatPct, formatDecimal,
   BADGE_TONE_META, BADGE_OVERRIDES, resolveBadge,
   DAEMON_STATUS_TONE, daemonStatusTone, daemonStatusLabel,
   RESULT_META, CLOSED_META, resolveResultMeta, LOW_N_MIN, formatPctWithDenominator,
-  TONE_GLYPH, TONE_ICON, PageVerdict, isLowSample, LowSampleMark, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
+  TONE_GLYPH, TONE_ICON, ALERT_SEVERITY_WORD, putCardFocus, isLowSample, LowSampleMark, STICKY_TH_STYLE, reviewFlagReasons, REVIEW_FLAG_REASON_ORDER, REVIEW_FLAG_REASON_META,
   outcomeShareTone, resolveOutcomeRate, OUTCOME_BREAKAGE_CRIT_SHARE, OUTCOME_OPEN_CAVEAT_WARN_SHARE,
   OUTCOME_MISSING_REPORT_WARN_SHARE,
   getOutcomeCount, getOutcomeOpenCount, getWriterTotal, getWriterOpenCount, getWriterCount,

@@ -444,6 +444,18 @@ before(async () => {
 			return reply.code(500).send({ error: "health fixture failure" });
 		return { ...healthFixture.hookFailures, days: HOOK_FAIL_WINDOW_DAYS, timezone: "UTC" };
 	});
+	// pricing advisory — every model priced, so the advisory adds one quiet line and no verdict
+	app.get("/api/health/unpriced-models", async () => {
+		recordHealthHit("/api/health/unpriced-models");
+		return {
+			days: HOOK_FAIL_WINDOW_DAYS,
+			limit: 50,
+			roster_available: true,
+			models: [],
+			model_count: 0,
+			timezone: "UTC",
+		};
+	});
 	await app.ready();
 	serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
 
@@ -710,6 +722,7 @@ test("AC-T18(c) the governance banner survives beside the writer alert", async (
  */
 const RING_CRIT_CLASS = "arch-node-live-crit";
 const RING_OK_CLASS = "arch-node-live-ok";
+const RING_WARN_CLASS = "arch-node-live-warn";
 const OK_DAEMON = "wiki";
 
 // 데몬 원천과 부품 원천이 같은 노드에서 만나는 자리 — HEALTH_CARD_DEFS 의 autoagent 카드 id.
@@ -1670,9 +1683,10 @@ const ABSORBED_HEALTH_PATHS = [
 	"/api/health/hook-chain",
 	"/api/health/daemon-payload?daemon=autoagent",
 	"/api/health/hook-failures",
+	"/api/health/unpriced-models",
 ];
 
-test("T7 the map requests all five health responses it absorbed", async () => {
+test("the map requests every health response it absorbed", async () => {
 	await openMap(getLiveFixture());
 	await waitForPartVerdict("pg");
 	// 앵커는 판정 넷으로 서므로 페이로드 왕복이 아직 안 끝났을 수 있음 — 기한을 두고 기다림.
@@ -1818,7 +1832,7 @@ const HOOK_FIXTURE_EVENTS: HealthHookChainResponse["events"] = [
 			{
 				matcher: "Write|Edit",
 				hooks: [
-					{ command: "hooks/enforce-harness-critical.sh", type: "command", timeout: 5 },
+					{ command: "hooks/validate-secret-scan.sh", type: "command", timeout: 5 },
 					{ command: "hooks/enforce-delegation.sh", type: "command", timeout: null },
 				],
 			},
@@ -1884,6 +1898,33 @@ test("T11 opening the hook part renders the whole configuration it was served", 
 		expanded.includes(HOOK_FIXTURE_SOURCE),
 		"the detail must name the file the configuration was read from",
 	);
+});
+
+// the hook tree reads on two left edges: the settings path with every event chevron, then each event's name with its matchers and commands
+test("the hook configuration starts each child on its event's name, one disclosure inset past the chevrons", async () => {
+	await openMapWithHealth(getHookChainFixture());
+	await openHookHealth(HOOK_FIXTURE_EVENTS[0].groups[0].hooks[0].command);
+
+	// one inline body — tsx wraps a named inner function in __name, which the browser lacks
+	const edges = await page.evaluate(() => {
+		const chain = document.querySelector(".arch-hook-chain") as Element;
+		const summaries = [...chain.querySelectorAll(".arch-hook-event > details > summary")];
+		return Object.fromEntries(
+			Object.entries({
+				path: [chain.querySelector(".arch-hook-head > *")],
+				chevrons: summaries.map((summary) => summary.firstElementChild),
+				names: summaries.map((summary) => summary.lastElementChild),
+				children: [...chain.querySelectorAll(".arch-hook-group > :first-child, .arch-hook-list > li")],
+			}).map(([key, els]) => [key, els.map((el) => Math.round((el as Element).getBoundingClientRect().left))]),
+		) as Record<"path" | "chevrons" | "names" | "children", number[]>;
+	});
+	const [outer] = edges.path;
+	const [inner] = edges.names;
+
+	assert.ok(edges.children.length > 0, "precondition: an opened event lists its matchers and commands");
+	assert.deepEqual([...new Set(edges.chevrons)], [outer], "every event chevron starts on the settings path's edge");
+	assert.deepEqual([...new Set([...edges.names, ...edges.children])], [inner], "event names, matchers and commands share one edge");
+	assert.equal(inner - outer, 18, "the inner edge sits one chevron and its gap past the outer edge");
 });
 
 // AC-B2-5a: 한 상세 영역이 구성과 실패 이력을 함께 냄 — 훅 신고 하나를 가르는 두 반쪽이
@@ -2655,9 +2696,11 @@ test("the expanded region counts the clean runs and lists only the failed run wi
 	await openMapWithHealth(getHealthFixture({ payload: getFailingPayload() }));
 	await openDaemonHealth(BOUND_DAEMON);
 
-	const text = await waitForRegionText(BOUND_DAEMON, PAYLOAD_FAIL_DATE);
+	// a run list inside one window dates each run in the Day form MM-DD (§2.1)
+	const [failDay, okDay] = [PAYLOAD_FAIL_DATE, PAYLOAD_OK_DATE].map((date) => date.slice(5));
+	const text = await waitForRegionText(BOUND_DAEMON, failDay);
 	assert.ok(
-		text.includes(PAYLOAD_FAIL_DATE),
+		text.includes(failDay) && !text.includes(PAYLOAD_FAIL_DATE),
 		`the region must carry the failing run's date — read "${text}"`,
 	);
 	assert.ok(
@@ -2675,14 +2718,105 @@ test("the expanded region counts the clean runs and lists only the failed run wi
 	);
 	const { entries } = getFailingPayload();
 	const cleanCount = entries.filter((entry) => entry.summary.verdict === "ok" && entry.summary.error_signatures.length === 0).length;
+	const runLine = `${cleanCount} of ${entries.length} runs clean`;
+	const row = await page.$eval(`[data-health-row="${DAEMON_PART_ID}"]`, (el) => el.textContent || "");
+	assert.ok(row.includes(runLine), `the row must count the clean runs against every stored run — read "${row}"`);
 	assert.ok(
-		text.includes(`${cleanCount}/${entries.length} runs clean`),
-		`the region must count the clean runs against every stored run — read "${text}"`,
-	);
-	assert.ok(
-		!text.includes(PAYLOAD_OK_DATE),
+		!text.includes(okDay),
 		`a clean run is counted in the summary, never listed — the list names failures only — read "${text}"`,
 	);
+});
+
+test("a daemon on schedule with a failed run reads one verdict in the drawer and in System parts", async () => {
+	await openMapWithHealth(getHealthFixture({ payload: getFailingPayload() }));
+	await openDaemonHealth(BOUND_DAEMON);
+	await waitForRegionText(BOUND_DAEMON, "runs clean");
+
+	const { entries } = getFailingPayload();
+	const cleanCount = entries.filter((entry) => entry.summary.verdict === "ok" && entry.summary.error_signatures.length === 0).length;
+	const runLine = `${cleanCount} of ${entries.length} runs clean`;
+	const drawerRow = await page.$eval(`[data-health-row="${DAEMON_PART_ID}"]`, (el) => el.textContent || "");
+	const partsRow = await page.$eval(`#arch-part-${DAEMON_PART_ID}`, (el) => el.textContent || "");
+	for (const [where, text] of [["drawer", drawerRow], ["System parts", partsRow]]) {
+		assert.ok(
+			text.includes("Needs attention") && !text.includes("Healthy"),
+			`the ${where} row reads Needs attention — read "${text}"`,
+		);
+		assert.strictEqual(text.split(runLine).length - 1, 1, `the ${where} row states the run line once — read "${text}"`);
+	}
+});
+
+// the ring and the row carry the same one verdict, and a daemon's run leg outlives another daemon's drawer
+test("a daemon on schedule with a failed run keeps its warn ring and row after another daemon's drawer opens", async () => {
+	await openMap(
+		getLiveFixture({ daemons: [getDaemon(BOUND_DAEMON, "ok"), getDaemon(DRILLDOWN_DAEMON, "ok")] }),
+		getQueueFixture(),
+		getHealthFixture({ payload: getFailingPayload() }),
+	);
+	await openDaemonHealth(BOUND_DAEMON);
+	await waitForRegionText(BOUND_DAEMON, "runs clean");
+	const readRow = () => page.$eval(`#arch-part-${DAEMON_PART_ID}`, (el) => el.textContent || "");
+	assertPartRing(await waitForPartRing(DAEMON_PART_ID, RING_WARN_CLASS), DAEMON_PART_ID, RING_WARN_CLASS);
+	assert.ok((await readRow()).includes("Needs attention"), "precondition: the failed run reads on the row");
+
+	await openDaemonHealth(DRILLDOWN_DAEMON);
+	await waitForRegionText(DRILLDOWN_DAEMON, "runs clean");
+
+	assertPartRing(await getRingProbe(), DAEMON_PART_ID, RING_WARN_CLASS);
+	const row = await readRow();
+	assert.ok(row.includes("Needs attention") && !row.includes("Healthy"), `the row keeps its verdict — read "${row}"`);
+});
+
+// a run leg held from an earlier drill never outlives the overlay's report of a later run
+test("a daemon no longer drilled drops its held failed runs once the overlay reports a later clean run", async () => {
+	await openMap(
+		getLiveFixture({ daemons: [getDaemon(BOUND_DAEMON, "ok"), getDaemon(DRILLDOWN_DAEMON, "ok")] }),
+		getQueueFixture(),
+		getHealthFixture({ payload: getFailingPayload() }),
+	);
+	await openDaemonHealth(BOUND_DAEMON);
+	await waitForRegionText(BOUND_DAEMON, "runs clean");
+	await openDaemonHealth(DRILLDOWN_DAEMON);
+	await waitForRegionText(DRILLDOWN_DAEMON, "runs clean");
+	await closePanel();
+	assertPartRing(await waitForPartRing(DAEMON_PART_ID, RING_WARN_CLASS), DAEMON_PART_ID, RING_WARN_CLASS);
+
+	const laterRunAt = new Date(Date.parse(DAEMON_RUN_TS) + 60 * 60_000).toISOString();
+	const recovered = getHealthFixture();
+	healthFixture = {
+		...recovered,
+		daemons: recovered.daemons.map((daemon) => (daemon.daemon_name === BOUND_DAEMON ? { ...daemon, last_run_at: laterRunAt } : daemon)),
+	};
+	await refreshMap();
+
+	assertPartRing(await waitForPartRing(DAEMON_PART_ID, RING_OK_CLASS), DAEMON_PART_ID, RING_OK_CLASS);
+	const row = await page.$eval(`#arch-part-${DAEMON_PART_ID}`, (el) => el.textContent || "");
+	assert.ok(!row.includes("Needs attention") && !row.includes("runs clean"), `the row rests on the later run alone — read "${row}"`);
+});
+
+// a failed re-read of the drilled daemon's runs never carries the old rows over to a later run
+test("the drilled daemon drops its held failed runs when the overlay reports a later run and the payload re-read fails", async () => {
+	await openMap(
+		getLiveFixture({ daemons: [getDaemon(BOUND_DAEMON, "ok")] }),
+		getQueueFixture(),
+		getHealthFixture({ payload: getFailingPayload() }),
+	);
+	await openDaemonHealth(BOUND_DAEMON);
+	await waitForRegionText(BOUND_DAEMON, "runs clean");
+	await closePanel();
+	assertPartRing(await waitForPartRing(DAEMON_PART_ID, RING_WARN_CLASS), DAEMON_PART_ID, RING_WARN_CLASS);
+
+	const laterRunAt = new Date(Date.parse(DAEMON_RUN_TS) + 60 * 60_000).toISOString();
+	healthFixture = {
+		...healthFixture,
+		payloadFails: true,
+		daemons: healthFixture.daemons.map((daemon) => (daemon.daemon_name === BOUND_DAEMON ? { ...daemon, last_run_at: laterRunAt } : daemon)),
+	};
+	await refreshMap();
+
+	assertPartRing(await waitForPartRing(DAEMON_PART_ID, RING_OK_CLASS), DAEMON_PART_ID, RING_OK_CLASS);
+	const row = await page.$eval(`#arch-part-${DAEMON_PART_ID}`, (el) => el.textContent || "");
+	assert.ok(!row.includes("Needs attention") && !row.includes("runs clean"), `the row rests on the later run alone — read "${row}"`);
 });
 
 // 드릴다운이 연 노드를 따라가는지 재는 반증 케이스 — 고정 리터럴 구현은 여기서 붉어짐.
@@ -2796,7 +2930,7 @@ test("AC-T9 a payload response still on its way reads as loading, not as unreada
 
 // --- AC-B2-4: the health table stands on the part roster ---------------------
 
-// 확장 컨트롤을 내야 하는 행 — 데몬 둘 + Hook Chain (AC-B2-4d). 명부에서 유도하지 않고 이름으로
+// 확장 컨트롤을 내야 하는 행 — 데몬 둘 + Hooks (AC-B2-4d). 명부에서 유도하지 않고 이름으로
 // 고정함: 유도하면 구현의 규칙을 그대로 되읽어 무엇을 세든 초록이 됨. 부품이 하나 늘면 여기가
 // 붉어지는 것이 맞음 — 새 부품은 '펼칠 것이 있는가' 를 스스로 밝혀야 함.
 const EXPANDABLE_PART_IDS = ["daemon-cycle", "glass-atrium-wiki-curator", "hook-chain"];
@@ -3272,7 +3406,7 @@ test("B2-4 guard the residual bindings come from the served part_bindings, not a
 	);
 });
 
-// 응답이 실행을 실어 준 데몬 부품 — autoagent 하나. wiki 는 실행 없이 답해 '—' 갈래를 채움.
+// 응답이 실행을 실어 준 데몬 부품 — autoagent 하나. wiki 는 실행 없이 답해 None 갈래를 채움.
 const RAN_PART_IDS = ["daemon-cycle"];
 
 // 대조 순간 — 첫 절이 실은 값과 자릿수까지 떨어뜨림. 상대시각은 버킷으로 접히므로 가까운 두 값은
@@ -3326,15 +3460,15 @@ test("B2-5 guard the last-run reading tracks the served instant and empties only
 			`a part whose response carried a run must read it as an elapsed time, but ${id} read "${served[id]}"`,
 		);
 	}
-	// 실행을 보고하지 않은 데몬 부품은 '—' 로 남아야 함(없음이 보여야 하는 사실임).
+	// 실행을 보고하지 않은 데몬 부품은 None 으로 남아야 함(없음이 보여야 하는 사실임, §2.2).
 	// 데몬이 아닌 부품은 그 칸 자체가 없음이 정답이라 빈 문자열임 — 둘을 갈라 잼.
 	for (const id of roster) {
 		if (RAN_PART_IDS.includes(id)) continue;
-		const expected = DAEMON_PART_IDS.includes(id) ? "—" : "";
+		const expected = DAEMON_PART_IDS.includes(id) ? "None" : "";
 		assert.equal(
 			served[id],
 			expected,
-			`a part with no run to report must read ${expected === "" ? "no last-run field at all" : 'an em dash'} — ${id} read "${served[id]}"`,
+			`a part with no run to report must read ${expected === "" ? "no last-run field at all" : 'the word None'} — ${id} read "${served[id]}"`,
 		);
 	}
 

@@ -8,7 +8,8 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { computeBucketTzToday, getBucketTzClock } from "../src/server/routes/dashboard.js";
+import { getBucketTzClock } from "../src/server/routes/dashboard.js";
+import { computeBucketTzToday } from "../src/server/timezone.js";
 
 const KST = "Asia/Seoul"; // UTC+9
 

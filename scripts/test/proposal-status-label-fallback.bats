@@ -3,8 +3,9 @@
 # the `unadjudicated` ProposalStatus label (new code running before its migration).
 #
 # Relationship: a write requesting `unadjudicated` — the cycle push, the supersede, the
-# parked guard and the generation-closed statement — persists it where the label exists and persists `rejected` where it does
-# not; every other status persists as requested; a
+# parked guard and the trial-decision step's void — persists it
+# where the label exists and persists `rejected` where it does not, which the reject streak still
+# sets aside; every other status persists as requested; a
 # stored terminal row survives a non-terminal re-push through both conflict arms on either
 # schema; the shared label probe answers present / absent, and unknown when the query
 # cannot run; the doctor's terminal-row probe counts the same terminal set on either schema.
@@ -92,7 +93,7 @@ _doctor_probe() {
     _ "${BATS_TEST_DIRNAME}/../.."
 }
 
-# $1 mode (push <status> | probe | probe-closed | supersede | park | close) — drives the real helper
+# $1 mode (push <status> | probe | probe-closed | supersede | park | decide) — drives the real helper
 # and the daemon's direct writers; refuses to run
 # unless libpq is pointed at this suite's cluster.
 _drive() {
@@ -148,10 +149,33 @@ elif mode == "park":
     daemon_cycle.update_parked_proposal_status(
         [{"proposal_id": proposal_id, "rows": [{"id": 1, "status": "rejected"}]}]
     )
-elif mode == "close":
+elif mode == "decide":
+    import contextlib
+    import io
+
     import daemon_cycle
 
-    daemon_cycle.update_generation_closed_proposals()
+    select = "FROM core.autoagent_proposals WHERE pattern_label = 'label-fallback'"
+    with helper._connect() as conn:
+        (proposal_id,) = conn.execute(f"SELECT id {select}").fetchone()
+    key = helper.get_live_trial_key(proposal_id)
+    agent = "glass-atrium-dev-python"
+    daemon_cycle._pg_write_trial_ledger_row(
+        daemon_cycle.TRIAL_LEDGER.EVENT.LIVE_PREREGISTRATION,
+        daemon_cycle.TRIAL_LEDGER.ACTOR.LIVE,
+        {"proposal_id": proposal_id},
+        trial_key=key,
+        agent=agent,
+        dedupe_key=key,
+    )
+    daemon_cycle._write_live_decision(key, agent, None, {"void": {"reason": "arm-imbalance"}})
+    with contextlib.redirect_stderr(io.StringIO()):
+        daemon_cycle.update_decided_trial_proposals()
+    with helper._connect() as conn:
+        status, rationale, reviewed_by = conn.execute(
+            f"SELECT status::text, rationale, reviewed_by {select}"
+        ).fetchone()
+    print(f"{status}|{reviewed_by}|{daemon_cycle._is_non_adjudication_reject(status, rationale)}")
 PY
 }
 
@@ -192,22 +216,20 @@ PY
   done
 }
 
-@test "the generation-closed statement stores unadjudicated with its reason, and rejected only where the label is absent" {
+@test "the trial-decision step stores a void's bound row unadjudicated, and where the label is absent a rejected the reject streak sets aside" {
   local rows=(
-    "label_present unadjudicated"
-    "label_absent rejected"
+    "label_present unadjudicated|daemon-cycle-trial-decision|True"
+    "label_absent rejected|daemon-cycle-trial-decision|True"
   )
-  local row template expected stored
+  local row template expected
   for row in "${rows[@]}"; do
     read -r template expected <<<"${row}"
     _use_db "${template}" || { echo "${row}: clone failed"; return 1; }
     run _drive push pending
     [[ "${status}" -eq 0 ]] || { echo "${row}: seed: ${output}"; return 1; }
-    run _drive close
+    run _drive decide
     [[ "${status}" -eq 0 ]] || { echo "${row}: ${output}"; return 1; }
-    stored="$(_q "SELECT status || '|' || rationale || '|' || reviewed_by FROM core.autoagent_proposals WHERE pattern_label = 'label-fallback'")"
-    [[ "${stored}" == "${expected}|generation closed until live trials: superseded by a later run in the same cycle|daemon-cycle-generation-closed" ]] \
-      || { echo "${row}: stored ${stored}"; return 1; }
+    [[ "${output}" == "${expected}" ]] || { echo "${row}: stored ${output}"; return 1; }
   done
 }
 

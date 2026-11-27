@@ -202,15 +202,27 @@ interface WeekRowHelpers {
     rows: Array<{ result: string; count: number }>; writerTotal: number; span: string; agents: Array<{ agent: string; count: number }>;
   };
   buildHourGrid: (data: unknown) => {
-    rows: Array<{ day: string; counts: number[]; fold: string | null }>; total: number; span: string;
+    rows: Array<{ day: string; counts: number[]; fold: string | null }>; total: number; span: string; dateCount: number | null;
     peak: { day: string; hour: number; count: number; fold: string | null };
   };
   describeHourGrid: (grid: unknown) => string;
+  getHeatStep: (count: number, max: number) => number;
   getPanelView: (state: unknown) => string;
   buildSpendStrip: (points: unknown) => { bars: Array<{ date: string; cost: number; isPartial: boolean }>; span: string | null };
   window: { UI: { resolveOutcomeRate: (data: unknown) => { breakage: number }; getWriterTotal: (data: unknown) => number } };
 }
 const week = dash as unknown as WeekRowHelpers;
+
+// linear in the count → a busier hour never paints a lighter step; a zero hour alone is unpainted
+test("the heat step rises with the count, from 0 for an empty hour to 4 at the peak, every run hour at least 1", () => {
+  for (const max of [1, 3, 4, 117, 1000]) {
+    const steps = Array.from({ length: max + 1 }, (_, count) => week.getHeatStep(count, max));
+    assert.equal(steps[0], 0, `max ${max}: a zero hour has no step`);
+    assert.equal(steps[max], 4, `max ${max}: the peak takes the top step`);
+    assert.ok(steps.slice(1).every((step) => step >= 1 && step <= 4), `max ${max}: a run hour takes a step 1–4`);
+    assert.ok(steps.every((step, at) => at === 0 || step >= steps[at - 1]), `max ${max}: never lighter for more runs`);
+  }
+});
 
 test("the results panel counts follow the tile's writer-emitted rule and name their window", () => {
   const data = {
@@ -256,7 +268,8 @@ test("the hour grid keeps every cell, ends on the server's today and names the s
   assert.equal(grid.total, sum, "rotation neither drops nor duplicates a cell");
   assert.deepEqual([...(grid.rows.find((row) => row.day === "Mon")?.counts ?? [])], data[1], "a row keeps its own weekday's hours");
   assert.deepEqual({ ...grid.peak }, { day: "Sat", fold: null, hour: 23, count: 623 });
-  assert.equal(grid.span, "09-23 – today, 8 calendar dates");
+  assert.equal(grid.span, "09-23 – today", "the sub-line states the window once, in the Day form");
+  assert.equal(grid.dateCount, 8, "the date count rides the ⓘ basis, off the sub-line");
 });
 
 test("every weekday row that sums two of the server's bucket dates names both, and no other row is marked", () => {
@@ -277,7 +290,8 @@ test("every weekday row that sums two of the server's bucket dates names both, a
     assert.deepEqual(marked, row.folds, `${row.name}: marked rows`);
     assert.equal(grid.rows[grid.rows.length - 1].fold, row.folds[grid.rows[grid.rows.length - 1].day as keyof typeof row.folds],
       `${row.name}: today's row is shown last`);
-    assert.equal(grid.span, `${row.first.slice(5)} – today, ${row.count} calendar dates`, `${row.name}: span`);
+    assert.equal(grid.span, `${row.first.slice(5)} – today`, `${row.name}: span`);
+    assert.equal(grid.dateCount, row.count, `${row.name}: date count`);
   }
   const meta = { bucket_dates: { first: "2026-09-23", last: "2026-09-30", count: 8 } };
   assert.match(week.describeHourGrid(week.buildHourGrid({ data, meta })), /Wed \(09-23 \+ today\) 14:00 with 90 runs/,

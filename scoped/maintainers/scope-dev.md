@@ -165,29 +165,29 @@ A DEV task is **SIZABLE** — it MUST enter the Document-Driven Workflow (plan a
 - **contract** — the change alters a public API signature, a persisted data schema, or a cross-agent / cross-service contract; a 1-file change can still be sizable through ripple, not line count.
 - **SIMPLE** (entry-exempt) = none of the four holds — typically a single-file typo / import addition / config-value edit / formatting, or a 1-2 file behavior-preserving change with no contract impact.
 
-### Spawn-time entry gate (BLOCKING — exit 2)
+### Spawn-time entry gate (warning only — exit 0)
 
-A DEV implementation spawn carrying neither a plan reference nor an `[ENTRY-CLASS] simple-task` token is blocked at spawn time (channel-a, stderr + exit 2).
+A DEV implementation spawn carrying neither a plan reference nor an `[ENTRY-CLASS] simple-task` token draws an entry-miss warning at spawn time (stderr, exit 0), and the spawn still runs.
 
 - **Both delegation paths are covered**: manual via the `enforce-verification-gate.sh` `PreToolUse(Agent)` hook (reads `subagent_type` from the spawn payload) · ultracode via the `enforce-workflow-verify-stage.sh` static scan of the workflow script.
-- **The `[ENTRY-CLASS] simple-task: <reason>` token is the escape hatch** for legitimate small DEV work: a spawn judged simple emits it to pass the gate (`skills/glass-atrium-ops-orchestrator-role.md` Decision phase classify-always rule).
+- **The `[ENTRY-CLASS] simple-task: <reason>` token is the escape hatch** for legitimate small DEV work: a spawn judged simple emits it to clear the warning (`skills/glass-atrium-ops-orchestrator-role.md` Decision phase classify-always rule).
 - **Ultracode placement**: on that path the token is recorded in the workflow script (canonical home: a `log()` string or `meta.description`), not in a delegation prompt.
   - A greppability convention, not a comment ban — the gate raw-scans, so any placement passes; the plan-ref token shares it.
   - Detail: `skills/glass-atrium-ops-orchestrator.md` → `### Ultracode / Workflow-tool Mode` (Workflow pre-flight item 1) and `##### Entry-class token placement (ultracode — DEV workflow)`.
 - **Recommended reason form** (honor-system audit convention; the gate's prefix match is unchanged): `[ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line>`.
   - Each key honestly negates one sizable criterion; a key that cannot be negated → the task is SIZABLE, author a plan.
-- **Honest caveat**: the gate enforces signal absence, not size — it blocks only the "no plan-ref and no token" case and never computes whether a task is sizable.
-  - The token is self-emitted, so a sizable task mislabeled simple still passes: the gate stops the unsignalled entry, not the misclassified one.
-  - Fail-open is preserved (internal error / missing tooling → exit 0).
+- **Honest caveat**: the check reads signal absence, not size — it warns only on the "no plan-ref and no token" case and never computes whether a task is sizable.
+  - The token is self-emitted, so a sizable task mislabeled simple still passes: the check flags the unsignalled entry, not the misclassified one.
+  - The hook exits 0 on every path, an internal error or missing tooling included.
 - **Not-gaming clarification**: emitting the token after an honest judgment that none of the four criteria hold is its correct use; gaming is only the dishonest inverse.
   - Error direction: under-classifying sizable work skips the plan + Stage-2 it needed (the dangerous error); over-escalating a simple task is the safe one — on a borderline case prefer SIZABLE.
 
 ### Sibling token — `[SIZE-EST]`
 
-- `[SIZE-EST]` answers "how big is this delegation?" (bundle count + rough tool_use estimate, gating a packing split); `### Spawn-time entry gate (BLOCKING — exit 2)` answers "is this DEV spawn classified?".
+- `[SIZE-EST]` answers "how big is this delegation?" (bundle count + rough tool_use estimate, gating a packing split); `### Spawn-time entry gate (warning only — exit 0)` answers "is this DEV spawn classified?".
 - Contract SoT: `skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md` → **`[SIZE-EST]` self-attestation token** (do not restate the format here).
 - Standing obligation and split triggers: `skills/glass-atrium-ops-orchestrator-role.md` → `### Spawn Budget` → Delegation-size discipline.
-- Both tokens' presence, never the estimate's correctness, is gate-enforced:
+- Both tokens' presence, never the estimate's correctness, is hook-checked, as a warning:
   - manual — `enforce-verification-gate.sh` (`has_size_est_token`, guarded by `hook_is_subagent` → orchestrator-origin spawns only);
   - ultracode — `enforce-workflow-verify-stage.sh` (`BLOCK_SIZEEST` under `ENTRY_OK`).
 
@@ -213,9 +213,11 @@ Headings and bold leads other files resolve to — renaming or deleting one dang
   - rules and agents ← `rules/glass-atrium/core-outcome-record.md` (`style_ref` row) · `agents/glass-atrium-dev-android.md` · `agents/glass-atrium-dev-swift.md`
   - notes in `scoped/maintainers/` ← `glass-atrium-dev-android.md` · `glass-atrium-dev-nestjs.md` · `glass-atrium-dev-node.md` · `glass-atrium-dev-python.md` · `glass-atrium-dev-react.md` · `glass-atrium-dev-shell.md` · `glass-atrium-dev-swift.md` · `shared-search-first.md`
   - code comments ← `hooks/lib/style-ref-consts.sh` · `hooks/lib/styleref-roster.sh` · `hooks/test/style-ref-flag-predicate.bats`
+  - **Anchor file (SECONDARY)** ← `skills/glass-atrium-ops-orchestrator.md` → `### Quality Gates [ORCHESTRATOR]` → **Team termination**, which proposes drift notes into the anchor file; the rule file carries no back-link because DEV readers act on none of it.
 - `### Pre-Edit Facts Disclosure` ← `hooks/advisory-preedit-facts.sh` (header and the operator-visible `missing`-verdict message) · `scoped/maintainers/glass-atrium-dev-nestjs.md` · `scoped/maintainers/glass-atrium-dev-react.md`
-- `## Agent-Level Tool Exceptions` ← `agents/glass-atrium-dev-rag.md` (frontmatter NOTE, itself a fixture in `hooks/test/enforce-harness-critical-frontmatter.bats`)
-- `## Modification Scope Constraint (Surface Area Constraint) [DEV]` ← `scoped/shared-testing.md` · `agents/glass-atrium-intel-planner.md`
+- `## Agent-Level Tool Exceptions` ← `agents/glass-atrium-dev-rag.md` (frontmatter NOTE)
+- `## Modification Scope Constraint (Surface Area Constraint) [DEV]` ← `scoped/shared-testing.md` · `scoped/shared-search-first.md` (**Fact-ownership search**) · `agents/glass-atrium-intel-planner.md`
+- **Bug fix = root cause, not symptom** ← `scoped/shared-search-first.md` (**Fact-ownership search**, which names the difference from it)
 - **Minimalism reflex** and **Rule of Three before abstraction** ← `scoped/shared-comment-logging.md`
 - `### Dead Code Non-Touch Principle` ← `scoped/shared-comment-logging.md` (disambiguates itself against it by name)
 - `## Vendor-Routing Awareness [DEV]` has no external citer; the `Vendor-Routing` hits in `scoped/scope-design.md` and the designer body are their own sections.
@@ -226,7 +228,7 @@ Headings and bold leads other files resolve to — renaming or deleting one dang
 - `### New-Agent Creation Gate` ← `skills/glass-atrium-ops-orchestrator.md`
 - `### Doc-sync note (CLI auto-writes vs. manual matrix update)` ← `rules/glass-atrium/core-compliance-matrix.md` → Scope Legend doc-sync note
 - `## Sprint Contract Gate (orchestrator side)` ← `scoped/scope-dev.md` (stub) · `skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` · `scoped/maintainers/scope-qa.md`
-- `### Sizable-task definition (single SoT — the positive entry floor)` ← `hooks/enforce-verification-gate.sh` (`entry_fix=` block text, VGATE-ENTRY-001) · `scoped/maintainers/orchestrator-role.md`
+- `### Sizable-task definition (single SoT — the positive entry floor)` ← `hooks/enforce-verification-gate.sh` (`entry_fix=` warning text, VGATE-ENTRY-001) · `scoped/maintainers/orchestrator-role.md`
 - `### glass-atrium-dev-front exposed-doc HTML participation = EXTEND, not creation` ← `scoped/maintainers/shared-design-token-consumption.md` → `## Readers, coupled tests, and one stale citation`
 - `## Ambiguity Gate — pair note` ← `scoped/maintainers/scope-planning.md` (reads its six-axes assertion)
 - `## Inbound citations to the rule file` ← `scoped/maintainers/glass-atrium-dev-android.md`

@@ -92,7 +92,8 @@ jobs:
   # ---------------------------------------------------------------------------
   gate-lint:
     name: "gate: lint workflows (actionlint)"
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: Playwright ships no chromium build for ubuntu 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -107,21 +108,17 @@ jobs:
   # ---------------------------------------------------------------------------
   # Monitor typecheck WITHOUT a live database. `tsc --noEmit` needs the
   # generated Prisma client (git-ignored at monitor/src/generated/prisma, so
-  # ABSENT on a fresh checkout) — but `prisma generate` does NOT need a live DB
-  # (it never connects). It DOES need config load to succeed, and Prisma 7's
-  # config `env()` helper resolves EAGERLY at config-load time: it fails the
-  # load if ANY referenced env var is unresolvable, whether or not a connecting
-  # command runs. prisma.config.ts references BOTH env("DATABASE_URL") and
-  # env("SHADOW_DATABASE_URL") (datasource + shadowDatabaseUrl), so BOTH must be
-  # present as harmless dummies — generate never dereferences the values.
-  # This keeps the fast-gate service-free. Sequence is load-bearing:
-  #   npm ci  →  npx prisma generate  →  npm run typecheck
+  # ABSENT on a fresh checkout) — but `prisma generate` never connects, so the
+  # monitor's db:generate:offline script (shared with local lanes) produces it
+  # with placeholder connection values. This keeps the fast-gate service-free.
+  # Sequence is load-bearing:
+  #   npm ci  →  npm run db:generate:offline  →  npm run typecheck
   # npm ci first so the prisma CLI + generated-client deps exist; generate lands
   # the client at src/generated/prisma; then tsc consumes it.
   # ---------------------------------------------------------------------------
   gate-typecheck:
     name: "gate: monitor typecheck (no DB)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     permissions:
       contents: read
@@ -140,16 +137,9 @@ jobs:
         working-directory: monitor
         run: npm ci
 
-      # Generate the Prisma client offline. Both dummies exist ONLY so config
-      # load succeeds — Prisma 7's config env() resolves eagerly, so an absent
-      # DATABASE_URL or SHADOW_DATABASE_URL fails the load before generate runs.
-      # Neither value is ever dereferenced, since no connecting command runs.
       - name: Generate Prisma client (no DB)
         working-directory: monitor
-        env:
-          DATABASE_URL: postgresql://dummy@localhost/dummy?host=/tmp
-          SHADOW_DATABASE_URL: postgresql://dummy@localhost/dummy_shadow?host=/tmp
-        run: npx prisma generate
+        run: npm run db:generate:offline
 
       - name: Typecheck
         working-directory: monitor
@@ -165,7 +155,7 @@ jobs:
   # ---------------------------------------------------------------------------
   gate-doctor:
     name: "gate: glass-atrium doctor preflight"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     permissions:
       contents: read
@@ -228,7 +218,7 @@ jobs:
   # ---------------------------------------------------------------------------
   detect-changes:
     name: detect changed stacks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -300,6 +290,10 @@ jobs:
               - 'hooks/lib/style-ref-consts.sh'
               - 'hooks/lib/styleref-roster.sh'
               - 'hooks/pricing.json'
+              # configd records shared with test/remote-access-cli.bats, read by
+              # monitor/test/remote-network.unit.test.ts. Pinned by
+              # scripts/test/ci-change-filter-coverage.bats.
+              - 'test/fixtures/configd/**'
             # Catch-all: its file list feeds the unclaimed-path check below.
             all:
               - '**'
@@ -361,7 +355,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-bash:
     name: "test: bats (${{ matrix.name }})"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -413,8 +407,19 @@ jobs:
           # a shallow checkout keeps the ref without the object, so every row would skip.
           fetch-depth: 0
 
+      # Every download the action makes goes through api.github.com, rate-limited per
+      # shared runner IP when unauthenticated (a 403 fails the step) → pinned version
+      # (no `releases/latest` lookup, cache key carries it), the job token for its reads,
+      # and no helper libraries (no suite loads them, see the job header).
       - name: Install bats
         uses: bats-core/bats-action@77d6fb60505b4d0d1d73e48bd035b55074bbfb43 # 4.0.0
+        with:
+          bats-version: 1.14.0
+          github-token: ${{ github.token }}
+          support-install: false
+          assert-install: false
+          detik-install: false
+          file-install: false
 
       # `bats --jobs` shells out to GNU parallel; without it bats silently degrades
       # to serial. Install it explicitly so the parallel invocation below is honored.
@@ -483,8 +488,8 @@ jobs:
         if: matrix.root == 'scripts/test'
         run: bash scripts/audit-rm.sh
 
-      # Pipe-drain audit (scripts/audit-pipe-drain.sh) → BLOCKING: an early-exit pipe reader in a hooks/
-      # shell file that neither drain_after wraps nor a `|| true` discards exits 1 (a SIGPIPE read as a verdict).
+      # Pipe-drain audit (scripts/audit-pipe-drain.sh) → BLOCKING: an early-exit pipe reader in a hooks/ or
+      # autoagent/ shell file that neither drain_after wraps nor a `|| true` discards exits 1 (a SIGPIPE read as a verdict).
       # A usage or IO error (exit 2/3) reds the step too; same leg, ordering and change filter as above.
       - name: Audit undrained early-exit pipe readers (blocking)
         if: matrix.root == 'scripts/test'
@@ -527,7 +532,7 @@ jobs:
           # Point every suite's mktemp -d sandbox (mktemp honors $TMPDIR) at the
           # runner's tmpfs so the I/O-bound installer fixtures — copy/symlink farms
           # + the doctor-auth 1500-file fixture — land in RAM. Linux-CI-only:
-          # /dev/shm always exists on ubuntu-latest; no test file or macOS path changes.
+          # /dev/shm always exists on the ubuntu runner; no test file or macOS path changes.
           TMPDIR: /dev/shm
         run: |
           # bats process start cwd → an empty scratch dir, so every path bats gets is absolute.
@@ -698,7 +703,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-python:
     name: "test: autoagent unittest"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -786,7 +791,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-python-pytest:
     name: "test: scripts pytest"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -861,7 +866,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-monitor:
     name: "test: monitor typecheck + tests (test-only DB)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -1191,7 +1196,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-naming-ratchet:
     name: "test: naming ratchet (ID titles · incident headers)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -1242,7 +1247,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test-e2e:
     name: "test: sandboxed E2E bootstrap (advisory)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # detect-changes is listed alongside test-monitor because this job's `if:`
     # reads needs.detect-changes.outputs.monitor — a job can only read outputs of
     # jobs in its own needs list, even though test-monitor already transitively
@@ -1320,7 +1325,7 @@ jobs:
   # ===========================================================================
   ci-pass:
     name: ci-pass (required)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     # ci-pass runs no checkout and never uses the token — it only reads upstream
     # job results via the `needs` context (an expression, not a token call). The

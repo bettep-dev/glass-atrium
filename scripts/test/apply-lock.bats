@@ -54,6 +54,19 @@ backdate_secs() {
 
 # 1. uncontended acquire
 
+@test "the shared lock dir sits in AUTOAGENT_REPORTS_DIR, else GA_DATA_ROOT's daemon reports, else HOME's" {
+  local row name reports data want got
+  local rows=("reports dir set|/r/reports|/d|/r/reports/.apply-lock"
+    "data root only||/d|/d/data/daemon-reports/.apply-lock"
+    "neither|||/h/.glass-atrium/data/daemon-reports/.apply-lock")
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name reports data want <<<"${row}"
+    got="$(env -u AUTOAGENT_REPORTS_DIR -u GA_DATA_ROOT HOME=/h ${reports:+AUTOAGENT_REPORTS_DIR="${reports}"} \
+      ${data:+GA_DATA_ROOT="${data}"} bash -c 'set -Eeuo pipefail; source "$1"; apply_lock_get_dir' _ "${LIB}")" || got="(failed)"
+    [[ "${got}" == "${want}" ]] || { echo "${name}: ${got}"; return 1; }
+  done
+}
+
 @test "uncontended acquire creates the lock dir and sets apply_lock_acquired=true" {
   run bash -c '
     set -Eeuo pipefail
@@ -453,58 +466,4 @@ STUB
   [ "$status" -ne 0 ]
   [[ "$output" != *"LOADED"* ]] || return 1
   [[ "$output" == *"[apply-lock] FATAL: cannot source the shared path guard"* ]] || return 1
-}
-
-# === T4b — daemon-reports seam (shared .apply-lock root moved to ~/.glass-atrium)
-# The lock LIBRARY takes an explicit path (tested hermetically above); the DEFAULT
-# location both writers contend on is resolved by update.sh's update_reports_dir /
-# update_apply_lock_dir, matching daemon-apply.sh. The domain-data-separation seam
-# flips that Tier-A default from ~/.claude to ${GA_DATA_ROOT:-~/.glass-atrium}/data
-# so the shared lock stays a single canonical directory at the new root.
-
-UPDATE_SH="${GA}/scripts/update.sh"
-
-@test "T4b seam: update_reports_dir with no override defaults under ~/.glass-atrium/data" {
-  [[ -f "${UPDATE_SH}" ]] || skip "update.sh not found: ${UPDATE_SH}"
-  run env -u AUTOAGENT_REPORTS_DIR -u GA_DATA_ROOT bash -c '
-    set -Eeuo pipefail
-    source "$1"
-    update_reports_dir
-  ' _ "${UPDATE_SH}"
-  [ "$status" -eq 0 ]
-  [[ "$output" == "${HOME}/.glass-atrium/data/daemon-reports" ]]
-  [[ "$output" != *".claude"* ]] # the seam moved off the CLI home
-}
-
-@test "T4b seam: update_apply_lock_dir places the shared lock under the new daemon-reports root" {
-  [[ -f "${UPDATE_SH}" ]] || skip "update.sh not found: ${UPDATE_SH}"
-  run env -u AUTOAGENT_REPORTS_DIR -u GA_DATA_ROOT bash -c '
-    set -Eeuo pipefail
-    source "$1"
-    update_apply_lock_dir
-  ' _ "${UPDATE_SH}"
-  [ "$status" -eq 0 ]
-  [[ "$output" == "${HOME}/.glass-atrium/data/daemon-reports/.apply-lock" ]]
-}
-
-@test "T4b seam: an exported AUTOAGENT_REPORTS_DIR override still wins (regression guard)" {
-  [[ -f "${UPDATE_SH}" ]] || skip "update.sh not found: ${UPDATE_SH}"
-  run env -u GA_DATA_ROOT AUTOAGENT_REPORTS_DIR="/tmp/custom-reports" bash -c '
-    set -Eeuo pipefail
-    source "$1"
-    update_reports_dir
-  ' _ "${UPDATE_SH}"
-  [ "$status" -eq 0 ]
-  [[ "$output" == "/tmp/custom-reports" ]]
-}
-
-@test "T4b seam: GA_DATA_ROOT redirects the daemon-reports default" {
-  [[ -f "${UPDATE_SH}" ]] || skip "update.sh not found: ${UPDATE_SH}"
-  run env -u AUTOAGENT_REPORTS_DIR GA_DATA_ROOT="/tmp/ga-data-root" bash -c '
-    set -Eeuo pipefail
-    source "$1"
-    update_reports_dir
-  ' _ "${UPDATE_SH}"
-  [ "$status" -eq 0 ]
-  [[ "$output" == "/tmp/ga-data-root/data/daemon-reports" ]]
 }

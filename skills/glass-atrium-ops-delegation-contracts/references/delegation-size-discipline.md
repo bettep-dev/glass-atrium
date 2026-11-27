@@ -5,17 +5,19 @@
 ## DEV-mode token
 
 - **`[SIZE-EST]` self-attestation token**: the DEV-mode form.
-  - Format `[SIZE-EST] bundles=N tool_uses~=N — <1-line reason>`.
+  - Format `[SIZE-EST] units=N bundles=N tool_uses~=N — <1-line reason>`.
+    - `units` = how many work-units this spawn carries: 1 by default, above 1 only for tiny units (`skills/glass-atrium-ops-orchestrator-role.md` → `## Spawn Granularity` → **One work-unit per DEV spawn**).
     - `bundles` = how many PRIMARY categories this delegation packs.
     - `tool_uses~=N` = the orchestrator's rough pre-spawn tool_use estimate.
   - Placement: `skills/glass-atrium-ops-orchestrator-role.md` → `### Context Handoff Size` → Attestation-token placement.
   - **Honesty framing** — why the file-head **Pointer site** rounds a borderline count up: an under-estimate is the dangerous error, masking an oversized delegation past the split triggers; an over-estimate is the safe error.
     - It covers `bundles`/`tool_uses` here and `reads~`/`fields` at an analysis-mode spawn (`## Analysis-mode token`).
-  - Enforcement — both paths block a DEV spawn missing the token:
+  - Backing — both paths warn on a DEV spawn missing the token, and neither blocks it:
     - manual: `enforce-verification-gate.sh` reads it from `.tool_input.prompt`, guarded by `hook_is_subagent` so it fires on orchestrator-origin spawns only;
     - ultracode: `enforce-workflow-verify-stage.sh`, DEV-gated, raw-scanning the script.
     - Except a simple-task entry with no plan-ref, which both pass silently (`skills/glass-atrium-ops-orchestrator-role.md` → `#### Entry classification (DEV delegations)` → **Simple-task waiver**).
   - Honest backing: the token records the orchestrator's own estimate, and no gate blocks on its value — the same existence-only boundary as `[ENTRY-CLASS]`.
+    - No gate reads `units=`: the manual gate checks the token's presence (`hooks/enforce-verification-gate.sh` → `has_size_est_token`), and the ultracode value check keys on `tool_uses~=` (`hooks/enforce-workflow-verify-stage.sh` → `SIZE_EST_TOOLUSES_RE`).
     - The one value check is advisory: the ultracode gate nudges, never blocks, when the declared `tool_uses~` falls below implementation slots × 4.5 or above ~40.
 - **Per-file tool_use measurement**: one file edit+verify+commit unit costs ~4-5 tool_uses measured.
   - The `files × 4.5` anchor built on it is a floor, calibrated up, never down.
@@ -62,7 +64,8 @@
 | Comparison / multi-source cross-check / independent multi-section work | **2-4 agents** in parallel | "compare 3 libraries", "review these 4 independent modules" |
 | Broad open-ended research sweep | fan out toward the engine's runtime concurrency self-cap | "survey the whole landscape of Y" |
 
-- Deep-but-single-threaded work escalates reasoning depth through the `effort` parameter, not more agents.
+- Deep-but-single-threaded work stays one agent: more agents add no depth to a single line of reasoning.
+  - Its depth lever is the `effort` tier, which this table does not set: the table decides team cardinality only.
 
 ## Analysis-Track Right-Sizing (input-side)
 

@@ -86,7 +86,6 @@ IFS=$'\t' read -r HOOK_EVENT AGENT_TYPE AGENT_ID <<<"${LOG_TUPLE}"
 # "is a child live in THIS worktree", and it therefore false-positives on exactly the
 # correctly-isolated configuration the rule encourages. Pure bash by design: the
 # hook's 2-python3-per-fire perf invariant is pinned by agent-tracker.bats.
-live_child_dir="${HOOK_DATA_DIR}/live-children"
 marker_key="$(hook_path_safe_key "${AGENT_ID}")"
 
 # Status 0 once the marker is gone; a refused path or a failed delete counts as kept (DATA-075).
@@ -100,22 +99,75 @@ delete_live_child_marker() {
   return 1
 }
 
+readonly ORPHAN_LIST_MAX=10
+
+# ORPHAN-ADV-001 — listing only: nothing is signalled or removed, the stop being the orchestrator's
+# close-out act (scripts/prune-worktrees.sh). The stopped agent's worktrees are the writer locks it held;
+# an agent that held none (Bash-only writes, read-only work, a lock past its TTL) gets no listing rather
+# than a machine-wide scan.
+# Args: $1=agent id, then the worktree roots its locks named · stderr only, exit status ignored by the caller.
+list_orphan_processes() {
+  local agent_id="${1}" script
+  shift
+  get_orphan_roots "$@"
+  ((${#orphan_roots[@]} > 0)) || return 0
+  # shellcheck disable=SC2310  # no cwd listing → no advisory
+  worktree_get_processes "${orphan_roots[@]}" || return 0
+  build_orphan_lines
+  ((orphan_total > 0)) || return 0
+  script="$(cd -P -- "${BASH_SOURCE%/*}/.." && pwd -P)/scripts/prune-worktrees.sh"
+  (printf '%s\n' \
+    "[agent-tracker] ORPHAN-ADV-001 ADVISORY ONLY — ${orphan_total} process(es) still run inside the worktree of stopped agent ${agent_id}; nothing was stopped; a listed process may belong to a live agent that holds no lock, and the close-out script decides:${orphan_lines}" \
+    "  close-out (dry run; --apply stops them): ${script} ${orphan_roots[*]}") >&2 || true
+}
+
+# Sets orphan_roots: the canonical spelling (the one lsof reports) of each LINKED worktree among $@ —
+# a main checkout also holds the session's own processes, which are no orphans.
+get_orphan_roots() {
+  local root canonical
+  orphan_roots=()
+  for root in "$@"; do
+    [[ -f "${root}/.git" ]] || continue
+    canonical="$(cd -P -- "${root}" 2>/dev/null && pwd -P)" || continue
+    orphan_roots+=("${canonical}")
+  done
+}
+
+# Sets orphan_lines (one "  pid= cmd= cwd=" line each, at most ORPHAN_LIST_MAX, then "and N more") and
+# orphan_total from worktree_processes_out. This hook's own chain ($$, its parent, the session) is skipped.
+build_orphan_lines() {
+  local entry pid cwd cmd
+  orphan_lines=""
+  orphan_total=0
+  for entry in "${worktree_processes_out[@]+"${worktree_processes_out[@]}"}"; do
+    IFS=$'\x1f' read -r pid cwd cmd <<<"${entry}"
+    case " $$ ${PPID} ${CLAUDE_PID:-} " in
+      *" ${pid} "*) continue ;;
+      *) ;;
+    esac
+    orphan_total=$((orphan_total + 1))
+    ((orphan_total <= ORPHAN_LIST_MAX)) || continue
+    orphan_lines+=$'\n'"  pid=${pid} cmd=${cmd} cwd=${cwd}"
+  done
+  ((orphan_total <= ORPHAN_LIST_MAX)) || orphan_lines+=$'\n'"  and $((orphan_total - ORPHAN_LIST_MAX)) more"
+}
+
 if [[ -n "${marker_key}" ]]; then
   case "${HOOK_EVENT}" in
     SubagentStart)
-      if ! { mkdir -p "${live_child_dir}" 2>/dev/null && : >"${live_child_dir}/${marker_key}"; }; then
+      if ! { mkdir -p "${LIVE_CHILD_DIR}" 2>/dev/null && : >"${LIVE_CHILD_DIR}/${marker_key}"; }; then
         emit_error "DATA-074" "warn" \
           "live-child marker write failed — the commit-time live-child advisory will under-report" \
-          "Check permissions/free space on ${live_child_dir}" \
+          "Check permissions/free space on ${LIVE_CHILD_DIR}" \
           "{\"event\":\"${HOOK_EVENT}\",\"marker\":\"${marker_key}\"}"
       fi
       ;;
     SubagentStop)
       # shellcheck disable=SC2310  # the delete's status IS the DATA-075 branch — set -e disable intended
-      if [[ -e "${live_child_dir}/${marker_key}" ]] && ! delete_live_child_marker "${live_child_dir}/${marker_key}"; then
+      if [[ -e "${LIVE_CHILD_DIR}/${marker_key}" ]] && ! delete_live_child_marker "${LIVE_CHILD_DIR}/${marker_key}"; then
         emit_error "DATA-075" "warn" \
           "live-child marker delete failed — a stale marker will over-report until its TTL expires" \
-          "Remove ${live_child_dir}/${marker_key} manually" \
+          "Remove ${LIVE_CHILD_DIR}/${marker_key} manually" \
           "{\"event\":\"${HOOK_EVENT}\",\"marker\":\"${marker_key}\"}"
       fi
       # Release arm of the per-worktree writer lock (lib/worktree-lock.sh; the acquire arm is
@@ -137,6 +189,9 @@ if [[ -n "${marker_key}" ]]; then
           "Remove the holder-matching lock dir under ${WORKTREE_LOCK_ROOT} manually" \
           "{\"event\":\"${HOOK_EVENT}\",\"agent_key\":\"${marker_key}\"}"
       fi
+      # shellcheck disable=SC2310  # advisory only: a failed listing prints nothing and never costs the lifecycle row
+      list_orphan_processes "${AGENT_ID}" \
+        "${worktree_lock_released_roots[@]+"${worktree_lock_released_roots[@]}"}" || true
       ;;
     *) ;; # main-session events (Stop/PreCompact/SessionStart) hold no live-child marker
   esac

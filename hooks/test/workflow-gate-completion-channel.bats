@@ -48,7 +48,7 @@ setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-workflow-verify-stage.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
-  # Refused loopback port → the PASS arm's monitor reads fail open; no fixture reaches the live monitor.
+  # Refused loopback port → the trailing advisories' monitor reads fail open; no fixture reaches the live monitor.
   export WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
   # The rollback marker's own override, pointed at a per-test temp path that does NOT exist: every row
   # therefore runs with the lever disarmed and none of them reads live-install state (the marker rows
@@ -510,33 +510,33 @@ const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema:
 # PRECEDENCE SPLIT — a DEV script blocked BEFORE the terminal emit carries no tag (the block is the
 # louder signal), while one blocked AT the terminal emit carries it. The counterfactual is what proves
 # the advisory decides nothing: the same script with the property declared blocks identically.
-@test "completion-channel(precedence): a DEV script blocked before the terminal emit carries no tag" {
+@test "completion-channel(precedence): a DEV script warned before the terminal emit carries no tag" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   run_hook_exec "const s = { schema: {} };
 agent('glass-atrium-dev-shell', { goal: 'x' });"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "${output}" == *"missing composition declaration"* ]] || return 1
   [[ "$(last_advisory)" != *"completion-channel"* ]] || {
-    echo "pre-empted block still tagged: $(last_advisory)" >&2
+    echo "pre-empted warning still tagged: $(last_advisory)" >&2
     return 1
   }
 }
 
-@test "completion-channel(precedence): a terminal-emit block keeps its exit with and without the nudge" {
+@test "completion-channel(precedence): a terminal-emit warning keeps its verdict with and without the nudge" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   run_hook_exec "${DECL_TEAM}
 ${SCHEMA_SITE}"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "${output}" == *"size-attestation miss"* ]] || return 1
   [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || {
-    echo "the nudge must ride a terminal-emit block -- ${output}" >&2
+    echo "the nudge must ride a terminal-emit warning -- ${output}" >&2
     return 1
   }
   # Counterfactual: property declared → same verdict, same exit, no nudge → the advisory decided nothing.
   run_hook_exec "${DECL_TEAM}
 const S = { completion_block: 'string' };
 const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: S });"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "${output}" == *"size-attestation miss"* ]] || return 1
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || {
     echo "nudged despite the declared property -- ${output}" >&2
@@ -816,8 +816,8 @@ const b = await agent('glass-atrium-intel-planner', { goal: 'plan', schema: { pr
 #
 # The lever exists so an operator can silence ONE cause mid-session without waiting for a release. Its
 # scope is what these rows pin: the property-absent MESSAGE goes quiet, and nothing else moves — not the
-# exit code, not the sibling advisories, and above all not the trace, because the promotion window is
-# adjudicated from the firing log and a rollback period that stopped recording would read as clean.
+# exit code, not the sibling advisories, and above all not the trace, because firings are adjudicated
+# from the firing log and a rollback period that stopped recording would read as clean.
 
 @test "rollback(marker): the marker demotes the property-absent message and never its trace line" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"

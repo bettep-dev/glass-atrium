@@ -33,6 +33,10 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
   - The `Function cap` label and its figures: `scoped/shared-comment-logging.md` → **One-line sufficiency gate**.
   - The `## Core Principles` heading and the `Member ordering` label: `skills/glass-atrium-dev-patterns/references/MODULE-COHESION.md` → `## Verification` → **Member ordering**.
   - The `7+ constructor deps = God Class` bullet: `skills/glass-atrium-dev-patterns/references/FUNCTION-DESIGN.md` → **Parameters**.
+  - The **One owner per derived fact** lead:
+    - `scoped/shared-search-first.md` → **Fact-ownership search** · `scoped/scope-dev.md` → **Rule of Three before abstraction**.
+    - `agents/glass-atrium-qa-code-reviewer.md` → `### 7-Perspective Checklist` (the note under its table).
+    - `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop` → **Regression-chain trigger**.
 - Outbound citations from the rule file:
   - `scoped/shared-type-safety.md`, named for the escape-hatch ban instead of restating it: a second copy in a peer Tier-3 file would drift.
   - `skills/glass-atrium-dev-patterns/SKILL.md` and its `references/`, the lookup half.

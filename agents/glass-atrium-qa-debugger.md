@@ -30,6 +30,7 @@ Systematically identify root causes through hypothesis-disproof cycles, and pres
   - `## Error Recovery` → "max 3 cycles" stays the tighter bound on the all-rejected restart path; this stop caps total cycles across the investigation.
 - **Cycle budget gate (precedence over the cycle count)**: from cycle 3 onward, if ~60% of the turn budget is consumed, emit [COMPLETION] `needs_context` with the Work-unit checkpoint payload immediately rather than opening another cycle.
 - **Systemic-gap escalation**: a root cause recurring across recent investigations of the same upstream agent → surface in the conclusion as one systemic guardrail recommendation (e.g., "add X to dev-nestjs guardrails"), not N isolated diagnoses.
+  - It also fires on a root cause recurring across recent fixes of one feature area → name the fact that has more than one derivation, and every site deriving it.
 - **Diagnosis specificity gate**: final conclusion MUST name file/module/function · exact behavior at a resolvable anchor (`<path> → <anchor>`) · concrete fix vector (recommendation phrasing OK).
   - A vague conclusion ("likely state issue") → rework before emission.
 - State uncertainty as the Root Cause confidence tier, never as a bare hedge ("it's probably this")
@@ -98,7 +99,8 @@ Systematically identify root causes through hypothesis-disproof cycles, and pres
   - identify related PRs/commits (intent + context);
   - cross-analyze the deployment timeline against issue timing;
   - trace env/config change history.
-- **Never-started vs started-then-failed (delegation forensics)**: a spawn blocked by a pre-tool gate never ran, so it leaves no outcome row and no spawn marker — check the durable block traces before concluding an agent ran and failed.
+- **Never-started vs started-then-failed (delegation forensics)**: a spawn with no outcome row and no spawn marker never ran — establish that before concluding an agent ran and failed.
+  - The spawn gates only warn: a line in the traces below marks a spawn that tripped a check and still ran, never a blocked one.
   - Manual Agent-tool path: `~/.glass-atrium/hooks/enforce-verification-gate.sh --block-counts` (counts by verdict tag) over `data/verification-gate-fired.log`.
   - Workflow path: `data/workflow-gate-fired.log`.
   - Both are observability-only — never a verdict source.

@@ -2,7 +2,8 @@
 # daemon-apply-landed-record.bats — the landed record every byte-landing apply writes: the unified diff
 # from the transaction's own before-image to the verified target, plus both whole-file sha256 digests.
 # Two copies: the applied JSONL row (durable) and core.autoagent_apply_records (queryable, written
-# after the status flip). Pins the table preflight (exit 25) and the record-failure exit (26).
+# after the status flip). Pins the table preflight (exit 25), the record-failure exit (26), the
+# live-trial refusal (27) and the approval-tier refusal (28).
 #
 # HERMETIC: temp agents tree, temp HOME, a stateful psql stand-in prepended to PATH, and the
 # daemon_cycle.py seam pointed at a stand-in. No live PG, no live install, no live agents dir.
@@ -15,6 +16,8 @@ GA="$(cd -- "${BATS_TEST_DIRNAME}/../.." && pwd)"
 REAL_SCRIPT="${GA}/autoagent/daemon-apply.sh"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${GA}/scripts/lib/path-guard.sh"
+# shellcheck source-path=SCRIPTDIR source=../../hooks/test/lib/forced-write.bash
+source "${GA}/hooks/test/lib/forced-write.bash"
 
 BEGIN_MARK='<!-- EDITABLE:BEGIN -->'
 END_MARK='<!-- EDITABLE:END -->'
@@ -22,6 +25,9 @@ ROW_ID=2763
 # A quote inside the label: an inlined value would break or alter the SQL the stand-in receives.
 LABEL="probe 'landed' record"
 ADDED_LINE='record probe insertion'
+# The pre-registered text hash the decision-state stand-in answers beside a trial's state: the
+# probe insertion's own canary text (its added line, newline-ended), so a won offset_diff lands.
+TRIAL_SHA="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(f"{sys.argv[1]}\n".encode()).hexdigest())' "${ADDED_LINE}")"
 
 setup() {
   [[ -x "${REAL_SCRIPT}" ]] || skip "daemon-apply.sh not executable: ${REAL_SCRIPT}"
@@ -58,6 +64,9 @@ teardown() {
 # install_psql_stub DIR — a stateful PG stand-in. Every -v binding of the flip and of the record
 # INSERT lands as one file per name (byte-exact, multi-line safe) with the statement text beside it.
 # STUB_PROBE answers the table probe (t | f | error); STUB_INSERT=error refuses the INSERT.
+# STUB_TRIAL answers the live-trial decision-state read: none (default) = no pre-registration names
+# the row · error = the read fails · any other value = the answer line itself.
+# STUB_TIER is the looked-up row's approval tier (default auto; set but empty = an unreadable field).
 install_psql_stub() {
   cat >"$1/psql" <<'STUB'
 #!/usr/bin/env bash
@@ -113,10 +122,20 @@ case "${sql}" in
     printf '%s\n' "${STUB_ROW_ID}"
     ;;
   *"id::text = :'pid'"*)
-    emit_row "|${row_status}|ok"
+    emit_row "|${row_status}|${STUB_TIER-auto}|ok"
     ;;
   *stale_attempt_count*)
     printf 'incremented\n'
+    ;;
+  *"core.autoagent_trial_ledger"*)
+    case "${STUB_TRIAL:-none}" in
+      none) ;;
+      error)
+        printf 'ERROR:  relation "core.autoagent_trial_ledger" does not exist\n' >&2
+        exit 2
+        ;;
+      *) printf '%s\n' "${STUB_TRIAL}" ;;
+    esac
     ;;
   *) : ;;
 esac
@@ -159,6 +178,12 @@ stale_diff() {
     ' editable goal line 10' "+${ADDED_LINE}" ' editable goal line 12'
 }
 
+# offset_diff with CR-ended hunk lines: its canary text drops the CR, git apply on a CRLF body keeps it.
+cr_hunk_diff() {
+  printf '%s\n' '--- a/probe.md' '+++ b/probe.md' '@@ -5,2 +5,3 @@'
+  printf '%s\r\n' ' editable goal line 10' "+${ADDED_LINE}" ' editable goal line 11'
+}
+
 headerless_diff() {
   printf '%s\n' "+${ADDED_LINE}"
 }
@@ -179,6 +204,7 @@ run_apply() {
   shift
   run env PATH="${STUB}:${PATH}" \
     HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
+    GIT_CONFIG_GLOBAL="${FAKE_HOME}/.gitconfig" \
     AUTOAGENT_REMOVAL_LIVE=1 \
     AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     AUTOAGENT_PREFLIGHT_ACTIVE=1 \
@@ -351,22 +377,23 @@ has_abort_row() {
   }
 }
 
-# every probe answer on the gated --proposal-id source (the monitor Approve route)
-@test "a record table that cannot be confirmed stops the run before any apply with exit 25" {
+# the record table's migration precedes the ledger's, so an install lacking the record table cannot read
+# the ledger either: its single apply keeps exit 25, the abort row and the migration remedy
+@test "an install whose record table cannot be confirmed stops a single apply with exit 25 ahead of the live-trial read" {
   local rows=(
-    "table absent, single source|f|--proposal-id|${ROW_ID}"
-    "probe failed, single source|error|--proposal-id|${ROW_ID}"
+    "neither table exists — the migration has not run|f|error"
+    "the probe fails, and the ledger read with it|error|error"
   )
-  local row name answer flag value
+  local row name probe trial
   for row in "${rows[@]}"; do
-    IFS='|' read -r name answer flag value <<<"${row}"
+    IFS='|' read -r name probe trial <<<"${row}"
     : >"$(applied_log_path)"
-    STUB_PROBE="${answer}" run_apply offset_diff ${flag:+"${flag}" "${value}"}
+    STUB_PROBE="${probe}" STUB_TRIAL="${trial}" run_apply offset_diff --proposal-id "${ROW_ID}"
     [[ "${status}" -eq 25 ]] || {
-      echo "${name}: ${output}"
+      echo "${name}: exit ${status}: ${output}"
       return 1
     }
-    [[ "${output}" == *"FATAL"*"core.autoagent_apply_records"* ]] || {
+    [[ "${output}" == *"FATAL"*"core.autoagent_apply_records"*"run the pending monitor migration"* ]] || {
       echo "${name}: ${output}"
       return 1
     }
@@ -455,4 +482,204 @@ has_abort_row() {
       return 1
     }
   done
+}
+
+@test "a live trial's decision state picks who may apply its proposal, and a proposal no trial pre-registered applies as before" {
+  # name | trial state | actor | exit | row status after | records written | the leg stderr names
+  local rows=(
+    "open, the machine actor|open|daemon-apply-flip|27|pending|0|live trial is open"
+    "open, the operator|open|monitor-user|27|pending|0|live trial is open"
+    "won, the machine actor|won|daemon-apply-flip|0|applied|1|"
+    "won, the operator|won|monitor-user|27|pending|0|live trial is won"
+    "decided without a win, the machine actor|decided|daemon-apply-flip|27|pending|0|live trial is decided without a win"
+    "decided without a win, the operator|decided|monitor-user|27|pending|0|live trial is decided without a win"
+    "no pre-registration, the machine actor|none|daemon-apply-flip|0|applied|1|"
+    "no pre-registration, the operator|none|monitor-user|0|applied|1|"
+  )
+  local row name state actor code row_status records leg answer changed
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name state actor code row_status records leg <<<"${row}"
+    answer="none"
+    [[ "${state}" == "none" ]] || answer="${state}|${TRIAL_SHA}"
+    cp -p -- "${BEFORE}" "${PROBE}"
+    printf 'pending' >"${PG}/row-status"
+    : >"${PG}/inserts"
+    : >"$(applied_log_path)"
+    STUB_TRIAL="${answer}" run_apply offset_diff --proposal-id "${ROW_ID}" --actor "${actor}"
+    [[ "${status}" -eq "${code}" && "${output}" == *"${leg}"* ]] || {
+      echo "${name}: exit ${status}: ${output}"
+      return 1
+    }
+    changed=1
+    if cmp -s "${PROBE}" "${BEFORE}"; then changed=0; fi
+    [[ "${changed}" -eq "${records}" ]] || {
+      echo "${name}: target changed=${changed}: ${output}"
+      return 1
+    }
+    [[ "$(cat "${PG}/row-status")" == "${row_status}" && "$(insert_count)" -eq "${records}" ]] || {
+      echo "${name}: row $(cat "${PG}/row-status"), records $(insert_count): ${output}"
+      return 1
+    }
+  done
+}
+
+@test "a proposal whose tier is not auto applies only for the operator, and an unreadable tier for nobody" {
+  # name | approval tier | actor | exit | row status after | records written | the refusal stderr names
+  local rows=(
+    "user tier, the machine actor|user|daemon-apply-flip|28|pending|0|its approval tier is user, not auto; only monitor-user applies it"
+    "user tier, the operator|user|monitor-user|0|applied|1|"
+    "llm tier, the machine actor|llm|daemon-apply-flip|28|pending|0|its approval tier is llm, not auto; only monitor-user applies it"
+    "llm tier, the operator|llm|monitor-user|0|applied|1|"
+    "unreadable tier, the machine actor||daemon-apply-flip|28|pending|0|its approval tier could not be read"
+    "unreadable tier, the operator||monitor-user|28|pending|0|its approval tier could not be read"
+  )
+  local row name tier actor code row_status records leg changed stored_status stored_records
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name tier actor code row_status records leg <<<"${row}"
+    cp -p -- "${BEFORE}" "${PROBE}"
+    printf 'pending' >"${PG}/row-status"
+    : >"${PG}/inserts"
+    : >"$(applied_log_path)"
+    STUB_TIER="${tier}" run_apply offset_diff --proposal-id "${ROW_ID}" --actor "${actor}"
+    [[ "${status}" -eq "${code}" && "${output}" == *"${leg}"* ]] || {
+      echo "${name}: exit ${status}: ${output}"
+      return 1
+    }
+    [[ "${code}" -eq 0 || "${output}" == *"REFUSED proposal id=${ROW_ID} actor=${actor} — "*"; nothing applied, row left as it was"* ]] || {
+      echo "${name}: refusal line: ${output}"
+      return 1
+    }
+    changed=1
+    if cmp -s "${PROBE}" "${BEFORE}"; then changed=0; fi
+    [[ "${changed}" -eq "${records}" ]] || {
+      echo "${name}: target changed=${changed}: ${output}"
+      return 1
+    }
+    stored_status="$(cat "${PG}/row-status")"
+    stored_records="$(insert_count)"
+    [[ "${stored_status}" == "${row_status}" && "${stored_records}" -eq "${records}" ]] || {
+      echo "${name}: row ${stored_status}, records ${stored_records}: ${output}"
+      return 1
+    }
+  done
+}
+
+@test "a live-trial decision state that cannot be read applies nothing and exits 27, never read as no trial" {
+  local rows=("the read fails|error" "the answer is no state line|held")
+  local row name answer
+  for row in "${rows[@]}"; do
+    name="${row%%|*}"
+    answer="${row#*|}"
+    STUB_TRIAL="${answer}" run_apply offset_diff --proposal-id "${ROW_ID}"
+    [[ "${status}" -eq 27 && "${output}" == *"FATAL"*"decision state could not be read"* ]] || {
+      echo "${name}: exit ${status}: ${output}"
+      return 1
+    }
+    cmp -s "${PROBE}" "${BEFORE}" || {
+      echo "${name}: target changed"
+      return 1
+    }
+    [[ "$(cat "${PG}/row-status")" == "pending" && "$(insert_count)" -eq 0 ]] || {
+      echo "${name}: DB written"
+      return 1
+    }
+  done
+}
+
+# The approve route's own argv under the forced-interrupt harness: a late child kept through exec, the
+# stderr pipe full → on bash 3.2 its SIGCHLD interrupts a blocked builtin write in the script's shell.
+@test "a live-trial refusal keeps exit 27 when a child's exit interrupts its blocked stderr line" {
+  # name | decision-state answer kind | the refusal text
+  local rows=(
+    "an open trial, the approve route|open|live trial is open"
+    "a decision state that is no state line, the approve route|held|decision state could not be read"
+  )
+  local wrapper="${WORK}/approve-route.sh" row name kind needle answer rest
+  printf 'exec /bin/bash %q --agents-dir %q --proposal-id %q --auto-regen --actor monitor-user\n' \
+    "${REAL_SCRIPT}" "${AGENTS}" "${ROW_ID}" >"${wrapper}"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name kind needle <<<"${row}"
+    answer="${kind}"
+    [[ "${kind}" == "held" ]] || answer="${kind}|${TRIAL_SHA}"
+    : >"${WORK}/other"
+    run --separate-stderr env PATH="${STUB}:${PATH}" \
+      HOME="${FAKE_HOME}" GA_DATA_ROOT="${FAKE_HOME}/.glass-atrium" \
+      GIT_CONFIG_GLOBAL="${FAKE_HOME}/.gitconfig" \
+      AUTOAGENT_REMOVAL_LIVE=1 AUTOAGENT_REPORTS_DIR="${REPORTS}" AUTOAGENT_PREFLIGHT_ACTIVE=1 \
+      AUTOAGENT_DAEMON_CYCLE_PY="${SEAM}" STUB_PG="${PG}" STUB_ROW_ID="${ROW_ID}" \
+      STUB_CYCLE="2026-10-01" STUB_LABEL="${LABEL}" STUB_AGENT="probe" STUB_TARGET="${PROBE}" \
+      STUB_DIFF_B64="$(offset_diff | base64 | tr -d '\n')" STUB_TRIAL="${answer}" \
+      python3 -c "${FORCED_HARNESS_PY}" "${wrapper}" /dev/null "${WORK}/other" stderr
+    rest="${output#*"${needle}"}"
+    [[ "${status}" -eq 27 && "${output}" == *"${needle}"* && "${rest}" != *"${needle}"* ]] || {
+      echo "${name}: exit ${status}: ${output} ${stderr}"
+      return 1
+    }
+    cmp -s "${PROBE}" "${BEFORE}" || {
+      echo "${name}: target changed"
+      return 1
+    }
+    [[ "$(cat "${PG}/row-status")" == "pending" && "$(insert_count)" -eq 0 ]] || {
+      echo "${name}: row $(cat "${PG}/row-status"), records $(insert_count)"
+      return 1
+    }
+  done
+}
+
+@test "a graduation call on a won row still pending binds the machine actor onto the flip and writes one record" {
+  STUB_TRIAL="won|${TRIAL_SHA}" run_apply offset_diff --proposal-id "${ROW_ID}" --actor daemon-apply-flip
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  [[ "$(cat "${PG}/flip/actor")" == "daemon-apply-flip" && "$(insert_count)" -eq 1 ]] || {
+    echo "flip actor $(cat "${PG}/flip/actor"), records $(insert_count): ${output}"
+    return 1
+  }
+}
+
+@test "a graduation whose landed lines are not its pre-registered text applies nothing and counts one stale attempt" {
+  # name | body builder | diff
+  local rows=(
+    "CR-ended hunk on a body turned CRLF mid-trial: the added line keeps a CR its text never held|build_crlf_body|cr_hunk_diff"
+    "autocrlf write: the stored diff's added line hashes to the text, but every line lands rewritten CRLF, the added one included|build_autocrlf_write|offset_diff"
+  )
+  local row name body_fn diff_fn pristine="${WORK}/probe.pristine"
+  cp -p -- "${BEFORE}" "${pristine}"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name body_fn diff_fn <<<"${row}"
+    cp -p -- "${pristine}" "${BEFORE}"
+    printf 'pending' >"${PG}/row-status"
+    : >"${PG}/psql.log"
+    : >"${FAKE_HOME}/.gitconfig"
+    "${body_fn}"
+    STUB_TRIAL="won|${TRIAL_SHA}" run_apply "${diff_fn}" --proposal-id "${ROW_ID}" --actor daemon-apply-flip
+    [[ "${status}" -eq 9 && "${output}" == *"trialled_text_mismatch"* ]] || {
+      echo "${name}: exit ${status}: ${output}"
+      return 1
+    }
+    cmp -s "${PROBE}" "${BEFORE}" || {
+      echo "${name}: target changed: ${output}"
+      return 1
+    }
+    [[ "$(cat "${PG}/row-status")" == "pending" && "$(insert_count)" -eq 0 ]] \
+      && grep -q 'stale_attempt_count' "${PG}/psql.log" || {
+      echo "${name}: row $(cat "${PG}/row-status"), records $(insert_count), stale attempt counted: no: ${output}"
+      return 1
+    }
+  done
+}
+
+# The probe body turned CRLF: the CR-ended hunk now lands.
+build_crlf_body() {
+  awk '{ printf "%s\r\n", $0 }' "${BEFORE}" >"${PROBE}"
+  cp -p -- "${PROBE}" "${BEFORE}"
+}
+
+# A frontmatter-less probe body (the rules-file class, where no first-line check sees a CR) applied
+# under the user's core.autocrlf: git apply's write converts every line, not only the added one.
+build_autocrlf_write() {
+  sed '1,3d' "${BEFORE}" >"${PROBE}"
+  cp -p -- "${PROBE}" "${BEFORE}"
+  printf '[core]\n\tautocrlf = true\n' >"${FAKE_HOME}/.gitconfig"
 }

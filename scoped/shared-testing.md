@@ -54,7 +54,7 @@ Each step builds on the previous.
   - The one exception is a large byte-identical fixture (`### Names, comments and test data` → **Shared fixture**).
   - A duplication-percentage metric MUST NOT be used as the trigger.
 - **Deletion duty**: when a relationship test subsumes existing example tests of the same behavior, delete the subsumed tests in the same change. Adding without deleting is how a suite inflates — a coding agent has no deletion pressure of its own.
-  - Name every test a change removes, with its reason, in `concerns` — a subsumed test here, or a stale or obsolete one under **Coupled-test check**.
+  - Name every test a change removes in `concerns`, with a reason **Coupled-test check** accepts.
 
 ### Detection signature per row, keyed by the Prohibited literal above
 
@@ -79,6 +79,11 @@ Each step builds on the previous.
 ## Mocking Rules
 
 - **Mock only at boundaries**: external APIs, databases, file systems, time
+  - A boundary fake models the real system's observable behavior independently of the code under test: it never reuses the code's own guard or predicate.
+  - A behavior that depends on the boundary's real response (a stored content type, a query filter, a constraint) is checked once against the real system or a recorded capture before it is reported done.
+    - A live external API or database call needs the user's approval first (`rules/glass-atrium/core-security.md` → `## Agent Tool Authorization [LLM06:2025]`); without it, check against a recorded capture.
+    - Not checked → `concerns` carries "fixture-only".
+  - Why: a fake that drops a content type or re-implements the query predicate stays green until the first real run.
 - Internal module mocking SHOULD be minimized → excessive mocking signals a design problem
 - **Mocking library**: use the one the sibling tests in the same directory already use; introducing a second one into a corpus needs a stated reason
 
@@ -109,6 +114,8 @@ Each step builds on the previous.
 - **Comments**: a test comment states what the test protects, never how the code or the test got here — `scoped/shared-comment-logging.md` binds test files like any other code.
   - A test that calls itself vacuous is fixed or deleted.
 - **Test data**: inline the few realistic values the assertion depends on; a placeholder (`'x'`, `'a@b.c'`) hides what matters.
+  - Use values at the precision and range real data has: sub-unit timestamps when production carries them; the real geometry and config constants, never reduced ones.
+  - Build input states through the code that produces them — a state the producer cannot emit is no evidence.
 - **Shared fixture**: a large fixture repeated byte-for-byte across tests or files, whose copies can drift, becomes one named fixture — or a builder with safe defaults once its variants multiply. Small readable setup stays inline.
 
 ### Table form per stack
@@ -145,7 +152,10 @@ Every table row carries a name stating its condition — an unnamed row fails wi
   - Obsolete: exercises nothing the change left, or now skips silently.
   - Wrong: its subject remains, but it fails because it expects the old text or behavior.
   - Fix each inside the declared file set; outside it → name the test and its class in `concerns`.
-  - Remove only a test this change made stale or obsolete, named with its reason per **Deletion duty**; never delete, skip or loosen a test to turn a red run green.
+  - Remove or rename a test only for a reason this check accepts, named in `concerns` as its sub-bullets state; never delete, skip or loosen a test to turn a red run green.
+    - Every test the change loosens (wider tolerance, weaker bound, an exact match widened to a partial one) or re-pins (changed expected value) is named in `concerns` with the rule change that requires it and that rule's source: the user's words, or a plan line the user approved.
+    - Every test the change renames or retires is named in `concerns` with its own reason: a **Deletion duty** subsumption, stale or obsolete under this check, the **ID ban**, or a **Fold-back** merge.
+    - "To make it pass" or a bare "by design" is never a reason.
   - Why: agents fix what fails and miss what stays green, so a stale test survives every run.
 
 ### Legitimate example tests (this is NOT a ban on examples)
@@ -159,8 +169,13 @@ Each kind is legitimate when the stated purpose is the whole reason the test exi
 | executable-specification example | it is the one canonical worked example documenting the contract |
 | one-off verification test (a probe, an incident repro, a change check) | it is kept as a regression pin in the behavior's home file, or deleted in the change that wrote it |
 
+- **Regression pin data** (the regression pin row): the reproduction uses the data the defect was reported on — an export or capture turned fixture.
+  - Mask or synthesize personal data, keeping the precision and range that reproduce the defect (`rules/glass-atrium/core-security.md` → `## Secret Management`).
+  - No such data → the fixture-only disclosure (`## Mocking Rules` → **Mock only at boundaries**).
 - **One-off disposition** (the one-off verification test row): keep one only when deleting it could let a real break through later; equal coverage is never the reason to keep or delete a test (**Deletion duty**).
 - **Boundary**: an example test is never a substitute for the relationship test of the same behavior. Three examples of one behavior with no named relationship is enumeration, not coverage.
+  - A regression pin is not exempt from `### Decision procedure`: a second pin on one behavior is its "second test" and runs the procedure first.
+    - Example relationship for a layout or state engine: a sweep over every fixture × configuration × state.
 
 ## Rationalization Rejection (Testing)
 
@@ -182,13 +197,31 @@ Each kind is legitimate when the stated purpose is the whole reason the test exi
 
 | Tier | Content | Cost | When to Run |
 |------|---------|------|-------------|
-| T1 Static | lint + typecheck | Free | After every change |
+| T1 Static | lint + typecheck | Free | On the changed files, after each change |
 | T2 Unit | Related unit tests | Low | For changed files |
-| T3 E2E/Integration | Full test suite | High | Before commit |
+| T3 E2E/Integration | Full test suite | High | Once per job, at its final gate; before any push or PR |
 
 - Execute in T1 → T2 → T3 order (fast feedback first).
 - Diff-based: run the T2 tests related to changed files first, selected per that project's test structure (`src/foo.ts` → `test/foo.spec.ts` / `foo.test.ts`).
-- A full T3 pass is REQUIRED before commit.
+- **Verification scope**: before a job's final gate, run only what the change can affect; the full pass runs once per job, at that gate.
+  - Job: the delegated work as a whole, which the orchestrator may split into work-units, one per spawn.
+  - Final gate: the one step the delegation brief names as final — a last work-unit or a separate gate spawn.
+    - A spawn whose brief names no final gate, and work done without a brief, is its own job's final gate.
+    - Why: one unit per spawn must not turn every spawn's last commit into a full-suite commit.
+  - Affected tests: the T2 tests for the changed files, plus every test that exercises changed code or that the change makes stale (**Coupled-test check**).
+  - Lint and typecheck: on the changed files, or the narrowest target the tool offers — a whole-project `tsc --noEmit` is already that target.
+  - Structure guards (dependency graph, function or file length, size audits, manifest): only where the change can move what the guard measures — a file added, moved or removed, an import edge changed, a function or file grown.
+  - A small, simple fix — a few lines, no file added, no import changed, no public signature changed — needs no structure guard.
+  - A change no test exercises (prose, rule text) runs no suite.
+  - Running more than this before the final gate is waste: it spends the turn budget and buys no evidence the final gate does not.
+    - Widen a run before the final gate only to diagnose a failure the scoped run showed.
+  - The final gate runs the full T3 suite, every structure guard and lint over the whole project, once for the job.
+- **Incremental commits**: a full T3 pass is REQUIRED before the commit of the job's final gate (**Verification scope**), and before any push or PR.
+  - Each earlier per-work-unit commit (`rules/glass-atrium/core-git-workflow.md` → **Who commits**) needs its affected test paths passing.
+  - Why: a full suite per work-unit exhausts the turn budget; which commit is the working base: `rules/glass-atrium/core-git-workflow.md` → `## Commits`.
+  - A final gate that ends before that full pass names "full suite not run since the last full pass" in `concerns`.
+- A test you add or change counts as run only when the run's output shows it executed; a suite command that does not select it (a separate e2e target, an excluded directory) is not its run.
+- A test class that no CI job runs is named in `concerns` as "not run in CI".
 
 ## Mechanical Success Metrics
 

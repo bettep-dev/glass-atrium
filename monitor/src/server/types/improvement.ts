@@ -73,6 +73,10 @@ export interface RejectProposalResponse {
 //   not_found (404)        ← exit 19: no proposal with that id
 //   generation_not_ok (409) ← exit 20: stored generation outcome (haiku_status) not ok-prefixed;
 //                            nothing applied, row untouched — Reject is the way out
+//   live_trial (409)       ← exit 27: a live trial pre-registered the proposal — its decision
+//                            state picks the actor; nothing applied, row untouched
+//   tier_not_auto (409)    ← exit 28: approval tier not auto for this actor, or unreadable;
+//                            nothing applied, row untouched
 //   apply_failed (422)     ← exit 9: git apply rejected the stored diff (row pending).
 //                            --auto-regen routes stale diffs through 10-14, so kept as a
 //                            defensive fallback only.
@@ -87,12 +91,15 @@ export interface RejectProposalResponse {
 //   apply_error (503)      ← exit 21: proposal DB query failed (nothing applied; retryable)
 //   apply_error (503)      ← exit 25: apply-record table unconfirmed (nothing applied; retry after
 //                            the pending monitor migration runs)
-//   apply_error (500)      ← other infra failure (exit 2 bad-arg / 3 no-psql / 6 DB-update-fail / other)
+//   apply_error (500)      ← other infra failure (exit 2 bad-arg / 3 no-psql / 6 DB-update-fail /
+//                            27 unread trial state / other)
 //   internal (500)         ← unexpected route-level failure
 export type ImprovementMutationErrorBody =
   | { status: "noop"; id: number; reason: string }
   | { status: "not_found"; id: number; reason: string }
   | { status: "generation_not_ok"; id: number; reason: string }
+  | { status: "live_trial"; id: number; reason: string }
+  | { status: "tier_not_auto"; id: number; reason: string }
   | { status: "apply_failed"; id: number; reason: string }
   | { status: "regen_failed"; id: number; reason: string }
   | { status: "regen_invalid"; id: number; reason: string; axes?: PreVerifyAxes }

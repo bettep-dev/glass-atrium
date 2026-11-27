@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # no-python3.bash — shared python3-absent PATH fixture for the fail-closed
-# security-gate suites (block-dangerous-commands · enforce-delegation ·
-# enforce-harness-critical).
+# security-gate suites (block-dangerous-commands · enforce-delegation).
 #
 # WHY: each gate must fail CLOSED when python3 is off PATH (extraction otherwise
 # degrades to EMPTY → silent allow) while keeping genuinely-empty stdin fail-open.

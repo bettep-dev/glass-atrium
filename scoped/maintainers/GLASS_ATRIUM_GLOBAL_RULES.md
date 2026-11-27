@@ -71,6 +71,14 @@ Heading-position suite detail:
 - **`## Learning Log & Correction Signal [ALL]`**: `core-learning-log.md` → Write-Gate omits the auto-path ban because the charter states it.
 - **`## Rationalization Rejection [ALL]`**: the charter names the five domain home files, and `scoped/maintainers/shared-testing.md` cites it.
 
+## Held cap exception — `### Turn Budget & Graceful Exit [ALL]`
+
+- This H3 stays over the 3 KB H3 cap (UTF-8, heading to the next H3, its `####` subsections included).
+- Why it cannot split: it must stay one heading block.
+  - `autoagent/test/test_pre_verify_section_excerpt.py` requires the whole block, subsections included, in the daemon's pre-verify excerpt.
+  - Its `Exempt` bullet scopes "this entire section, including every `####` subsection", and `hooks/inject-scope-rules.sh` cites that bullet.
+- Hold it there: any addition is a pointer, never a restated rule; byte-measure before adding.
+
 ## Thinking Budget Policy — measured precedence
 
 - The charter's **Default tier** claim was measured for a parent tier at or above settings `effortLevel`.
@@ -86,7 +94,7 @@ Beyond the suites in `## Machine-read shapes (moved out of the charter body)`:
 | Reader | Reads | Consequence of a careless edit |
 |---|---|---|
 | `scripts/test/deploy-coverage-partition.bats` | deploy partition | pins that the EDITABLE merge loop skips this basename |
-| `hooks/test/enforce-foreground-harness.bats` + `-branch.bats` | basename allowlist | a Harness Path Protection BASENAME exception; renaming the file breaks both |
+| `hooks/enforce-delegation.sh` | basename allowlist | early pass ahead of DEL-004; a rename changes no verdict, but keep the literal in step with the file name |
 | `autoagent/daemon_cycle.py` | `GLOBAL_RULES_FILE`, sensitive-path regex, C2 prompt slot | path-keyed: a move breaks the Tier-2 safety trigger and the C2 excerpt |
 | `scripts/lib/apply-spine.sh` | basename literal | classifies the charter as a non-agent file |
 | `scripts/lib/path-guard.sh` → `ga_guard_path` | nothing — one-way: `File Deletion Policy` restates its refusal set | a guard-only change splits the two sets, and no test compares them — change both in one edit |
@@ -99,6 +107,18 @@ Prose citations into charter anchors — grep each before renaming its target:
 - **Absolute Rules**: `## Absolute Rules [ALL]` · `Absolute Rules → Output Language` · `Absolute Rules → the response-language rule` · `Anchor by symbol`
 - **Continuity and files**: `Cross-Session Continuity (progress.md) [ALL]` and its `[CONTINUITY]` header activation contract · `File Deletion Policy`
 - **Conduct**: `## System Prompt Protection` · `AI-Generated Anti-Pattern Prohibition` · `Philosophy (ETHOS)` · `Rationalization Rejection`
+- **Obstacles and blockers**: `## Obstacles and Blockers [ALL]`, cited by:
+  - `agents/glass-atrium-dev-node.md` → `## Guardrails` → the bullet that opens `MUST NOT retry or work around an Edit permission denial`;
+  - `agents/glass-atrium-intel-planner.md` → `### Monitor connectivity`;
+  - `agents/glass-atrium-intel-researcher.md` → `#### raw/ constraints` → **Blocked-write triage**;
+  - `rules/glass-atrium/core-outcome-record.md` → `### result values`;
+  - `scoped/scope-report.md` → `### Emission contract`;
+  - `scoped/shared-investigation-discipline.md` → `## Investigation Discipline [DEV+QA]`;
+  - `skills/glass-atrium-ops-orchestrator-role.md` → `#### Decision-phase probes` · `#### Monitoring-phase notes` → **Blocker class**;
+  - `skills/glass-atrium-ops-verify-gate/SKILL.md` → `### Verification Order (halt on failure)`;
+  - maintainer notes: `scoped/maintainers/core-outcome-record.md` · `scoped/maintainers/orchestrator-role.md` · `scoped/maintainers/scope-report.md` · `scoped/maintainers/shared-investigation-discipline.md`.
+  - The section itself names `scoped/shared-investigation-discipline.md` and `skills/glass-atrium-ops-orchestrator-role.md` → `### Failure Recovery Loop`, so a rename of either lands there too.
+  - `agents/glass-atrium-wiki-curator.md` → **Turn-0 sequence** rests its lock halt on the section's "or agent body" stop-point clause: narrowing that clause strands the halt.
 - **Precedence**: `### Precedence Resolution`, cited by:
   - rule prose: `scoped/scope-meta.md` · `scoped/scope-planning.md` · the `rules/glass-atrium/core-compliance-matrix.md` → `## Precedence Resolution` stub;
   - skill references: `skills/glass-atrium-ops-delegation-contracts/references/delegation-prompt.md` · `skills/glass-atrium-ops-delegation-contracts/references/architecture-patterns.md`;

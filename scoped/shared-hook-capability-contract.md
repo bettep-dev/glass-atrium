@@ -14,8 +14,10 @@ What each Claude Code lifecycle event can observe, what it can mutate, and which
 |-------|------------------------|-----------------|---------------|-------|
 | PreToolUse | `tool_input` only (via `updatedInput`) | `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`, `tool_name`, `tool_input`, `agent_id` | channel a for every block here (measured) · stdout `hookSpecificOutput.permissionDecision`, not `decision` (docs-only) | Cannot read the agent's prose/reasoning. Agent calls: `PreToolUse(Agent) measured record`. |
 | PostToolUse | none — observe-only (no `updatedOutput`) | `tool_name`, `tool_response`/output, `tool_input` | channel a, or channel b (stdout `{"decision":"block"}` only) | May only block, or advise via stderr, after the tool ran. |
-| `Stop` / `SubagentStop` | none — observe-only | terminal turn / subagent transcript metadata | none (advisory lifecycle; `exit 2` does not rewind a finished turn) | Post-completion accounting only (`cost-tracker.sh`, `track-outcome.sh`). |
-| `SessionStart` | injects turn-0 context via stdout (additive, never a mutation) | drained stdin (payload unused by current hooks) | none — an `exit 2` here is an audit signal that rewinds nothing | `inject-session-context.sh` injects; `validate-compliance-matrix.sh` exits 2 on a confirmed matrix or roster mismatch |
+| `Stop` / `SubagentStop` | none — observe-only | `Stop` stdin payload (measured 2.1.322 `-p`, 2026-11-13: `background_tasks`, `cwd`, `effort`, `hook_event_name`, `last_assistant_message`, `permission_mode`, `prompt_id`, `session_crons`, `session_id`, `stop_hook_active`, `transcript_path`); `stop_hook_active` is `false` on the first fire and `true` on the fire that follows a block (measured, same run), also when the continuation ran a tool (measured below) · `Stop` turn reading (measured 2.1.322 `-p`, 2026-11-13, one session over three invocations: a tool turn with one block, a resumed tool-free turn, a task-notification turn): `last_assistant_message` holds every line of the turn's final assistant message and none of a text message sent before the turn's tool call; at the fire the transcript does not yet hold that final text, so the payload key is its only source then; a turn starts at the newest transcript entry with a non-null `turnPosition` (`turnIndex` counts turns), the task-notification entry included, while `tool_result`, assistant and the `isMeta` `Stop hook feedback:` entries carry none; no `-p` entry carries `origin.kind` `human` (a prompt entry has no `origin`, `turnOrigin` `sdk`; the notification entry's `origin.kind` is `task-notification`); `prompt_id` equals the turn-start entry's `promptId`, stays the same on the fire after a block whose continuation ran a tool, and is new on every turn, the notification turn included · `turnPosition` by CLI version (one observation by a reviewer, 2026-11-13, CLI 2.1.322, keys only — not a general rule): sessions started on the current CLI with entrypoint `cli` carry a `turnPosition` object on every turn start; one live background session started on CLI 2.1.283 carries none, so the turn reading returns none there and the check never asks (fail-open) · unmeasured: the turn-reading facts on interactive and `--bg` sessions; `SubagentStop` adds `agent_id`, `agent_type`, `agent_transcript_path` (docs-only) · `Stop` session env (measured, same run, parent session ids unset before launch): `CLAUDE_CODE_SESSION_ID` set and equal to the payload `session_id`; `CLAUDE_PID` set, the session's own `claude` process (its nearest `claude` ancestor); `CLAUDE_CODE_MESSAGING_SOCKET` and the messaging token set; `CLAUDE_CONFIG_DIR` set but inherited from the launching shell, never unset before launch, so whether the host sets it is unmeasured; the session id and pid equal the Bash tool env of the same session | channel b at `exit 0` keeps Claude from stopping and continues the turn: the `reason` reaches the model as a user-role text `Stop hook feedback:` + the reason, and the model answered it in the same turn — a continuation, never a rewind (measured 2.1.322 `-p`, 2026-11-13) · `exit 2` + stderr: docs-only · unmeasured: `--bg` (refused for an untrusted workspace; trust is a profile write) and interactive sessions | `Stop` fires for the main agent only, never on a user interrupt (an API error fires `StopFailure`) — docs-only; the interrupt case needs the owner at an interactive terminal. `queue-turn-end-check.sh` is the one blocking `Stop` hook: it reads `stop_hook_active` and its own stamp, because the host's eight-continuation cap resets on every tool call. `cost-tracker.sh`, `advisory-preedit-facts.sh`, `post-edit-typecheck.sh` and `track-outcome.sh` only account or advise, and a continued turn runs them again. `queue-listener.sh`, bound `asyncRewake`, blocks no turn end: its `exit 2` wakes the idle session into a new turn (measured record above). End-turn payload: on a turn ended by an MCP end-turn result (next row) `Stop` still fires, `stop_hook_active` `false`, and the payload carries **no `last_assistant_message` key** — the reply text written before the call does not reach it (measured 2.1.325, 3 of 3, `-p` and interactive). Source: `https://code.claude.com/docs/en/hooks` → `### Stop`, `### Stop input`, `### Stop decision control`. |
+| MCP tool result end-turn (not a hook event: a stdio server's result `_meta`) | none | the `Stop` and `PostToolBatch` hooks that run after it (Stop row: end-turn payload) | `claude/endTurn: true` alone: a `PostToolBatch` or `Stop` block is discarded and the turn stays ended (M3) · with `claude/endTurnHonorsStopHooks: true` beside it a `Stop` block is honored — the model is re-invoked with the reason and `Stop` fires again with `stop_hook_active` `true` (M3) | Measured 2.1.325, model haiku, 3 runs: M1 no model request follows the result (`-p` and interactive) · M2 `Stop` fires, plain and `asyncRewake`, with no `last_assistant_message` · M3 as the block column · M4 the reply streams in the same API message as the call; interactive shows no extra line for the ended turn · M5 the next turn runs normally · M6 the tool needs an allow rule in `default` mode; a `--mcp-config` server needs no approval, a project `.mcp.json` server needs one interactively (static) · M7 with tool search on, the tool is deferred: name only until a ToolSearch load, which can cost one request before the call. Static: the value must be strictly `true`; an error result never ends the turn; the blockable variant sits behind a default-on remote gate whose flip reverts it to discard. MCP stdio server facts: `### MCP stdio server — measured record`. Source: `queue-mcp` probe record M1-M7. |
+| `SessionStart` | injects turn-0 context via stdout (additive, never a mutation) | stdin payload (measured 2.1.319: `cwd`, `hook_event_name`, `session_id`, `source`, `transcript_path`, plus `model` on interactive and `--bg` starts; no `permission_mode`): `queue-session-register.sh` reads `cwd` and `session_id` for the register and `permission_mode` as a display hint only, should a version send it; the other hooks drain it unused · session env `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID` (measured: the session's own process), `CLAUDE_CODE_MESSAGING_SOCKET` (measured: set), `CLAUDE_CONFIG_DIR` | none — an `exit 2` here is an audit signal that rewinds nothing | `inject-session-context.sh` injects; `validate-compliance-matrix.sh` exits 2 on a confirmed matrix or roster mismatch; `queue-session-register.sh` registers the session with the owner queue and adds one count-only pointer line, fail-open, always `exit 0`; `queue-listener.sh`, bound `asyncRewake`, wakes an idle interactive session with `exit 2` + stderr (measured record above) |
+| `SessionEnd` | none — observe-only | stdin payload (measured 2.1.319: `cwd`, `hook_event_name`, `prompt_id`, `reason`, `session_id`, `transcript_path`): `queue-session-deregister.sh` reads `session_id` · session env `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID` (measured: set, the ending session's own process), `CLAUDE_CODE_MESSAGING_SOCKET` and the messaging token (measured: both unset) | none (docs-only: the session is already ending) | `queue-session-deregister.sh` deregisters the session and removes its token file, fail-open, always `exit 0`. Fires on `-p` exit and `claude stop` (`reason` `other`) and on interactive `/exit` (`reason` `prompt_input_exit`) (measured 2.1.319); other exits (Ctrl-D, a closed terminal, a kill) are unprobed, and a missed run is covered by the monitor's dead-session rule |
 | `SubagentStart` | injects child context via stdout `hookSpecificOutput.additionalContext` (additive) | `agent_type`, `agent_id` | none (cannot block a spawn — context-injection only) | `inject-scope-rules.sh` delivers the marker blocks to its rostered children; fail-open, always `exit 0`. |
 | `UserPromptSubmit` | injects context via stdout `hookSpecificOutput.additionalContext` (additive) | `prompt`, `transcript_path`, `prompt_id`; never `agent_id`; `source` absent on CLI 2.1.283 | `exit 2` erases the prompt — unused: the registered hook never blocks | `inject-reply-language.sh` — see Event Registration Status. |
 
@@ -34,17 +36,83 @@ What a PreToolUse hook receives on an `Agent` tool call. Agent calls only: no ot
 - **Workflow `agent()` spawns do not reach PreToolUse(Agent)**: the Workflow spawn left no record, so no PreToolUse(Agent) hook sees a Workflow spawn.
 - **Re-probe**: after a CLI upgrade, re-capture the Agent `tool_input` and envelope keys before a hook relies on any one of them.
 
+### `asyncRewake` command hooks — measured record
+
+What a command hook bound with `asyncRewake: true` does, per session kind. Bound by `queue-listener.sh` on `SessionStart` and `Stop` (`lib/ga-env.sh` → `EXPECTED_HOOK_BINDING_OPTIONS`).
+
+- **Provenance**: isolated probe on CLI 2.1.322, 2026-11-13, model haiku, plus two lifetime runs of the same kit on the same CLI: 1b (2026-11-13, one run per configuration) and 1c (2026-11-13 22:11 to 2026-11-14 21:19 KST, one run per event).
+  - The stand-in hook was a stub that slept and exited with a planned code; no queue call was made.
+  - Settings: `--setting-sources project` + `--settings` holding only the stub bindings, `claudeMdExcludes` for every CLAUDE.md and rules file, `--strict-mcp-config` with an empty config. No user or project hook of the machine ran.
+  - Session kinds: `-p` (`CLAUDE_CODE_ENTRYPOINT` `sdk-cli`) and an interactive pty in a private tmux server (`cli`, `--permission-mode default`).
+  - Workspace trust came from a parent directory the profile already trusted. No trust entry was written: the set of trusted paths was the same before and after.
+- **Session kind decides async**: interactive → the hook runs in the background and the session takes input meanwhile.
+  - `-p` → the same binding runs synchronously, as a plain hook (static read: async rewake is skipped in non-interactive mode).
+    - `SessionStart` holds the start for the hook's full run.
+    - `UserPromptSubmit` `exit 2` blocks the prompt.
+    - `Stop` `exit 2` continues the turn.
+    - `Stop` at `exit 0` after a 25 s sleep still holds the `-p` exit for those 25 s.
+  - So a `-p` process waits out every such hook, and a long-lived one holds a headless worker for its whole lifetime.
+- **Events accepting it** (P1): `SessionStart` and `Stop`, both measured interactive, and the binding validates and runs on `UserPromptSubmit` (`-p` only). No event restriction appears in the rewake handler (static read).
+- **`exit 2` wakes an idle interactive session** (P2): measured on `SessionStart` with no prompt ever typed, and on `Stop` after a finished turn.
+  - The wake starts a new turn that carries `<task-notification><summary>Stop hook feedback</summary>…` plus a system reminder `Stop hook blocking error from command "<event>": <stderr>`, so stderr reaches the model.
+  - A draft typed into the input box stays unsent.
+  - `--bg` sessions: unmeasured. A `--bg` start enters the owner's real job list, so it is not isolatable.
+- **Timeout** (P3): at the binding `timeout` the host sends the hook SIGTERM: no wake, no orphan, and the session stays idle.
+  - Measured at 20 s, and (1b) at 3600 s: a hook sleeping 3700 s under `timeout` 3600 got SIGTERM at exactly 3600 s, no wake followed, and the session was still alive and idle 4 minutes later.
+  - A `timeout` of 1200 let a `SessionStart` hook run 666 s, past the 600 s command default, and its `exit 2` then woke a session idle for 11 minutes.
+  - 1b: under `timeout` 7200 or 86400 a hook ran about 3755 s, on `SessionStart` and on `Stop`, and its `exit 2` then woke a session idle for 62 minutes.
+  - 1b: values up to 1e10 were accepted with no clamp, no fall-back to the 600 s default and no early fire — `timeout` 2147483 and 2147484 with a 60 s run, 1e10 and 2147484 with a 700 s run, each ran to its `exit 2` and woke the session.
+  - 1c, the longest measured: under `timeout` 86400 a hook ran 82860 s (23 h 01 min) on `SessionStart` and on `Stop`, logging a heartbeat every 1800 s with no gap and receiving no signal; its `exit 2` woke the idle session once, 3 s after the exit, with no repeated wake and no early kill, and the session stayed usable.
+  - Static read (1b): the async timer is the binding `timeout` in milliseconds, and the only clamp found (60 s) belongs to `SessionEnd`. [UNCHECKED: static read, not an executed path]
+  - Unmeasured: a lifetime past 82860 s; any lifetime across a system sleep — the Mac did not sleep during the 1c window (sleep prevented, no sleep or wake event logged), so the host timer's behaviour across a sleep is unknown; a hook that ignores SIGTERM, or a child outside the hook's process group.
+- **Wake during a busy turn** (P4): no interruption, and nothing lost.
+  - On a turn making tool calls, the wake is folded into that same turn as a `queued_command` attachment between tool calls. The turn ran on to its own end, and the model did not act on the folded text.
+  - On a turn with no tool call, the wake waits for the turn to end, then starts its own turn.
+- **Environment** (P5): `CLAUDE_PID` is set and equals the nearest `claude` ancestor. `CLAUDE_CODE_SESSION_ID` equals the payload `session_id`. `CLAUDE_CODE_ENTRYPOINT` is `cli` interactive and `sdk-cli` under `-p`. The hook's parent is the session process.
+  - The `-p` reading was taken with `CLAUDE_CODE_ENTRYPOINT` unset before launch.
+  - A `-p` child that inherits `cli` from an interactive parent (a daemon cycle's `claude -p` started inside a session passes its whole environment): static read only, CLI 2.1.322 — the CLI rewrites an inherited `cli` to `sdk-cli` in non-interactive mode; not instrumented.
+  - `queue-listener.sh` does not rest on that rewrite alone: it also refuses a `CLAUDE_PID` process whose argv carries `-p` or `--print` (`is_print_mode_process`).
+  - At `/exit` and at a SIGTERM to the session process, the running async hook receives SIGTERM and exits; no orphan is left.
+- **Background-job idle supervision** (P6): unmeasured. It needs a `--bg` session left about an hour, in the owner's real job list.
+- **Interactive idle supervision**: no idle stop seen — 8 sessions idle up to 64 minutes (1b) and two sessions idle about 23 hours (1c) stayed alive.
+- **A woken turn ends with a `Stop` fire**: the wake turn fired `Stop` (1b, on `Stop`), and a `Stop` hook logged the woken turn's end 3 s after the wake on both events (1c).
+- **Overlapping `Stop` instances** (P7): a `Stop` that fires while the previous turn's async `Stop` hook still runs starts a second instance. The first is not cancelled and runs to its own end.
+- **Background command exit** (interactive): a `run_in_background` Bash command finishing in an idle interactive session starts a turn on its own.
+- **Re-probe**: after a CLI upgrade, re-run the probe before a hook relies on any line above.
+  - Add the inherited-entrypoint row: launch `-p` with `CLAUDE_CODE_ENTRYPOINT=cli` exported and read the hook env's value.
+
+### MCP stdio server — measured record
+
+What a stdio MCP server bound to a session sees. Server facts only; the end-turn result is the MCP row of the table above.
+
+- **Provenance**: one interactive session on CLI 2.1.325, 2026-11-17. Kit under the trusted home, `--setting-sources project`, `--strict-mcp-config --mcp-config` with one bash stub server, no prompt typed, then `/clear` and `/exit`. Zero main-loop model requests and one `quota_check` side request. Static reads of the same binary.
+- **Z1 — server env**: the parent is the session's `claude` process, the same pid the hooks see as `CLAUDE_PID`.
+  - `CLAUDE_CODE_SESSION_ID` equals the `SessionStart` payload id; `CLAUDE_CODE_ENTRYPOINT` is `cli`; the cwd is the start directory; `CLAUDE_PROJECT_DIR` and `CLAUDE_CONFIG_DIR` are set.
+  - `CLAUDE_PID` is **unset** in the server env, so the server names its session process by its own parent pid.
+- **Z2 — `/clear`**: the hooks get a new session id under the same `CLAUDE_PID`. The server is **not restarted** and keeps the old id in its env until `/exit`, so a server-side session id is resolved per call, never read once from the env.
+- **Z3 — idle RSS**: a bash 3.2 read-loop server, idle after the handshake, 2,592 KB with no child (replayed outside a session).
+- **Z4 — same-name precedence** (static): `user` < approved `project` < `local` < `managed` < `dynamic` (`--mcp-config`); the later scope replaces the earlier. A pending project entry replaces nothing.
+- **Z5 — subagents** (static): an agent with no `tools:` list or a wildcard receives every MCP tool; an explicit list receives only the names it lists.
+  - No agent identity reaches a user-scope stdio server: `claudecode/agentId` is sent in `tools/call` `_meta` only to one named dynamic-scope server, and the env is the session's.
+  - A main-session-only rule for such tools is therefore adherence-only for built-in, wildcard and untyped spawns.
+- **Z6 — headless child** (static): a nested `claude -p` loads user-scope servers. It rewrites an inherited `cli` entrypoint to `sdk-cli` in non-interactive mode, and its server inherits that process env, so an entrypoint gate lists no tools there.
+  - Inferred, not instrumented: the rewritten value reaching the server env.
+- **Z7 — monitor content type**: the monitor parses JSON types only on session routes (any case, with params).
+  - `text/plain`, form, multipart, octet-stream, image and `+json` types get 415: `monitor/src/server/request-guards.ts` → `registerRequestGuards` removes the `text/plain` parser, and the image parsers are encapsulated in `routes/queue-owner.ts` → `imageUploadPlugin`.
+- **Re-probe**: after a CLI upgrade, re-run the kit before relying on any line above.
+
 ## Block Channels (Two Non-Interchangeable Mechanisms)
 
-- Every block this section names pairs its channel with `exit 2`; a stdout decision at `exit 0` is documented, unused by these hooks, and unmeasured.
+- Every block this section names pairs its channel with `exit 2`, except the `Stop` use of channel b at `exit 0` (measured on `-p`, CLI 2.1.322; the `Stop` row above).
 - **Non-substitutability**: never swap one channel for the other without re-verifying the registering event's contract.
   - Why: each block shows the model one reason text, and the event plus the JSON content decide which surface supplies it (**What the model sees at `exit 2`**, below).
 - **Channel a — stderr `emit_error` JSON + `exit 2`**: the hook writes a structured JSON error to stderr (`hook-utils.sh` → `hook_emit_error`), then exits 2.
-  - Used by `validate-secret-scan.sh`, `block-dangerous-commands.sh`, `enforce-commit-guard.sh`, `block-no-verify.sh`, `block-md-creation.sh`, `enforce-delegation.sh`, `enforce-harness-critical.sh`.
-  - A plain-text stderr reason + `exit 2` with silent stdout is the same channel — `enforce-foreground-harness.sh` is the worked case.
-- **Channel b — stdout `{"decision":"block"}` + exit**: the hook prints a JSON object carrying `"decision":"block"` to stdout, then exits — `validate-output.sh`'s blocking LLM05 path, on PostToolUse.
+  - Used by `validate-secret-scan.sh`, `block-dangerous-commands.sh`, `enforce-commit-guard.sh`, `enforce-delegation.sh`, `validate-pre-write-raw.sh`, `lint-workflow-template-literal.sh` (plain-text reason), and the no-progress brake of `advisory-subagent-budget.sh` (`NOPROGRESS-001`).
+  - A plain-text stderr reason + `exit 2` with silent stdout is the same channel.
+- **Channel b — stdout `{"decision":"block"}` + exit**: the hook prints a JSON object carrying `"decision":"block"` to stdout, then exits — no registered PostToolUse hook uses it.
+  - On `Stop` the object at `exit 0` keeps Claude from stopping, and its required `reason` tells Claude why it should continue (measured on `-p`, CLI 2.1.322; source: `https://code.claude.com/docs/en/hooks` → `### Stop decision control`); `queue-turn-end-check.sh` uses it.
 - **`"advisory"` is not a channel-b form**: the PostToolUse decision schema rejects it (`"Hook JSON output validation failed"`), so a non-blocking advisory emits a stderr `emit_error` + `exit 0` instead — `validate-output.sh`'s LLM07 path is the worked case.
-- **Discriminator is the stdout `"decision"` JSON, never the exit code**: channel-a hooks carry no stdout `decision` at all, while `validate-output.sh` emits a stdout decision and `exit 2` together.
+- **Discriminator is the stdout `"decision"` JSON, never the exit code**: channel-a hooks carry no stdout `decision` at all, while a channel-b block emits a stdout decision and `exit 2` together.
 - **What the model sees at `exit 2`**: on PreToolUse and PostToolUse, stdout JSON at `exit 2` is parsed, not ignored; which text reaches the model differs per event, per the table below.
   - Recheck the two live-probe rows after a CLI upgrade — the published reference does not say which PostToolUse JSON fields apply at `exit 2`.
 
@@ -71,21 +139,26 @@ A one-word vocabulary for a failed check's disposition — a description only, n
 
 Worked cases, keyed by disposition:
 
-- **exception**: the fail-closed hooks — `validate-secret-scan.sh` · `block-dangerous-commands.sh` · `enforce-harness-critical.sh` · `enforce-foreground-harness.sh` · `enforce-workflow-verify-stage.sh` block verdicts.
+- **exception**: the blocking hooks — `validate-secret-scan.sh` · `block-dangerous-commands.sh` · `enforce-commit-guard.sh` · `enforce-delegation.sh`'s sensitive-file block · `validate-pre-write-raw.sh` · `lint-workflow-template-literal.sh`.
+  - Also an exception: the no-progress brake of `advisory-subagent-budget.sh` (`NOPROGRESS-001`, armed by default) — the one block in an otherwise advisory hook.
 - **fix**: the post-write repair hooks — `post-edit-format.sh` · `post-edit-typecheck.sh`.
 - **filter**: the resilient-workflow join `.filter(Boolean)` dropping a null agent result · `track-outcome.sh` synthesizing a fallback `done_with_concerns` record on a degraded `[COMPLETION]` parse.
-- **noop**: the advisory budget/cost hooks — `advisory-context-budget.sh` · `advisory-spawn-cost.sh` · `advisory-subagent-budget.sh` · `validate-edit-syntax.sh`'s advisory-first path · a `track-outcome.sh` parse advisory that only warns and records the block unchanged.
-- **reask**: `robustAgent`'s retry-once-on-null re-spawn in schema-mode workflows · the Failure Recovery Loop retry at the delegation layer.
+- **noop**: the advisory budget/cost hooks — `advisory-context-budget.sh` · `advisory-spawn-cost.sh` · `advisory-subagent-budget.sh` · `validate-edit-syntax.sh`.
+  - `advisory-subagent-budget.sh` is a noop for its tool-use nudges only; its no-progress brake is listed under **exception**.
+  - Also noop: the `enforce-verification-gate.sh` and `enforce-workflow-verify-stage.sh` warnings.
+  - Also noop: a `track-outcome.sh` parse advisory that only warns and records the block unchanged.
+- **reask**: `robustAgent`'s retry-once-on-null re-spawn in schema-mode workflows · the Failure Recovery Loop retry at the delegation layer · `queue-turn-end-check.sh`'s one `Stop` continuation per turn end, naming the queue wait command, the missing queue record, or both.
 
 ### Picking a disposition
 
-- **Disposition is event-capability-bound**: an event with no block channel (`Stop`/`SubagentStop`/`SessionStart`/`SubagentStart`) can only `filter`, `fix`, `noop`, or `reask` (via a later spawn) — never `exception`.
+- **Disposition is event-capability-bound**: an event with no block channel (`SessionStart`/`SessionEnd`/`SubagentStart`) can only `filter`, `fix`, `noop`, or `reask` (via a later spawn) — never `exception`.
+  - A `Stop`/`SubagentStop` block continues the turn that just finished, so it is a `reask` of the same model, never an `exception`: nothing it blocks is undone.
   - A SessionStart audit `exit 2` stops nothing, so it is not an `exception`.
   - Naming a disposition grants no capability the registering event lacks.
 
 ## Event Registration Status (file-verified)
 
-- Events with at least one registered hook in `settings.json`: `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStart`, `SubagentStop`, `PreCompact`, `SessionStart`, `UserPromptSubmit`.
+- Events with at least one registered hook in `settings.json`: `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStart`, `SubagentStop`, `PreCompact`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`.
 - **`UserPromptSubmit` carries one hook, `inject-reply-language.sh`**, which adds one context line:
   - it recognises a machine-written prompt by `source` first, then by the prompt's wrapper shape; a typed slash command is the user's own prompt, never recognised by its leading slash;
   - it screens nothing: `validate-prompt.sh` (prompt-injection + zero-width Unicode screening) runs at `PreToolUse(Write|Edit)` on content written to files, not on raw user prompts.
@@ -98,15 +171,18 @@ Worked cases, keyed by disposition:
 - **Mutation discipline**: design no hook that rewrites model-visible data other than PreToolUse `tool_input` — a `PostToolUse` hook cannot rewrite tool output.
 - **Channel discipline**: pick channel a or channel b per the registering event's contract, and document which in the hook header.
   - Never swap them unverified: `## Block Channels` → **Non-substitutability**.
-  - Mixing is allowed only where an existing hook already does so deliberately (`validate-output.sh`).
-- **Fail-open default**: a lifecycle hook that cannot block (`SessionStart`, `SubagentStart`, `Stop`/`SubagentStop`) MUST `exit 0` on internal error — never break a session on hook failure.
+- **Fail-open default**: a lifecycle hook (`SessionStart`, `SessionEnd`, `SubagentStart`, `Stop`/`SubagentStop`) MUST `exit 0` on internal error — never break a session on hook failure.
+  - A `Stop` hook blocks only on a condition it decided, never on an error it hit, and checks `stop_hook_active` so it blocks at most once per turn end.
   - Exception: `~/.glass-atrium/autoagent/` pipeline hooks follow the loud-fail principle (`rules/glass-atrium/shared-self-improve-hygiene.md` → `## Precondition Loud-Fail Principle`).
 - **No secret/PII in hook output**: hook stdout/stderr is session-visible — never echo `.env` contents, tokens, or PII.
 
 ## Hook Operation Policy
 
-- **Default behavior**: `exit 0` by default · return non-zero only when blocking is intended; a SessionStart audit `exit 2`, which blocks nothing, is the sanctioned exception.
+- **Default behavior**: `exit 0` by default · return non-zero only when blocking is intended. Sanctioned exceptions, each blocking nothing:
+  - a SessionStart audit `exit 2`;
+  - the `queue-listener.sh` wake: `exit 2` from an `asyncRewake` binding in an interactive session, the measured wake path ("`asyncRewake` command hooks — measured record" → P2).
 - **Timeout**: the host's command-hook default is 600 seconds, but a hook runs on every matching event, so design it to finish fast.
+  - Exception: an `asyncRewake` hook runs beside an interactive session and may live up to its binding `timeout`, within the longest lifetime measured (P3); under `-p` the same binding holds the run, so such a hook exits at once there.
 - **Rollback**: identify the problematic hook → remove its entry from `settings.json` → restart the session.
 - **Pre-deployment verification**: confirm blocking behavior with an intentional-violation probe before treating rollout as complete.
   - Claude Code snapshots the hook config at session start, so a `settings.json` binding added mid-session stays inert in every running session (and any pre-warmed background process) until restart.

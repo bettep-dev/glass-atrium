@@ -1,0 +1,915 @@
+// Fixture data for the Queue page render harness: the sessions, items, orders and images of mockup v5's rest state,
+// typed on the server's own view types → a change to the item view, session row or history read fails typecheck here.
+// Item text keeps the mockup's shape (Korean bullets, backticks, a declared document, coded options with pros and cons) in
+// neutral wording: the mockup's sample text quotes private project work and this repository is public.
+
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { getImageFacts } from "../../src/server/queue/image-format.js";
+import { ITEM_TITLE_MAX, SESSION_NAME_MAX } from "../../src/server/queue/schemas.js";
+import type { ImageView } from "../../src/server/queue/images.js";
+import type { OwnerItemView, OwnerSessionView, RecentResume, RelayFacts, RelayRefusalView, RelaySender, ScanApprovalFacts, ScanApprovalLines } from "../../src/server/queue/owner-views.js";
+import { getSessionIdPrefix } from "../../src/server/queue/owner-views.js";
+import { getLineDisplay, getLineHash } from "../../src/server/queue/scan-approvals.js";
+import type { OwnerSessionRow } from "../../src/server/queue/owner-sessions.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ASSET_ROOT = resolve(HERE, "..", "..", "..", "docs", "assets");
+const MIN_MS = 60_000;
+
+/** The page's clock is pinned here → every relative age in a capture reads the same on every run (15:00 KST). */
+export const FIXTURE_NOW = Date.UTC(2026, 10, 13, 6, 0, 0);
+export const FIXTURE_CLI_PATH = "/Users/owner/.glass-atrium/scripts/atrium-queue.sh";
+
+export interface FixtureImage {
+  view: ImageView;
+  bytes: Buffer;
+  mime: string;
+}
+
+/** What the harness's fixture routes answer; a state swaps any part of it before its capture. */
+export interface QueueFixture {
+  items: OwnerItemView[];
+  sessions: OwnerSessionRow[];
+  orders: OwnerItemView[];
+  resumes: RecentResume[];
+  relays: RelayThreadFixture;
+  /** The history read's kind `item` (spec §4.6): decisions and reports no longer open; unset → none. */
+  done?: OwnerItemView[];
+  /** The owner read of a waiting secret approval's captured lines, by item id; unset or absent → the request is gone. */
+  scanReads?: Record<number, ScanApprovalLines>;
+}
+
+const SESSION_IDS = {
+  gersona: "25a65a54-3c1e-4f0a-9b2d-6e7f8a9b0c11",
+  atrium: "e8923338-5d2f-4a1b-8c3e-7f9a0b1c2d22",
+  aidl: "aca91592-6e3a-4b2c-9d4f-8a0b1c2d3e33",
+  yoaida: "fa32c7cb-7f4b-4c3d-8e5a-9b1c2d3e4f44",
+  portfolio: "5d0e77a1-8a5c-4d4e-9f6b-0c2d3e4f5a55",
+} as const;
+type SessionKey = keyof typeof SESSION_IDS;
+
+const IMAGES = ["screen-dashboard.webp", "screen-agents.webp", "screen-cost.webp"].map((file, index) => getFixtureImage(file, index));
+
+/** Image bytes by id, for the harness's serve route; nothing is read from a data directory. */
+export const FIXTURE_IMAGES: ReadonlyMap<string, FixtureImage> = new Map(IMAGES.map((image) => [image.view.id, image]));
+
+function getFixtureImage(file: string, index: number): FixtureImage {
+  const bytes = readFileSync(resolve(ASSET_ROOT, file));
+  const facts = getImageFacts(bytes);
+  if (facts === null) throw new Error(`fixture image ${file} is not a PNG, JPEG, WebP or GIF`);
+  const id = `0f1e2d3c-4b5a-4968-8778-6a5b4c3d2e1${index}`;
+  const view: ImageView = { id, name: `queue-0${index + 1}.webp`, type: facts.type, bytes: bytes.length, width: facts.width, height: facts.height };
+  return { view, bytes, mime: `image/${facts.type}` };
+}
+
+function getAt(minutesAgo: number): string {
+  return new Date(FIXTURE_NOW - minutesAgo * MIN_MS).toISOString();
+}
+
+function buildSessionView(key: SessionKey): OwnerSessionView {
+  return {
+    id: SESSION_IDS[key],
+    sessionIdPrefix: SESSION_IDS[key].slice(0, 8),
+    name: key,
+    isNameRegistered: true,
+    profileLabel: ".claude-work",
+    cwd: "/Users/owner",
+    cwdTail: "Users/owner",
+    configDir: null,
+    state: key === "portfolio" ? "exited" : "live",
+    isWaiting: key !== "portfolio",
+    permissionHint: "default",
+    marker: null,
+  };
+}
+
+function buildSessionRow(key: SessionKey, count: OwnerSessionRow["count"], minutesAgo: number): OwnerSessionRow {
+  const view = buildSessionView(key);
+  return {
+    id: view.id,
+    sessionIdPrefix: view.id.slice(0, 8),
+    name: view.name,
+    isNameRegistered: view.isNameRegistered,
+    profileLabel: view.profileLabel,
+    cwd: view.cwd,
+    cwdTail: view.cwdTail,
+    state: view.state,
+    exitReason: key === "portfolio" ? "ended" : null,
+    isWaiting: view.isWaiting,
+    lastActivityAt: getAt(minutesAgo),
+    count,
+    markerSetAt: null,
+    isSelectable: true,
+    isHidden: false,
+  };
+}
+
+function buildItem(id: number, key: SessionKey, fields: Partial<OwnerItemView>): OwnerItemView {
+  return {
+    id, kind: "decision", title: "", body: "", linkedDocIds: [], options: [], recommendedCode: null,
+    isFreeTextAllowed: true, isApprovalClass: false, status: "open", queuePosition: id, deferCount: 0, nextAttempt: 1,
+    answer: { code: null, text: null }, askedAt: getAt(9), answeredAt: null, deliveredAt: null, closedAt: null, sendId: null,
+    attachments: [], answerRecord: null, isAnsweredOutside: false, session: buildSessionView(key), resumes: [],
+    deviation: null, skipReason: null, canResend: false, relay: null, scanApproval: null,
+    ...fields,
+  };
+}
+
+// one copy per recipient, as createMessages writes them: one send id, one answeredAt, one body
+function buildOrderCopies(firstId: number, send: { sendId: string; minutesAgo: number; text: string; to: Array<[SessionKey, Partial<OwnerItemView>]>; images?: ImageView[] }): OwnerItemView[] {
+  return send.to.map(([key, fields], index) => buildItem(firstId + index, key, {
+    kind: "message", title: send.text.split("\n")[0], body: send.text, isFreeTextAllowed: false, status: "delivered",
+    askedAt: getAt(send.minutesAgo), answeredAt: getAt(send.minutesAgo), sendId: send.sendId,
+    attachments: send.images ?? [], answerRecord: { route: "message", signal: "fetch_metadata" },
+    ...fields,
+  }));
+}
+
+const DOC_LINE = "- 계획 문서: 모니터 44060, 이슈 DOC-120";
+
+function buildDecision(id: number, title: string, bullets: string[], options: Array<[string, string, string]>, recommendedCode: string): OwnerItemView {
+  return buildItem(id, "gersona", {
+    title, body: [...bullets, DOC_LINE].join("\n"), linkedDocIds: [44060], recommendedCode,
+    options: options.map(([label, pros, cons], index) => ({ code: `R${index + 1}`, label, pros, cons })),
+  });
+}
+
+const DECISIONS = [
+  buildDecision(103, "[도움말 프롬프트] 답의 꼴: 짧은 안내문 vs 지금의 단계별 설명", [
+    "- 기획 초안은 짧은 안내문(한두 문장, 필요할 때만 예시)이고, 지금 백엔드 글은 2~5문단 단계별 설명(번호 목록 + 굵은 강조, 1,000자 안)입니다.",
+    "- 두 글이 정면으로 다르고, 바꾸려면 예전에 최종 글로 정한 안내 목적 글(`guide`)을 고쳐야 합니다.",
+    "- 공개 자료로 가릴 수 있는 문제가 아니라 제품 의도로 정할 일입니다.",
+  ], [
+    ["짧은 안내문으로 교체", "초안의 표현 규칙이 그대로 들어맞고 화면에서 읽기 쉽다", "안내 목적 글과 예문, 스냅샷 시험이 함께 바뀌고 설명 깊이가 줄어든다"],
+    ["지금 꼴 유지, 짧은 안내문은 모델별 비교 평가 뒤 결정", "이미 정한 글과 시험을 건드리지 않고, 근거를 보고 정할 수 있다", "초안이 말하는 짧은 느낌과는 당분간 다르다. 짧은 질문에도 두 문단을 채운다"],
+    ["기본은 짧게, 회원이 자세히를 누르면 단계별 설명", "두 쓰임을 모두 받는다", "모델이 전환 시점을 판단해야 해 답이 들쭉날쭉해질 수 있고 평가가 가장 어렵다"],
+  ], "R2"),
+  buildDecision(104, "[도움말 프롬프트] 모르는 질문에 어떻게 답할지", [
+    "- 지금 규칙: 범위 밖 질문도 아는 만큼 답하고 출처는 밝히지 않습니다. 서버의 출처 표시 설정은 기본 꺼짐입니다.",
+    "- 초안은 여기에 \"모르면 모른다고 짧게 답한다\"를 더합니다.",
+    "- 조사 결과: 일부 모델은 범위 밖 질문을 거절하라는 지시를 일관되게 따르지 않습니다. 고객 지원 지침은 출처 표시를 권한다는 자료가 있습니다(요약본 기준, 확인 필요).",
+  ], [
+    ["초안의 짧은 거절은 넣지 않고, 지금 규칙과 출처 표시 설정을 검토에 올림", "답이 끊기는 표현을 피하고, 검토 전에 위험을 키우지 않는다", "검토 답이 올 때까지 지금 규칙이 그대로 남는다"],
+    ["초안대로 반영", "기획 초안과 일치한다", "답이 자주 끊겨 불만이 늘 수 있고, 모델마다 따르는 정도가 달라진다"],
+    ["범위 밖이면 출처와 함께 답하도록 지금 규칙을 바꿈", "근거를 가장 분명하게 보인다", "답이 길어질 수 있고, 예전 결정을 바꾸는 일이라 안내 목적 글을 고쳐야 한다"],
+  ], "R1"),
+  buildDecision(105, "[도움말 프롬프트] 도우미가 자기를 무엇으로 소개할지: 이름 vs 표시명", [
+    "- 초안은 \"이름은 등록·관리용이고 표시명(역할)이 대화용\"이라고 전제합니다.",
+    "- 우리 시스템에서는 이름(8자)과 표시명(20자)이 둘 다 화면에 보이는 값이고 중복도 허용합니다. 초안의 전제가 맞지 않습니다.",
+    "- 코드로는 어느 쪽으로 소개할지 정해져 있지 않습니다.",
+  ], [
+    ["표시명으로 소개하고 이름은 대화에 쓰지 않음", "초안의 뜻과 가깝다", "표시명이 역할이나 별칭(\"친절한 안내원\")이면 자기소개가 어색해진다"],
+    ["이름으로 소개하고 표시명은 별칭·역할로 받음", "이름 칸의 뜻과 맞고, 표시명이 역할이어도 자연스럽다", "초안의 전제와 반대라 기획에 알려야 한다"],
+    ["기획에 먼저 확인", "화면 문구와 기획 의도를 맞춘 뒤 정한다", "그동안 이 줄만 비워 두고 진행한다"],
+  ], "R2"),
+  buildDecision(106, "[도움말 프롬프트] 다룰 주제의 범위를 어디까지 둘지", [
+    "- 초안은 도우미가 제품 설명서 밖의 주제를 아예 다루지 않는 것으로 하고, 파일·문서·코드·표 같은 산출물 제작과 도구 사용도 못 한다고 적습니다.",
+    "- 우리 시스템엔 웹 검색 도구, 첨부 파일 읽기, \"설정 방법을 차근차근 설명한다\" 같은 특기 문구가 있어 그대로는 충돌합니다.",
+  ], [
+    ["초안대로 전면 적용하고 특기 문구와 도구를 그에 맞춰 고침", "답의 범위가 가장 분명하다", "특기·웹 검색·첨부 기능의 쓰임이 크게 줄고 고칠 범위가 넓다"],
+    ["넣지 않음", "지금 기능과 충돌이 없다", "도우미가 무엇이든 답하는 일반 챗봇처럼 느껴질 수 있다"],
+    ["설명서 밖 전문 주제의 대행과 문서·표 만들기만 막고, 고른 특기와 안전 안내·도구 결과는 허용", "범위를 지키면서 지금 기능(특기, 웹 검색, 첨부)과 충돌하지 않는다", "경계가 글로만 정해져 모델별 평가가 필요하다"],
+  ], "R3"),
+  buildDecision(107, "[도움말 프롬프트] \"말투는 정중하게 시작\" 규칙을 넣을지", [
+    "- 초안: 호칭·말투는 설정한 관계에서 바로 출발하되, 가벼운 농담은 대화가 쌓인 만큼만 보인다.",
+    "- 넣으면 친근하게 설정한 도우미도 처음에는 덜 가깝게 느껴집니다. 제품 체감이 바뀌는 규칙입니다.",
+  ], [
+    ["넣되 친근한 설정은 따로 평가", "갑자기 가까운 말투를 쓰는 어색함을 줄이고, 관계가 쌓이는 느낌을 준다", "친근한 설정에서 처음이 차갑게 느껴질 수 있어 평가가 필요하다"],
+    ["넣지 않음", "설정한 말투가 처음부터 그대로 느껴진다", "대화 기록이 없는데도 가까운 말투를 전제한 답이 나올 수 있다"],
+  ], "R1"),
+];
+
+const REPORTS = [
+  buildItem(101, "yoaida", {
+    kind: "report", askedAt: getAt(10),
+    title: "주문 서비스 단일 출처 작업 — 세 저장소 최종 정리·리뷰 완료, API 후속 수정 진행 중",
+    body: [
+      "- API: 최종 정리·리뷰·필수 수정 8건 반영 완료 (끝 커밋 `684bac3b`, 테스트 3280건 통과, 빌드 통과)",
+      "- 웹: 완료 (`e3ec857f`, 361건 통과) · 관리 화면: 완료 (`eb4ec43`, 294건 통과, 빌드 통과)",
+      "- 동작이 바뀐 곳: 수량 없이 올린 주문 파일 업로드는 400 거절(전에는 기본 수량으로 처리) · 무료 요금제 회원에게 다음 결제일을 보내지 않음",
+      "- 진행 중: API 후속(웹·관리 화면이 기다리는 응답 항목 7건 + 리뷰 권고) → 타입 재생성 → 웹·관리 화면 후속 → 브라우저 확인(로그인 필요)",
+      "- 아직 안 한 것: DB 기반 테스트 두 묶음 실행, dev DB 반영(DB-3), 병합 — 모두 승인 뒤",
+      "- 디스크: 끝난 작업 폴더 12개 정리, 여유 5.8 GB → 22 GB",
+    ].join("\n"),
+  }),
+  buildItem(102, "atrium", {
+    kind: "report", askedAt: getAt(10),
+    title: "배포 #60 완료 — 보고 큐 설정 없이 사용 가능",
+    body: [
+      "배포 #60이 라이브에 반영됐습니다 (`integration/deploy-60` @ `bbc6686c`).",
+      "",
+      "- 보고 큐: 로그인·설정 없이 Queue 페이지가 바로 열립니다. 세션 목록(이름 표시)과 다중 선택 메시지 전송이 들어갔습니다.",
+      "- 업데이터: 다음 업데이트부터 모니터 의존성 설치와 Prisma 생성을 직접 합니다.",
+      "- 검증: 라이브 전체 테스트 실패 0건(bats 3361 통과, 그중 84 건너뜀), 읽기 전용 검증 통과.",
+      "- 마이그레이션 3건 적용, 기존 행 변경 0건, 적용 전 DB 덤프 보관.",
+      "",
+      "남은 일: 큐 실사용 확인(결정 요청 → 페이지에서 답변 → 세션 수령, 페이지에서 세션으로 메시지 전송), PR 병합 단계, 모니터 UI 나머지 화면.",
+    ].join("\n"),
+  }),
+];
+
+const ANSWERED_DECISION = buildItem(108, "aidl", {
+  status: "answered", askedAt: getAt(42), answeredAt: getAt(31), linkedDocIds: [44047], recommendedCode: "R1",
+  title: "[연동] 파트너 연동 안내를 어디에 둘지",
+  body: "- 파트너가 읽을 연동 안내를 API 명세 위쪽에 둘지, 별도 문서로 둘지 정해야 합니다.\n- 계획 문서: 모니터 44047",
+  options: [
+    { code: "R1", label: "API 명세 위쪽 안내로", pros: "파트너가 한 곳만 보면 된다", cons: "명세 화면이 길어진다" },
+    { code: "R2", label: "별도 문서로", pros: "명세 화면이 짧게 남는다", cons: "두 곳을 함께 고쳐야 한다" },
+  ],
+  answer: { code: "R1", text: null }, answerRecord: { route: "answer", signal: "fetch_metadata" },
+  attachments: IMAGES.slice(0, 2).map((image) => image.view),
+});
+
+const YESTERDAY_18_KST_MINUTES = 21 * 60;
+const SEND_IDS = {
+  yesterday: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b01",
+  readme: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b02",
+  screens: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b03",
+  inDelivery: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b04",
+  notReceived: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b05",
+} as const;
+
+// the one order still in delivery: in the owner list (answered) and in the history read
+const IN_DELIVERY_ORDER = buildOrderCopies(109, {
+  sendId: SEND_IDS.inDelivery, minutesAgo: 3,
+  text: "API 후속 수정이 끝나면 dev DB 반영(DB-3) 전에 DB 기반 테스트 두 묶음을 먼저 돌리고 결과를 보고해 주세요.\n병합은 그 보고를 본 뒤 승인하겠습니다.",
+  to: [["yoaida", { status: "answered", deliveredAt: null }]],
+});
+
+const RECEIVED_ORDERS = [
+  ...buildOrderCopies(201, {
+    sendId: SEND_IDS.yesterday, minutesAgo: YESTERDAY_18_KST_MINUTES, text: "오늘 작업이 끝나면 바뀐 점을 보고 한 건으로 올려 주세요.",
+    to: [["gersona", { deliveredAt: getAt(YESTERDAY_18_KST_MINUTES - 2) }], ["aidl", { deliveredAt: getAt(YESTERDAY_18_KST_MINUTES - 5) }]],
+  }),
+  ...buildOrderCopies(203, {
+    sendId: SEND_IDS.readme, minutesAgo: 85, text: "배포가 끝나면 큐 설정 안내를 README에 옮겨 주세요.",
+    to: [["atrium", { deliveredAt: getAt(83) }]],
+  }),
+  ...buildOrderCopies(204, {
+    sendId: SEND_IDS.screens, minutesAgo: 40, text: "Queue 화면에서 표시한 세 곳을 고쳐 주세요. 글자 크기, 목록 위계, 명령 입력창입니다.",
+    to: [["atrium", { deliveredAt: getAt(39) }]], images: IMAGES.map((image) => image.view),
+  }),
+];
+
+/** An order no session acknowledged in time: the amber `Not received` with `Resend` (mockup state 09). */
+export const NOT_RECEIVED_ORDER = buildOrderCopies(210, {
+  sendId: SEND_IDS.notReceived, minutesAgo: 25, text: "오늘 작업을 마치기 전에 남은 일과 막힌 곳을 한 줄씩 보고해 주세요.",
+  to: [["yoaida", { status: "unacked", deviation: "unacked", canResend: true }]],
+});
+
+const SESSION_ROWS = [
+  buildSessionRow("gersona", { awaiting: 5, inDelivery: 0 }, 9),
+  buildSessionRow("atrium", { awaiting: 1, inDelivery: 0 }, 10),
+  buildSessionRow("aidl", { awaiting: 0, inDelivery: 1 }, 10),
+  buildSessionRow("yoaida", { awaiting: 1, inDelivery: 1 }, 10),
+  buildSessionRow("portfolio", { awaiting: 0, inDelivery: 0 }, 180),
+];
+
+const RESUMES: RecentResume[] = [
+  { sentAt: getAt(22), attempt: 1, result: "acked", abortReason: null, bgId: null, item: { id: 108, title: ANSWERED_DECISION.title }, session: { profileLabel: ".claude-work", cwdTail: "Users/owner" } },
+  { sentAt: getAt(75), attempt: 1, result: "acked", abortReason: null, bgId: null, item: { id: 204, title: RECEIVED_ORDERS[3]!.title }, session: { profileLabel: ".claude-work", cwdTail: "Users/owner" } },
+];
+
+/** Mockup v5's rest state: 5 decisions, 2 reports, 2 in delivery; 4 live sessions and the ended `portfolio`. */
+export function getRestFixture(): QueueFixture {
+  return {
+    items: [...REPORTS, ...DECISIONS, ANSWERED_DECISION, ...IN_DELIVERY_ORDER],
+    sessions: SESSION_ROWS,
+    orders: [...RECEIVED_ORDERS, ...IN_DELIVERY_ORDER],
+    resumes: RESUMES,
+    relays: { items: [], refusals: [] },
+  };
+}
+
+export const DONE_IDS = { answered: 801, read: 802, withdrawn: 803, replied: 804, outside: 805 } as const;
+
+const DONE_ITEMS = [
+  buildItem(DONE_IDS.answered, "gersona", {
+    ...DECISIONS[0], id: DONE_IDS.answered, status: "delivered", answer: { code: "R1", text: null }, answeredAt: getAt(3), closedAt: getAt(3), deliveredAt: getAt(2),
+    answerRecord: { route: "answer", signal: "fetch_metadata" }, attachments: IMAGES.slice(1, 3).map((image) => image.view),
+  }),
+  buildItem(DONE_IDS.read, "atrium", { kind: "report", status: "seen", askedAt: getAt(75), closedAt: getAt(60), title: "배포 65 완료: 모니터 재시작, 화면 점검 통과", body: "- 모니터를 다시 띄우고 화면 다섯 개를 점검했습니다." }),
+  buildItem(DONE_IDS.withdrawn, "yoaida", { status: "withdrawn", askedAt: getAt(27 * 60), closedAt: getAt(26 * 60), title: "마이그레이션 순서: 스키마 먼저 vs 데이터 먼저", options: [{ code: "R1", label: "스키마 먼저", pros: null, cons: null }] }),
+  buildItem(DONE_IDS.replied, "aidl", {
+    kind: "report", status: "delivered", askedAt: getAt(29 * 60), answeredAt: getAt(28 * 60), closedAt: getAt(28 * 60), deliveredAt: getAt(28 * 60),
+    answer: { code: null, text: "API 후속 수정은 다음 배포에 넣어 주세요." }, answerRecord: { route: "reply", signal: "fetch_metadata" },
+    title: "파트너 연동 안내 초안 작성 완료", body: "- 안내 초안을 API 명세 위쪽에 두었습니다.",
+  }),
+  buildItem(DONE_IDS.outside, "portfolio", { status: "answered", askedAt: getAt(4 * 24 * 60 + 30), answeredAt: getAt(4 * 24 * 60), closedAt: getAt(4 * 24 * 60), isAnsweredOutside: true, title: "포트폴리오 배포 창: 오늘 밤 vs 내일 아침" }),
+];
+
+/** The rest state plus done items over three days: an answer, a read report, a withdraw, a reply and an answer outside the page. */
+export function getDoneFixture(): QueueFixture {
+  return { ...getRestFixture(), done: DONE_ITEMS };
+}
+
+/** Nothing open, the done items alone → the Done bands start at the list's top. */
+export function getDoneOnlyFixture(): QueueFixture {
+  return { ...getEmptyFixture(), done: DONE_ITEMS };
+}
+
+/** The done fixture plus 35 read reports two days back → the done read's first page of 30 leaves 10 for Show more. */
+export function getManyDoneFixture(): QueueFixture {
+  const reads = Array.from({ length: 35 }, (_, index) => buildItem(900 + index, "atrium", {
+    kind: "report", status: "seen", askedAt: getAt(2 * 24 * 60 + index * 10 + 5), closedAt: getAt(2 * 24 * 60 + index * 10), title: `야간 점검 ${index + 1}회차 완료`, body: "- 점검을 마쳤습니다.",
+  }));
+  return { ...getRestFixture(), done: [...DONE_ITEMS, ...reads] };
+}
+
+/** The rest state plus the not-received order to `yoaida`, in the owner list and the history read alike. */
+export function getNotReceivedFixture(): QueueFixture {
+  const rest = getRestFixture();
+  return { ...rest, items: [...rest.items, ...NOT_RECEIVED_ORDER], orders: [...rest.orders, ...NOT_RECEIVED_ORDER] };
+}
+
+/** A state (the rest state by default) plus a report `yoaida` posts after the page first read it, its rail count raised with it. */
+export function getArrivalFixture(rest: QueueFixture = getRestFixture()): QueueFixture {
+  const report = buildItem(150, "yoaida", { kind: "report", askedAt: getAt(0), title: "야간 정리 작업 완료 — 끝난 작업 폴더 4개 정리", body: "- 끝난 작업 폴더 4개를 정리했습니다." });
+  const sessions = rest.sessions.map((row) => (row.id === SESSION_IDS.yoaida ? { ...row, count: { ...row.count, awaiting: row.count.awaiting + 1 } } : row));
+  return { ...rest, items: [...rest.items, report], sessions };
+}
+
+/** Nothing open: the In delivery band alone, its first row an order, and an order between its two answered decisions → stepping passes over orders. */
+export function getOrderFirstFixture(): QueueFixture {
+  const rest = getRestFixture();
+  const second = { ...ANSWERED_DECISION, id: 160, askedAt: getAt(18), title: "배포 전 업데이터 점검 순서" };
+  return { ...rest, items: [...IN_DELIVERY_ORDER, ANSWERED_DECISION, ...NOT_RECEIVED_ORDER, second], orders: [...rest.orders, ...NOT_RECEIVED_ORDER] };
+}
+
+/** The order the owner types in states 06–08, to `gersona` and `yoaida` (mockup v5 §18.3). */
+export const FIXTURE_ORDER_TEXT = "오늘 결정한 내용은 내일 오전 보고에 한 줄씩 정리해 주세요.";
+
+/** The rest state plus that order sent with the three images, `gersona` having received it and `yoaida` not yet. */
+export function getOneReceivedFixture(): QueueFixture {
+  const rest = getRestFixture();
+  const sent = buildOrderCopies(220, {
+    sendId: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b06", minutesAgo: 1, text: FIXTURE_ORDER_TEXT, images: IMAGES.map((image) => image.view),
+    to: [["gersona", { deliveredAt: getAt(0) }], ["yoaida", { status: "answered", deliveredAt: null }]],
+  });
+  return { ...rest, items: [...rest.items, sent[1]!], orders: [...rest.orders, ...sent] };
+}
+
+/** The rest state with the aidl answer gone unacknowledged: `Not received` on the sheet with `Resend answer`. */
+export function getAnswerNotReceivedFixture(): QueueFixture {
+  const rest = getRestFixture();
+  const unacked = { ...ANSWERED_DECISION, status: "unacked" as const, deviation: "unacked" as const, canResend: true };
+  return { ...rest, items: rest.items.map((item) => (item.id === ANSWERED_DECISION.id ? unacked : item)) };
+}
+
+/** No item left and no order sent: the empty queue and the empty thread. */
+export function getEmptyFixture(): QueueFixture {
+  const rest = getRestFixture();
+  return { ...rest, items: [], orders: [], sessions: rest.sessions.map((row) => ({ ...row, count: { awaiting: 0, inDelivery: 0 } })) };
+}
+
+/** The rest state with `atrium` no longer answering: its rail row `Not reachable`. */
+export function getUnreachableFixture(): QueueFixture {
+  return getPatchedRestFixture(SESSION_IDS.atrium, { state: "stale", lastActivityAt: getAt(14) });
+}
+
+/** The rest state after `yoaida` was replaced: its row listed, no longer taking a message (a tick on it is dropped). */
+export function getStoppedFixture(): QueueFixture {
+  return getPatchedRestFixture(SESSION_IDS.yoaida, { state: "exited", exitReason: "replaced", isSelectable: false });
+}
+
+// the rest state with one session row patched by id
+function getPatchedRestFixture(id: string, patch: Partial<QueueFixture["sessions"][number]>): QueueFixture {
+  const rest = getRestFixture();
+  return { ...rest, sessions: rest.sessions.map((row) => (row.id === id ? { ...row, ...patch } : row)) };
+}
+
+/**
+ * The copies one taken send writes, as the send route stores them: one per recipient, awaiting receipt.
+ * @param firstId - the first copy's item id; the rest follow it
+ */
+export function buildSentCopies(firstId: number, send: { sendId: string; sessionIds: string[]; text: string; images: ImageView[] }): OwnerItemView[] {
+  const keys = Object.keys(SESSION_IDS) as SessionKey[];
+  const to = send.sessionIds.flatMap((id): Array<[SessionKey, Partial<OwnerItemView>]> => {
+    const key = keys.find((candidate) => SESSION_IDS[candidate] === id);
+    return key === undefined ? [] : [[key, { status: "answered", deliveredAt: null }]];
+  });
+  return buildOrderCopies(firstId, { sendId: send.sendId, minutesAgo: 0, text: send.text, to, images: send.images });
+}
+
+export const FIXTURE_SESSION_IDS = SESSION_IDS;
+
+// spec 44063 §14.4's edge cases, beside the rest state: the page's limits and the facts that only show next to a neighbour
+export const EDGE_SESSION_IDS = {
+  twin: "b7c6d5e4-0f1a-4b2c-8d3e-1a2b3c4d5e66",
+  longName: "c8d7e6f5-1a2b-4c3d-9e4f-2b3c4d5e6f77",
+  busy: "d9e8f7a6-2b3c-4d4e-8f5a-3c4d5e6f7a88",
+} as const;
+
+/** The longest name a session can register (`schemas.ts` → SESSION_NAME_MAX). */
+export const EDGE_LONG_SESSION_NAME = "nightly-dependency-audit-and-release-notes-for-the-public-monitor-installer-and-its-update-script-ci";
+if (EDGE_LONG_SESSION_NAME.length !== SESSION_NAME_MAX) throw new Error(`the long-name fixture is ${EDGE_LONG_SESSION_NAME.length} characters, not ${SESSION_NAME_MAX}`);
+
+/** The longest title an item can carry (`schemas.ts` → ITEM_TITLE_MAX). */
+export const EDGE_LONG_TITLE = "[정리 작업] 세 저장소의 끝난 작업 폴더 정리, 의존성 감사, 릴리스 노트 초안, 설치 스크립트 점검을 한 번에 진행한 결과 — 웹·관리 화면·API 모두 테스트 통과, dev DB 반영과 병합은 승인 대기, 디스크 여유 22GB 확보, 남은 일은 브라우저 확인과 README 안내 이동, 그리고 다음 배포 전 업데이터 점검과 모니터 화면 나머지 정리입니다";
+if (EDGE_LONG_TITLE.length !== ITEM_TITLE_MAX) throw new Error(`the long-title fixture is ${EDGE_LONG_TITLE.length} characters, not ${ITEM_TITLE_MAX}`);
+
+/** Item ids and send ids of the edge cases, for the tests that select them. */
+export const EDGE_IDS = {
+  nineOptions: 301, approval: 302, longTitle: 303, linkedReport: 304, declaredReport: 305, threeReceipts: 310, eightImages: 320, sevenRecipients: 330, longOrder: 340,
+  threeReceiptsSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b10", eightImagesSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b11",
+  sevenRecipientsSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b12", longOrderSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b13",
+} as const;
+
+// eight distinct ids over the three asset files → an order at the per-order image limit
+const EDGE_IMAGES: FixtureImage[] = Array.from({ length: 8 }, (_, index) => {
+  const image = IMAGES[index % IMAGES.length]!;
+  return { ...image, view: { ...image.view, id: `1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5${index}`, name: `queue-edge-0${index + 1}.${image.view.type}` } };
+});
+
+/** The edge orders' image bytes by id, beside FIXTURE_IMAGES for the harness's serve route. */
+export const EDGE_FIXTURE_IMAGES: ReadonlyMap<string, FixtureImage> = new Map(EDGE_IMAGES.map((image) => [image.view.id, image]));
+
+function buildEdgeSession(id: string, name: string, awaiting: number): { view: OwnerSessionView; row: OwnerSessionRow } {
+  const view: OwnerSessionView = { ...buildSessionView("atrium"), id, sessionIdPrefix: getSessionIdPrefix(id), name };
+  const row: OwnerSessionRow = { ...buildSessionRow("atrium", { awaiting, inDelivery: 0 }, 12), id, sessionIdPrefix: id.slice(0, 8), name };
+  return { view, row };
+}
+
+const EDGE_SESSIONS = {
+  twin: buildEdgeSession(EDGE_SESSION_IDS.twin, "atrium", 1),
+  longName: buildEdgeSession(EDGE_SESSION_IDS.longName, EDGE_LONG_SESSION_NAME, 0),
+  busy: buildEdgeSession(EDGE_SESSION_IDS.busy, "batch", 128),
+};
+
+const NINE_OPTION_LABELS = ["지금 꼴 유지", "짧은 안내문", "단계별 설명", "모델별 평가 뒤 결정", "기획에 먼저 확인", "회원 설정으로", "화면별로 다르게", "다음 배포로 미룸", "검토에 올림"];
+
+const EDGE_ITEMS = [
+  buildItem(EDGE_IDS.nineOptions, "gersona", {
+    title: "[도움말 프롬프트] 답의 꼴을 아홉 안 가운데 하나로 정하기",
+    body: "- 기획 초안과 지금 백엔드 글이 다르고, 검토에서 아홉 가지 안이 나왔습니다.\n- 계획 문서: 모니터 44060",
+    linkedDocIds: [44060], recommendedCode: "R4",
+    options: NINE_OPTION_LABELS.map((label, index) => ({ code: `R${index + 1}`, label, pros: "지금 기능과 충돌이 없다", cons: "평가가 필요하다" })),
+  }),
+  buildItem(EDGE_IDS.approval, "aidl", {
+    title: "[배포] dev DB 반영(DB-3) 승인", isApprovalClass: true, recommendedCode: "R1",
+    body: "- DB 기반 테스트 두 묶음이 통과했습니다.\n- 반영 전 덤프를 보관합니다.",
+    options: [
+      { code: "R1", label: "지금 반영", pros: "다음 작업이 바로 이어진다", cons: "반영 중 dev DB 쓰기가 잠시 멈춘다" },
+      { code: "R2", label: "내일 오전 반영", pros: "작업 시간을 피한다", cons: "후속 작업이 하루 밀린다" },
+    ],
+  }),
+  buildItem(EDGE_IDS.longTitle, "yoaida", { kind: "report", title: EDGE_LONG_TITLE, body: "- 세 저장소 모두 테스트 통과\n- dev DB 반영과 병합은 승인 대기" }),
+  buildItem(EDGE_IDS.linkedReport, "atrium", {
+    kind: "report", title: "배포 #61 계획 검토 완료", linkedDocIds: [44061],
+    body: "- 계획 모니터 44061을 검토했고 필수 수정 2건을 반영했습니다.\n- 다음 단계: 구현 위임",
+  }),
+  buildItem(EDGE_IDS.declaredReport, "atrium", {
+    kind: "report", session: EDGE_SESSIONS.twin.view, title: "업데이터 점검 완료", linkedDocIds: [44071],
+    body: "- 업데이터의 의존성 단계가 빠진 도구를 다시 설치하는지 점검했습니다.\n- 남은 일 없음",
+  }),
+];
+
+// the delivered copy leaves the owner list (TERMINAL) and stays in the history read, as on the server
+const THREE_RECEIPT_ORDER = buildOrderCopies(EDGE_IDS.threeReceipts, {
+  sendId: EDGE_IDS.threeReceiptsSend, minutesAgo: 30, text: "오늘 바뀐 점을 보고 한 건으로 올려 주세요.",
+  to: [["gersona", { deliveredAt: getAt(28) }], ["aidl", { status: "answered", deliveredAt: null }], ["yoaida", { status: "unacked", deviation: "unacked", canResend: true }]],
+});
+
+const EIGHT_IMAGE_ORDER = buildOrderCopies(EDGE_IDS.eightImages, {
+  sendId: EDGE_IDS.eightImagesSend, minutesAgo: 20, text: "표시한 여덟 화면의 글자 크기를 한 단계씩 줄여 주세요.", images: EDGE_IMAGES.map((image) => image.view),
+  to: [["atrium", { status: "answered", deliveredAt: null }]],
+});
+
+// spec §9.3 → Five recipients or more: one roll-up line, `7 sessions · 5 received · 1 not yet` + `⚠ 1 not received`
+const SEVEN_RECIPIENT_ORDER = buildOrderCopies(EDGE_IDS.sevenRecipients, {
+  sendId: EDGE_IDS.sevenRecipientsSend, minutesAgo: 16, text: "다음 배포 전에 각 저장소의 변경 기록을 한 줄씩 정리해 주세요.",
+  to: [
+    ["gersona", { deliveredAt: getAt(15) }], ["atrium", { deliveredAt: getAt(15) }], ["aidl", { deliveredAt: getAt(14) }],
+    ["portfolio", { deliveredAt: getAt(13) }], ["atrium", { session: EDGE_SESSIONS.twin.view, deliveredAt: getAt(14) }],
+    ["yoaida", { status: "answered", deliveredAt: null }],
+    ["atrium", { session: EDGE_SESSIONS.longName.view, status: "unacked", deviation: "unacked", canResend: true }],
+  ],
+});
+
+// spec §9.3: past ORDERS_Q.CLAMP_LINES the bubble clamps, `Show all 31 lines` under it
+const LONG_ORDER_TEXT = Array.from({ length: 31 }, (_, index) => `${index + 1}. 화면 ${index + 1}의 글자 크기와 줄 간격을 한 단계씩 줄이고 결과를 캡처로 남겨 주세요.`).join("\n");
+const LONG_ORDER = buildOrderCopies(EDGE_IDS.longOrder, {
+  sendId: EDGE_IDS.longOrderSend, minutesAgo: 12, text: LONG_ORDER_TEXT,
+  to: [["gersona", { deliveredAt: getAt(11) }]],
+});
+
+/** The rest state plus every edge case of spec 44063 §14.4 the rest state leaves out, its new sessions at the rail's end. */
+export function getEdgeFixture(): QueueFixture {
+  const rest = getRestFixture();
+  const orders = [...THREE_RECEIPT_ORDER, ...EIGHT_IMAGE_ORDER, ...SEVEN_RECIPIENT_ORDER, ...LONG_ORDER];
+  return {
+    ...rest,
+    items: [...rest.items, ...EDGE_ITEMS, ...orders.filter((copy) => copy.status !== "delivered")],
+    sessions: [...rest.sessions, ...Object.values(EDGE_SESSIONS).map((session) => session.row)],
+    orders: [...rest.orders, ...orders],
+  };
+}
+
+/** The edge state plus three older open reports → the Reports band's newest row lies below the list's visible part from 1440 × 900 down. */
+export function getOffViewFixture(): QueueFixture {
+  const edge = getEdgeFixture();
+  const titles = ["로그 보관 기간 점검 완료", "의존성 업데이트 점검 완료", "백업 복구 연습 완료"];
+  const reports = titles.map((title, index) => buildItem(151 + index, "aidl", { kind: "report", askedAt: getAt(40 + index), title, body: "- 남은 일 없음" }));
+  return { ...edge, items: [...edge.items, ...reports] };
+}
+
+/** The edge state with its first open item from the 100-character name and its second from a session that registered no name. */
+export function getNameColumnFixture(): QueueFixture {
+  const edge = getEdgeFixture();
+  const [first, second] = edge.items.filter((item) => item.status === "open");
+  if (!first || !second) throw new Error("the edge fixture lost its two open items");
+  const nameless: OwnerSessionView = { ...buildEdgeSession("d4e5f6a7-0000-4000-8000-000000000003", "atrium-hooks", 0).view, isNameRegistered: false };
+  const sessions = new Map([[first.id, EDGE_SESSIONS.longName.view], [second.id, nameless]]);
+  return { ...edge, items: edge.items.map((item) => ({ ...item, session: sessions.get(item.id) ?? item.session })) };
+}
+
+/** A session that registered "Gersona " beside the rest state's gersona → two names one normalization apart on the rail. */
+export const CONFUSABLE_SESSION_ID = "5e55a000-1b2c-4d3e-8f4a-5b6c7d8e9f01";
+
+export function getConfusableNameFixture(): QueueFixture {
+  const rest = getRestFixture();
+  return { ...rest, sessions: [...rest.sessions, buildEdgeSession(CONFUSABLE_SESSION_ID, "Gersona ", 0).row] };
+}
+
+// spec 44063 §14.4, Not listening stream only: live and not-reachable sessions with no wait or listener polling (isWaiting false)
+export const NOT_LISTENING_SESSION_IDS = {
+  sixmon: "e1f2a3b4-3c4d-4e5f-9a6b-4d5e6f7a8b91",
+  hermes: "f2a3b4c5-4d5e-4f6a-8b7c-5e6f7a8b9c02",
+  nightly: "a3b4c5d6-5e6f-4a7b-9c8d-6f7a8b9c0d13",
+  relay: "b4c5d6e7-6f7a-4b8c-8d9e-7a8b9c0d1e24",
+} as const;
+
+/** Item ids and send ids of the not-listening cases, for the tests that select them. */
+export const NOT_LISTENING_IDS = {
+  answeredDecision: 401, mixedOrder: 410, deafOrder: 420, resumeOrder: 430, unreachableOrder: 440, twoBadgeOrder: 450, rollUpOrder: 460,
+  mixedSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b20", deafSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b21",
+  resumeSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b22", unreachableSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b23",
+  twoBadgeSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b24", rollUpSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b25",
+  wideRollUpOrder: 470, wideRollUpSend: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b26",
+} as const;
+
+function buildNotListeningSession(id: string, name: string, state: "live" | "stale", inDelivery: number): { view: OwnerSessionView; row: OwnerSessionRow } {
+  const view: OwnerSessionView = { ...buildSessionView("atrium"), id, sessionIdPrefix: getSessionIdPrefix(id), name, state, isWaiting: false };
+  const row: OwnerSessionRow = { ...buildSessionRow("atrium", { awaiting: 0, inDelivery }, 7), id, sessionIdPrefix: id.slice(0, 8), name, state, isWaiting: false };
+  return { view, row };
+}
+
+const NOT_LISTENING_SESSIONS = {
+  sixmon: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.sixmon, "sixmon", "live", 3),
+  hermes: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.hermes, "hermes", "live", 1),
+  nightly: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.nightly, "nightly", "live", 0),
+  relay: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.relay, "relay", "stale", 1),
+};
+
+// an answered decision whose live session does not listen: the sheet's date line and its line under `Your answer`
+const NOT_LISTENING_DECISION = {
+  ...ANSWERED_DECISION, id: NOT_LISTENING_IDS.answeredDecision, session: NOT_LISTENING_SESSIONS.sixmon.view, askedAt: getAt(27), answeredAt: getAt(8),
+  title: "[계측] 대기 세션 알림 주기 정하기",
+};
+
+const NOT_LISTENING_ORDERS = [
+  // one order, a listening and a not-listening recipient
+  ...buildOrderCopies(NOT_LISTENING_IDS.mixedOrder, {
+    sendId: NOT_LISTENING_IDS.mixedSend, minutesAgo: 6, text: "오늘 바뀐 설정을 각 세션 보고에 한 줄씩 붙여 주세요.",
+    to: [["gersona", { status: "answered", deliveredAt: null }], ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }]],
+  }),
+  // two copies, both waiting for sessions that do not listen → `0 of 2 received` · `2 not listening`
+  ...buildOrderCopies(NOT_LISTENING_IDS.deafOrder, {
+    sendId: NOT_LISTENING_IDS.deafSend, minutesAgo: 5, text: "식스몬과 헤르메스 모두 오늘 받은 메시지를 다시 확인해 주세요.",
+    to: [
+      ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.hermes.view, status: "answered", deliveredAt: null }],
+    ],
+  }),
+  // an ended session's copy its automatic resume is still to start → `Not yet`
+  ...buildOrderCopies(NOT_LISTENING_IDS.resumeOrder, {
+    sendId: NOT_LISTENING_IDS.resumeSend, minutesAgo: 4, text: "포트폴리오 배포 기록을 오늘 날짜로 정리해 주세요.",
+    to: [["portfolio", { status: "resume_pending", deviation: "resume_pending", deliveredAt: null }]],
+  }),
+  // a not-reachable session that does not listen
+  ...buildOrderCopies(NOT_LISTENING_IDS.unreachableOrder, {
+    sendId: NOT_LISTENING_IDS.unreachableSend, minutesAgo: 2, text: "중계 세션은 다시 연결되면 남은 일을 보고해 주세요.",
+    to: [["atrium", { session: NOT_LISTENING_SESSIONS.relay.view, status: "answered", deliveredAt: null }]],
+  }),
+];
+
+// listening sessions that only the twelve-recipient order reaches
+const WIDE_ROLL_UP_NAMES = ["wiki", "docs", "billing", "search", "mobile"];
+
+function buildWideRollUpSession(name: string, index: number): OwnerSessionView {
+  const id = `c5d6e7f8-7a8b-4c9d-8e0f-1a2b3c4d5e${index.toString(16).padStart(2, "0")}`;
+  return { ...buildSessionView("atrium"), id, sessionIdPrefix: getSessionIdPrefix(id), name };
+}
+
+const NOT_LISTENING_EDGE_ORDERS = [
+  // one copy not listening beside one not received → the list row's two badges
+  ...buildOrderCopies(NOT_LISTENING_IDS.twoBadgeOrder, {
+    sendId: NOT_LISTENING_IDS.twoBadgeSend, minutesAgo: 3, text: "두 세션 모두 어제 남긴 실패 로그를 다시 올려 주세요.",
+    to: [
+      ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
+      ["yoaida", { status: "unacked", deviation: "unacked", canResend: true, deliveredAt: null }],
+    ],
+  }),
+  // seven recipients → the roll-up line, its not-listening recipient still listed under it
+  ...buildOrderCopies(NOT_LISTENING_IDS.rollUpOrder, {
+    sendId: NOT_LISTENING_IDS.rollUpSend, minutesAgo: 1, text: "오늘 배포 전 각 세션의 남은 작업을 한 줄로 보고해 주세요.",
+    to: [
+      ["gersona", { deliveredAt: getAt(1) }], ["atrium", { deliveredAt: getAt(1) }], ["aidl", { deliveredAt: getAt(1) }], ["yoaida", { deliveredAt: getAt(1) }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.hermes.view, deliveredAt: getAt(1) }],
+      ["portfolio", { status: "resume_pending", deviation: "resume_pending", deliveredAt: null }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
+    ],
+  }),
+  // twelve recipients → two-digit counts in all four segments, wider than the order's column at 1280
+  ...buildOrderCopies(NOT_LISTENING_IDS.wideRollUpOrder, {
+    sendId: NOT_LISTENING_IDS.wideRollUpSend, minutesAgo: 0.5, text: "이번 주 회고에 넣을 항목을 세션마다 세 줄로 보고해 주세요.",
+    to: [
+      ["gersona", { deliveredAt: getAt(0.5) }], ["atrium", { deliveredAt: getAt(0.5) }], ["aidl", { deliveredAt: getAt(0.5) }], ["yoaida", { deliveredAt: getAt(0.5) }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.hermes.view, deliveredAt: getAt(0.5) }],
+      ...WIDE_ROLL_UP_NAMES.map((name, index): [SessionKey, Partial<OwnerItemView>] => ["atrium", { session: buildWideRollUpSession(name, index), deliveredAt: getAt(0.5) }]),
+      ["portfolio", { status: "resume_pending", deviation: "resume_pending", deliveredAt: null }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
+    ],
+  }),
+];
+
+/** Every rail state of spec §9.1 on one page: the not-listening state, the hidden sessions and the approval decision in the list. */
+export function getRailFixture(): QueueFixture {
+  const base = getHiddenSessionsFixture(getNotListeningFixture());
+  return { ...base, items: [...base.items, ...EDGE_ITEMS.filter((item) => item.isApprovalClass)] };
+}
+
+/** The not-listening state plus a list row with both badges, an order to seven sessions and one to twelve. */
+export function getNotListeningEdgeFixture(): QueueFixture {
+  const base = getNotListeningFixture();
+  return { ...base, items: [...base.items, ...NOT_LISTENING_EDGE_ORDERS], orders: [...base.orders, ...NOT_LISTENING_EDGE_ORDERS] };
+}
+
+/** The not-listening state with no session listening — the page right after a deploy restarts the monitor. */
+export function getNoneListeningFixture(): QueueFixture {
+  const base = getNotListeningFixture();
+  const deafen = (item: OwnerItemView): OwnerItemView => ({ ...item, session: { ...item.session, isWaiting: false } });
+  return {
+    ...base,
+    items: base.items.map(deafen),
+    orders: base.orders.map(deafen),
+    sessions: base.sessions.map((row) => ({ ...row, isWaiting: false })),
+  };
+}
+
+/** The rest state plus §14.4's not-listening cases: three live sessions and a not-reachable one that do not listen, beside listening `gersona`. */
+export function getNotListeningFixture(): QueueFixture {
+  const rest = getRestFixture();
+  // the mixed order's listening copy and the ended session's resume copy are in delivery too
+  const added = new Set<string>([SESSION_IDS.gersona, SESSION_IDS.portfolio]);
+  const sessions = rest.sessions.map((row) => (added.has(row.id) ? { ...row, count: { ...row.count, inDelivery: row.count.inDelivery + 1 } } : row));
+  return {
+    ...rest,
+    items: [...rest.items, NOT_LISTENING_DECISION, ...NOT_LISTENING_ORDERS],
+    sessions: [...sessions, ...Object.values(NOT_LISTENING_SESSIONS).map((session) => session.row)],
+    orders: [...rest.orders, ...NOT_LISTENING_ORDERS],
+  };
+}
+
+/** What the relay thread read answers: its page (newest send first, each send's copies together) and its refusal records. */
+export interface RelayThreadFixture {
+  items: OwnerItemView[];
+  refusals: RelayRefusalView[];
+  /** the server's page cut its refusals at their bound (owner-views.ts → getRefusalPage) */
+  isRefusalListCut?: boolean;
+}
+
+interface RelaySend {
+  firstId: number;
+  sendId: string;
+  from: SessionKey;
+  minutesAgo: number;
+  text: string;
+  to: Array<[SessionKey, Partial<Pick<RelayFacts, "fetchedAt" | "lapsedAt">> & { deliveredAt?: string }]>;
+  facts?: Partial<Pick<RelayFacts, "hop" | "parent" | "redaction">>;
+  linkedDocIds?: number[];
+}
+
+function buildRelaySender(key: SessionKey): RelaySender {
+  const { sessionIdPrefix, profileLabel, cwdTail } = buildSessionView(key);
+  return { sessionIdPrefix, profileLabel, selfDeclaredName: key, cwdTail };
+}
+
+// one copy per recipient under one send id, as relay.ts stores them: answered at send time, the title the text's first line
+function buildRelayCopies(send: RelaySend): OwnerItemView[] {
+  const sender = buildRelaySender(send.from);
+  return send.to.map(([key, copy], index) => buildItem(send.firstId + index, key, {
+    kind: "relay", title: send.text.split("\n")[0], body: send.text, isFreeTextAllowed: false,
+    status: copy.lapsedAt ? "withdrawn" : copy.deliveredAt ? "delivered" : "answered",
+    askedAt: getAt(send.minutesAgo), answeredAt: getAt(send.minutesAgo), deliveredAt: copy.deliveredAt ?? null, sendId: send.sendId,
+    linkedDocIds: send.linkedDocIds ?? [],
+    relay: { hop: 0, parent: null, sender, fetchedAt: copy.fetchedAt ?? copy.deliveredAt ?? null, redaction: null, lapsedAt: copy.lapsedAt ?? null, ...send.facts },
+  }));
+}
+
+const RELAY_SEND_IDS = {
+  received: "3a1b2c3d-0001-4e5f-8a9b-0c1d2e3f4a01",
+  forwarded: "3a1b2c3d-0002-4e5f-8a9b-0c1d2e3f4a02",
+  redacted: "3a1b2c3d-0003-4e5f-8a9b-0c1d2e3f4a03",
+} as const;
+
+const RECEIVED_RELAY = buildRelayCopies({
+  firstId: 398, sendId: RELAY_SEND_IDS.received, from: "atrium", minutesAgo: 27 * 60,
+  text: "배포 65 의 마이그레이션 순서를 공유합니다.\n1) 큐 스키마 2) 릴레이 색인 3) 감사 기록 순서로 반영합니다.",
+  to: [["gersona", { deliveredAt: getAt(27 * 60 - 1) }]],
+});
+
+/** The relay passed on at hop 1: one copy received, one lapsed; its parent the received relay above. */
+export const FORWARDED_RELAY = buildRelayCopies({
+  firstId: 412, sendId: RELAY_SEND_IDS.forwarded, from: "aidl", minutesAgo: 240,
+  text: "파트너 연동 안내의 응답 예시에서 필드 이름이 바뀌었습니다. 요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.\n<b>굵게</b> 표시는 글자 그대로 읽힙니다.\n- 근거: clauded-docs/44099 의 **응답 예시** 절",
+  to: [["yoaida", { deliveredAt: getAt(236) }], ["portfolio", { lapsedAt: getAt(60) }]],
+  facts: { hop: 1, parent: { id: 398, sender: buildRelaySender("atrium"), sentAt: getAt(27 * 60) } },
+  linkedDocIds: [44099],
+});
+
+const REDACTED_RELAY = buildRelayCopies({
+  firstId: 415, sendId: RELAY_SEND_IDS.redacted, from: "gersona", minutesAgo: 120,
+  text: "[relay text redacted by the owner]",
+  to: [["atrium", {}]],
+  facts: { redaction: { at: getAt(30), length: 1284 } },
+});
+
+/** A refusal between the sends: gersona over its hourly limit to yoaida. */
+export const PAIR_CAP_REFUSAL: RelayRefusalView = {
+  at: getAt(180), reason: "pair_cap", senderIdPrefix: SESSION_IDS.gersona.slice(0, 8), recipientIdPrefixes: [SESSION_IDS.yoaida.slice(0, 8)], unresolvedCount: null,
+};
+
+/** The relay thread: a received relay, the hop-1 relay under it with a lapsed copy, a refused one, a redacted one. */
+export function getRelayThreadFixture(): RelayThreadFixture {
+  return {
+    items: [...REDACTED_RELAY, ...FORWARDED_RELAY, ...RECEIVED_RELAY],
+    refusals: [PAIR_CAP_REFUSAL],
+  };
+}
+
+export const RELAY_ROW_IDS = { one: 421, several: 424 } as const;
+
+/** The rest state plus two relays on their way under In delivery: aidl to yoaida, and gersona to three sessions with one copy received. */
+export function getRelayRowFixture(): QueueFixture {
+  const one = buildRelayCopies({
+    firstId: RELAY_ROW_IDS.one, sendId: "3a1b2c3d-0004-4e5f-8a9b-0c1d2e3f4a04", from: "aidl", minutesAgo: 2,
+    text: "파트너 연동 안내의 응답 예시에서 필드 이름이 바뀌었습니다.\n요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.",
+    to: [["yoaida", {}]],
+  });
+  const several = buildRelayCopies({
+    firstId: RELAY_ROW_IDS.several, sendId: "3a1b2c3d-0005-4e5f-8a9b-0c1d2e3f4a05", from: "gersona", minutesAgo: 9,
+    text: "배포 65 점검 결과를 공유합니다.\n모니터 화면 다섯 개를 점검했고 모두 통과했습니다.",
+    to: [["yoaida", { deliveredAt: getAt(5) }], ["atrium", {}], ["aidl", {}]],
+    facts: { hop: 1, parent: { id: 398, sender: buildRelaySender("atrium"), sentAt: getAt(12) } },
+  });
+  const rest = getRestFixture();
+  return { ...rest, items: [...rest.items, ...one, ...several] };
+}
+
+const LONG_FENCE = ["```ts", ...Array.from({ length: 30 }, (_, index) => `const step${index + 1} = await runStep("migrate-${index + 1}", { dryRun: false });`), "```"];
+
+const PROSE_REPORT_BODY = [
+  "# 주문 서비스 단일 출처 — 최종 정리", "## 반영한 것",
+  "- API: 필수 수정 8건 반영 (끝 커밋 `684bac3b`)", "  - 테스트 3280건 통과", "    - 계약 테스트 412건 포함", "- 웹: 화면 3개 정리",
+  "1. dev DB 반영", "2. 병합",
+  "### 결과", "| 저장소 | 테스트 | 빌드 |", "|---|--:|:--:|", "| api | 3280 | 통과 |", "| web | 812 | 통과 |", "| admin | 240 | 통과 |",
+  "> 병합과 배포는 승인 뒤에 진행합니다.", "---", "## 마이그레이션 순서", ...LONG_FENCE,
+].join("\n");
+
+const PROSE_DECISION_BODY = ["- 아래 순서 그대로 반영할지 정해 주세요.", ...LONG_FENCE, DOC_LINE].join("\n");
+
+const PROSE_RELAY_BODY = [
+  "파트너 연동 안내의 **응답 예시**에서 필드 이름이 바뀌었습니다.", "## 요청", "- 요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.", "  - 응답 예시 표도 함께",
+  "| 필드 | 이전 | 이후 |", "|---|---|---|", "| 주문 번호 | orderNo | orderId |", "> 지난 배포 기록에서 옮긴 줄", "---",
+  "```ts", "const field = \"orderId\";", "```", "[안내 문서](clauded-docs/44099) ![화면](https://example.com/a.png)",
+].join("\n");
+
+/** Spec §5's text surfaces: report 101 in Markdown with a 30-line fence, decision 103 an approval with one, relay 421 holding every block form. */
+export function getProseFixture(): QueueFixture {
+  const relays = getRelayRowFixture();
+  const bodies = new Map<number, Partial<OwnerItemView>>([
+    [101, { body: PROSE_REPORT_BODY }],
+    [103, { body: PROSE_DECISION_BODY, isApprovalClass: true }],
+    [RELAY_ROW_IDS.one, { body: PROSE_RELAY_BODY, title: PROSE_RELAY_BODY.split("\n")[0], linkedDocIds: [44099] }],
+  ]);
+  return { ...relays, items: relays.items.map((item) => ({ ...item, ...bodies.get(item.id) })) };
+}
+
+/**
+ * The one list with every band kind: Decisions with one Approval (tag and fact), the tagless Reports, In delivery with relays beside
+ * the answered decision's two images (fact alone), the Done bands (tag and fact).
+ */
+export function getOneListFixture(): QueueFixture {
+  const relays = getRelayRowFixture();
+  return { ...relays, items: relays.items.map((item) => (item.id === 103 ? { ...item, isApprovalClass: true } : item)), done: DONE_ITEMS };
+}
+
+/** `rest` plus a session with no work yet and an agent's probe, both hidden: the session read leaves them out unless asked. */
+export function getHiddenSessionsFixture(rest: QueueFixture = getRestFixture()): QueueFixture {
+  const hidden = [["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e91", "spare"], ["c1d2e3f4-0a1b-4c2d-8e3f-4a5b6c7d8e92", "deploy62-probe"]].map(([id, name]) => ({
+    ...buildNotListeningSession(id!, name!, "live", 0).row, isWaiting: true, isHidden: true,
+  }));
+  return { ...rest, sessions: [...rest.sessions, ...hidden] };
+}
+
+/**
+ * The done fixture with the relay thread fixture's sends in the relay read: under Done Today a decision, a report, a refusal and a relay
+ * with one copy lapsed; under Done Yesterday a received relay beside a decision and a report; the redacted relay on its way under In delivery.
+ */
+export function getDoneRelaysFixture(): QueueFixture {
+  return { ...getDoneFixture(), relays: getRelayThreadFixture() };
+}
+
+/**
+ * Every relay state in one list: the two relays on their way under In delivery beside the redacted one from the relay read,
+ * the relay thread's Done sends and refusal among the many done items, so Show more stands at the list's end.
+ * @param isRefusalListCut - the relay read answers that its refusals were cut → the cut line at the list's end
+ */
+export function getRelayListFixture(isRefusalListCut = false): QueueFixture {
+  return { ...getRelayRowFixture(), done: getManyDoneFixture().done, relays: { ...getRelayThreadFixture(), isRefusalListCut } };
+}
+
+/** The rest state with the relay thread fixture's sends and refusal in the relay read. */
+export function getRelayRecordFixture(): QueueFixture {
+  return { ...getRestFixture(), relays: getRelayThreadFixture() };
+}
+
+export const SCAN_IDS = { one: 801, long: 802, expired: 803, gone: 804, approved: 805, unread: 806, declined: 807, withdrawn: 808, ended: 809 } as const;
+
+/** The code points the owner's screen must show as tiles: listed invisible and look-alike points beside C0/C1, zero-width and bidi samples. */
+export const SCAN_MARK_POINTS = [0x09, 0x85, 0xad, 0x34f, 0x61c, 0x115f, 0x17b4, 0x180e, 0x200b, 0x202e, 0x2066, 0x2028, 0x2029, 0xa0, 0xfeff, 0xfff9] as const;
+
+const SCAN_PATH = "/Users/owner/Desktop/git/glass-atrium/monitor/src/server/queue/example-config.ts";
+const SCAN_AGENT = "glass-atrium-dev-front";
+
+/** A request the store no longer holds: the state alone. */
+export const SCAN_GONE_FACTS: ScanApprovalFacts = { state: "gone", lineCount: null, expiresAt: null, path: null, rule: null, agentType: null, requestId: null };
+
+/** A request the store holds, pending or approved, as the owner list carries it. */
+function getScanHeldFacts(id: number, state: "pending" | "approved", lineCount: number, expiresAt: string): ScanApprovalFacts {
+  return { state, lineCount, expiresAt, path: SCAN_PATH, rule: "SEC-013", agentType: SCAN_AGENT, requestId: `5ca1ab1e-0000-4000-8000-${String(id).padStart(12, "0")}` };
+}
+
+/** The server's secret-approval item text (items.ts → SECRET_APPROVAL_ITEM) on a fixture row. */
+function buildScanItem(id: number, fields: Partial<OwnerItemView>): OwnerItemView {
+  return buildItem(id, "gersona", {
+    title: "Secret-scan refusal: approve one write?",
+    body: "Approve this write once (R1) lets the write this request names pass the secret-scan hook once: the same lines, file, rule and session, within 10 minutes of the answer. Decline (R2) when a line holds a real password or key: the session then writes an environment-variable reference instead.",
+    options: [
+      { code: "R1", label: "Approve this write once", pros: "The refused write lands as written.", cons: "A real secret in a line would be written to the file." },
+      { code: "R2", label: "Decline", pros: "Nothing is written and the request is dropped.", cons: "The session rewrites the line, e.g. as an environment-variable reference." },
+    ],
+    recommendedCode: "R2", isFreeTextAllowed: false, isApprovalClass: true, ...fields,
+  });
+}
+
+// harmless parts joined at run time → assignments the scanner never refuses
+function getScanLine(value: string): string {
+  return ["greeting = ", String.fromCharCode(34), value, String.fromCharCode(34), ";"].join("");
+}
+
+function buildScanRead(lines: string[]): ScanApprovalLines {
+  return { path: SCAN_PATH, rule: "SEC-013", agentType: SCAN_AGENT, lines: lines.map((line) => ({ hash: getLineHash(line), ...getLineDisplay(line) })) };
+}
+
+/**
+ * `rest` plus a secret approval in each state: one waiting line; three waiting lines, one of them about 4,000 characters holding every marked
+ * code point and a trailing space; a waiting request past its expiry; a request gone with a restart; an approval inside its window;
+ * a waiting request the owner read refuses. Done: a declined request, a withdrawn one, an approval past its window.
+ */
+export function getScanApprovalFixture(rest: QueueFixture = getRestFixture()): QueueFixture {
+  const marked = SCAN_MARK_POINTS.map((point) => `x${String.fromCodePoint(point)}`).join("");
+  const longLine = `${getScanLine(`${"hello world ".repeat(330)}${marked}`)} `;
+  const waits = new Date(FIXTURE_NOW + 23 * 60 * MIN_MS).toISOString();
+  const items = [
+    buildScanItem(SCAN_IDS.one, { askedAt: getAt(2), scanApproval: getScanHeldFacts(SCAN_IDS.one, "pending", 1, waits) }),
+    buildScanItem(SCAN_IDS.long, { askedAt: getAt(3), scanApproval: getScanHeldFacts(SCAN_IDS.long, "pending", 3, waits) }),
+    buildScanItem(SCAN_IDS.expired, { askedAt: getAt(24 * 60 + 1), scanApproval: getScanHeldFacts(SCAN_IDS.expired, "pending", 1, getAt(1)) }),
+    buildScanItem(SCAN_IDS.gone, { askedAt: getAt(40), scanApproval: SCAN_GONE_FACTS }),
+    buildScanItem(SCAN_IDS.approved, {
+      askedAt: getAt(6), status: "answered", answeredAt: getAt(2), answer: { code: "R1", text: null },
+      scanApproval: getScanHeldFacts(SCAN_IDS.approved, "approved", 1, getAt(-8)),
+    }),
+    buildScanItem(SCAN_IDS.unread, { askedAt: getAt(4), scanApproval: getScanHeldFacts(SCAN_IDS.unread, "pending", 1, waits) }),
+  ];
+  const done = [
+    buildScanItem(SCAN_IDS.declined, {
+      askedAt: getAt(90), status: "delivered", answeredAt: getAt(80), closedAt: getAt(80), deliveredAt: getAt(79), answer: { code: "R2", text: null },
+      scanApproval: SCAN_GONE_FACTS,
+    }),
+    buildScanItem(SCAN_IDS.withdrawn, { askedAt: getAt(120), status: "withdrawn", closedAt: getAt(110), scanApproval: SCAN_GONE_FACTS }),
+    buildScanItem(SCAN_IDS.ended, {
+      askedAt: getAt(60), status: "delivered", answeredAt: getAt(50), closedAt: getAt(50), deliveredAt: getAt(49), answer: { code: "R1", text: null },
+      scanApproval: getScanHeldFacts(SCAN_IDS.ended, "approved", 1, getAt(40)),
+    }),
+  ];
+  const scanReads = {
+    [SCAN_IDS.one]: buildScanRead([getScanLine(`hello${String.fromCodePoint(0x200b)}world`)]),
+    [SCAN_IDS.long]: buildScanRead([getScanLine("**b** <b>x</b> ## h | a | ``` U+200B"), longLine, "const x = process.env.HOME;"]),
+  };
+  return { ...rest, items: [...items, ...rest.items], done: [...done, ...(rest.done ?? [])], scanReads };
+}

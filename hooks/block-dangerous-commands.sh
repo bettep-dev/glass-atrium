@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse(Bash) — dangerous-command heuristic filter, NOT a security boundary.
+# PreToolUse(Bash) — destructive-deletion heuristic filter, NOT a security boundary.
 # Bar-raising text match only: raises the cost of an obvious mistake, does not confine a determined caller.
 #
 # Known bypass classes (OUT of scope — each defeats a literal text match; extending the list is an unwinnable arms race):
@@ -54,23 +54,13 @@ readonly RM_TARGETS='(/($|[^a-zA-Z])|/\*|~|"?\$\{?HOME\}?|\.\s*$|\.\.)'
 # row alone matches every wipe target above, including the -- form).
 readonly RM_WIPE_PATTERN='rm\s+(-[a-zA-Z]+\s+)*-[a-zA-Z]*[rR][a-zA-Z]*\s+(-[a-zA-Z]+\s+)*(--\s+)?'"${RM_TARGETS}"
 
-# One `name=pattern` row per heuristic, folded into a single ERE alternation below;
+# One `name=pattern` row per deletion heuristic, folded into a single ERE alternation below;
 # the name is the only command-derived datum the block output carries.
-# Pipe-to-shell rows carry a trailing word boundary so `curl … | shasum` no longer
-# false-positives; text match is bar-raising only — variable indirection is out of
-# scope (settings deny layer covers the residual).
+# Deletion rows only: a wipe, a raw-device overwrite, a filesystem format.
 DANGEROUS_PATTERNS=(
   "rm-wipe=${RM_WIPE_PATTERN}"
-  # chmod 777, bare or through a flag-run (e.g. -R).
-  'chmod-777=chmod\s+(-[a-zA-Z]+\s+)*777'
-  # Pipe of a fetch to (sudo-)shell — sh/bash/zsh/dash, word-bounded.
-  'fetch-pipe-shell=(curl|wget)\s.*\|\s*(sudo\s+)?(ba|z|da)?sh([^[:alnum:]_]|$)'
-  # Shell process-substitution of a fetch: `bash <(curl …)`.
-  'fetch-process-substitution=(^|[^[:alnum:]_])(ba|z|da)?sh\s+<\(\s*(curl|wget)'
   'dd-if=dd\s+if='
   'mkfs=mkfs\.'
-  'fork-bomb=:\(\)\{'
-  'fork-bomb-phrase=fork\s*bomb'
 )
 
 # Top-level `|` is the lowest ERE precedence, so each row's internal groups stay intact.

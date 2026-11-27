@@ -29,6 +29,7 @@ Corpus-maintenance companion to that rule file. Nothing here is delivered to an 
 | agent bodies, skills, `scoped/scope-planning.md`, maintainer notes | the H2/H3 headings by name — find them with a corpus grep of the heading | a rename or deletion dangles them; fix every citer in the same pass |
 
 - No outside citer: `#### Who closes` and `#### Supersede vs new`, the sub-headings under `### Document Lifecycle — completion + exposure routing`.
+- **Near the 8 KB H2 cap**: `## Output Format Routing [REPORT]` — byte-measure it before any addition.
 
 ## Machine-read byte contract — `## Pre-drawing Doctrine [REPORT]`
 
@@ -63,7 +64,12 @@ Each entry is keyed by the rule text; its copies change with it.
   - the `### Emission contract` carve-out bullet;
   - `agents/glass-atrium-intel-reporter.md` → `## Output Format Routing`, the exception lead inside the turn-0 routing hard gate;
   - `agents/glass-atrium-intel-planner.md` → `### Turn-0 routing hard gate`, the stamp table and the `The stamp attests` bullet;
-  - the delegation-side canonical `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria`.
+  - the delegation-side canonical `skills/glass-atrium-ops-orchestrator-role.md` → `## Delegation Criteria`;
+  - the main-session copy `scoped/orchestrator-core.md` → `## Authoring delegation`.
+- **HTML generation failure**:
+  - the `### Emission contract` bullet that opens `A user-requested HTML generation failure` (canonical), which cites `agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`;
+  - `agents/glass-atrium-intel-reporter.md` → `## Absolute Rules`, the `never a silent MD fallback` sub-bullet, which cites it;
+  - `agents/glass-atrium-intel-planner.md` → `### Three emission modes (evaluate in order)` → **Fallback**.
 - **Document lifecycle**:
   - `agents/glass-atrium-intel-reporter.md` → the bolded lead `**Document lifecycle duties — you are the completing agent and you own these:**`, the reporter-only deltas;
   - `agents/glass-atrium-intel-planner.md` → `### Document lifecycle duties (delivered copy — the completing agent owns these)` + its sibling `### Document stages and closing`.
@@ -107,7 +113,7 @@ Each entry is keyed by the rule text; its copies change with it.
 - **Live-file pin**: `agent-frontmatter-identity.bats` is the only suite that reads this file; it skips outside a git work tree and on a shallow clone, and CI runs it at full depth.
 - **Indifferent suites** — they name the agent in a roster or fixture and never read the body:
   - `scripts/test/doctrine-budget-parity.bats` reads `scoped/scope-report.md`, `scoped/scope-planning.md` and two monitor sources, never this body — keep the body a pointer, so no unjudged copy can drift.
-  - `hooks/test/block-doc-routing-leak.bats` and the other hook rosters · `scripts/test/test_inject_sync.py`.
+  - the hook roster suites · `scripts/test/test_inject_sync.py`.
   - the `monitor/test/model-config.*` and `monitor/test/clauded-docs.*` suites, driven by their own fixtures — a body claim contradicting the server goes unnoticed until a 400.
 - **Body headings and leads cited from outside** — a rename edits every citer in the same pass:
   - `## Output Format Routing` · `### Turn-0 Format Guard` · `### HTML Request Test (explicit-request-only — heuristic auto-HTML FORBIDDEN)` · `## Designer Handoff Contract`
@@ -162,4 +168,5 @@ The rule file keeps the rules no body carries, the sections a coupled reader or 
   - the Preset step's viewer/export selector line — parity the suite checks (byte contract above), obliging no author.
   - the "Who counts" sentence naming the planner, designer and orchestrator counters — the **Designer Co-Emission Trigger** co-edit entry above holds that roster.
   - the `diagram-types.json` path on the Diagram Standard **Permitted types** bullet — the Type step it points to names the same SoT.
+  - the `#### Admin-console tropes (data screens)` → `##### Color, type and decoration` sub-path on the **SoT** bullet — a locator the reader need not follow to act; the linkage: `scoped/maintainers/glass-atrium-design-designer.md` → `## Body text other files cite`.
   - the `#### Monitoring-phase notes` pointer on the **Markup exception (narrow)** bullet — it locates the orchestrator's judgment, which the reporter never performs; the **Designer Co-Emission Trigger** co-edit entry above holds the linkage.

@@ -123,7 +123,6 @@ def render_agent_md(
     domains: list[str],
     description: str | None = None,
     body: str | None = None,
-    model: str | None = None,
 ) -> str:
     """Render an agent .md scaffold (canonical frontmatter + body).
 
@@ -139,27 +138,19 @@ def render_agent_md(
     body is the prompt content, the `description` the routing blurb; the two
     stay distinct, no duplication).
 
-    `model` carries the scope-resolved SAVED TARGET model id (from the monitor
-    DB via db_utils.resolve_model_for_scope). When set, a `model: <id>` line is
-    emitted immediately after `maxTurns:`. When None — the default, and the value
-    used whenever no saved target exists / the DB is unreachable — NO model line
-    is emitted and the output is byte-identical to the historical scaffold (the
-    agent then inherits its model from settings.json).
+    No `model:` line is emitted: a new agent arrives unpinned and is pinned from
+    the monitor's agent list.
     """
     desc = (
         description
         or f"{name} agent (scaffolded by agent-lifecycle; body pending authoring)."
     )
-    # Emitted only when a model is resolved; empty string keeps the None path
-    # byte-identical to the historical frontmatter (backward-compat invariant).
-    model_line = f"model: {model}\n" if model is not None else ""
     frontmatter = (
         "---\n"
         f"name: {name}\n"
         f"description: {desc}\n"
         "tools: [Read, Glob, Grep, Edit, Write, Bash]\n"
         "maxTurns: 40\n"
-        f"{model_line}"
         "---\n"
         "\n"
     )

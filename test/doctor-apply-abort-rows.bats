@@ -55,6 +55,7 @@ source "${GA}/scripts/lib/path-guard.sh"
 
 setup() {
   load 'lib/bats-db-seal'
+  load 'lib/remote-run-stub'
   ga_bats_db_seal
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
   [[ -f "${APPLY_SH}" ]] || skip "daemon-apply.sh not found: ${APPLY_SH}"
@@ -62,7 +63,8 @@ setup() {
   DATA_ROOT="$(mktemp -d -t ga-doctor-abort-data.XXXXXX)"
   WORK="$(cd -- "$(mktemp -d -t ga-doctor-abort-work.XXXXXX)" && pwd -P)"
   REPORTS="${DATA_ROOT}/data/daemon-reports"
-  mkdir -p "${TARGET}/bin" "${REPORTS}" "${WORK}/agents" "${WORK}/home"
+  mkdir -p "${TARGET}/bin" "${REPORTS}" "${WORK}/agents" "${WORK}/home" "${WORK}/ga-root"
+  make_remote_stub_root "${WORK}/ga-root" "${GA}"
   cat >"${TARGET}/bin/claude" <<'SH'
 #!/bin/bash
 echo OK
@@ -86,7 +88,7 @@ teardown() {
 run_doctor_seam() {
   GA_TARGET_HOME="${TARGET}" GA_DATA_ROOT="${DATA_ROOT}" \
     ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT}" \
-    DOCTOR_AUTH_REPORTS_DIR="${REPORTS}" run "${REAL_GA}" doctor
+    DOCTOR_AUTH_REPORTS_DIR="${REPORTS}" run "${WORK}/ga-root/glass-atrium" doctor
 }
 
 # Drive the REAL daemon into its root-absence preflight abort so the abort row under test is

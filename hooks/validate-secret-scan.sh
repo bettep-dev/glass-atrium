@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # PreToolUse(Write|Edit|Bash) — block on secret-pattern detection.
-#   Write|Edit channel: scan tool_input.content + tool_input.new_string.
+#   Write|Edit channel: scan tool_input.content + tool_input.new_string through scripts/lib/secret-scan.sh.
 #   Bash channel: scan tool_input.command for a HIGH-SIGNAL credential value
 #     redirected/heredoc'd into a dotenv/secrets file (a secret can otherwise be
 #     written via `echo KEY=... > .env`, fully bypassing the Write|Edit channel).
 # One coherent secret-scan surface — branches on tool_name. Both invocations
 # block with exit 2 on match. Bind this hook to BOTH Write|Edit and Bash.
+# A Write|Edit whose every match is SEC-013 passes once on the owner's queue approval of exactly those lines
+# (the monitor's consume); otherwise it is refused, plus one line: the request id, or why none was checked.
 set -Eeuo pipefail
 IFS=$'\n\t'
 
@@ -24,71 +26,292 @@ else
   }
 fi
 
-# WHY fail-closed: field extraction degrades to EMPTY without python3 (tool_name
-# mis-detects, content scans nothing), which would let a credential write through
-# unscanned. A secret gate MUST refuse rather than silently allow — block here so
-# no unscanned write can proceed on a python3-less PATH.
+# python3 reads every payload value → its absence is named here; a payload it cannot read is refused below, never
+# scanned as empty
 hook_require_python3 "SEC-017" \
   "Secret scan unavailable: python3 is required to parse hook input"
 
 # Payload names: an inherited export would carry them into every child's environment, capped per string on Linux.
 export -n INPUT CMD CONTENT input blob cmd
 INPUT=$(hook_read_input)
-TOOL_NAME=$(hook_get_field "${INPUT}" "tool_name")
 
-# Structured + format secret patterns (Write|Edit content channel).
-# High-signal patterns: structured-token shapes + generic credential
-# assignments (non-trivial value only, to avoid FP on empty/placeholder) +
-# PEM private-key headers + cloud service-account JSON markers.
-# NOTE: a literal-dash-leading pattern (PEM "-----BEGIN") MUST be matched with
-# `grep -E --` so BSD grep does not parse it as an option flag.
-PATTERNS=(
-  'AKIA[0-9A-Z]{16}'
-  'ghp_[a-zA-Z0-9]{36}'
-  'sk-[a-zA-Z0-9]{20,}'
-  'eyJ[a-zA-Z0-9_-]*\.eyJ'
-  'postgres://[^ ]*@'
-  'mongodb(\+srv)?://[^ ]*@'
-  'AIza[0-9A-Za-z_-]{35}'
-  'xox[bpoa]-[0-9a-zA-Z-]+'
-  '(password|passwd|api[_-]?key|secret|token|access[_-]?key|aws_secret_access_key)["'"'"' ]*[:=][ ]*["'"'"']?[^[:space:]"'"'"']{8,}'
-  '-----BEGIN [A-Z ]*PRIVATE KEY-----'
-  '"private_key"[ ]*:[ ]*"-----BEGIN'
-  '"type"[ ]*:[ ]*"service_account"'
-)
-CODES=(SEC-001 SEC-002 SEC-003 SEC-004 SEC-005 SEC-006 SEC-007 SEC-008 SEC-013 SEC-014 SEC-015 SEC-015)
-NAMES_EN=(
-  "AWS Access Key"
-  "GitHub Token"
-  "API Key (sk-)"
-  "JWT Token"
-  "DB connection string"
-  "MongoDB connection string"
-  "Google API Key"
-  "Slack Token"
-  "Generic credential assignment"
-  "PEM private key"
-  "Service-account private key"
-  "Service-account JSON marker"
-)
+# The content patterns and their scan live in the shared scanner, found through this file's real path — a symlinked
+# copy has no scripts/ beside it; exit contract: the scanner's header.
+self="${BASH_SOURCE[0]}"
+if [[ -L "${self}" ]]; then self="$(readlink -f -- "${self}")" || self=""; fi
+readonly SCANNER="${self%/*}/../scripts/lib/secret-scan.sh"
+readonly SCAN_CLEAN=0
+readonly SCAN_MATCH=3
+readonly SCAN_LIST_FLAG=--list-all
+readonly HOOK_LIB_DIR="${self%/*}/lib"
+readonly SCRIPTS_LIB_DIR="${self%/*}/../scripts/lib"
+# the one rule an owner may approve and the monitor routes that bind the approval
+readonly APPROVABLE_RULE=SEC-013
+readonly CONSUME_ROUTE=/api/queue/scan-approvals/consume
+readonly REGISTER_ROUTE=/api/queue/scan-approvals
+# whole approval step (list, build, consume, register); each monitor call also carries queue_send's own deadlines
+readonly APPROVAL_DEADLINE_S=6
+readonly APPROVAL_PREFIX="${APPROVABLE_RULE} approval:"
+readonly HASH_LIST_SHAPE='^[0-9a-f]{64}(,[0-9a-f]{64})*$'
+readonly REPLY_CODE_SHAPE='^[a-z_]{1,64}$'
+# the text the scanner sees → an approval binds the same lines; a lone surrogate → U+FFFD, the character a UTF-8
+# write of the text puts on disk; a field that is not text raises
+readonly SCANNED_FIELD_PY='import re
+def get_written_text(text):
+    return re.sub("[\ud800-\udfff]", "�", text)
+def get_scanned_field(d):
+    ti = d.get("tool_input", {})
+    return get_written_text(ti.get("content", "") + ti.get("new_string", ""))'
+# payload on stdin, tool_name · command · scanned as the argument → that value's UTF-8 bytes; exit 1 for a payload it
+# cannot read (not JSON, not an object, the value not text)
+readonly PAYLOAD_TEXT_PY='import json, sys
+d = json.load(sys.stdin)
+if sys.argv[1] == "tool_name":
+    text = get_written_text(d.get("tool_name", ""))
+elif sys.argv[1] == "command":
+    text = get_written_text(d.get("tool_input", {}).get("command", ""))
+else:
+    text = get_scanned_field(d)
+sys.stdout.buffer.write(text.encode("utf-8"))'
+# payload on stdin, rule then the 1-based lines to approve as arguments → the consume body, the register body, the
+# hashes joined by commas; exit 65 no session_id, 66 a target path with no real parent directory, 67 a line that is not
+# one of the text's (an index not a decimal from 1 to the line count → lines[-1] would bind another line)
+readonly APPROVAL_BODIES_PY='import json, os, sys
+d = json.load(sys.stdin)
+session = d.get("session_id")
+if not isinstance(session, str) or not session:
+    sys.exit(65)
+path = d.get("tool_input", {}).get("file_path")
+if not isinstance(path, str) or not os.path.isabs(path) or not os.path.isdir(os.path.dirname(path)):
+    sys.exit(66)
+path = os.path.realpath(path)
+lines = get_lines(get_scanned_field(d).encode("utf-8"))
+indexes = sys.argv[2:]
+if not all(index.isascii() and index.isdigit() and 1 <= int(index) <= len(lines) for index in indexes):
+    sys.exit(67)
+picked = [lines[int(index) - 1] for index in indexes]
+hashes = [get_line_hash(line) for line in picked]
+agent = {key: d.get(field) if isinstance(d.get(field), str) else "" for key, field in (("id", "agent_id"), ("type", "agent_type"))}
+target = {"sessionId": session, "path": path, "rule": sys.argv[1]}
+print(json.dumps(dict(target, hashes=hashes)))
+texts = [{"text": line.decode("utf-8"), "hash": digest} for line, digest in zip(picked, hashes)]
+print(json.dumps(dict(target, agent=agent, lines=texts)))
+print(",".join(hashes))'
+# reply body on stdin → the string value of the key named by the argument; exit 1 for any other shape, a line break
+# included → the caller's $( ) cannot strip "pass\n" into "pass"
+readonly REPLY_VALUE_PY='import json, sys
+d = json.load(sys.stdin)
+value = d.get(sys.argv[1]) if isinstance(d, dict) else None
+if not isinstance(value, str) or "\n" in value:
+    sys.exit(1)
+print(value)'
 
-# Scan a blob against every PATTERNS entry; exit 2 on the first match.
+# Scan a blob through the shared scanner; exit 2 on a match and on any outcome but clean (fail-closed).
 # Args: $1=blob to scan
 scan_content() {
-  local blob="${1}" i
+  local blob="${1}" reply="" rc=0
   [[ -z "${blob}" ]] && return 0
-  for i in "${!PATTERNS[@]}"; do
-    # `-i` for case-insensitive credential keys · `--` so a dash-leading PEM
-    # pattern is not parsed as a grep option flag.
-    # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-    if printf '%s\n' "${blob}" | drain_after grep -qiE -- "${PATTERNS[${i}]}"; then
-      emit_error "${CODES[${i}]}" "block" \
-        "Secret pattern detected: ${NAMES_EN[${i}]}" \
-        "Replace the hardcoded secret with an environment-variable reference (core-security.md -> Secret Management)" \
-        "{\"pattern\":\"${CODES[${i}]}\"}"
-      exit 2
+  [[ -f "${SCANNER}" ]] || block_scan_unavailable
+  # shellcheck disable=SC2310  # the scanner's status is the verdict, read below
+  reply="$(get_scan_reply "${blob}")" || rc=$?
+  [[ "${rc}" -eq "${SCAN_CLEAN}" ]] && return 0
+  if [[ "${rc}" -ne "${SCAN_MATCH}" || ! "${reply}" =~ ^(SEC-[0-9]{3})$'\t'(.+)$ ]]; then
+    block_scan_unavailable
+  fi
+  local code="${BASH_REMATCH[1]}" name="${BASH_REMATCH[2]}"
+  APPROVAL_NOTE=""
+  # shellcheck disable=SC2310  # the approval's verdict is its status; every failure inside refuses
+  if [[ "${code}" == "${APPROVABLE_RULE}" ]] && is_approved_write "${blob}"; then return 0; fi
+  emit_error "${code}" "block" \
+    "Secret pattern detected: ${name}" \
+    "Replace the hardcoded secret with an environment-variable reference (core-security.md -> Secret Management)" \
+    "{\"pattern\":\"${code}\"}"
+  [[ -z "${APPROVAL_NOTE}" ]] || _hook_emit_line "${APPROVAL_NOTE}"
+  exit 2
+}
+
+# The scanner's reply over the text, fed by a pipe: a here-string spills to a temp file (bash 3.2 always, newer bash
+# past the pipe buffer); the scanner reads to EOF before it exits → the feed never dies of SIGPIPE.
+# Args: $1=text · $2=scanner flag, optional
+get_scan_reply() {
+  printf '%s\n' "${1}" | "${BASH}" "${SCANNER}" ${2:+"${2}"}
+}
+
+# Asks the monitor to consume the owner's approval of this write's SEC-013 lines, within APPROVAL_DEADLINE_S.
+# Returns 0 only on the monitor's pass, with a hash-free log line; else 1 with APPROVAL_NOTE the refusal's added line.
+# Args: $1=scanned blob
+is_approved_write() {
+  local outcome status=0
+  APPROVAL_NOTE="${APPROVAL_PREFIX} the approval check could not run; this write stays refused"
+  # shellcheck disable=SC2310  # a library that cannot load is a refusal, never an errexit
+  set_approval_libs || return 1
+  # shellcheck disable=SC2310  # the step's own status is read below; a missed deadline is DEADLINE_STATUS
+  outcome="$(run_with_deadline "${APPROVAL_DEADLINE_S}" get_approval_outcome "${1}" </dev/null)" || status=$?
+  if ((status == DEADLINE_STATUS)); then
+    APPROVAL_NOTE="${APPROVAL_PREFIX} the approval check passed its ${APPROVAL_DEADLINE_S} s deadline; this write stays refused"
+    return 1
+  fi
+  is_pass_outcome "${outcome}"
+}
+
+# Reads the step's outcome line → 0 only on a well-formed pass, logged; else 1 with APPROVAL_NOTE naming what failed.
+# Args: $1=outcome line
+is_pass_outcome() {
+  local kind="${1%%$'\t'*}" value="${1#*$'\t'}" hashes
+  case "${kind}" in
+    cause) APPROVAL_NOTE="${APPROVAL_PREFIX} ${value}; this write stays refused" ;;
+    request)
+      APPROVAL_NOTE="${APPROVAL_PREFIX} the monitor's register reply was malformed; this write stays refused"
+      [[ ! "${value}" =~ ${QUEUE_UUID_SHAPE} ]] || APPROVAL_NOTE="$(get_request_note "${value}")"
+      ;;
+    pass)
+      hashes="${value#*$'\t'}" value="${value%%$'\t'*}"
+      if [[ "${value}" =~ ${QUEUE_UUID_SHAPE} && "${hashes}" =~ ${HASH_LIST_SHAPE} ]]; then
+        put_pass_log "${value}" "${hashes}"
+        return 0
+      fi
+      APPROVAL_NOTE="${APPROVAL_PREFIX} the monitor's consume reply was malformed; this write stays refused"
+      ;;
+    *) ;;
+  esac
+  return 1
+}
+
+# Loads the bounded wait, the line hash and the monitor client; 1 when any is missing or fails to load.
+set_approval_libs() {
+  local wait_lib="${HOOK_LIB_DIR}/bounded-wait.sh" hash_lib="${HOOK_LIB_DIR}/scan-approval.sh"
+  local queue_lib="${SCRIPTS_LIB_DIR}/queue-session.sh"
+  # a test, not a failed source: bash 3.2 exits on a missing sourced file even inside a condition
+  [[ -r "${wait_lib}" && -r "${hash_lib}" && -r "${queue_lib}" ]] || return 1
+  # shellcheck source-path=SCRIPTDIR source=lib/bounded-wait.sh
+  source "${wait_lib}" || return 1
+  # shellcheck source-path=SCRIPTDIR source=lib/scan-approval.sh
+  source "${hash_lib}" || return 1
+  # shellcheck source-path=SCRIPTDIR source=../scripts/lib/queue-session.sh
+  source "${queue_lib}" || return 1
+}
+
+# The refusal's line for a registered request → its id and the one sanctioned route, never the line.
+# Args: $1=request id
+get_request_note() {
+  printf '%s request %s registered. Post the secret-approval form with this request id alone, never the line; on the owner'"'"'s approve answer repeat the identical write once, and this hook decides. A subagent returns the request id and the target path, never the line; it never posts and never retries before its parent'"'"'s approve answer.\n' \
+    "${APPROVAL_PREFIX}" "${1}"
+}
+
+# One line per approved pass → which approval let how many lines through; no hash — the log lasts at 0644 and
+# an unsalted hash of a short line can be guessed back.
+# Args: $1=request id · $2=hashes joined by commas
+put_pass_log() {
+  local stamp commas="${2//[!,]/}"
+  stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || stamp=unknown-time
+  mkdir -p -- "${HOOK_LOG_DIR}" 2>/dev/null || return 0
+  # GA-ABSORB[benign]: the pass is the monitor's consume; a lost log line never turns it into a refusal
+  (printf '%s %s approved write passed request=%s lines=%s\n' "${stamp}" "${APPROVABLE_RULE}" "${1}" "$((${#commas} + 1))") \
+    >>"${HOOK_LOG_DIR}/validate-secret-scan.log" 2>/dev/null || true
+}
+
+# The bounded step: list every match, then consume, then register on a refusal. Prints one outcome line —
+# "pass<TAB><request id><TAB><hashes>", "request<TAB><request id>" or "cause<TAB><why no approval was checked>".
+# Args: $1=scanned blob
+# shellcheck disable=SC2329  # invoked through run_with_deadline
+get_approval_outcome() {
+  local rows index code bodies rc=0 reply
+  local -a indexes=()
+  # shellcheck disable=SC2310  # the scanner's status is the verdict, read below
+  rows="$(get_scan_reply "${1}" "${SCAN_LIST_FLAG}")" || rc=$?
+  if ((rc != SCAN_MATCH)) || [[ -z "${rows}" ]]; then
+    printf 'cause\tthe scanner could not list the matching lines\n'
+    return 0
+  fi
+  while IFS=$'\t' read -r index code; do
+    if [[ "${code}" != "${APPROVABLE_RULE}" ]]; then
+      printf 'cause\tanother secret rule also matches this write, so no approval can cover it\n'
+      return 0
     fi
-  done
+    indexes+=("${index}")
+  done <<<"${rows}"
+  if ! command -v curl >/dev/null 2>&1; then
+    printf 'cause\tcurl is not available, so no approval was checked\n'
+    return 0
+  fi
+  rc=0
+  bodies="$(printf '%s\n' "${INPUT}" | python3 -I -c "${SCAN_APPROVAL_HASH_PY}"$'\n'"${SCANNED_FIELD_PY}"$'\n'"${APPROVAL_BODIES_PY}" \
+    "${APPROVABLE_RULE}" "${indexes[@]}" 2>/dev/null)" || rc=$?
+  case "${rc}" in
+    0) ;;
+    65) printf 'cause\tthe hook payload carries no session_id\n' && return 0 ;;
+    66) printf 'cause\tthe target path has no real parent directory\n' && return 0 ;;
+    67) printf 'cause\tthe scanner listed a line this write does not hold\n' && return 0 ;;
+    *) printf 'cause\tthe approval request could not be built\n' && return 0 ;;
+  esac
+  # shellcheck disable=SC2310  # queue_send fails only with no reply at all → a cause, never an errexit
+  reply="$(printf '%s\n' "${bodies%%$'\n'*}" | queue_send POST "${CONSUME_ROUTE}" -)" || {
+    printf 'cause\tthe monitor did not answer, so no approval was checked\n'
+    return 0
+  }
+  bodies="${bodies#*$'\n'}"
+  put_consume_outcome "${reply}" "${bodies%%$'\n'*}" "${bodies#*$'\n'}"
+}
+
+# The consume reply decides: pass, or on the monitor's refusal register the lines; any other reply is a cause.
+# Args: $1=consume reply · $2=register body · $3=hashes joined by commas
+# shellcheck disable=SC2329  # invoked through run_with_deadline
+put_consume_outcome() {
+  local code body value
+  code="$(queue_get_reply_code "${1}")"
+  body="$(queue_get_reply_body "${1}")"
+  value="$(printf '%s\n' "${body}" | python3 -I -c "${REPLY_VALUE_PY}" decision 2>/dev/null)" || value=""
+  if [[ "${code}" == 200 && "${value}" == pass ]]; then
+    value="$(printf '%s\n' "${body}" | python3 -I -c "${REPLY_VALUE_PY}" requestId 2>/dev/null)" || value=""
+    printf 'pass\t%s\t%s\n' "${value}" "${3}"
+  elif [[ "${code}" == 409 && "${value}" == refuse ]]; then
+    put_register_outcome "${2}"
+  else
+    printf 'cause\tthe monitor'"'"'s consume reply was neither a pass nor a refusal\n'
+  fi
+}
+
+# Registers the write's SEC-013 lines (body on curl's stdin, never an argument) → the request id, or a cause.
+# Args: $1=register body
+# shellcheck disable=SC2329  # invoked through run_with_deadline
+put_register_outcome() {
+  local reply code body value
+  # shellcheck disable=SC2310  # queue_send fails only with no reply at all → a cause, never an errexit
+  reply="$(printf '%s\n' "${1}" | queue_send POST "${REGISTER_ROUTE}" -)" || {
+    printf 'cause\tthe monitor did not answer the request registration\n'
+    return 0
+  }
+  code="$(queue_get_reply_code "${reply}")"
+  body="$(queue_get_reply_body "${reply}")"
+  if [[ "${code}" == 200 ]] && value="$(printf '%s\n' "${body}" | python3 -I -c "${REPLY_VALUE_PY}" requestId 2>/dev/null)"; then
+    printf 'request\t%s\n' "${value}"
+    return 0
+  fi
+  value="$(printf '%s\n' "${body}" | python3 -I -c "${REPLY_VALUE_PY}" error 2>/dev/null)" || value=""
+  [[ "${value}" =~ ${REPLY_CODE_SHAPE} ]] || value="no readable code"
+  printf 'cause\tthe monitor did not register the request (HTTP %s, %s)\n' "${code}" "${value}"
+}
+
+block_scan_unavailable() {
+  emit_error "SEC-017" "block" \
+    "Secret scan unavailable: the shared scanner is missing or failed" \
+    "Restore scripts/lib/secret-scan.sh (glass-atrium update) and retry" \
+    "{\"missing\":\"secret-scan\"}"
+  exit 2
+}
+
+block_payload_unreadable() {
+  emit_error "SEC-017" "block" \
+    "Secret scan unavailable: the hook payload could not be read as text" \
+    "Repeat the call with text fields; a payload the scan cannot read is refused, never passed unscanned" \
+    "{\"unreadable\":\"payload\"}"
+  exit 2
+}
+
+# One payload value for the scan → its text; status 1 when the payload cannot be read.
+# Args: $1=tool_name · command · scanned
+get_payload_text() {
+  printf '%s\n' "${INPUT}" | python3 -I -c "${SCANNED_FIELD_PY}"$'\n'"${PAYLOAD_TEXT_PY}" "${1}" 2>/dev/null
 }
 
 # Bash channel (HIGH SIGNAL ONLY).
@@ -164,18 +387,18 @@ scan_bash_command() {
   fi
 }
 
+# shellcheck disable=SC2310  # an unreadable payload is a refusal, never an errexit
+TOOL_NAME="$(get_payload_text tool_name)" || block_payload_unreadable
 if [[ "${TOOL_NAME}" == "Bash" ]]; then
-  CMD=$(hook_get_tool_input "${INPUT}" "command")
+  # shellcheck disable=SC2310  # an unreadable payload is a refusal, never an errexit
+  CMD="$(get_payload_text command)" || block_payload_unreadable
   scan_bash_command "${CMD}"
   exit 0
 fi
 
 # Default (Write|Edit): scan combined content + new_string.
-CONTENT=$(printf '%s\n' "${INPUT}" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-ti=d.get('tool_input',{}); print(ti.get('content','') + ti.get('new_string',''))
-" 2>/dev/null) || CONTENT=""
+# shellcheck disable=SC2310  # an unreadable payload is a refusal, never an errexit
+CONTENT="$(get_payload_text scanned)" || block_payload_unreadable
 
 scan_content "${CONTENT}"
 exit 0

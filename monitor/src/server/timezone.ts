@@ -8,6 +8,7 @@
 // Production boot guard (resolveDayBucketTimezone): under NODE_ENV=production an absent ATRIUM_TIMEZONE
 // refuses the DEV-ONLY fallback outright — it raises a prominent, monitor-surfaced alarm and pins the last-resort.
 
+import { Prisma } from "../generated/prisma/client.js";
 import { type ConfigAlarmSink, isProductionEnv, makeConfigAlarm } from "./config-alarm.js";
 
 // Re-exported so timezone.unit.test.ts's `import { type ConfigAlarmSink } from "./timezone.js"` seam stays intact.
@@ -119,3 +120,29 @@ export function resolveDayBucketTimezone(
 
 // Module-load resolution — the single SoT. Invalid explicit value → loud boot failure in the launchd log, not a silent wrong bucket.
 export const DAY_BUCKET_TIMEZONE: string = resolveDayBucketTimezone(process.env.ATRIUM_TIMEZONE);
+
+/** Day-bucket timezone's "today" as an ISO calendar day (YYYY-MM-DD, en-CA format) — the day the KPI path buckets on via SQL NOW() AT TIME ZONE. */
+export function computeBucketTzToday(now: Date, timeZone: string = DAY_BUCKET_TIMEZONE): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+/**
+ * Canonical "last N days" window of every cost read: [today - (days-1) .. today] inclusive,
+ * `today` = the bucket-tz calendar day (computeBucketTzToday), never session-tz CURRENT_DATE
+ * → every "last N days" card covers the same bucket-tz day-set as the KPI band.
+ * Safe Prisma.raw: `days` allowlist-validated ({7, 30, 90}); `days - 1` is a derived integer.
+ */
+export function buildDayWindow(
+  todayIso: string,
+  days: number,
+): { firstDay: Prisma.Sql; lastDay: Prisma.Sql } {
+  return {
+    firstDay: Prisma.sql`${todayIso}::date - ${Prisma.raw(`INTERVAL '${days - 1} days'`)}`,
+    lastDay: Prisma.sql`${todayIso}::date`,
+  };
+}

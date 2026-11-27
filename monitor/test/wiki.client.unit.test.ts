@@ -55,7 +55,6 @@ interface WikiHelpers {
   buildThroughputModel: (cyclesState: FetchState) => { isMixUniform: boolean; rows: unknown[] };
   buildTileBandModel: (summaryState: FetchState, indexState: FetchState, backlogState: FetchState) => Array<Tile & { info?: string; hint?: string }>;
   readTileBandFailuresW: (summaryState: FetchState, indexState: FetchState) => Array<{ feeder: string; label: string }>;
-  describeNotesByTypeW: (state: FetchState) => string;
   describeRunHistoryW: (cyclesState: FetchState, model: unknown, summaryState: FetchState) => string;
   window: { UI: Record<string, unknown> };
 }
@@ -111,6 +110,7 @@ test("a reported clean index stays clean and a reported dirty index tints", () =
   );
   assert.equal(clean.state, "ready");
   assert.equal(clean.value, "Clean");
+  assert.equal(clean.sub ?? null, null, "a clean index needs no context line");
   assert.equal(clean.tone, "neutral");
 
   const dirty = helpers.buildIndexTileW(
@@ -134,25 +134,15 @@ test("loading, error and unreported each read as themselves, never as a value", 
     helpers.buildIndexTileW(errored),
     helpers.buildIndexTileW(ready({ has_dirty_flag: false, dirty: false, last_dirty_ms: null })),
   ];
-  const subs = states.map((t) => `${t.value} ${t.sub ?? ""}`);
-  assert.equal(new Set(subs).size, subs.length, `states must read distinctly: ${subs.join(" / ")}`);
+  const reads = states.map((t) => `${t.state} ${t.sub ?? ""}`);
+  assert.equal(new Set(reads).size, reads.length, `states must read distinctly: ${reads.join(" / ")}`);
   for (const tile of states) {
-    assert.equal(/\d/.test(tile.value), false, `placeholder must carry no figure: ${tile.value}`);
+    assert.equal(tile.value, undefined, `placeholder must carry no value: ${tile.value}`);
     assert.equal(tile.tone, "neutral");
   }
 });
 
 // State contract: loading and failure never share a token, and a failed payload is announced once at its group.
-
-test("notes by type reads loading, failure and a count as three different tokens", () => {
-  const tokens = [
-    helpers.describeNotesByTypeW(loading),
-    helpers.describeNotesByTypeW(errored),
-    helpers.describeNotesByTypeW(ready({ by_type: [{ note_type: "concept", count: 3 }] })),
-  ];
-  assert.equal(new Set(tokens).size, 3, `tokens must differ: ${tokens.join(" / ")}`);
-  assert.equal(tokens[2], "1 types");
-});
 
 test("a failed band feeder is named once for the group, never per tile", () => {
   const tiles = [...helpers.buildTileBandModel(errored, errored, ready({ backlog: null }))];
@@ -365,6 +355,19 @@ test("the run-history summary carries the cycle p95 exactly when the server repo
   helpers.window.UI.formatDuration = originalFormat;
 });
 
+describe("the run-history head stays silent when its body already states the fact", () => {
+  const rows = [
+    { name: "no runs in the window", cycles: ready({ cycles: [] }) },
+    { name: "the cycles read failed", cycles: errored },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const head = helpers.describeRunHistoryW(row.cycles, helpers.buildThroughputModel(row.cycles), ready({ cycle_p95_ms: 4200 }));
+      assert.equal(head, null);
+    });
+  }
+});
+
 test("the run-history summary fits the 32-character header-meta cap at its widest", () => {
   const originalFormat = helpers.window.UI.formatDuration;
   helpers.window.UI.formatDuration = (v: number, unit: string) => `${v}${unit}`;
@@ -391,16 +394,27 @@ test("the library tile's caption carries the broken-link count, and says so when
   }
 });
 
-test("an index with no dirty flag on record says so in plain words and keeps the mechanism in its tooltip", () => {
-  const tile = helpers.buildIndexTileW(ready({ has_dirty_flag: false, dirty: false, last_dirty_ms: null })) as { state: string; value: string; sub?: string; hint?: string };
+test("an index with no dirty flag on record is unreported, its mechanism only in the cause", () => {
+  const tile = helpers.buildIndexTileW(ready({ has_dirty_flag: false, dirty: false, last_dirty_ms: null })) as Tile & { cause?: string };
   assert.equal(tile.state, "unavailable");
-  assert.notEqual(tile.value, "—");
-  assert.match(tile.sub ?? "", /freshness not reported/i);
-  assert.doesNotMatch(tile.sub ?? "", /dirty flag/i, "the jargon stays out of the visible line");
-  assert.match(tile.hint ?? "", /dirty flag/i);
+  assert.equal(tile.sub, "Index not reported", "the visible line names the source, never the jargon");
+  assert.match(tile.cause ?? "", /dirty flag/i);
 });
 
-// Run streak grouping, note-type bars and the merge-proposal list's order.
+test("the cycle p95 is stated once, in the Run history head, never on the last-run stat", () => {
+  const originalFormat = helpers.window.UI.formatDuration;
+  helpers.window.UI.formatDuration = (v: number, unit: string) => `${v}${unit}`;
+  const summary = healthySummary({ cycle_p95_ms: 550 });
+  const cycles = unchangedCycles(3);
+  const lastRun = glanceHelpers.buildLastRunTileW(summary);
+  const head = helpers.describeRunHistoryW(cycles, helpers.buildThroughputModel(cycles), summary);
+  helpers.window.UI.formatDuration = originalFormat;
+
+  assert.doesNotMatch(lastRun.sub ?? "", /p95/);
+  assert.match(head, /· p95 550ms$/);
+});
+
+// Run streak grouping and the merge-proposal list's order.
 
 interface RunGroup {
   count: number;
@@ -409,7 +423,6 @@ interface RunGroup {
 }
 const layoutHelpers = helpers as unknown as {
   groupConstantRunsW: (reports: unknown[]) => RunGroup[];
-  buildNoteTypeRowsW: (rows: unknown[]) => Array<{ type: string; count: number; share: number }>;
   buildMaintenanceModel: (backlogState: FetchState, cyclesState?: FetchState) => { proposals: Array<{ cluster_hash: string }> };
 };
 
@@ -440,19 +453,6 @@ describe("consecutive runs sharing status and backlog form one streak", () => {
   }
 });
 
-test("each note type's bar is its count's share of the largest type, and an all-zero index draws none", () => {
-  const rows = layoutHelpers.buildNoteTypeRowsW([
-    { note_type: "concept", count: 40 },
-    { note_type: "source", count: 10 },
-    { note_type: "empty", count: 0 },
-  ]);
-  assert.deepEqual(rows.map((r) => r.share), [100, 25, 0]);
-  assert.deepEqual(
-    layoutHelpers.buildNoteTypeRowsW([{ note_type: "a", count: 0 }]).map((r) => r.share),
-    [0],
-  );
-});
-
 test("the merge-proposal list follows the alarm lane's order", () => {
   const backlog = proposalBacklog(["old", "new", "mid"], {
     old: isoDaysAgo(77),
@@ -467,13 +467,8 @@ test("the merge-proposal list follows the alarm lane's order", () => {
   );
 });
 
-// Page verdict, tile causes and note-type labels.
+// Tile causes and note-type labels.
 
-interface Verdict {
-  tone: string;
-  text: string;
-  chips: Array<{ label: string; targetId?: string }>;
-}
 interface GlanceTile {
   key: string;
   value: string;
@@ -482,10 +477,9 @@ interface GlanceTile {
   tone: string;
 }
 const glanceHelpers = helpers as unknown as {
-  buildWikiVerdictW: (summary: FetchState, index: FetchState, backlog: FetchState, cycles: FetchState) => Verdict;
-  buildCompiledTileW: (summary: FetchState, backlog?: FetchState, cycles?: FetchState) => GlanceTile;
+  buildCompiledTileW: (summary: FetchState, backlog?: FetchState) => GlanceTile;
   buildLastRunTileW: (summary: FetchState, at?: string | null) => GlanceTile;
-  buildNoteTypeRowsW: (rows: unknown[]) => Array<{ type: string; label: string; pct: number }>;
+  buildNoteTypeRowsW: (rows: unknown[]) => Array<{ type: string; label: string }>;
 };
 
 function healthySummary(extra: Record<string, unknown> = {}): FetchState {
@@ -499,94 +493,38 @@ function healthySummary(extra: Record<string, unknown> = {}): FetchState {
   });
 }
 
-describe("the page verdict takes the worst actionable tone and parked proposals never raise it", () => {
-  const clean = ready({ has_dirty_flag: true, dirty: false, last_dirty_ms: 1 });
-  const noBacklog = ready({ backlog: null });
-  const rows = [
-    { name: "a healthy run with nothing waiting reads ok", summary: healthySummary(), index: clean, backlog: noBacklog, tone: "ok" },
-    { name: "a missed daily cycle reads crit", summary: healthySummary({ hours_since_last_cycle: 40 }), index: clean, backlog: noBacklog, tone: "crit" },
-    { name: "a dirty index reads warn", summary: healthySummary(), index: ready({ has_dirty_flag: true, dirty: true, last_dirty_ms: 1 }), backlog: noBacklog, tone: "warn" },
-    { name: "a failed last run reads crit", summary: healthySummary({ last_status: "fail" }), index: clean, backlog: noBacklog, tone: "crit" },
-    { name: "only parked proposals keep ok", summary: healthySummary(), index: clean, backlog: proposalBacklog(["a", "b"], { a: isoDaysAgo(79), b: isoDaysAgo(67) }), tone: "ok" },
-    { name: "a proposal still inside its waiting window reads warn", summary: healthySummary(), index: clean, backlog: proposalBacklog(["a"], { a: isoDaysAgo(1) }), tone: "warn" },
-    { name: "an unloaded summary reads no signal", summary: loading, index: clean, backlog: noBacklog, tone: "neutral" },
-    { name: "an errored index withholds the all-clear", summary: healthySummary(), index: errored, backlog: noBacklog, tone: "neutral" },
-    { name: "an errored backlog withholds the all-clear", summary: healthySummary(), index: clean, backlog: errored, tone: "neutral" },
-    { name: "an index still loading withholds the all-clear", summary: healthySummary(), index: loading, backlog: noBacklog, tone: "neutral" },
-    { name: "a backlog still loading withholds the all-clear", summary: healthySummary(), index: clean, backlog: loading, tone: "neutral" },
-    { name: "an errored feeder never softens a missed cycle already known", summary: healthySummary({ hours_since_last_cycle: 40 }), index: errored, backlog: noBacklog, tone: "crit" },
-  ];
-  for (const row of rows) {
-    test(row.name, () => {
-      assert.equal(glanceHelpers.buildWikiVerdictW(row.summary, row.index, row.backlog, unchangedCycles(30)).tone, row.tone);
-    });
-  }
-});
-
-test("the verdict sentence names each feeder it could not check", () => {
-  const verdict = glanceHelpers.buildWikiVerdictW(healthySummary(), errored, errored, unchangedCycles(30));
-  assert.match(verdict.text, /couldn't check search index, merge proposals$/);
-});
-
-test("parked proposals fold into the verdict sentence with their count, oldest age and one chip to the list", () => {
-  const verdict = glanceHelpers.buildWikiVerdictW(
-    healthySummary(),
-    ready({}),
-    proposalBacklog(["a", "b", "c"], { a: isoDaysAgo(79), b: isoDaysAgo(70), c: isoDaysAgo(67) }),
-    unchangedCycles(30),
-  );
-  assert.match(verdict.text, /3 merges parked, oldest 79d/);
-  assert.match(verdict.text, /0 compiled/);
-  assert.equal(verdict.chips.length, 1);
-  assert.equal(typeof verdict.chips[0].targetId, "string");
-});
-
-test("with no proposals the verdict sentence names no merge and offers no chip", () => {
-  const none = glanceHelpers.buildWikiVerdictW(healthySummary(), ready({}), ready({ backlog: null }), unchangedCycles(30));
-  assert.doesNotMatch(none.text, /merge/);
-  assert.deepEqual([...none.chips], []);
-});
-
-describe("the compiled tile names why it reads zero, adds the window total and tints only when originals wait", () => {
-  const cycles = ready({ cycles: [4, 0, 8].map((compiled_count, i) => ({ run_date: isoDaysAgo(i), compiled_count })) });
+describe("the compiled tile names why it reads zero, tints only when originals wait, and says nothing above zero", () => {
   const backlog = (waiting: number) => ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: waiting } });
   const rows = [
-    { name: "idle — nothing waiting stays quiet", compiled: 0, waiting: 0, sub: /^Nothing waiting · 12 in 3d$/, tone: "neutral" },
-    { name: "stalled — originals waiting with none compiled tints", compiled: 0, waiting: 5, sub: /^Stalled · 5 waiting · 12 in 3d$/, tone: "warn" },
-    { name: "producing — a compiled cycle shows the window total only", compiled: 4, waiting: 5, sub: /^12 in 3d$/, tone: "neutral" },
+    { name: "idle — nothing waiting stays quiet", compiled: 0, waiting: 0, sub: "Idle", tone: "neutral" },
+    { name: "stalled — originals waiting with none compiled tints", compiled: 0, waiting: 5, sub: "Stalled", tone: "warn" },
+    { name: "producing — a compiled cycle needs no context", compiled: 4, waiting: 5, sub: null, tone: "neutral" },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const tile = glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: row.compiled }), backlog(row.waiting), cycles);
-      assert.match(tile.sub ?? "", row.sub);
+      const tile = glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: row.compiled }), backlog(row.waiting));
+      assert.equal(tile.sub ?? null, row.sub);
       assert.equal(tile.tone, row.tone);
     });
   }
 });
 
 test("a stalled compiled tile keeps the full cause behind its info trigger", () => {
-  const cycles = ready({ cycles: [{ run_date: isoDaysAgo(0), compiled_count: 0 }] });
   const tile = glanceHelpers.buildCompiledTileW(
     healthySummary({ latest_compiled_count: 0 }),
     ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: 13 } }),
-    cycles,
   );
   assert.match(tile.info ?? "", /13 saved originals are waiting and the last cycle compiled none/);
 });
 
-// Widest realistic values: 4-digit counts, a 90-day window, the stalled and stale states.
+// Widest realistic values: 4-digit counts and the stale states.
 describe("every tile sub fits the 40-character KPI-hint cap at its widest", () => {
-  const ninetyDays = ready({
-    cycles: Array.from({ length: 90 }, (_, i) => ({ run_date: isoDaysAgo(i), compiled_count: i === 0 ? 9999 : 0 })),
-  });
   const deadlinks = Array.from({ length: 9999 }, (_, i) => ({ from: `a${i}`, to: "b" }));
   const backlog = (extra: Record<string, unknown>) =>
     ready({ backlog: { run_date: isoDaysAgo(0), true_backlog: 9999, deadlink_dryrun: deadlinks, ...extra } });
   const index = ready({ notes_total: 9999, has_dirty_flag: true, dirty: false });
   const rows = [
-    { name: "compiled, stalled over 90 days", tile: () => glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: 0 }), backlog({}), ninetyDays), sub: /^Stalled · 9,999 waiting · 9,999 in 90d$/ },
-    { name: "compiled, idle over 90 days", tile: () => glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: 0 }), backlog({ true_backlog: 0 }), ninetyDays), sub: /^Nothing waiting · 9,999 in 90d$/ },
-    { name: "library, stale snapshot", tile: () => libraryTile(index, backlog({ run_date: isoDaysAgo(9) })), sub: /^9,999 waiting · 9,999 broken links$/ },
+    { name: "library, stale snapshot", tile: () => libraryTile(index, backlog({ run_date: isoDaysAgo(9) })), sub: /^Stale snapshot \d{2}-\d{2}$/ },
     { name: "library, undated snapshot", tile: () => libraryTile(index, backlog({ run_date: null })), sub: /^9,999 waiting · 9,999 broken links$/ },
     { name: "library, originals unreported", tile: () => libraryTile(index, backlog({ true_backlog: undefined })), sub: /^Waiting unreported · 9,999 broken links$/ },
     { name: "library, both unreported", tile: () => libraryTile(index, backlog({ true_backlog: undefined, deadlink_dryrun: undefined })), sub: /^Waiting unreported · links unreported$/ },
@@ -607,16 +545,18 @@ function libraryTile(index: FetchState, backlog: FetchState): (GlanceTile & { hi
 test("a stale or undated library snapshot carries a visible warn cue, and its date rides the info trigger and tooltip", () => {
   const index = ready({ notes_total: 40 });
   const staleDate = isoDaysAgo(9);
+  const figures = /^13 waiting · 0 broken links$/;
   const rows = [
-    { name: "stale", run_date: staleDate, tone: "warn", cue: /^Stale snapshot$/, dated: new RegExp(`as of ${staleDate}, cycle overdue`) },
-    { name: "undated", run_date: null, tone: "warn", cue: /^Undated snapshot$/, dated: /run date not reported/i },
-    { name: "current", run_date: isoDaysAgo(0), tone: "neutral", cue: undefined, dated: undefined },
+    { name: "stale", run_date: staleDate, tone: "warn", sub: new RegExp(`^Stale snapshot ${staleDate.slice(5)}$`), cue: /^Stale snapshot$/, dated: new RegExp(`as of ${staleDate}, cycle overdue`) },
+    { name: "undated", run_date: null, tone: "warn", sub: figures, cue: /^Undated snapshot$/, dated: /run date not reported/i },
+    { name: "current", run_date: isoDaysAgo(0), tone: "neutral", sub: figures, cue: undefined, dated: undefined },
   ];
   for (const row of rows) {
     const tile = libraryTile(index, ready({ backlog: { run_date: row.run_date, true_backlog: 13, deadlink_dryrun: [] } })) as
       | (GlanceTile & { hint?: string; toneLabel?: string })
       | undefined;
     assert.equal(tile?.tone, row.tone, `${row.name}: tone`);
+    assert.match(tile?.sub ?? "", row.sub, `${row.name}: context`);
     if (!row.cue || !row.dated) {
       assert.equal(tile?.toneLabel, undefined, `${row.name}: no cue`);
       continue;
@@ -637,11 +577,11 @@ describe("the last-run tile keeps the shared freshness rule over a failed refres
   const at = new Date().toISOString();
   const warm = (summary: FetchState): FetchState => ({ ...summary, error: "HTTP 500" });
   const rows = [
-    { name: "a settled healthy run names its outcome", summary: healthySummary({ cycle_p95_ms: 1000 }), sub: /^Healthy · p95/, tone: "neutral" },
-    { name: "a healthy run held under a failed read reads Last known, never Healthy", summary: warm(healthySummary({ cycle_p95_ms: 1000 })), sub: /^Last known · p95/, tone: "neutral" },
+    { name: "a settled healthy run names its outcome alone", summary: healthySummary({ cycle_p95_ms: 1000 }), sub: /^Healthy$/, tone: "neutral" },
+    { name: "a healthy run held under a failed read reads Last known, never Healthy", summary: warm(healthySummary({ cycle_p95_ms: 1000 })), sub: /^Last known$/, tone: "neutral" },
     { name: "a failed run held under a failed read keeps its alarm", summary: warm(healthySummary({ last_status: "fail" })), sub: /^Last known: Failed$/, tone: "crit" },
-    { name: "a settled missed cycle reads Overdue", summary: healthySummary({ hours_since_last_cycle: 40 }), sub: /^Overdue · cycle /, tone: "crit" },
-    { name: "a missed cycle held under a failed read reads Last known: Overdue and keeps crit", summary: warm(healthySummary({ hours_since_last_cycle: 40 })), sub: /^Last known: Overdue · cycle /, tone: "crit" },
+    { name: "a settled missed cycle reads Overdue", summary: healthySummary({ hours_since_last_cycle: 40 }), sub: /^Overdue$/, tone: "crit" },
+    { name: "a missed cycle held under a failed read reads Last known: Overdue and keeps crit", summary: warm(healthySummary({ hours_since_last_cycle: 40 })), sub: /^Last known: Overdue$/, tone: "crit" },
   ];
   for (const row of rows) {
     test(row.name, () => {
@@ -652,22 +592,46 @@ describe("the last-run tile keeps the shared freshness rule over a failed refres
   }
 });
 
-test("note types read as human labels with their share of all notes", () => {
+test("note types read as human labels, an unlisted type named after Other", () => {
   const rows = glanceHelpers.buildNoteTypeRowsW([
     { note_type: "source-summary", count: 480 },
     { note_type: "raw", count: 471 },
     { note_type: "source", count: 1 },
   ]);
   assert.deepEqual(rows.map((r) => r.label), ["Summary notes", "Saved originals", "Other · source"]);
-  assert.deepEqual(rows.map((r) => r.pct), [50, 49, 0]);
 });
 
-test("the per-run fold's summary states the unchanged stretch or how often it changed, so a one-row table needs no click", () => {
+test("the Runs fold's count states the unchanged stretch or how often it changed, and Not loaded on a failed read", () => {
   const h = helpers as unknown as { describeRunTableW: (state: FetchState, days: number) => string };
   const same = Array.from({ length: 27 }, () => ["ok", 0, 3] as [string, number, number]);
-  assert.equal(h.describeRunTableW(ready({ reports: runs(same) }), 30), "27 runs · all healthy");
-  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]) }), 30), "3 runs · 2 changes");
-  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["error", 0, 3]]) }), 30), "3 runs · 1 change");
+  assert.equal(h.describeRunTableW(ready({ reports: runs(same) }), 30), "27 · all healthy");
+  assert.equal(h.describeRunTableW(ready({ reports: runs(same.slice(0, 1)) }), 30), "1 · healthy");
+  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["ok", 0, 3]]) }), 30), "3 · 2 changes");
+  assert.equal(h.describeRunTableW(ready({ reports: runs([["ok", 0, 3], ["error", 0, 3], ["error", 0, 3]]) }), 30), "3 · 1 change");
+  assert.equal(h.describeRunTableW(errored, 30), "Not loaded");
+});
+
+describe("the Merge proposals count splits waiting from parked pairs, and says Not loaded when the list was not read", () => {
+  const h = helpers as unknown as {
+    buildMaintenanceModel: (backlogState: FetchState, cyclesState?: FetchState) => unknown;
+    describeProposalCountW: (model: unknown) => string;
+  };
+  const PATTERN = /^\d+ (parked|waiting)( · \d+ parked)?$/;
+  const rows = [
+    { name: "waiting only", backlog: proposalBacklog(["a", "b"], { a: isoDaysAgo(1), b: isoDaysAgo(2) }), count: "2 waiting" },
+    { name: "parked only", backlog: proposalBacklog(["a"], { a: isoDaysAgo(30) }), count: "1 parked" },
+    { name: "both", backlog: proposalBacklog(["a", "b", "c"], { a: isoDaysAgo(1), b: isoDaysAgo(2), c: isoDaysAgo(30) }), count: "2 waiting · 1 parked" },
+    { name: "an empty list", backlog: proposalBacklog([]), count: "None" },
+    { name: "a list the cycle did not report", backlog: ready({ backlog: { run_date: isoDaysAgo(0) } }), count: "Not loaded" },
+    { name: "a failed read", backlog: errored, count: "Not loaded" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const count = h.describeProposalCountW(h.buildMaintenanceModel(row.backlog, ready({ cycles: [] })));
+      assert.equal(count, row.count);
+      if (/\d/.test(row.count)) assert.match(count, PATTERN);
+    });
+  }
 });
 
 // Widest realistic values: a 90-day window, a change every run, the longest status label and run date.
@@ -726,14 +690,19 @@ test("the trend's tick cap is the largest one up to seven that splits its days i
   }
 });
 
-test("the compiled tile and Run history name the same span for the same total", () => {
-  const h = helpers as unknown as {
-    buildThroughputModel: (state: FetchState) => unknown;
-    describeRunHistoryW: (cycles: FetchState, model: unknown, summary: FetchState) => string;
-  };
-  const cycles = ready({ cycles: [["2026-09-01", 20], ["2026-09-18", 0], ["2026-09-29", 2]].map(([run_date, compiled_count]) => ({ run_date, compiled_count, status: "ok" })) });
-  const tile = glanceHelpers.buildCompiledTileW(healthySummary({ latest_compiled_count: 2 }), ready({ backlog: null }), cycles);
-  const history = h.describeRunHistoryW(cycles, h.buildThroughputModel(cycles), ready({}));
-  assert.match(tile.sub ?? "", /\b22 in 29d\b/);
-  assert.match(history, /^3 runs in 29d\b/, "runs are counted as runs over the same span");
+test("the last-run stat names its cycle date in its tooltip only, when the summary records one", () => {
+  const rows = [
+    { name: "dated, on time", date: "2026-09-24", hours: undefined, hint: "Cycle 2026-09-24" },
+    { name: "dated, overdue", date: "2026-09-24", hours: 999, hint: "Cycle 2026-09-24" },
+    { name: "undated, on time", date: null, hours: undefined, hint: undefined },
+    { name: "undated, overdue", date: null, hours: 999, hint: undefined },
+  ];
+  for (const row of rows) {
+    const extra = row.hours === undefined ? {} : { hours_since_last_cycle: row.hours };
+    const summary = healthySummary({ last_run_date: row.date, ...extra });
+    const tile = glanceHelpers.buildLastRunTileW(summary) as { sub: string; hint?: string };
+    assert.equal(tile.hint, row.hint, row.name);
+    assert.doesNotMatch(tile.sub, /09-24/, `${row.name}: the context line leaves the date to the lane and tooltip`);
+    assert.doesNotMatch(tile.sub, /undefined|null/, `${row.name}: the context line holds no missing value`);
+  }
 });

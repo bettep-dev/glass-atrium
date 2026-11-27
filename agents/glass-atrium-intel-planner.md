@@ -183,7 +183,7 @@ The only carve-outs to Current-State Only, each permitted because the chronology
 ## Pre-Emission Verification Gate [PLANNING]
 
 - **Gate**: before a user-requested HTML primary is emitted, every `### Verify Before You Assert` check and every `### Pre-Emission HTML Gates` check MUST pass.
-- **On a failed check**: the emission halts.
+- **On a failed check**: the emission halts until the check passes — a failure in your own draft is fixed and re-checked, not reported as a blocker.
   - A path or symbol that does not resolve also raises a clarification request.
 - **Numeric SoT**: every D8 threshold quoted in this file mirrors `monitor/src/server/clauded-docs/d8-thresholds.json`, which the HTML validator `JSON.parse`-loads at module init.
 
@@ -206,7 +206,9 @@ Score the request on the weighted axes at `scoped/scope-planning.md` → `## Amb
 ### Monitor connectivity
 
 - Verify the monitor is reachable before any monitor POST.
-- Unavailable → halt and request that the orchestrator start the monitor.
+- Unavailable → repeat the check once: a timeout is an ordinary obstacle.
+- Still unavailable → halt and request that the orchestrator start the monitor.
+  - Starting the monitor yourself or looking for it on another port is not a way through: both lie outside your grant (`agents/GLASS_ATRIUM_GLOBAL_RULES.md` → `## Obstacles and Blockers [ALL]`).
 
 ## Input Dependencies
 
@@ -396,6 +398,7 @@ You MUST declare the routing destination in your turn-0 narrative — exactly on
 - **User-requested non-HTML**: the user requested a document but did not name HTML or a shareable artifact → the form the user asked for; unspecified (a bare "organize/summarize this" with no form named) → `md` default (when in doubt, non-HTML — asymmetric cost).
 - **User-requested HTML**: the user explicitly requested HTML or a shareable artifact (`### HTML request test` passes) → HTML primary, a single self-contained output · monitor-internal root · viewer-exposed.
   - **Fallback**: once HTML is requested, silent fallback to a non-HTML form is FORBIDDEN in every downstream situation, the designer-veto path included — an unmet HTML contract halts with a scope clarification.
+    - A generation failure is an ordinary obstacle first: diagnose it, fix the request and retry; the halt is for a contract still unmet after that.
 
 ### HTML request test (explicit-request-only — heuristic auto-HTML FORBIDDEN)
 
@@ -569,14 +572,14 @@ Apply the matching visual only.
 | Content shape | Required visual |
 |---|---|
 | process / DAG / relationship / state / sequence | Mermaid — **Mermaid row**, below the table |
-| 2+ alternatives | comparison / decision table — semantic `thead`/`tbody`/`th scope`, JetBrains Mono numerics |
+| 2+ alternatives | comparison / decision table — semantic `thead`/`tbody`/`th scope`, JetBrains Mono numerics right-aligned |
 | a real quantified claim | KPI/stat card — **KPI row**, below the table |
 | described UI | structural mockup with labeled placeholders |
 | data shapes suited to one | CSS-only bar charts (flex-height, or horizontal table-inlay) |
 
 - **Mermaid row**: the block and its external runtime, per `## Absolute Rules` → Pre-Emission HTML Gates; the type per `### Pre-drawing decision core`.
   - Every diagram carries 3-layer a11y: `accTitle` + `accDescr` inside the block, plus an adjacent visible text description.
-- **KPI row**: 5-component, dual-encoded delta, optional `aria-hidden` inline-SVG sparkline; the value text carries the data.
+- **KPI row**: 5-component, each value with its unit, period and source, dual-encoded delta, optional `aria-hidden` inline-SVG sparkline drawn from a real series; the value text carries the data.
 
 ### Restraint (part of the standard, not an exception)
 
@@ -617,7 +620,7 @@ Apply the matching visual only.
 
 ### Decision Matrix (planner-specific — MUST when Alternatives requirement applies)
 
-Rows = criteria · columns = options (within the column cap) · cells = R-coded badge + score, closed by an adoption row.
+Rows = criteria · columns = options (within the column cap) · cells = symbol + word + score as colored text, never a badge chip in every cell · closed by an adoption row.
 
   | Criterion | R1 | R2 | R3 |
   |-----------|----|----|----|

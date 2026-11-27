@@ -10,7 +10,6 @@
 # One declaration of the switch list: ga_bats_hermetic_env unsets it, ga_bats_assert_hermetic
 # pins it — a switch added here is cleared AND asserted by every corpus with no further edit.
 GA_BATS_KILLSWITCHES=(
-  DOC_ROUTING_LEAK_OFF
   SYNTAX_GATE_OFF
   SUBAGENT_BUDGET_METER_OFF
   SUBAGENT_TOOL_BUDGET_OFF

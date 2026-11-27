@@ -427,7 +427,7 @@ test("canonical mermaid_source 의 edge_type/node type/layer role 히스토그�
 });
 
 test("AC-B2-1f `doc_export` 는 external 로 분류되고 그 규칙이 다른 노드를 재분류하지 않음", () => {
-  // 노드 type 은 노드 상세 드로어에 사람이 읽는 Pill 로 렌더됨 — 분류가 틀리면 화면에 보이는 거짓말이 됨.
+  // 노드 type 은 payload 의 FlowNode.type 으로 나감 — 분류가 틀리면 거짓 type 이 실림.
   // 규칙이 없으면 `doc_export` 는 어느 키워드에도 안 걸려 shape 폴백으로 `agent` 가 됨 (ADR-17).
   const drawnNodes = extract(CANONICAL_MAP.mermaid_drawn).nodes;
   const exported = drawnNodes.find((n) => n.id.endsWith("doc_export"));

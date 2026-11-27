@@ -25,12 +25,11 @@ fi
 [[ -n "${_core}" ]] || _core="[ORCHESTRATOR CORE] missing — ${CORE_FILE} is absent or empty, so this session starts without the orchestrator core"
 
 # [RESTATED SoT FIGURES] reply language — GLASS_ATRIUM_GLOBAL_RULES.md -> "## Absolute Rules [ALL]" -> "### Output Language"
-#   · the response-language rule and its children are restated by the three "Reply language" heredoc lines → re-verify on every edit
+#   · the "Reply language" heredoc line restates the response-language rule's head → re-verify on every edit
+#   · its fallback and kept-form children reach the session whole on the host channel → named here, never restated
 _banner=""
 IFS= read -r -d '' _banner <<'ORCHESTRATOR_INIT' || true # EOF before a NUL is the normal end of a heredoc
-Reply language: write the final message of each turn, clarifying questions and the end-of-job results summary to the user in the language of the user's own prose in their latest message; mid-turn progress notes between tool calls may be in English.
-Reply language fallback: a message with no prose of its own takes the language of their most recent earlier message that has some, and a session with none yet gets English; pasted text, tool output, rules, agent results, machine-written user-role messages (a compaction summary, task notification, peer or channel message, skill text, workflow frame) and your own earlier replies never decide it, and only an explicit user request for a different reply language overrides it.
-Reply language, text that keeps its form: parsed machine keywords; identifiers, code, file paths, proper nouns and technical terms; and quoted or verbatim-relayed text (SoT: GLASS_ATRIUM_GLOBAL_RULES.md → Absolute Rules → Output Language, response-language rule).
+Reply language: write the final message of each turn, clarifying questions and the end-of-job results summary to the user in the language of the user's own prose in their latest message; mid-turn progress notes between tool calls may be in English (its fallback and the text that keeps its form: GLASS_ATRIUM_GLOBAL_RULES.md → Absolute Rules → Output Language, response-language rule).
 [INJECTION CANARY] ◈ — start the first line of your first tool-free reply with this glyph; it precedes the BLUF and is not part of it.
 ORCHESTRATOR_INIT
 
@@ -119,6 +118,67 @@ if [[ -r "${_PROGRESS_TRACKER}" ]]; then
   [[ -z "${_continuity}" ]] || _continuity="[CONTINUITY] open progress files: ${_continuity}"
 fi
 
+# Harness integrity — one line from the verdict the doctor or update preflight last recorded
+#   · writer and path: lib/ga-doctor.sh → set_integrity_verdict at lib/ga-env.sh → INTEGRITY_VERDICT (pinned by this hook's bats)
+#   · never a hash walk here (~0.2 s+ over ~1000 files): a jq + one find, so the leg stays inside the ~1 s budget
+#   · a manifest-listed file, the agents/ or hooks/ dir, settings.json or a profile branch's settings.json newer than the verdict → named as changed since
+#   · detection only — the doctor is the authoritative surface; any failure prints the unread line
+readonly INTEGRITY_VERDICT="${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/integrity/last-verdict"
+
+# The [INTEGRITY] line, rc 1 on an unreadable verdict.
+get_integrity_line() {
+  local stamp count root settings changed
+  if [[ ! -e "${INTEGRITY_VERDICT}" ]]; then
+    printf '%s' "[INTEGRITY] not checked yet — run 'glass-atrium doctor' for the harness integrity verdict"
+    return 0
+  fi
+  IFS=$'\t' read -r stamp count root settings <"${INTEGRITY_VERDICT}" || return 1
+  [[ "${stamp}" =~ ^[0-9]+$ && -n "${root}" ]] || return 1
+  # shellcheck disable=SC2310,SC2312  # an unrecognised count is the unread line
+  get_verdict_text "${count}" "$((($(date +%s) - stamp) / 3600))h ago" || return 1
+  # shellcheck disable=SC2310  # an unlistable manifest only drops the suffix
+  changed="$(get_changed_count "${root}" "${settings}")" || changed=0
+  [[ "${changed:-0}" -eq 0 ]] || printf '%s' " · ${changed} tracked file(s) changed since — re-run 'glass-atrium doctor' for a fresh verdict"
+}
+
+# Verdict count $1 aged $2 → the line's head; rc 1 on a count the writer never records.
+get_verdict_text() {
+  case "$1" in
+    0) printf '%s' "[INTEGRITY] clean at the last check ($2) — install files match manifest.json and the Atrium hook bindings match" ;;
+    unread) printf '%s' "[INTEGRITY] the last check could not run ($2) — run 'glass-atrium doctor'" ;;
+    *[!0-9]* | '') return 1 ;;
+    *) printf '%s' "[INTEGRITY] $1 finding(s) at the last check ($2) — 'glass-atrium doctor' lists them; 'glass-atrium update' restores" ;;
+  esac
+}
+
+# Count of tracked paths modified after the verdict file; rc 1 when the manifest cannot be listed.
+get_changed_count() {
+  local root="$1" settings="$2" listed line changed
+  local -a paths=("${root}/agents" "${root}/hooks" "${root}/manifest.json" "${settings}")
+  listed="$(jq -r --arg r "${root}" '(.files // [])[] | $r + "/" + .' -- "${root}/manifest.json" 2>/dev/null)" || return 1
+  listed+=$'\n'"$(get_branch_settings "${settings}")"
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] || paths+=("${line}")
+  done <<<"${listed}"
+  # a start point that no longer exists makes find exit 1 after listing the rest — the verdict reports it at the next check
+  changed="$(find "${paths[@]}" -maxdepth 0 -newer "${INTEGRITY_VERDICT}" -print 2>/dev/null)" || true
+  grep -c . <<<"${changed}" || true
+}
+
+# settings.json of every profile branch beside the target home of settings file $1 — the doctor's
+# branch set: a `.claude-*` sibling holding a .claude.json. A replaced link is newer than the verdict.
+get_branch_settings() {
+  local home="${1%/*}" branch
+  for branch in "${home%/*}"/.claude-*; do
+    [[ -f "${branch}/.claude.json" && ! "${branch}" -ef "${home}" ]] || continue
+    [[ ! -e "${branch}/settings.json" && ! -L "${branch}/settings.json" ]] || printf '%s\n' "${branch}/settings.json"
+  done
+}
+
+# shellcheck disable=SC2310  # any failure is answered by the unread line below
+_integrity="$(get_integrity_line 2>/dev/null)" || _integrity=""
+[[ -n "${_integrity}" ]] || _integrity="[INTEGRITY] unread — ${INTEGRITY_VERDICT} could not be read; run 'glass-atrium doctor'"
+
 # Hook-context cap: 10,000 UTF-16 units (measured record: hooks/inject-scope-rules.sh -> INJECT_CTX_MAX_BYTES)
 #   · over it the host delivers a ~2 KB preview → the core outranks the open-plan list, which yields to one overflow line
 readonly CONTEXT_CAP_UNITS=10000
@@ -135,7 +195,7 @@ get_utf16_units() {
 }
 
 readonly WIKI_LINE='[WIKI] wiki search available: ~/.glass-atrium/scripts/wiki-query.sh "keywords"'
-_context="${_core}"$'\n'"${_banner%$'\n'}${_pointer:+$'\n'${_pointer}}"$'\n'"${WIKI_LINE}"
+_context="${_core}"$'\n'"${_banner%$'\n'}${_pointer:+$'\n'${_pointer}}"$'\n'"${WIKI_LINE}"$'\n'"${_integrity}"
 _units="$(get_utf16_units "${_context}"$'\n'"${_open_plans}${_continuity:+$'\n'${_continuity}}")"
 if ((_units > CONTEXT_CAP_UNITS)); then
   _open_plans="[OPEN PLANS] omitted — the session context would be ${_units} UTF-16 units, $((_units - CONTEXT_CAP_UNITS)) over the ${CONTEXT_CAP_UNITS}-unit hook cap; read the list with GET /api/clauded-docs?${OPEN_PLANS_QUERY}"

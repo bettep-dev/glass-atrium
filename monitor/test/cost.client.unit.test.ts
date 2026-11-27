@@ -1,5 +1,5 @@
 // Unit pins for the PURE derivations behind the cost screen's decision tier (screens/cost.jsx):
-// alarm-lane triggers, the tile-1 hot verdict, the window-total delta rule, the session Other-row
+// the spend alarm rows' triggers and held state, the stat-1 hot verdict, the window-total delta rule, the session Other-row
 // rollup. Each pins a relationship the composition rests on, not a sampled pair.
 //
 // Runner: npx tsx --test test/cost.client.unit.test.ts
@@ -27,20 +27,36 @@ interface PanelState {
   pendingKey?: string | null;
 }
 
+// the newest trend day outside its rolling band — its figure, its day and the band it left
+interface OutsideDay {
+  actual: number;
+  fullDate: string;
+  lowerBand: number;
+  upperBand: number;
+}
+
 interface HotVerdict {
   todayCost: number | null;
   normalDaily: number | null;
   ratio: number | null;
+  paceCost: number | null;
   paceRatio: number | null;
   isHot: boolean;
   isPaceHot: boolean;
-  verdict: string;
 }
 
 interface AlarmRow {
   key: string;
   tone: string;
-  text: string;
+  title: string;
+  detail: string | null;
+  isHeld: boolean;
+}
+
+interface HeldReads {
+  kpi: boolean;
+  trend: boolean;
+  parseError: boolean;
 }
 
 interface WindowTotal {
@@ -83,9 +99,11 @@ interface CostHelpers {
   };
   computeAlarmRows: (input: {
     hot: HotVerdict;
-    latestOutsideBand: boolean;
+    outsideDay: OutsideDay | null;
     parseError: { crit: number; total: number };
+    heldReads: HeldReads;
   }) => AlarmRow[];
+  isRegionHeldC: (state: PanelState) => boolean;
   computeHotVerdict: (kpi: Record<string, unknown>) => HotVerdict;
   computeWindowTotal: (state: PanelState) => WindowTotal;
   getShownDays: (state: PanelState, requestedDays: number) => number;
@@ -95,7 +113,7 @@ interface CostHelpers {
     isEmpty: boolean;
   };
   getParseErrorDayCounts: (state: PanelState) => { crit: number; total: number };
-  isLatestOutsideBand: (state: PanelState) => boolean;
+  getLatestOutsideBandC: (state: PanelState) => OutsideDay | null;
   rollupSessionRows: (
     sessions: ReadonlyArray<{ session_id: string; total_cost_usd: number }>,
     topN: number,
@@ -106,8 +124,8 @@ interface CostHelpers {
     topN: number,
   ) => { count: number; share: number } | null;
   turnStopReasonMeta: (reason: string | null) => { label: string; raw: string; desc: string };
-  getTileStatus: (state: PanelState, value: unknown, isEmpty: boolean) => PanelStatus;
-  getTileNote: (status: PanelStatus, unavailableNote: string) => string;
+  getStatStatus: (state: PanelState, value: unknown, isEmpty: boolean) => PanelStatus;
+  getStatNote: (status: PanelStatus, unavailableNote: string) => string;
   getFreshnessInputC: (
     asOfAt: string | null,
     panelStates: ReadonlyArray<PanelState>,
@@ -130,12 +148,6 @@ interface CostHelpers {
     session: Record<string, unknown>,
     nowMs: number,
   ) => ReadonlyArray<readonly [string, string]>;
-  getTileVerdictTextC: (hot: HotVerdict) => string;
-  getSpendVerdictC: (input: {
-    hot: HotVerdict;
-    latestOutsideBand: boolean;
-    kpiStatus: string;
-  }) => { tone: string; label: string; text: string };
   getStopReasonSessionShare: (sessionCount: number, population: number) => number | null;
   markPartialDay: (rows: ReadonlyArray<{ actual: number }>) => ReadonlyArray<{
     actual: number;
@@ -151,7 +163,8 @@ interface CostHelpers {
   getCacheTicks: (domain: readonly [number, number]) => number[];
   getUsdTicksC: (maxValue: number) => number[];
   getFlatCacheRate: (rows: readonly { rate_pct: number | null }[]) => number | null;
-  getCacheTotalNoteC: (input: { listTotal: number | null; recordedTotal: number | null; days: number }) => string;
+  getCacheTotalNoteC: (input: { listTotal: number; days: number }) => string;
+  formatNormalRangeC: (row: { lowerBand: number; upperBand: number }) => string;
   getTokenAxisFormatter: (maxValue: number) => (value: number) => string;
   computeTokenShares: (
     points: readonly Record<string, number>[],
@@ -159,10 +172,11 @@ interface CostHelpers {
   getTokenStackOrder: (
     shares: ReadonlyArray<{ key: string; total: number }>,
   ) => ReadonlyArray<{ key: string; total: number }>;
-  getTurnHeadline: (
+  getSpendAlarmCopyC: (hot: HotVerdict, outsideDay: OutsideDay | null) => { title: string; detail: string | null };
+  getSessionTurnStat: (
     turns: { avg_turns_per_session?: number; turn_session_count?: number },
     sessionPopulation: number,
-  ) => { value: string | null; note: string };
+  ) => { label: string; value: string | null; context: string };
   getTrendReadout: (
     row: {
       fullDate: string;
@@ -216,22 +230,33 @@ function getTrendPoints(costs: readonly number[]): PanelState {
   return ready({ points: costs.map((c, i) => ({ day: `d${i}`, cost_usd: c })) });
 }
 
+// a week at $4–$6, then $10.50 on 11-16 → above mean + 2σ of its 7-day window ($5.79 + 2 × $2.14 = $10.06; lower $1.51)
+const OUTSIDE_TREND = ready({
+  points: [4, 6, 4, 6, 4, 6, 10.5].map((c, i) => ({ date: `2026-11-${10 + i}`, cost_usd: c, session_count: 1 })),
+});
+const RANGE_ONLY_TITLE = "$10.50 on 11-16, outside its 7-day normal range";
+const OUTSIDE_DAY = cost.getLatestOutsideBandC(OUTSIDE_TREND);
+const RANGE_ONLY_DETAIL = "Normal range $1.51 \u2013 $10.06";
+
+// every read current → no row reads Last known
+const FRESH_READS: HeldReads = { kpi: false, trend: false, parseError: false };
+
 const CALM: HotVerdict = {
   todayCost: 1,
   normalDaily: 1,
   ratio: 1,
+  paceCost: 1,
   paceRatio: 1,
   isHot: false,
   isPaceHot: false,
-  verdict: "Today is 100% of the 7-day daily normal so far.",
 };
 
-test("the lane stays empty unless a trigger fires, and every trigger fires it alone", () => {
+test("no alarm row renders without a trigger, each trigger alone fires the one spend row, and the parse-error row follows it", () => {
   assert.strictEqual(
-    cost.computeAlarmRows({ hot: CALM, latestOutsideBand: false, parseError: { crit: 0, total: 9 } })
+    cost.computeAlarmRows({ hot: CALM, outsideDay: null, parseError: { crit: 0, total: 9 }, heldReads: FRESH_READS })
       .length,
     0,
-    "no trigger must render zero rows — the lane is structural and zero-height when calm",
+    "no trigger must render zero rows — the list is not rendered when calm",
   );
 
   const hotTriggers: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
@@ -242,17 +267,19 @@ test("the lane stays empty unless a trigger fires, and every trigger fires it al
   for (const [name, hotDelta, outsideBand] of hotTriggers) {
     const rows = cost.computeAlarmRows({
       hot: { ...CALM, ...hotDelta },
-      latestOutsideBand: outsideBand,
+      outsideDay: outsideBand ? OUTSIDE_DAY : null,
       parseError: { crit: 0, total: 9 },
+      heldReads: FRESH_READS,
     });
     assert.deepStrictEqual(getKeys(rows), ["hot"], name);
-    assert.ok(rows[0]!.text.length > 0, `${name} must state itself in words`);
+    assert.ok(rows[0]!.title.length > 0, `${name} must state itself in words`);
   }
 
   const withParse = cost.computeAlarmRows({
     hot: { ...CALM, isHot: true },
-    latestOutsideBand: false,
+    outsideDay: null,
     parseError: { crit: 3, total: 9 },
+    heldReads: FRESH_READS,
   });
   assert.deepStrictEqual(
     getKeys(withParse),
@@ -260,30 +287,30 @@ test("the lane stays empty unless a trigger fires, and every trigger fires it al
     "the parse-error row is conditional and follows the hot row",
   );
   assert.match(
-    withParse[1]!.text,
+    withParse[1]!.title,
     /\b3 of 9\b/,
     "the parse-error row states its count beside the population it came from — never a count alone",
   );
 });
 
-test("a payload that failed or never arrived contributes no lane trigger", () => {
+test("a payload that failed or never arrived fires no alarm row", () => {
   for (const state of [loading, failed]) {
     const counts = cost.getParseErrorDayCounts(state);
     assert.strictEqual(counts.crit, 0, `${state.status} crit`);
     assert.strictEqual(counts.total, 0, `${state.status} population`);
-    assert.strictEqual(cost.isLatestOutsideBand(state), false, state.status);
+    assert.strictEqual(cost.getLatestOutsideBandC(state), null, state.status);
   }
-  // Below the rolling window the band has no answer, and no answer must not fire the lane.
-  assert.strictEqual(cost.isLatestOutsideBand(getTrendPoints([1, 9, 1])), false);
+  // Below the rolling window the band has no answer, and no answer must not fire a spend row.
+  assert.strictEqual(cost.getLatestOutsideBandC(getTrendPoints([1, 9, 1])), null);
 });
 
-test("tile-1 tone follows the so-far ratio alone, never the pace figure", () => {
+test("the so-far verdict follows the so-far ratio alone, and a hot pace sets only the pace verdict", () => {
   const hotSoFar = cost.computeHotVerdict(getKpiAtRatio(2, null));
   assert.strictEqual(hotSoFar.isHot, true);
   assert.strictEqual(hotSoFar.isPaceHot, false);
 
   const hotPaceOnly = cost.computeHotVerdict(getKpiAtRatio(0.1, 2));
-  assert.strictEqual(hotPaceOnly.isHot, false, "a hot pace must not make the tone hot");
+  assert.strictEqual(hotPaceOnly.isHot, false, "a hot pace must not make the so-far verdict hot");
   assert.strictEqual(hotPaceOnly.isPaceHot, true);
 
   // The cut is a threshold, so it holds across the class, not at one hand-picked value.
@@ -295,14 +322,14 @@ test("tile-1 tone follows the so-far ratio alone, never the pace figure", () => 
   }
 });
 
-test("the verdict always carries the so-far clause and adds the pace clause only when measured", () => {
-  const withPace = cost.computeHotVerdict(getKpiAtRatio(1.5, 2));
-  assert.match(withPace.verdict, /so far/);
-  assert.match(withPace.verdict, /pace/);
+test("the spend title always carries the so-far amount and adds the pace clause only when measured", () => {
+  const withPace = cost.getSpendAlarmCopyC(cost.computeHotVerdict(getKpiAtRatio(1.5, 2)), null);
+  assert.match(withPace.title, /so far today/);
+  assert.match(withPace.title, /on pace for/);
 
-  const withoutPace = cost.computeHotVerdict(getKpiAtRatio(1.5, null));
-  assert.match(withoutPace.verdict, /so far/);
-  assert.doesNotMatch(withoutPace.verdict, /pace/, "a missing burn rate must drop the clause, not guess it");
+  const withoutPace = cost.getSpendAlarmCopyC(cost.computeHotVerdict(getKpiAtRatio(1.5, null)), null);
+  assert.match(withoutPace.title, /so far today/);
+  assert.doesNotMatch(withoutPace.title, /pace/, "a missing burn rate must drop the clause, not guess it");
 });
 
 test("the pace lands today's spend so far plus the burn over the hours left, never below what is spent", () => {
@@ -334,9 +361,11 @@ test("the hours left are read in the day bucket's zone, and an unreadable instan
   assert.ok(Math.abs(kst.paceRatio! - (5 + 3) / 10) < 1e-9);
 
   for (const broken of [{ day_bucket_timezone: "Not/AZone" }, { day_bucket_timezone: "UTC", fetched_at: "x" }, {}]) {
-    const hot = cost.computeHotVerdict({ window_7d_cost_usd: 70, today_cost_usd: 5, burn_rate_3h_usd_per_hour: 1, ...broken });
+    // so far at 2× the average → the row fires on the so-far leg alone, so its title can only lose the pace
+    const hot = cost.computeHotVerdict({ window_7d_cost_usd: 70, today_cost_usd: 20, burn_rate_3h_usd_per_hour: 1, ...broken });
     assert.strictEqual(hot.paceRatio, null, JSON.stringify(broken));
-    assert.doesNotMatch(hot.verdict, /pace/);
+    assert.strictEqual(hot.paceCost, null, JSON.stringify(broken));
+    assert.doesNotMatch(cost.getSpendAlarmCopyC(hot, null).title, /pace/);
   }
 });
 
@@ -345,7 +374,10 @@ test("a missing or unusable kpi figure stays null rather than collapsing to zero
     const hot = cost.computeHotVerdict(kpi);
     assert.strictEqual(hot.ratio, null, JSON.stringify(kpi));
     assert.strictEqual(hot.isHot, false);
-    assert.strictEqual(hot.verdict, "", "no ratio means no verdict sentence to state");
+    assert.equal(
+      cost.computeAlarmRows({ hot, outsideDay: null, parseError: { crit: 0, total: 9 }, heldReads: FRESH_READS }).length, 0,
+      "no ratio means no spend row to state",
+    );
   }
 });
 
@@ -398,7 +430,7 @@ function getTrendWithPrior(costs: readonly number[], prior: Record<string, unkno
   });
 }
 
-describe("the cost tile's delta compares the window total with the server's prior window", () => {
+describe("the cost stat's delta compares the window total with the server's prior window", () => {
   const rows = [
     { name: "a total above the prior window reads up", costs: [1, 2, 3, 4], prior: 5, delta: 100 },
     { name: "a total below the prior window reads down", costs: [1, 2, 3, 4], prior: 20, delta: -50 },
@@ -577,7 +609,7 @@ test("nothing is rolled into Other when the population fits", () => {
   assert.strictEqual(none.total, 0);
 });
 
-test("every tile state is distinct, and only ready renders a measured value", () => {
+test("every stat state is distinct, and only ready renders a measured value", () => {
   const cases: ReadonlyArray<readonly [PanelState, unknown, boolean, PanelStatus]> = [
     [loading, 1, false, "loading"],
     [failed, 1, false, "error"],
@@ -589,14 +621,15 @@ test("every tile state is distinct, and only ready renders a measured value", ()
     [ready({}), 0, false, "ready"],
   ];
   for (const [state, value, isEmpty, expected] of cases) {
-    const status = cost.getTileStatus(state, value, isEmpty);
+    const status = cost.getStatStatus(state, value, isEmpty);
     assert.strictEqual(status, expected, `${state.status}/${String(value)}/${isEmpty}`);
   }
 
-  for (const status of ["error", "empty", "unavailable"] as const) {
-    assert.ok(cost.getTileNote(status, "no normal to compare against").length > 0, status);
+  // a failed read's line is the pointer to its notice (the not-current spend stat cases)
+  for (const status of ["empty", "unavailable"] as const) {
+    assert.ok(cost.getStatNote(status, "no normal to compare against").length > 0, status);
   }
-  assert.strictEqual(cost.getTileNote("ready", "x"), "", "a ready tile states its value, not a note");
+  assert.strictEqual(cost.getStatNote("ready", "x"), "", "a ready stat states its value, not a note");
 });
 
 test("a model reads by one display name in every table, and an unattributed model never reads as a model name", () => {
@@ -665,31 +698,64 @@ test("the session drawer's task-results link does not promise a session-scoped v
     type,
     props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
   });
-  const collectButtons = (node: unknown, out: DrawerElement[]): DrawerElement[] => {
+  const collectLinks = (node: unknown, out: DrawerElement[]): DrawerElement[] => {
     if (Array.isArray(node)) {
-      for (const child of node) collectButtons(child, out);
+      for (const child of node) collectLinks(child, out);
       return out;
     }
     if (typeof node !== "object" || node === null || !("props" in node)) return out;
     const el = node as DrawerElement;
-    if (el.type === "button") out.push(el);
-    return collectButtons(el.props.children, out);
+    if (typeof el.props.href === "string") out.push(el);
+    return collectLinks(el.props.children, out);
   };
-  const navCalls: unknown[][] = [];
   const session = { session_id: "12345678-9abc-4def-8123-456789abcdef", total_cost_usd: 1 };
-  const drawer = sandbox.SessionDetailDrawerC({ session, onClose: () => {}, onNav: (...args: unknown[]) => navCalls.push(args) });
+  const drawer = sandbox.SessionDetailDrawerC({ session, onClose: () => {} });
 
-  const [link] = collectButtons(drawer, []).filter((b) => {
-    const before = navCalls.length;
-    (b.props.onClick as () => void)();
-    return navCalls.length > before;
-  });
+  const links = collectLinks(drawer, []);
+  assert.deepEqual(links.map((l) => l.props.href), ["#outcomes"], "the one destination carries no session scope");
+  const [link] = links;
   assert.ok(link, "the drawer still links to Task results");
-  assert.deepEqual(navCalls, [["outcomes"]], "the destination carries no session scope");
   assert.match(String(link.props.children), /^All task results/, "an unscoped destination is labelled as the whole list");
 });
 
-test("the running-hot sentence is stated once — in the lane when it fires, on tile 1 otherwise", () => {
+test("the session drawer sets only the session id in the machine-string face; every other fact reads in sans", async () => {
+  interface DrawerElement {
+    type: unknown;
+    props: Record<string, unknown>;
+  }
+  interface DrawerSandbox {
+    React: { createElement: unknown };
+    SessionDetailDrawerC: (props: Record<string, unknown>) => DrawerElement;
+  }
+  const sandbox = await buildScreenSandbox<DrawerSandbox>(COST_SRC);
+  sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | null, ...rest: unknown[]) => ({
+    type,
+    props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
+  });
+  const collect = (node: unknown, isMatch: (el: DrawerElement) => boolean, out: DrawerElement[] = []): DrawerElement[] => {
+    if (Array.isArray(node)) {
+      for (const child of node) collect(child, isMatch, out);
+      return out;
+    }
+    if (typeof node !== "object" || node === null || !("props" in node)) return out;
+    const el = node as DrawerElement;
+    if (isMatch(el)) out.push(el);
+    return collect(el.props.children, isMatch, out);
+  };
+  const isMachine = (el: DrawerElement) => typeof el.type === "function" && el.type.name === "MachineString";
+  const session = {
+    session_id: "12345678-9abc-4def-8123-456789abcdef", top_model: "claude-opus-5-5",
+    total_cost_usd: 1.25, total_tokens: 120_000, event_count: 42,
+  };
+  const facts = collect(sandbox.SessionDetailDrawerC({ session, onClose: () => {} }), (el) => el.type === "dd");
+
+  assert.ok(facts.length >= 4, `the drawer lists the session facts (${facts.length})`);
+  const machineText = facts.map((dd) => collect(dd.props.children, isMachine).map((el) => String(el.props.children)));
+  assert.deepEqual(machineText.filter((texts) => texts.length > 0), [[session.session_id]]);
+  assert.ok(facts.every((dd) => !/font-mono/.test(String(dd.props.className))), "no fact falls back to a mono class");
+});
+
+test("the spend amount is stated once, in the alarm rows, exactly when a spend leg reaches the cut", () => {
   const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
     ["calm", {}, false],
     ["so-far ratio", { isHot: true }, false],
@@ -697,59 +763,26 @@ test("the running-hot sentence is stated once — in the lane when it fires, on 
     ["outlier day only", {}, true],
     ["both ratios", { isHot: true, isPaceHot: true }, true],
   ];
-  const verdict = "Today is 81% of the 7-day daily normal so far, on pace for 3.1x it.";
   for (const [name, delta, outsideBand] of cases) {
-    const hot = { ...CALM, verdict, ...delta };
-    const laneTexts = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
-      .map((r) => r.text);
-    const pageVerdict = cost.getSpendVerdictC({ hot, latestOutsideBand: outsideBand, kpiStatus: "ready" }).text;
-    assert.ok(!pageVerdict.includes(verdict), `${name}: the page verdict names the state, never the figures`);
-    const places = [...laneTexts, cost.getTileVerdictTextC(hot)].filter((t) => t.includes(verdict)).length;
-    assert.equal(places, 1, name);
+    const hot = { ...CALM, todayCost: 842, ...delta };
+    const titles = [...cost.computeAlarmRows({ hot, outsideDay: outsideBand ? OUTSIDE_DAY : null, parseError: { crit: 3, total: 9 }, heldReads: FRESH_READS })]
+      .map((r) => r.title);
+    const places = titles.filter((t) => t.startsWith("$842 so far today")).length;
+    assert.equal(places, hot.isHot || hot.isPaceHot ? 1 : 0, name);
   }
 });
 
-test("the page verdict carries the lane's hot tone when it fires, and reads on pace when nothing fires", () => {
+// spec 44084 §3.4: the spend alarm takes one glyph on Cost and Dashboard alike, whichever leg fires it
+test("every spend row is a warning, whichever trigger fires it, as on the Dashboard", () => {
   const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean]> = [
-    ["calm", {}, false],
     ["so-far ratio", { isHot: true }, false],
+    ["so-far and pace", { isHot: true, isPaceHot: true }, true],
     ["pace only", { isPaceHot: true }, false],
     ["outlier day only", {}, true],
-    ["so-far and pace", { isHot: true, isPaceHot: true }, true],
   ];
   for (const [name, delta, outsideBand] of cases) {
-    const hot = { ...CALM, ...delta };
-    const hotRow = [...cost.computeAlarmRows({ hot, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } })]
-      .find((r) => r.key === "hot");
-    const verdict = cost.getSpendVerdictC({ hot, latestOutsideBand: outsideBand, kpiStatus: "ready" });
-    assert.equal(verdict.tone, hotRow ? hotRow.tone : "ok", name);
-    assert.equal(verdict.label, hotRow ? "Above normal" : "On pace", name);
-  }
-});
-
-test("the page verdict claims no spend state without a measured normal", () => {
-  const rows: ReadonlyArray<{ name: string; hot: HotVerdict; kpiStatus: string }> = [
-    { name: "kpi still loading", hot: CALM, kpiStatus: "loading" },
-    { name: "kpi failed", hot: { ...CALM, isHot: true }, kpiStatus: "error" },
-    { name: "no 7-day normal", hot: { ...CALM, ratio: null, normalDaily: null }, kpiStatus: "ready" },
-  ];
-  for (const row of rows) {
-    const verdict = cost.getSpendVerdictC({ hot: row.hot, latestOutsideBand: true, kpiStatus: row.kpiStatus });
-    assert.equal(verdict.tone, "neutral", row.name);
-    assert.ok(verdict.text.length > 0, `${row.name}: the line still says why there is no verdict`);
-  }
-});
-
-test("the hot row is red only past the so-far cut; a projection or an outlier day is amber", () => {
-  const cases: ReadonlyArray<readonly [string, Partial<HotVerdict>, boolean, string]> = [
-    ["so-far ratio", { isHot: true }, false, "crit"],
-    ["so-far and pace", { isHot: true, isPaceHot: true }, true, "crit"],
-    ["pace only", { isPaceHot: true }, false, "warn"],
-    ["outlier day only", {}, true, "warn"],
-  ];
-  for (const [name, delta, outsideBand, tone] of cases) {
-    const rows = cost.computeAlarmRows({ hot: { ...CALM, ...delta }, latestOutsideBand: outsideBand, parseError: { crit: 0, total: 9 } });
-    assert.equal(rows[0]!.tone, tone, name);
+    const rows = cost.computeAlarmRows({ hot: { ...CALM, ...delta }, outsideDay: outsideBand ? OUTSIDE_DAY : null, parseError: { crit: 0, total: 9 }, heldReads: FRESH_READS });
+    assert.equal(rows[0]!.tone, "warn", name);
   }
 });
 
@@ -872,6 +905,14 @@ test("stop reasons read as plain words, with the raw id kept as the secondary la
   }
 });
 
+test("a turn with no stop reason reads as not recorded, never a dash", () => {
+  for (const reason of [null, ""]) {
+    const meta = cost.turnStopReasonMeta(reason);
+    assert.strictEqual(meta.label, cost.turnStopReasonMeta("unknown").label, `${JSON.stringify(reason)} takes the unrecorded label`);
+    assert.strictEqual(meta.raw, "");
+  }
+});
+
 test("a log-integrity bar reads as over threshold exactly when it rises above the threshold line on the same count axis", () => {
   const rows = [
     { event_date: "2026-09-01", error_count: 6, total_count: 100 },
@@ -962,20 +1003,20 @@ test("the stack draws the largest category last, so the top edge carries that se
   }
 });
 
-test("the turn headline states one per-session figure and reconciles its session count with the population", () => {
+test("the turns-per-session stat reconciles its session count with the population in its hint", () => {
   const rows = [
-    { name: "fewer sessions logged a turn count", counted: 257, population: 582 },
-    { name: "every session logged a turn count", counted: 582, population: 582 },
+    { name: "fewer sessions logged a turn count", counted: 257, population: 582, context: "257 of 582 sessions" },
+    { name: "every session logged a turn count", counted: 582, population: 582, context: "582 sessions" },
+    { name: "no session logged a turn count", counted: 0, population: 40, context: "No session logged a turn count." },
   ];
-  for (const { name, counted, population } of rows) {
-    const { value, note } = cost.getTurnHeadline({ avg_turns_per_session: 91.25, turn_session_count: counted }, population);
-    assert.strictEqual(value, "91.3", name);
-    const numbers = note.match(/\d+/g) ?? [];
-    assert.deepStrictEqual([...new Set(numbers)].sort(), [...new Set([String(counted), String(population)])].sort(), `${name}: ${note}`);
-    assert.strictEqual(numbers.length, new Set(numbers).size, `${name}: each count stated once — ${note}`);
+  for (const { name, counted, population, context } of rows) {
+    const stat = cost.getSessionTurnStat({ avg_turns_per_session: 91.25, turn_session_count: counted }, population);
+    assert.deepStrictEqual(
+      { label: stat.label, value: stat.value, context: stat.context },
+      { label: "Turns per session", value: counted === 0 ? null : "91.3", context },
+      name,
+    );
   }
-  const none = cost.getTurnHeadline({ avg_turns_per_session: 0, turn_session_count: 0 }, 40);
-  assert.strictEqual(none.value, null, "no counted session has no average");
 });
 
 // --- Error cards survive their Retry, and a held read under a failure never reads current ---
@@ -986,23 +1027,41 @@ interface RenderModule {
   [name: string]: unknown;
 }
 
-// the tiles are thin wrappers over the shared KPI anatomy → the real KPI renders, its slots stay stub atoms
+// the spend stats and the ledgers are models over shared atoms → the real stat row, loading row, Stack and table atoms render, other atoms stay stubs
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
-const realKpi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI.KPI;
+const realUi = ((await loadScreenModule(UI_SRC)) as { UI: Record<string, unknown> }).UI;
+const REAL_ATOMS = new Set(["StatRow", "StatNotes", "QuietButton", "AlarmRow", "AbsentValue", "LoadingPlaceholder", "Stack", "Table", "TableRow", "TableCell"]);
 
-// real ui.jsx helpers, with every rendered atom a host element carrying its props (the KPI anatomy itself real)
+// real ui.jsx helpers, with every rendered atom a host element carrying its props (the stat row anatomy itself real)
 function getAtomUi(overrides: Record<string, unknown> = {}): unknown {
   const real = cost.window.UI as Record<string, unknown>;
   return new Proxy({}, {
     get: (_target, name: string) => {
       if (name in overrides) return overrides[name];
-      if (name === "KPI") return realKpi;
+      if (REAL_ATOMS.has(name)) return getReactPropsAtom(realUi[name] as (props: Record<string, unknown>) => unknown);
       const value = real[name];
       if (typeof value !== "function" || /^[a-z]/.test(name)) return value;
       return (props: Record<string, unknown>) => ({ __element: true, type: "ui-atom", props: { ...props, atom: name } });
     },
     has: () => true,
   });
+}
+
+// React hands a lone child over as itself, the stub always as an array → a render-function child (Table rows) only runs unwrapped
+function getReactPropsAtom(atom: (props: Record<string, unknown>) => unknown) {
+  return (props: Record<string, unknown>) => {
+    const { children } = props;
+    return atom(Array.isArray(children) && children.length === 1 ? { ...props, children: children[0] } : props);
+  };
+}
+
+const isStat = (n: RenderedNode) => n.type === "div" && n.props.className === "stat";
+
+// the spend card's ⓘ body, rendered — the stub Card holds it as a prop
+function renderSpendNotes(tree: RenderedNode): RenderedNode {
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card" && n.props.title === "Spend");
+  assert.ok(card?.props.info, "the spend card carries an info trigger");
+  return renderScreen(card.props.info) as RenderedNode;
 }
 
 function renderIn(mod: RenderModule, name: string, props: Record<string, unknown>): RenderedNode {
@@ -1016,10 +1075,10 @@ test("a cold-failed region keeps its error card mounted and busy while its Retry
     "CostTrendBody", "TokenStackedBody", "ModelCostBody", "CacheHitBody", "SessionDistributionBody", "ParseErrorBody", "TurnStatsBody",
   ];
   // the ids the page renders on its region wrappers, which stay mounted through any recovery
-  const page = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const page = renderIn(mod, "ScreenCost", {});
   const regionIds = new Set(findNodes(page, (n) => n.type === "div" && typeof n.props.id === "string").map((n) => n.props.id));
   for (const name of bodies) {
-    const tree = renderIn(mod, name, { state: retrying, days: 30, onRetry: () => {}, onNav: () => {} });
+    const tree = renderIn(mod, name, { state: retrying, days: 30, onRetry: () => {} });
     const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
     assert.equal(cards.length, 1, `${name} keeps its error card`);
     assert.equal(findNodes(tree, (n) => n.props.atom === "LoadingPlaceholder").length, 0, `${name} never swaps in a loader`);
@@ -1028,33 +1087,215 @@ test("a cold-failed region keeps its error card mounted and busy while its Retry
   }
 });
 
-test("a cold-failed KPI payload retrying reads as failed on its tiles, never a skeleton beside its busy error card", async () => {
+test("a cold-failed KPI payload retrying reads as failed on its stats, never a skeleton beside its busy error card", async () => {
   const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
   const kpiState: PanelState = { status: "loading", data: null, error: "HTTP 500 Internal Server Error", busy: true };
   const settled = ready({ points: [{ day: "2026-01-09", cost_usd: 2 }], rows: [] });
-  const tree = renderIn(mod, "KpiRowC", {
+  const tree = renderIn(mod, "SpendCardC", {
     kpiState, hot: cost.computeHotVerdict({}), trendState: settled, modelState: settled, days: 30, onRetry: () => {},
   });
 
   const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
   assert.equal(cards.length, 1, "the KPI error card stays mounted");
   assert.equal(cards[0].props.isBusy, true);
-  const tiles = findNodes(tree, (n) => n.type === "div" && String(n.props.className ?? "").split(/\s+/).includes("kpi"));
-  assert.equal(tiles.length, 4);
-  assert.equal(tiles.filter((t) => t.props["aria-busy"] === "true").length, 0, "no tile reads as loading beside the card");
+  const failedStats = findNodes(tree, isStat).filter((stat) => /Not loaded/.test(collectText(stat)));
+  assert.equal(failedStats.length, 2, "the two stats the KPI payload feeds read as not loaded");
+  assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 0, "no stat reads as loading beside the card");
+});
+
+test("a failed KPI read states its cause as the Spend card's first body row, above the stats it blanks, never on the page ground", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const kpiState: PanelState = { status: "error", data: null, error: "HTTP 500 Internal Server Error", busy: false };
+  const settled = ready({ points: [{ day: "2026-01-09", cost_usd: 2 }], rows: [] });
+  const tree = renderIn(mod, "SpendCardC", {
+    kpiState, hot: cost.computeHotVerdict({}), trendState: settled, modelState: settled, days: 30, onRetry: () => {},
+  });
+
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card" && n.props.title === "Spend");
+  assert.ok(card, "the Spend card renders");
+  const inCard = findNodes(card, (n) => n.props.atom === "RegionFailure" || isStat(n));
+  assert.equal(findNodes(tree, (n) => n.props.atom === "RegionFailure").length, 1, "one notice for the KPI read");
+  assert.equal(inCard[0]?.props.atom, "RegionFailure", "the notice sits inside the card, before every stat");
+});
+
+test("a spend stat that read nothing says so in faint words — Not loaded for a failed read, None for an empty one — never a dash", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const rows = [
+    { name: "a failed read", status: "error", word: "Not loaded" },
+    { name: "a window with no spend", status: "empty", word: "None" },
+    { name: "a figure with no basis", status: "unavailable", word: "None" },
+  ];
+  for (const row of rows) {
+    const tree = renderIn(mod, "SpendStatValueC", { stat: { key: "today", label: "Today", status: row.status } });
+    assert.equal(collectText(tree).trim(), row.word, row.name);
+    assert.equal(findNodes(tree, (n) => n.type === "span" && hasFaintClass(n) && collectText(n) === row.word).length, 1, `${row.name}: the word is faint`);
+    assert.equal(findNodes(tree, (n) => n.props["aria-hidden"] === "true").length, 0, `${row.name}: nothing is hidden from a screen reader`);
+  }
+});
+
+test("a firing spend stat draws the shared stat tone glyph in its tone, read as running hot, before the figure", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const stat = renderIn(mod, "SpendStatValueC", { stat: { key: "today", label: "Today", status: "ready", tone: "warn", value: "$1,790" } });
+  const glyphs = findNodes(stat, (n) => n.props.atom === "ToneGlyph");
+
+  assert.deepEqual(glyphs.map((n) => [n.props.tone, n.props.label]), [["warn", "Running hot"]]);
+  assert.equal(collectText(stat).trim(), "$1,790");
+});
+
+function hasFaintClass(node: RenderedNode): boolean {
+  return String(node.props.className ?? "").split(/\s+/).includes("text-faint");
+}
+
+// spec 44084 §3.4: amount first in the title; the multiple, the basis noun and the basis amount in the detail
+describe("the spend alarm reads amount first, then its multiple of the 7-day average", () => {
+  // a $1,380/day average, read at UTC noon → 12 hours of the day remain
+  const getKpi = (today: number, endOfDay: number | null): Record<string, unknown> => ({
+    window_7d_cost_usd: 1_380 * 7,
+    today_cost_usd: today,
+    burn_rate_3h_usd_per_hour: endOfDay === null ? null : (endOfDay - today) / NOON_HOURS_LEFT,
+    day_bucket_timezone: "UTC",
+    fetched_at: NOON_UTC,
+  });
+  const rows = [
+    {
+      name: "a pace figure names where the day lands, and the multiple is the pace's",
+      kpi: getKpi(842, 2_480), isOutsideBand: false,
+      title: "$842 so far today, on pace for $2,480 by end of day", detail: "1.8\u00d7 the 7-day average ($1,380/day)",
+    },
+    {
+      name: "without a pace figure the multiple is the so-far share",
+      kpi: getKpi(1_790, null), isOutsideBand: false,
+      title: "$1,790 so far today", detail: "1.3\u00d7 the 7-day average ($1,380/day)",
+    },
+    {
+      name: "with no spend leg at the cut the latest day leads with its amount and date, its range as the detail",
+      kpi: getKpi(842, null), isOutsideBand: true,
+      title: RANGE_ONLY_TITLE, detail: RANGE_ONLY_DETAIL,
+    },
+    {
+      name: "a pace figure under the cut does not lead a row the range fact fired",
+      kpi: getKpi(842, 1_000), isOutsideBand: true,
+      title: RANGE_ONLY_TITLE, detail: RANGE_ONLY_DETAIL,
+    },
+    {
+      name: "the range fact joins the detail only beside a spend leg at the cut",
+      kpi: getKpi(1_790, null), isOutsideBand: true,
+      title: "$1,790 so far today", detail: "1.3\u00d7 the 7-day average ($1,380/day) \u00b7 the latest day is outside its 7-day normal range",
+    },
+    {
+      name: "with no spend figure the latest day still leads with its amount",
+      kpi: {}, isOutsideBand: true,
+      title: RANGE_ONLY_TITLE, detail: RANGE_ONLY_DETAIL,
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const copy = cost.getSpendAlarmCopyC(cost.computeHotVerdict(row.kpi), row.isOutsideBand ? OUTSIDE_DAY : null);
+      assert.equal(copy.title, row.title);
+      assert.equal(copy.detail, row.detail);
+    });
+  }
+
+});
+
+test("log integrity with no unreadable entry says so in plain words, never the raw column name", async () => {
+  const mod = await loadCostRender();
+  const state = ready({ rows: [{ event_date: "2026-01-09", error_count: 0, total_count: 1187 }] });
+  const tree = renderIn(mod, "ParseErrorBody", { state, days: 30, onRetry: () => {} });
+  // the message prop rides down the EmptyState atom's own nodes → one distinct message per empty state
+  const messages = new Set(findNodes(tree, (n) => typeof n.props.message === "string").map((n) => n.props.message));
+  assert.deepEqual([...messages], ["No unreadable entries in 30 days."]);
+});
+
+test("an average turn count drops a trailing .0", () => {
+  const { value } = cost.getSessionTurnStat({ avg_turns_per_session: 4, turn_session_count: 10 }, 10);
+  assert.strictEqual(value, "4");
+});
+
+describe("an instrumentation card sets its figures in one stat row, never a tile grid", () => {
+  const readStats = (tree: RenderedNode) => findNodes(tree, isStat).map((stat) => {
+    const [label] = findNodes(stat, (n) => n.props.className === "stat-label");
+    const [value] = findNodes(stat, (n) => typeof n.props.className === "string" && n.props.className.startsWith("stat-value"));
+    return [collectText(label), collectText(value)];
+  });
+  const rows = [
+    {
+      name: "log integrity with unreadable entries",
+      body: "ParseErrorBody",
+      data: { rows: [
+        { event_date: "2026-01-08", error_count: 0, total_count: 1240 },
+        { event_date: "2026-01-09", error_count: 3, total_count: 1187 },
+      ] },
+      stats: [["Unreadable entries", "3"], ["Last seen", undefined]],
+    },
+    {
+      name: "log integrity with none — Last seen reads None",
+      body: "ParseErrorBody",
+      data: { rows: [{ event_date: "2026-01-09", error_count: 0, total_count: 1187 }] },
+      stats: [["Unreadable entries", "0"], ["Last seen", "None"]],
+    },
+    {
+      name: "turn statistics",
+      body: "TurnStatsBody",
+      data: {
+        stop_reasons: [{ stop_reason: "end_turn", event_count: 1830, session_count: 412 }],
+        stop_reason_session_count: 412,
+        turns: { avg_turns_per_session: 14.4, avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
+      },
+      stats: [["Turns per session", "14.4"], ["Avg turns per event", "3.3"], ["Most turns in one event", "1,204"], ["Total turns", "5,948"]],
+    },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name}: each figure is a stat, label then value`, async () => {
+      const mod = (await loadScreenModule(COST_SRC, {
+        UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
+      })) as RenderModule;
+      const stats = readStats(renderIn(mod, row.body, { state: ready(row.data), days: 30, onRetry: () => {} }));
+
+      assert.deepEqual(stats.map(([label]) => label), row.stats.map(([label]) => label));
+      // a relative day count moves with the clock → only its presence is pinned
+      row.stats.forEach(([label, value], i) => {
+        assert.ok(value === undefined ? stats[i][1].length > 0 : stats[i][1] === value, `${label} reads ${value ?? "a value"}`);
+      });
+    });
+  }
 });
 
 test("every cost region error card carries the page Retry, so a region the banner does not cover still offers one", async () => {
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi({ INITIAL_REGION_STATE: failed }), React: createReactStub(),
   })) as RenderModule;
-  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const tree = renderIn(mod, "ScreenCost", {});
 
   assert.equal(findNodes(tree, (n) => n.props.atom === "PageErrorBanner").length, 1, "the shared outage shows its banner");
   const cards = findNodes(tree, (n) => n.props.atom === "RegionFailure");
   assert.ok(cards.length >= 7, "every payload's region renders its error card");
   for (const card of cards) {
     assert.equal(typeof card.props.onRetry, "function", `${String(card.props.source)} keeps its Retry for RegionFailure to hide or show`);
+  }
+});
+
+describe("the page banner's Retry hands focus to a region card every page state renders", () => {
+  const renderInState = async (state: PanelState) => renderIn((await loadScreenModule(COST_SRC, {
+    UI: getAtomUi({ INITIAL_REGION_STATE: state }), React: createReactStub(),
+  })) as RenderModule, "ScreenCost", {});
+  const rows = [
+    { name: "loading", state: loading },
+    { name: "error", state: failed },
+    { name: "ready", state: ready({ ...getKpiAtRatio(1, 1), points: [], rows: [] }) },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name}: the fallback card renders once, outside the banner`, async () => {
+      const [banner] = findNodes(await renderInState(failed), (n) => n.props.atom === "PageErrorBanner");
+      const fallbackId = banner.props.focusTargetId;
+      // host nodes and stubbed atoms only — a screen component also carries the id it passes down
+      const targets = findNodes(await renderInState(row.state), (n) => /^[a-z]/.test(n.type) && n.props.id === fallbackId);
+
+      assert.equal(targets.length, 1, `focus target ${String(fallbackId)} is one rendered element`);
+      assert.notEqual(targets[0].props.atom, "PageErrorBanner", "never the banner that unmounts on recovery");
+    });
   }
 });
 
@@ -1067,7 +1308,7 @@ function renderCostWithRegions(regions: PanelState[]): Promise<RenderedNode> {
     useState: (initial: unknown) => [initial === regionInitial ? (queue.shift() ?? loading) : initial, () => undefined],
   };
   return loadScreenModule(COST_SRC, { UI: getAtomUi({ INITIAL_REGION_STATE: regionInitial }), React: react })
-    .then((mod) => renderIn(mod as RenderModule, "ScreenCost", { onNav: () => {} }));
+    .then((mod) => renderIn(mod as RenderModule, "ScreenCost", {}));
 }
 
 describe("the cost banner reads Retrying only while a failed region is re-read", () => {
@@ -1083,7 +1324,7 @@ describe("the cost banner reads Retrying only while a failed region is re-read",
   }
 });
 
-test("the page verdict over a warm error reads Last known, never the all-clear", async () => {
+test("the header stamp over a warm error reads stale, and no page verdict restates it", async () => {
   const ui = cost.window.UI;
   const now = Date.parse(NOON_UTC);
   const readAt = new Date(now - 60_000).toISOString();
@@ -1093,12 +1334,10 @@ test("the page verdict over a warm error reads Last known, never the all-clear",
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi({ INITIAL_REGION_STATE: warmError }), React: react,
   })) as RenderModule;
-  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
-  const [verdict] = findNodes(tree, (n) => n.props.id === "cost-verdict");
-  const props = verdict.props as { tone: string; label?: string; freshness?: Record<string, unknown> };
-  const shown = ui.getFreshnessVerdict({ ...props.freshness, tone: props.tone, label: props.label, now });
-  assert.match(String(shown.label), /^Last known/, `the verdict reads ${String(shown.label)}`);
-  assert.notEqual(shown.tone, "ok", "a held read under a failure never reads healthy");
+  const tree = renderIn(mod, "ScreenCost", {});
+  const [header] = findNodes(tree, (n) => n.props.atom === "PageHeader");
+  const stamp = header.props.freshness as { props: { at: string | null; regions: readonly PanelState[] } };
+  assert.equal(ui.getFreshnessState({ ...stamp.props, now }), "stale", "a held read under a failure is never fresh");
 });
 
 // every Recharts part renders as a host node named after it, so a chart's wrapper and data are inspectable
@@ -1130,9 +1369,12 @@ const TREND_WITH_GAP = ready({
   ],
 });
 
-const CACHE_ROWS = ["2026-01-08", "2026-01-09", "2026-01-10"].map((event_date, i) => ({
-  event_date, cache_hit_rate: [0.97, 0.99, 0.985][i], total_cache_read: 900, total_input: 20,
-}));
+// each day's rate is its own read share → the pooled figure is the series' weighted mean
+const CACHE_ROWS = ["2026-01-08", "2026-01-09", "2026-01-10"].map((event_date, i) => {
+  const read = 900;
+  const input = [28, 9, 14][i]!;
+  return { event_date, cache_hit_rate: read / (read + input), total_cache_read: read, total_input: input };
+});
 
 // Prior cost far above the shown cost → a delta reading cost instead of tokens would read down.
 function getTokenTrend(tokens: readonly number[], priorTokens: number | null): PanelState {
@@ -1153,15 +1395,15 @@ function getSpokenText(node: RenderedNode | string | null): string {
   return node.children.map(getSpokenText).join(" ");
 }
 
-describe("the token volume total compares with the server's prior window, cut at this time of day", () => {
-  const span = "vs the 4 days before 01-03, cut at this time of day";
+describe("the token volume total compares with the server's prior window", () => {
+  const span = "on the previous 4 days";
   const rows = [
     { name: "more tokens than the prior window read up, whatever cost did", tokens: [100, 100, 100, 100], prior: 200, glyph: "\u25b2", spoken: new RegExp(`\\bup\\s+100\\s*%\\s*${span}`) },
     { name: "fewer tokens read down", tokens: [50, 50, 50, 50], prior: 400, glyph: "\u25bc", spoken: new RegExp(`\\bdown\\s+50\\s*%\\s*${span}`) },
-    { name: "equal totals read unchanged", tokens: [100, 100, 100, 100], prior: 400, glyph: "\u2014", spoken: new RegExp(`\\bunchanged\\s+0\\s*%\\s*${span}`) },
+    { name: "equal totals read level, with no glyph", tokens: [100, 100, 100, 100], prior: 400, glyph: null, spoken: /Level with the previous 4 days/ },
     { name: "today's partial day counts toward the total it sits under", tokens: [100, 100, 100, 500], prior: 400, glyph: "\u25b2", spoken: new RegExp(`\\bup\\s+100\\s*%\\s*${span}`) },
     { name: "an absent prior window reads as no comparison", tokens: [100, 100], prior: null, glyph: null, spoken: /No comparison — the prior window did not arrive/ },
-    { name: "a zero prior window states no percentage", tokens: [100, 100], prior: 0, glyph: null, spoken: /No comparison — the 2 days before 01-03 held no tokens\./ },
+    { name: "a zero prior window states no percentage", tokens: [100, 100], prior: 0, glyph: null, spoken: /No comparison — the previous 2 days held no tokens\./ },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -1175,47 +1417,120 @@ describe("the token volume total compares with the server's prior window, cut at
   }
 });
 
-describe("the cost tile names its prior window in words", () => {
+// spec 44084 §2.2 + §3.2: a stat whose read is not current says so in the Dashboard's words — its cause, or Last known
+describe("a spend stat whose read is not current says so on its context line, as the Dashboard stats do", () => {
+  const kpi = getKpiAtRatio(1, null);
+  const heldKpi: PanelState = { ...ready(kpi), error: "HTTP 500 Internal Server Error" };
+  const trend = getTrendPoints([1, 2, 3]);
   const rows = [
-    { name: "a measured change names the window it compares with", prior: 5, spoken: /\bup\s+100\s*%\s*vs the 4 days before 01-03, cut at this time of day/ },
-    { name: "a zero prior says the window held no cost", prior: 0, spoken: /No comparison — the 4 days before 01-03 held no cost\./ },
+    {
+      name: "a failed kpi read states its cause",
+      props: { kpiState: failed, hot: cost.computeHotVerdict({}), trendState: trend },
+      label: "Spend today", context: "Server error, not read.", title: "Server error, not read.",
+    },
+    {
+      name: "a failed trend read states its own cause",
+      props: { kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: { ...failed, error: "TypeError: Failed to fetch" } },
+      label: "Cost, 30d", context: "No answer, not read.", title: "No answer, not read.",
+    },
+    {
+      name: "a held kpi read says Last known and names the failed refresh on hover",
+      props: { kpiState: heldKpi, hot: cost.computeHotVerdict(kpi), trendState: trend },
+      label: "Spend today", context: "Last known", title: "Last known \u2014 couldn't refresh cost KPIs",
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadCostRender();
+      const tree = renderIn(mod, "SpendCardC", { modelState: ready({ rows: [] }), days: 30, onRetry: () => {}, ...row.props });
+      const stat = findNodes(tree, isStat).find((n) => collectText(findNodes(n, (c) => c.props.className === "stat-label")[0]!) === row.label);
+      assert.ok(stat, `a stat labelled ${row.label}`);
+      const [context] = findNodes(stat, (n) => n.props.className === "stat-context");
+      assert.equal(collectText(context!).trim(), row.context);
+      assert.equal(findNodes(context!, (n) => n.type === "span" && n.props.title === row.title).length, 1, "the hover title carries the cause");
+    });
+  }
+});
+
+// spec 44084 §9 (R8): a firing stat is value + tone glyph; the alarm row above it owns the sentence
+test("while the spend row is up, the Today stat's line leaves the 7-day average to the row", async () => {
+  const mod = await loadCostRender();
+  const rows = [
+    { name: "calm", kpi: getKpiAtRatio(0.5, null), hasAverage: true },
+    { name: "so-far leg at the cut", kpi: getKpiAtRatio(2, null), hasAverage: false },
+  ];
+  for (const row of rows) {
+    const tree = renderIn(mod, "SpendCardC", {
+      kpiState: ready(row.kpi), hot: cost.computeHotVerdict(row.kpi), trendState: getTrendPoints([1, 2, 3]),
+      modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
+    });
+    const today = findNodes(tree, isStat).find((n) => /Spend today/.test(collectText(n)))!;
+    assert.equal(/7-day average/.test(collectText(today)), row.hasAverage, row.name);
+  }
+});
+
+describe("the window stat names its prior window in words", () => {
+  const rows = [
+    { name: "a measured change names the window it compares with", prior: 5, spoken: /^\s*up\s+100\s*%\s*on the previous 4 days\s*$/ },
+    { name: "an equal prior reads level, with no direction word", prior: 10, spoken: /^\s*Level with the previous 4 days\s*$/ },
+    { name: "a zero prior says the window held no cost", prior: 0, spoken: /^\s*No comparison — the previous 4 days held no cost\.\s*$/ },
   ];
   for (const row of rows) {
     test(row.name, async () => {
       const mod = await loadCostRender();
       const kpi = getKpiAtRatio(1, 1);
-      const tree = renderIn(mod, "KpiRowC", {
+      const tree = renderIn(mod, "SpendCardC", {
         kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendWithPrior([1, 2, 3, 4], getPriorBlock(row.prior)),
         modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
       });
-      assert.match(getSpokenText(tree), row.spoken);
+      const window = findNodes(tree, isStat).find((n) => collectText(findNodes(n, (c) => c.props.className === "stat-label")[0]!) === "Cost, 30d")!;
+      const [context] = findNodes(window, (n) => n.props.className === "stat-context");
+      assert.match(getSpokenText(context!), row.spoken);
     });
   }
 });
 
-test("every KPI hint fits the 40-character KPI-hint cap at the widest realistic figures", async () => {
+test("the window stat's ⓘ states the cut its change line compares at, and only when a prior window arrived", async () => {
+  const mod = await loadCostRender();
+  const kpi = getKpiAtRatio(1, 1);
+  const rows = [
+    { name: "a prior window", trend: getTrendWithPrior([1, 2, 3, 4], getPriorBlock(5)), hasCut: true },
+    { name: "no prior window", trend: getTrendPoints([1, 2, 3, 4]), hasCut: false },
+  ];
+  for (const row of rows) {
+    const tree = renderIn(mod, "SpendCardC", {
+      kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: row.trend, modelState: ready({ rows: [] }), days: 4, onRetry: () => {},
+    });
+    const notes = collectText(renderSpendNotes(tree));
+    assert.equal(notes.includes("Compared with the 4 days before 01-03, same time of day."), row.hasCut, row.name);
+  }
+});
+
+test("every stat hint fits the 40-character one-line cap at the widest realistic figures", async () => {
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
     getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
   })) as RenderModule;
   const kpi = {
-    window_7d_cost_usd: 699_999.93, today_cost_usd: 123_456.78, burn_rate_3h_usd_per_hour: 9_999.99,
+    // a calm day (under the cut, no pace) → the Today stat keeps its hint; a firing stat leaves it to the row
+    window_7d_cost_usd: 699_999.93, today_cost_usd: 123_456.78, burn_rate_3h_usd_per_hour: 0,
     cost_per_done_usd: 1_234.56, done_count_7d: 123_456, day_bucket_timezone: "UTC", fetched_at: NOON_UTC,
   };
   const modelRows = [{
     model: "claude-opus-4", cost_usd: 999_999.99, session_count: 12_345,
     input_tokens: 9e9, output_tokens: 9e9, cache_read_tokens: 9e11, cache_creation_tokens: 9e10,
   }];
-  const tree = renderIn(mod, "KpiRowC", {
+  const tree = renderIn(mod, "SpendCardC", {
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), modelState: ready({ rows: modelRows }), days: 90, onRetry: () => {},
     trendState: ready({ days: 90, points: Array.from({ length: 90 }, (_, i) => ({ date: `d${i}`, cost_usd: 123_456.78 - i })) }),
   });
-  const hints = findNodes(tree, (n) => /\bkpi-hint\b/.test(String(n.props.className ?? ""))).map((n) => collectText(n));
-  assert.equal(hints.length, 4, "every tile states a hint at these figures");
+  const hints = findNodes(tree, (n) => n.type === "span" && typeof n.props.title === "string" && n.props["aria-hidden"] !== "true")
+    .map((n) => collectText(n));
+  assert.equal(hints.length, 3, "every stat without a delta line states a hint at these figures");
   for (const hint of hints) assert.ok(hint.length <= 40, `"${hint}" is ${hint.length} chars`);
 });
 
-test("the cache tile's list-price note keeps its window (\"30 days\") whole as one DateRange token", async () => {
+test("the cache stat's list-price note keeps its window (\"30 days\") whole as one DateRange token", async () => {
   const mod = (await loadScreenModule(COST_SRC, {
     UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
     getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
@@ -1225,13 +1540,11 @@ test("the cache tile's list-price note keeps its window (\"30 days\") whole as o
     model: "claude-opus-4", cost_usd: 120, session_count: 3,
     input_tokens: 1e6, output_tokens: 1e6, cache_read_tokens: 1e7, cache_creation_tokens: 1e6,
   }];
-  const tree = renderIn(mod, "KpiRowC", {
+  const tree = renderIn(mod, "SpendCardC", {
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
     modelState: ready({ rows: modelRows }), days: 30, onRetry: () => {},
   });
-  const [foot] = findNodes(tree, (n) => n.props.className === "cost-foot");
-  assert.ok(foot, "the cache tile carries its list-price note");
-  const ranges = findNodes(foot, (n) => n.props.atom === "DateRange");
+  const ranges = findNodes(renderSpendNotes(tree), (n) => n.props.atom === "DateRange");
   assert.equal(ranges.length, 1);
   assert.equal(ranges[0].props.range, "30 days");
   assert.match(String(ranges[0].props.children), /, last 30 days\b/, "the sentence carries the token as a plain string");
@@ -1241,8 +1554,8 @@ test("the window delta foot hands its sentence to DayTokens, so \"30 days\" befo
   const mod = await loadCostRender();
   const prior = { days: 30, period_end: "2026-09-30" };
   const rows = [
-    { delta: 12, sentence: "12% vs the 30 days before 09-30, cut at this time of day" },
-    { delta: null, sentence: "No comparison — the 30 days before 09-30 held no cost." },
+    { delta: 12, sentence: "12% on the previous 30 days" },
+    { delta: null, sentence: "No comparison — the previous 30 days held no cost." },
   ];
   for (const row of rows) {
     const tree = renderIn(mod, "TrendDeltaC", { delta: row.delta, prior, noun: "cost" });
@@ -1253,37 +1566,44 @@ test("the window delta foot hands its sentence to DayTokens, so \"30 days\" befo
 });
 
 // R-c: every KPI-band sentence carrying a dashed "7-day" token hands it to DayTokens, so the compound never breaks at its hyphen
-test("the KPI band's 7-day sentences (today hint and verdict, per-task hint and foot) each ride one DayTokens", async () => {
+test("the spend card's 7-day sentences (today hint, per-task hint and its window note) each ride one DayTokens", async () => {
   const mod = await loadCostRender();
   const kpi = { ...getKpiAtRatio(0.15, null), cost_per_done_usd: 0.39, done_count_7d: 2_396 };
-  const tree = renderIn(mod, "KpiRowC", {
+  const tree = renderIn(mod, "SpendCardC", {
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
     modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
   });
-  const sentences = findNodes(tree, (n) => n.props.atom === "DayTokens").map((n) => String(n.props.children));
+  const sentences = [tree, renderSpendNotes(tree)]
+    .flatMap((root) => findNodes(root, (n) => n.props.atom === "DayTokens"))
+    .map((n) => String(n.props.children));
   for (const sentence of [
-    "$10.00 7-day normal/day",
-    "Today is 15% of the 7-day daily normal so far.",
-    "7-day cost / 2,396 finished",
+    "7-day average $10.00/day",
+    "2,396 finished tasks",
     "Fixed 7-day window — the range above does not change it.",
   ]) {
     assert.ok(sentences.includes(sentence), `"${sentence}" reaches DayTokens whole; got ${JSON.stringify(sentences)}`);
   }
 });
 
-test("the window-cost tile keeps its counting rule behind an info trigger described by the tile label", async () => {
+test("each stat with a counting rule keeps it behind the spend card's one info trigger, led by the stat label", async () => {
   const mod = await loadCostRender();
   const kpi = getKpiAtRatio(1, 1);
-  const tree = renderIn(mod, "KpiRowC", {
+  const tree = renderIn(mod, "SpendCardC", {
     kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
     modelState: ready({ rows: [] }), days: 30, onRetry: () => {},
   });
-  const infos = findNodes(tree, (n) => n.props.atom === "CardInfo");
-  assert.equal(infos.length, 1, "one tile carries a counting rule");
-  const [info] = infos;
-  const [label] = findNodes(tree, (n) => n.props.id === info.props.describedBy);
-  assert.equal(label ? collectText(label) : null, "Cost, last 30 days");
-  assert.match(collectText(info), /recorded cost/i);
+  const rules = [
+    { label: "Cost, 30d", rule: /^Cost, 30d\s+—\s+Sum of recorded cost per day, today so far included\. Average \$2\.00\/day · peak day \$3\.00\.$/ },
+    { label: "Cost per finished task, 7d", rule: /fixed 7-day window/i },
+  ];
+  const notes = findNodes(renderSpendNotes(tree), (n) => n.type === "p");
+  assert.equal(notes.length, rules.length, "only the stats with a counting rule carry a note");
+  for (const note of notes) {
+    const [lead] = findNodes(note, (n) => n.type === "strong");
+    const row = rules.find((r) => r.label === (lead ? collectText(lead) : null));
+    assert.ok(row, `a note led by ${lead ? collectText(lead) : "nothing"}`);
+    assert.match(collectText(note), row.rule, row.label);
+  }
 });
 
 // one row per chart the page draws
@@ -1338,14 +1658,14 @@ test("a no-data day is a gap in both trend charts and in their names, never $0",
 test("the pace figure is stated once on the page", async () => {
   const state = ready({ ...getKpiAtRatio(1, 1.5), points: (TREND_WITH_GAP.data as { points: unknown[] }).points, rows: [] });
   const mod = await loadCostRender({ INITIAL_REGION_STATE: state });
-  const text = collectText(renderIn(mod, "ScreenCost", { onNav: () => {} }));
+  const text = collectText(renderIn(mod, "ScreenCost", {}));
   assert.equal(text.match(/\bpace\b|heading past/gi)?.length ?? 0, 1, text);
 });
 
 test("the token legend is printed once", async () => {
   const state = ready({ ...getKpiAtRatio(1, 1), points: (TREND_WITH_GAP.data as { points: unknown[] }).points, rows: [] });
   const mod = await loadCostRender({ INITIAL_REGION_STATE: state });
-  const tree = renderIn(mod, "ScreenCost", { onNav: () => {} });
+  const tree = renderIn(mod, "ScreenCost", {});
   const [volume] = findNodes(tree, (n) => n.props.atom === "Disclosure" && n.props.title === "Token volume");
   const swatches = findNodes(volume, (n) => String(n.props.className ?? "").includes("rounded-sm") && n.props.style !== undefined);
   const colors = swatches.map((n) => String((n.props.style as { background?: string }).background));
@@ -1356,8 +1676,8 @@ test("the token legend is printed once", async () => {
 test("the trend card names its band in plain words and keeps its live echo off screen", async () => {
   const mod = await loadCostRender();
   const tree = renderIn(mod, "CostTrendCard", { state: TREND_WITH_GAP, days: 30, onRetry: () => {} });
-  const [head] = findNodes(tree, (n) => n.props.atom === "CardHead");
-  const toggle = renderScreen(head.props.right) as RenderedNode;
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+  const toggle = renderScreen(card.props.right) as RenderedNode;
   assert.doesNotMatch(collectText(toggle) + String(toggle.props.title ?? ""), /σ/);
   const echoes = findNodes(tree, (n) => n.props["aria-live"] === "polite");
   assert.ok(echoes.length > 0);
@@ -1366,10 +1686,10 @@ test("the trend card names its band in plain words and keeps its live echo off s
 
 test("a flat hit-rate strip collapses to one line instead of an empty chart", async () => {
   const mod = await loadCostRender();
-  const flat = CACHE_ROWS.map((r) => ({ ...r, cache_hit_rate: 1 }));
+  const flat = CACHE_ROWS.map((r) => ({ ...r, cache_hit_rate: 1, total_input: 0 }));
   const tree = renderIn(mod, "CacheHitBody", { state: ready({ rows: flat }), days: 30, onRetry: () => {} });
   assert.equal(findNodes(tree, isChart).length, 0);
-  assert.match(collectText(tree), /100\.0%.*every day/);
+  assert.match(collectText(tree), /Flat at 100% every day/);
 });
 
 // --- Cost & usage: every figure pair agrees or names its difference; the legend lists only drawn series ---
@@ -1397,17 +1717,42 @@ describe("the cost trend y-axis steps in round amounts", () => {
 
 test("a hit-rate series that reads as one figure at the shown precision is flat, one that reads as two is not", () => {
   const toRows = (values: (number | null)[]) => values.map((rate_pct) => ({ rate_pct }));
-  assert.strictEqual(cost.getFlatCacheRate(toRows([99.97, 100, null, 99.99])), 100, "every day reads 100.0%");
-  assert.strictEqual(cost.getFlatCacheRate(toRows([99.5, 100])), null, "99.5% and 100.0% are two figures");
+  assert.strictEqual(cost.getFlatCacheRate(toRows([100, 100, null, 100])), 100, "every day reads 100%");
+  assert.strictEqual(cost.getFlatCacheRate(toRows([99.97, 100, 99.99])), null, "a day under 100 reads >99.9%, a second figure beside 100%");
+  assert.strictEqual(cost.getFlatCacheRate(toRows([99.5, 100])), null, "99.5% and 100% are two figures");
 });
 
-test("the cache tile says the list-price total matches the recorded total when both read the same, and names the gap when not", () => {
-  const match = cost.getCacheTotalNoteC({ listTotal: 14_520.3, recordedTotal: 14_520.1, days: 30 });
-  assert.doesNotMatch(match, /not the recorded total/);
-  assert.match(match, /matches the recorded total/);
-  const differ = cost.getCacheTotalNoteC({ listTotal: 120, recordedTotal: 100, days: 30 });
-  assert.match(differ, /\$120/);
-  assert.match(differ, /\$100 recorded/);
+test("the spend concentration sentence prints its share through formatPct, so a share short of the whole never reads 100%", () => {
+  const getText = (cost as unknown as { getSpendConcentrationText: (c: unknown, n: number) => string }).getSpendConcentrationText;
+  assert.match(getText({ share: 0.9996, count: 1 }, 40), /holds >99\.9% of the spend/);
+  assert.match(getText({ share: 0.4125, count: 3 }, 40), /hold 41\.3% of the spend/);
+});
+
+// spec 44084 §9.2: the two 30-day totals differ by an edge-day cut → the note states its one sum, no reconciling clause
+test("the cache stat's list-price note states one sum and its window, and closes as a sentence", () => {
+  assert.strictEqual(cost.getCacheTotalNoteC({ listTotal: 40_001.2, days: 30 }), "of $40,001 at list token prices, last 30 days.");
+});
+
+// spec 44084 §2.1: the two bounds of one range are one set → one precision for both
+describe("a normal range reads both bounds in one precision", () => {
+  const rows = [
+    { name: "a bound under $100 keeps cents on both", lowerBand: 0, upperBand: 2307, text: "Normal range $0.00 \u2013 $2,307.00" },
+    { name: "both bounds under $100 keep cents", lowerBand: 1.51, upperBand: 10.06, text: "Normal range $1.51 \u2013 $10.06" },
+    { name: "both bounds of $100 or more drop cents", lowerBand: 150.4, upperBand: 2307.2, text: "Normal range $150 \u2013 $2,307" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.strictEqual(cost.formatNormalRangeC(row), row.text);
+    });
+  }
+});
+
+// one day's band, one form: the hover tooltip and the keyboard readout share the money-set precision
+test("the hover tooltip prints a day's normal range in the readout's one form", async () => {
+  const mod = (await loadScreenModule(COST_SRC, { UI: getAtomUi(), React: createReactStub() })) as RenderModule;
+  const row = { fullDate: "Nov 16, 2026", actual: 120, isPartial: false, rollingMean: 102.6, lowerBand: 85.2, upperBand: 120 };
+  const text = collectText(renderIn(mod, "CostTrendTooltipC", { active: true, payload: [{ payload: row }], bandOn: true }));
+  assert.ok(text.includes(cost.formatNormalRangeC(row)), text);
 });
 
 test("the cost trend legend names the no-data days on screen, not only in the chart label", async () => {
@@ -1429,7 +1774,7 @@ describe("the card pairs share one edge", () => {
 
   test("every pair stretches as peers, and the one lg override names the same split as its ratio", async () => {
     const mod = await loadCostRender();
-    const rows = findNodes(renderIn(mod, "ScreenCost", { onNav: () => {} }), (n) => n.props.atom === "SplitRow");
+    const rows = findNodes(renderIn(mod, "ScreenCost", {}), (n) => n.props.atom === "SplitRow");
     assert.equal(rows.length, 2, "the decision pair and the instrumentation pair");
     assert.deepEqual(rows.map((row) => row.props.layout), ["equal", "equal"]);
     const overrides = rows.flatMap((row) => {
@@ -1446,7 +1791,7 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
       UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
       getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
     })) as RenderModule;
-    const tree = renderIn(mod, name, { state: ready(data), days: 30, onRetry: () => {}, onNav: () => {} });
+    const tree = renderIn(mod, name, { state: ready(data), days: 30, onRetry: () => {} });
     const [card] = findNodes(tree, (n) => n.props.atom === "Card");
     assert.ok(card, `${name} renders the shared Card`);
     return card;
@@ -1475,8 +1820,11 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
       assert.equal(shown, Math.min(count, budget), "rows shown never pass the budget");
       assert.equal(Boolean(card.props.foot), hidden > 0, "the card carries a foot exactly when rows are rolled up");
       const foot = card.props.foot ? collectText(renderScreen(card.props.foot)) : "";
-      assert.equal(foot.includes(`Other · ${hidden} more model`), hidden > 0, foot || "no foot");
       assert.equal(foot.includes(`Show all ${count}`), hidden > 0, foot || "no foot");
+      assert.doesNotMatch(foot, /Other/, "the rolled-up line is a table row, so the Total under it closes every part");
+      const bodyRows = findNodes(card, (n) => n.type === "tbody").flatMap((body) => findNodes(body, (n) => n.type === "tr"));
+      const lastRow = bodyRows.length > 0 ? collectText(bodyRows[bodyRows.length - 1]!) : "";
+      assert.equal(lastRow.startsWith(`Other · ${hidden} more model`), hidden > 0, lastRow);
     });
   }
 
@@ -1487,9 +1835,55 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
   ]) {
     test(`models — ${name} ledger carries no foot`, async () => {
       const mod = await loadCostRender();
-      const [card] = findNodes(renderIn(mod, "ModelCostCard", { state, days: 30, onRetry: () => {}, onNav: () => {} }), (n) => n.props.atom === "Card");
+      const [card] = findNodes(renderIn(mod, "ModelCostCard", { state, days: 30, onRetry: () => {} }), (n) => n.props.atom === "Card");
       assert.ok(card, "ModelCostCard renders the shared Card");
       assert.equal(Boolean(card.props.foot), false, "no foot strip without a rolled-up row");
+    });
+  }
+
+  // one head in every state: the ⓘ opens the ranking note whether or not the read drew rows
+  for (const { name, state } of [
+    { name: "a loading", state: loading },
+    { name: "a failed", state: failed },
+    { name: "an empty", state: ready({ rows: [], total_session_count: 0, truncated: false }) },
+    { name: "a ready", state: ready({ rows: [{ session_id: "s-1", total_cost_usd: 12.5 }], total_session_count: 1, truncated: false }) },
+  ]) {
+    test(`sessions — ${name} read keeps the ranking note behind the head ⓘ`, async () => {
+      const mod = await loadCostRender();
+      const [card] = findNodes(renderIn(mod, "SessionDistributionCard", { state, days: 30, failures: [], onRetry: () => {} }), (n) => n.props.atom === "Card");
+      assert.match(String(card?.props.info ?? ""), /^Sessions ranked by spend in this window\./);
+    });
+  }
+
+  test("sessions — an empty window states no Top count in the head; the body says what is missing", async () => {
+    const card = await getCard("SessionDistributionCard", { rows: [], total_session_count: 0, truncated: false });
+    assert.equal(card.props.sub, undefined);
+  });
+
+  const tokens ={ input_tokens: 10, output_tokens: 10, cache_read_tokens: 10, cache_creation_tokens: 10 };
+  const priced = { model: "claude-opus-5-5", cost_usd: 30, session_count: 4, ...tokens };
+  const unattributedCases = [
+    {
+      name: "both unattributed buckets fold into one row — summed cost, no summed session count",
+      rows: [priced, { model: "unknown", cost_usd: 2.5, session_count: 3, ...tokens }, { model: "<synthetic>", cost_usd: 1.25, session_count: 1, ...tokens }],
+      cost: "3.75", sessions: "None",
+    },
+    {
+      name: "a lone unattributed bucket keeps its own session count",
+      rows: [priced, { model: "unknown", cost_usd: 2.5, session_count: 3, ...tokens }],
+      cost: "2.50", sessions: "3",
+    },
+  ];
+  for (const row of unattributedCases) {
+    test(`models — ${row.name}`, async () => {
+      const card = await getCard("ModelCostCard", { rows: row.rows });
+      const ledgerRows = findNodes(card, (n) => n.type === "tr" && findNodes(n, (c) => c.type === "button").length > 0);
+      const unattributed = ledgerRows.filter((tr) => collectText(tr).includes("Unattributed"));
+      assert.equal(ledgerRows.length, 2, "one priced row plus one Unattributed row");
+      assert.equal(unattributed.length, 1, "Unattributed is stated once");
+      const cells = findNodes(unattributed[0]!, (n) => n.type === "td").map((td) => collectText(td));
+      assert.ok(cells[1]!.includes(row.cost), `cost cell ${cells[1]}`);
+      assert.equal(cells[2], row.sessions);
     });
   }
 
@@ -1499,6 +1893,7 @@ describe("the decision lists keep to their slot's row budget and roll the rest i
       const rows = Array.from({ length: count }, (_, i) => ({ session_id: `session-${i}`, total_cost_usd: 50 - i }));
       const card = await getCard("SessionDistributionCard", { rows, total_session_count: count, truncated: false });
       assert.equal(card.props.size, "L");
+      assert.equal(card.props.sub, `Top ${Math.min(count, budget)} of ${count}`);
       const shown = findNodes(card, (n) => n.type === "tr" && /^Session /.test(String(n.props["aria-label"] ?? ""))).length;
       const hidden = count - shown;
       assert.equal(shown, Math.min(count, budget), "rows shown never pass the budget");
@@ -1532,20 +1927,29 @@ test("every chart tooltip floats on the opaque overlay surface and follows the p
   }
 });
 
-// the tiles load through the shared KPI loading row → its indicator, not a screen-local skeleton, carries the motion
-test("a loading tile's indicator animates only through a motion-safe class, so reduced motion holds it still", async () => {
-  const mod = await loadCostRender();
+// the stat label already names the figure → the loader repeats none of it
+test("a loading spend stat reads Loading… alone under its label", async () => {
   const loading: PanelState = { status: "loading", data: null, error: null, busy: false };
-  const tree = renderIn(mod, "KpiRowC", {
+  const tree = renderIn(await loadCostRender(), "SpendCardC", {
     kpiState: loading, hot: cost.computeHotVerdict({}), trendState: loading, modelState: loading, days: 30, onRetry: () => {},
   });
-  const isTile = (n: RenderedNode) => n.type === "div" && String(n.props.className ?? "").split(/\s+/).includes("kpi");
-  const tiles = findNodes(tree, isTile);
-  assert.equal(tiles.length, 4);
-  for (const tile of tiles) {
-    assert.equal(tile.props["aria-busy"], "true", "a loading tile says so");
-    const animated = findNodes(tile, (n) => /\banimate-/.test(String(n.props.className ?? "")));
-    assert.ok(animated.length > 0, "each loading tile shows a moving indicator");
+  const loaders = findNodes(tree, isStat).map((stat) => findNodes(stat, (n) => n.props.role === "status").map(collectText).join("").trim());
+  assert.deepEqual(loaders, Array(4).fill("Loading\u2026"));
+});
+
+// the stats load through the shared loading row → its indicator, not a screen-local skeleton, carries the motion
+test("a loading stat's indicator animates only through a motion-safe class, so reduced motion holds it still", async () => {
+  const mod = await loadCostRender();
+  const loading: PanelState = { status: "loading", data: null, error: null, busy: false };
+  const tree = renderIn(mod, "SpendCardC", {
+    kpiState: loading, hot: cost.computeHotVerdict({}), trendState: loading, modelState: loading, days: 30, onRetry: () => {},
+  });
+  const stats = findNodes(tree, isStat);
+  assert.equal(stats.length, 4);
+  assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 1, "the loading row says so once");
+  for (const stat of stats) {
+    const animated = findNodes(stat, (n) => /\banimate-/.test(String(n.props.className ?? "")));
+    assert.ok(animated.length > 0, "each loading stat shows a moving indicator");
     for (const node of animated) {
       assert.equal((node.props.style as Record<string, unknown> | undefined)?.animation, undefined, "no inline loop a stylesheet cannot override");
       const loops = String(node.props.className).split(/\s+/).filter((c) => /animate-/.test(c));
@@ -1562,4 +1966,238 @@ test("a refreshing region dims at the 120ms state timing, and only when motion i
   assert.ok(tokens.includes("opacity-60"), "a refresh dims the held payload");
   assert.deepEqual(tokens.filter((t) => /^(?:transition|duration-|animate-)/.test(t)), [], "every motion utility is gated");
   assert.ok(tokens.includes("motion-safe:duration-[120ms]"), "the dim eases at the state timing");
+});
+
+describe("a Cost series mark carries the data colour; a tone marks only a bar over its stated threshold", () => {
+  const getPaints = (tree: RenderedNode | null): string[] => findNodes(tree, () => true).flatMap((n) => {
+    const style = n.props.style as Record<string, unknown> | undefined;
+    const dot = n.props.dot as Record<string, unknown> | undefined;
+    const cursor = n.props.cursor as Record<string, unknown> | undefined;
+    return [n.props.fill, n.props.stroke, style?.background, style?.border, style?.borderTop, dot?.fill, cursor?.fill]
+      .filter((paint) => typeof paint === "string").map(String);
+  });
+  const trendRows = [
+    { date: "01-05", fullDate: "2026-01-05", actual: 12, completeCost: 12, partialCost: null, isPartial: false, rollingMean: 10, upperBand: 14, lowerBand: 6 },
+    { date: "01-06", fullDate: "2026-01-06", actual: 4, completeCost: null, partialCost: 4, isPartial: true, rollingMean: 10, upperBand: 14, lowerBand: 6 },
+  ];
+
+  test("the daily spend line and today's dashed segment take --data, the 7-day normal is a 1px dashed faint reference", async () => {
+    const tree = renderIn(await loadCostRender(), "CostTrendChart", { rows: trendRows, bandOn: true });
+    const lines = findNodes(tree, (n) => n.type === "recharts-Line");
+    const byKey = Object.fromEntries(lines.map((line) => [line.props.dataKey, line.props]));
+    assert.equal(byKey.completeCost.stroke, "rgb(var(--data))");
+    assert.equal(byKey.partialCost.stroke, "rgb(var(--data))");
+    assert.ok(byKey.partialCost.strokeDasharray, "today's partial day stays dashed");
+    assert.deepEqual([byKey.rollingMean.stroke, byKey.rollingMean.strokeWidth, Boolean(byKey.rollingMean.strokeDasharray)], ["rgb(var(--faint))", 1, true]);
+    assert.deepEqual((byKey.completeCost.activeDot as Record<string, unknown>).fill, "rgb(var(--ink))", "the hovered day takes ink");
+    assert.deepEqual(getPaints(tree).filter((paint) => /--(?:accent|info)\b/.test(paint)), [], "the accent paints no chart mark");
+  });
+
+  test("the cache hit rate, one quantity, is a --data line with no dots", async () => {
+    const tree = renderIn(await loadCostRender(), "CacheHitChart", { rows: [], yDomain: [90, 100] });
+    const lines = findNodes(tree, (n) => n.type === "recharts-Line");
+    assert.deepEqual(lines.map((line) => [line.props.type, line.props.stroke, line.props.dot]), [["linear", "rgb(var(--data))", false]]);
+  });
+
+  test("the session histogram paints its bands --data and only the outlier bands, over their stated floor, warn", async () => {
+    const mod = await loadCostRender();
+    const bins = [{ label: "$0–1", count: 9, isOutlier: false }, { label: "$50+", count: 1, isOutlier: true }];
+    const chart = renderIn(mod, "SessionDistributionChart", { bins });
+    const cells = findNodes(chart, (n) => n.type === "recharts-Cell").map((n) => n.props.fill);
+    assert.equal(cells[0], "rgb(var(--data))");
+    assert.match(String(cells[1]), /--warn/);
+    const legend = renderIn(mod, "SessionHistogramLegendC", {});
+    const [outlierKey] = findNodes(legend, (n) => n.type === "li" && /Outlier/.test(collectText(n)));
+    assert.ok(findNodes(outlierKey, (n) => /\btext-warn\b/.test(String(n.props.className ?? "")) && collectText(n).trim() === "\u26a0").length === 1,
+      "the warn mark is keyed by its glyph beside the words");
+    assert.deepEqual([...getPaints(chart), ...getPaints(legend)].filter((paint) => /--(?:accent|info)\b/.test(paint)), []);
+  });
+
+  test("log integrity: readable-day bars take --data, the threshold is a faint reference, crit marks only a day over it", async () => {
+    const mod = await loadCostRender();
+    const rows = [{ date: "01-05", error_count: 2, threshold_count: 5, isCrit: false }, { date: "01-06", error_count: 9, threshold_count: 5, isCrit: true }];
+    const chart = renderIn(mod, "ParseErrorChart", { rows });
+    assert.deepEqual(findNodes(chart, (n) => n.type === "recharts-Cell").map((n) => /--crit/.test(String(n.props.fill)) ? "crit" : n.props.fill),
+      ["rgb(var(--data))", "crit"]);
+    const [threshold] = findNodes(chart, (n) => n.type === "recharts-Line");
+    assert.deepEqual([threshold.props.stroke, threshold.props.strokeWidth], ["rgb(var(--faint))", 1]);
+    const legend = renderIn(mod, "ParseErrorLegendC", { hasCritDay: true });
+    const [critKey] = findNodes(legend, (n) => n.type === "li" && /over threshold/.test(collectText(n)));
+    assert.ok(findNodes(critKey, (n) => /\btext-crit\b/.test(String(n.props.className ?? "")) && collectText(n).trim() === "\u2715").length === 1,
+      "the crit mark is keyed by its glyph beside the words");
+    assert.deepEqual([...getPaints(chart), ...getPaints(legend)].filter((paint) => /--(?:accent|info)\b/.test(paint)), []);
+  });
+});
+
+// spec 44084 \u00a73.2 States \u2192 held: the last reading stands while its read failed
+describe("an alarm row is held exactly when a read its sentence states failed after loading", () => {
+  type RegionUi = {
+    INITIAL_REGION_STATE: PanelState;
+    putRegionRequest: (state: PanelState, key: string, request: object) => PanelState;
+    putRegionData: (state: PanelState, request: object, data: unknown) => PanelState;
+    putRegionFailure: (state: PanelState, request: object, err: unknown) => PanelState;
+  };
+  const regionUi = realUi as unknown as RegionUi; // ui.jsx's own region reducers, typed for this block only
+  const getRead = (key: string): PanelState => {
+    const request = new AbortController();
+    return regionUi.putRegionData(regionUi.putRegionRequest(regionUi.INITIAL_REGION_STATE, key, request), request, { rows: [] });
+  };
+  const getFailedRead = (state: PanelState, key: string): PanelState => {
+    const request = new AbortController();
+    return regionUi.putRegionFailure(regionUi.putRegionRequest(state, key, request), request, new Error("HTTP 500 Internal Server Error"));
+  };
+
+  test("a region is held only while it keeps loaded data beside a failed refresh", () => {
+    const loaded = getRead("/api/cost/kpi");
+    const held = getFailedRead(loaded, "/api/cost/kpi");
+    const retrying = regionUi.putRegionRequest(held, "/api/cost/kpi", new AbortController());
+    const cold = getFailedRead(regionUi.INITIAL_REGION_STATE, "/api/cost/kpi");
+
+    assert.deepEqual(
+      [loaded, held, retrying, cold].map((state) => cost.isRegionHeldC(state)),
+      [false, true, true, false],
+      "loaded \u00b7 held \u00b7 held and re-reading \u00b7 never loaded",
+    );
+  });
+
+  const rows = [
+    { name: "a spend leg on a held kpi read", delta: { isHot: true }, isOutsideBand: false, heldReads: { ...FRESH_READS, kpi: true }, expected: true },
+    { name: "a spend leg on a fresh kpi read beside a held trend read", delta: { isHot: true }, isOutsideBand: false, heldReads: { ...FRESH_READS, trend: true }, expected: false },
+    { name: "the range fact on a held trend read", delta: {}, isOutsideBand: true, heldReads: { ...FRESH_READS, trend: true }, expected: true },
+    { name: "the range fact alone beside a held kpi read", delta: {}, isOutsideBand: true, heldReads: { ...FRESH_READS, kpi: true }, expected: false },
+    { name: "a spend leg joined by the range fact on a held trend read", delta: { isPaceHot: true }, isOutsideBand: true, heldReads: { ...FRESH_READS, trend: true }, expected: true },
+    { name: "every read fresh", delta: { isHot: true, isPaceHot: true }, isOutsideBand: true, heldReads: FRESH_READS, expected: false },
+  ];
+  for (const row of rows) {
+    test(`spend row \u2014 ${row.name}`, () => {
+      const [spend] = cost.computeAlarmRows({
+        hot: { ...CALM, ...row.delta }, outsideDay: row.isOutsideBand ? OUTSIDE_DAY : null, parseError: { crit: 0, total: 9 }, heldReads: row.heldReads,
+      });
+      assert.equal(spend!.isHeld, row.expected);
+    });
+  }
+
+  test("the parse-error row is held with the log-integrity read alone", () => {
+    const getParseRow = (heldReads: HeldReads) =>
+      [...cost.computeAlarmRows({ hot: CALM, outsideDay: null, parseError: { crit: 3, total: 9 }, heldReads })]
+        .find((r) => r.key === "parse-error")!;
+
+    assert.equal(getParseRow({ ...FRESH_READS, parseError: true }).isHeld, true);
+    assert.equal(getParseRow({ kpi: true, trend: true, parseError: false }).isHeld, false);
+  });
+
+  // the page reads each row's held state from its own region → regions in ScreenCost declaration order: kpi, trend, model, cache, session, log
+  const hotKpi = getKpiAtRatio(3, null);
+  const getHeld = (state: PanelState): PanelState => ({ ...state, error: "HTTP 500 Internal Server Error" });
+  const critLog = ready({ rows: [{ error_ratio: 0.2 }, { error_ratio: 0.01 }] });
+  const screenRows = [
+    { name: "a held kpi read behind a spend leg holds the spend row", regions: [getHeld(ready(hotKpi)), ready({ points: [] })], words: /so far today/, isHeld: true },
+    { name: "a fresh kpi read beside a held trend read leaves the spend row current", regions: [ready(hotKpi), getHeld(ready({ points: [] }))], words: /so far today/, isHeld: false },
+    {
+      name: "a held log-integrity read holds the parse-error row",
+      regions: [ready(getKpiAtRatio(1, null)), ready({ points: [] }), loading, loading, loading, getHeld(critLog)],
+      words: /unreadable-log/, isHeld: true,
+    },
+  ];
+  for (const row of screenRows) {
+    test(`on the page, ${row.name}`, async () => {
+      const tree = await renderCostWithRegions(row.regions);
+      const alarmRows = findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("alarm-row"));
+      const [target] = alarmRows.filter((n) => row.words.test(collectText(n)));
+
+      assert.ok(target, `the row renders: ${alarmRows.map((n) => collectText(n)).join(" | ")}`);
+      assert.equal(/Last known/.test(collectText(target)), row.isHeld);
+    });
+  }
+});
+
+describe("the spend alarm rows lead the Spend card, under its head, and leave it untouched when calm", () => {
+  const kpi = getKpiAtRatio(3, null);
+  const rows = [
+    { name: "firing", alarmRows: [{ key: "hot", tone: "warn", title: "$30.00 so far today", detail: "3.0\u00d7 the 7-day average ($10.00/day)" }], count: 1 },
+    { name: "calm", alarmRows: [], count: 0 },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const mod = await loadCostRender();
+      const tree = renderIn(mod, "SpendCardC", {
+        kpiState: ready(kpi), hot: cost.computeHotVerdict(kpi), trendState: getTrendPoints([1, 2, 3]),
+        modelState: ready({ rows: [] }), days: 30, onRetry: () => {}, alarmRows: row.alarmRows,
+      });
+      const [card] = findNodes(tree, (n) => n.props.atom === "Card" && n.props.title === "Spend");
+      const order = findNodes(card!, (n) => (n.type === "div" && n.props.role === "alert") || String(n.props.className ?? "").split(" ").includes("stat-row"))
+        .map((n) => (n.props.role === "alert" ? "alarm" : "stats"));
+      assert.deepEqual(order, [...Array(row.count).fill("alarm"), "stats"], "alarm rows first, then the stat row, all inside the Spend card");
+    });
+  }
+});
+
+// spec 44084 §2.1: one precision per money column, decided from its own values — the session list and the token-type set
+describe("a money set with any amount under $100 keeps cents on every amount of the set", () => {
+  test("the session list's cost column", async () => {
+    const mod = await loadCostRender();
+    const rows = [
+      { session_id: "a1b2c3d4-0000", top_model: "claude-opus-4", total_cost_usd: 16_764, total_tokens: 9e8, event_count: 900, last_event_at: null },
+      { session_id: "e5f6a7b8-0000", top_model: "claude-opus-4", total_cost_usd: 5.22, total_tokens: 1e5, event_count: 4, last_event_at: null },
+    ];
+    const text = collectText(renderIn(mod, "SessionDistributionBody", { state: ready({ rows }), rows, days: 30, onRetry: () => {} }));
+    assert.match(text, /\$16,764\.00/);
+    assert.match(text, /\$5\.22/);
+  });
+
+  test("the By token type legend", async () => {
+    const mod = await loadCostRender();
+    const rows = [
+      { key: "cache_read_tokens", label: "Cache read", colorVar: "--cat-2", cost: 112, pct: 112 / 156.61 },
+      { key: "output_tokens", label: "Output", colorVar: "--cat-4", cost: 44.61, pct: 44.61 / 156.61 },
+    ];
+    const text = collectText(renderIn(mod, "CategoryShareRowC", { rows }));
+    assert.match(text, /\$112\.00/);
+    assert.match(text, /\$44\.61/);
+  });
+});
+
+// spec 44084 §9 (R12): the Total row is one line — the reason is two words, the full sentence rides the cell's title
+test("the ledger Total row's count cell reads Not summed and keeps the reason on its title", async () => {
+  const mod = (await loadScreenModule(COST_SRC, {
+    UI: getAtomUi(), React: createReactStub(), Recharts: RECHARTS_STUB,
+    getTokenRate: () => ({ input: 1, output: 1, cache_read: 1, cache_creation: 1 }),
+  })) as RenderModule;
+  const rows = [{ model: "claude-opus-4", cost_usd: 120, session_count: 3, input_tokens: 1e6, output_tokens: 1e6, cache_read_tokens: 1e7, cache_creation_tokens: 1e6 }];
+  const tree = renderIn(mod, "ModelCostBody", { state: ready({ rows }), days: 30, onRetry: () => {} });
+  const [foot] = findNodes(tree, (n) => n.type === "tfoot");
+  const cells = findNodes(foot!, (n) => n.type === "td" || n.type === "th");
+  const reason = cells[cells.length - 1]!;
+  assert.equal(collectText(reason).trim(), "Not summed");
+  assert.match(String(reason.props.title), /a session using several models counts under each/);
+});
+
+// d1 read-back finding 2: a stop reason is a word, not a colour — no stripe before the label, no bar before the count
+test("the stop-reason table paints no colour mark on any row", async () => {
+  const mod = await loadCostRender();
+  const data = {
+    stop_reasons: [
+      { stop_reason: "end_turn", event_count: 1830, session_count: 412 },
+      { stop_reason: "tool_use", event_count: 245, session_count: 80 },
+    ],
+    stop_reason_session_count: 412,
+    turns: { avg_turns: 3.25, max_turns: 1204, total_turns: 5948, turn_session_count: 412 },
+  };
+  const tree = renderIn(mod, "TurnStatsBody", { state: ready(data), days: 30, onRetry: () => {} });
+  const [table] = findNodes(tree, (n) => n.type === "table");
+  assert.ok(table, "the stop-reason table renders");
+  // a rendered style prop is a plain object of CSS properties
+  const hasBackground = (n: RenderedNode) => (n.props.style as Record<string, unknown> | undefined)?.background !== undefined;
+  assert.equal(findNodes(table, hasBackground).length, 0);
+});
+
+// pre-compose A16: the band toggle is the quiet pressed toggle — ink text and the ✓ slot, no edge
+test("the Normal range toggle is the quiet toggle and reports its pressed state", async () => {
+  const mod = await loadCostRender();
+  const tree = renderIn(mod, "CostTrendCard", { state: TREND_WITH_GAP, days: 30, onRetry: () => {} });
+  const [card] = findNodes(tree, (n) => n.props.atom === "Card");
+  const [toggle] = findNodes(renderScreen(card.props.right) as RenderedNode, (n) => n.type === "button");
+  assert.ok(toggle, "the toggle is a button");
+  assert.match(String(toggle.props.className), /^btn ghost sm$/);
+  assert.equal(toggle.props["aria-pressed"], false);
 });

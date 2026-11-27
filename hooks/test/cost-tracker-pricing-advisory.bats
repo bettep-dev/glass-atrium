@@ -8,7 +8,7 @@
 # Covered cases (advisory only where noted; cost math anchors preserved):
 #   1. known model + fresh baseline → priced + SILENT (no advisory), exit 0
 #   2. unknown model → stderr advisory model=unknown:<id> resolution=fallback
-#      + structured DATA-183 emit (monitor hook-failure path) + still recorded
+#      + structured DATA-183 emit + still recorded
 #   3. stale baseline → staleness advisory naming age + window (from the SoT)
 #   4. cost math anchor — known opus-4-8 1000in/500out → cost_usd=0.0175
 #   5. unknown model is NOT zero-priced — fallback_model (fable-5, the most
@@ -16,10 +16,11 @@
 #   6. dated id (claude-haiku-4-5-20251001) → haiku rate 0.0035 via
 #      normalize_model_key (sot resolution, no advisory)
 #   7. fable-5 → first-class SoT row at 10/50 rates (0.035), no advisory
-#   8. '<synthetic>' (harness marker) → zero-cost allowlist: no advisory,
-#      no DATA-183, clean $0 row still recorded
-#   9. missing model field → zero-cost allowlist: no advisory, no DATA-183,
-#      clean $0 row (the resolution chain is never walked)
+#   8. each zero-cost id of the parity table (fixtures/model-id-pricing-parity.json:
+#      missing model field, '', '<synthetic>')
+#      → no advisory, no DATA-183, clean $0 row despite billable usage
+#   9. each near miss of a zero-cost id → walks the resolution chain:
+#      fallback price + model=unknown:<id> advisory
 #  10. synthetic sonnet-5 launch window (fixture tier) — COST_TRACKER_TODAY 2026-08-31 →
 #      intro 0.007, 2026-09-01 → standard 0.0105 (tier-by-date in the loader)
 #  11. family-matched NEW id (claude-opus-4-9) → older-family rate 0.0175 +
@@ -32,6 +33,11 @@
 #      PRICING_LIB_DIR derivation canonicalizes BASH_SOURCE, so the loader
 #      imports from the REAL hooks/lib: exit 0, no ModuleNotFoundError,
 #      no DATA-184, pricing resolution demonstrably ran
+#  14. unknown model on a live schema → cost row priced by the fallback,
+#      advisory on stderr, no core.hook_failures row (a pricing gap is no
+#      write failure)
+#  15. failed cost write, known or unknown model → exactly one
+#      core.hook_failures row, naming the session
 #
 # Isolation:
 #   * COST_TRACKER_TODAY injects a deterministic "today" (no wall clock).
@@ -43,9 +49,11 @@
 #   * PRICING_LIB_DIR points the sliced parser at hooks/lib — the hook shell
 #     exports it itself, but parser-direct runs must supply it (the heredoc
 #     runs under `python3 -c`, where __file__ is absent).
-#   * PGHOST forced to a nonexistent socket → PG dual-write + hook_failures
-#     INSERT both fail open (advisory/pricing path exercised without a live
-#     DB).
+#   * Cases 1-13: PGHOST forced to a nonexistent socket → the PG dual-write
+#     fails open (advisory/pricing path exercised without a live DB).
+#   * Cases 14-15: an ephemeral cluster (lib/ephemeral-pg.bash) carrying the
+#     real migration chain, re-created per test from a template; PGHOST/PGPORT
+#     redirect the hook there and eph_assert_isolated proves no other target.
 #   * Synthetic transcript jsonl via mktemp (no live transcript dependency).
 
 # BATS_TEST_DIRNAME is assigned by the bats runtime (SC2154 false positive).
@@ -58,6 +66,33 @@ FRESH_TODAY="2026-07-02"
 
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+# shellcheck source=SCRIPTDIR/lib/ephemeral-pg.bash
+source "${BATS_TEST_DIRNAME}/lib/ephemeral-pg.bash"
+
+# Missing PostgreSQL tooling skips only the cases that call _eph_reset_db.
+setup_file() {
+  local bin
+  for bin in initdb pg_ctl createdb dropdb psql python3; do
+    if ! command -v "${bin}" >/dev/null 2>&1; then
+      export EPH_SKIP="missing required tool: ${bin} (PostgreSQL client/server + python3)"
+      return 0
+    fi
+  done
+  export EPH_DATADIR="${BATS_FILE_TMPDIR}/pgdata" EPH_SOCKDIR="${BATS_FILE_TMPDIR}/sock" \
+    EPH_PORT="55475" EPH_DB="glass_atrium" EPH_TEMPLATE="eph_cost_tpl"
+  # psycopg sits in the PEP 370 user site, which the per-test HOME override would hide.
+  export EPH_USER_SITE
+  EPH_USER_SITE="$(python3 -m site --user-site)"
+  # eph_pg_start's hand DDL lands on the bootstrap DB; the template gets the real migrations.
+  eph_pg_start "${EPH_DATADIR}" "${EPH_SOCKDIR}" "${EPH_PORT}" "eph_boot" || return 1
+  eph_pg_create_migrated_db "${EPH_SOCKDIR}" "${EPH_PORT}" "${EPH_TEMPLATE}" || return 1
+}
+
+teardown_file() {
+  if [[ -z "${EPH_SKIP:-}" ]]; then
+    eph_pg_stop "${EPH_DATADIR}"
+  fi
+}
 
 setup() {
   TEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/cost-tracker-bats.XXXXXX")"
@@ -175,6 +210,36 @@ _run_parser() {
     python3 -c "${parser_body}"
 }
 
+# Fresh glass_atrium from the migrated template → no row or schema change crosses tests or rows.
+_eph_reset_db() {
+  if [[ -n "${EPH_SKIP:-}" ]]; then
+    skip "${EPH_SKIP}"
+  fi
+  export GA_BATS_PG_RECORD="${BATS_TEST_TMPDIR:?}/pg-connect.log"
+  : >"${GA_BATS_PG_RECORD}"
+  PGOPTIONS='-c client_min_messages=warning' \
+    dropdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" --if-exists "${EPH_DB}" || return 1
+  createdb -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -T "${EPH_TEMPLATE}" "${EPH_DB}"
+}
+
+_eph_q() {
+  psql -X -h "${EPH_SOCKDIR}" -p "${EPH_PORT}" -d "${EPH_DB}" -tAqc "${1}"
+}
+
+# Run the hook against the ephemeral cluster; a temp HOME keeps the subagent mtime cache out of
+# the real tree. Positional args into `bash -c` avoid interpolation.
+# Args: $1=transcript_path $2=stderr_capture_file
+_run_hook_eph() {
+  local stdin_json home="${TEST_TMP}/home"
+  stdin_json="$(_stop_input "${1}")"
+  mkdir -p "${home}"
+  # shellcheck disable=SC2016 # $1-$3 expand in the child shell
+  run env -u GA_DATA_ROOT HOME="${home}" PYTHONPATH="${EPH_PG_RECORDER_DIR}:${EPH_USER_SITE}" \
+    PGHOST="${EPH_SOCKDIR}" PGPORT="${EPH_PORT}" COST_TRACKER_TODAY="${FRESH_TODAY}" \
+    CLAUDE_SESSION_ID='' PRICING_SOT_PATH="${FIXTURE_SOT}" PRICING_REMOTE_DISABLE=1 \
+    bash -c 'printf "%s" "$1" | "$2" 2>"$3"' _ "${stdin_json}" "${HOOK_SH}" "${2}"
+}
+
 # Case 1: known model + fresh baseline → priced + SILENT advisory-wise
 
 @test "known model with fresh baseline prices silently (no pricing advisory) and exits 0" {
@@ -209,7 +274,7 @@ _run_parser() {
   # remote is gated off → the conservative fallback rung priced it).
   [[ "${err}" =~ "model=unknown:claude-foobar-9-9" ]]
   [[ "${err}" =~ "resolution=fallback" ]]
-  # The monitor-facing hook-failure path: structured emit carrying the model id.
+  # The structured DATA-183 emit carrying the model id.
   [[ "${err}" =~ '"error_code":"DATA-183"' ]]
   [[ "${err}" =~ '"models":"claude-foobar-9-9"' ]]
   # Staleness MUST NOT fire here (date is fresh) — isolates the unknown signal.
@@ -306,52 +371,57 @@ _run_parser() {
   [[ "${output}" == *'"parse_error": false'* ]]
 }
 
-# Case 8: harness-synthetic model is allowlisted (no advisory, no DATA-183)
-
-@test "harness-synthetic model emits no unknown advisory and no DATA-183, records \$0 row" {
-  local tx stderr_file
-  tx="${TEST_TMP}/synthetic.jsonl"
-  stderr_file="${TEST_TMP}/err8.txt"
-  # Real harness-synthetic records carry all-zero usage → faithful 0/0 tokens.
-  _make_transcript "<synthetic>" "${tx}" 0 0
-  _run_hook "${tx}" "${FRESH_TODAY}" "${stderr_file}"
-  [[ "${status}" -eq 0 ]]
-  local err
-  err="$(cat "${stderr_file}")"
-  [[ ! "${err}" =~ "model=unknown" ]]
-  [[ ! "${err}" =~ "DATA-183" ]]
-  # The row itself is still recorded (clean $0, not a parse error).
-  _run_parser "${tx}" "${FRESH_TODAY}"
-  [[ "${status}" -eq 0 ]]
-  # Trailing comma pins the full value — bare '0.0' would prefix-match 0.0525.
-  [[ "${output}" == *'"cost_usd": 0.0,'* ]]
-  [[ "${output}" == *'"model": "<synthetic>"'* ]]
-  [[ "${output}" == *'"parse_error": false'* ]]
+# Prints `<null|str><US><model><US><stored model as JSON>` per id under the given parity-table key (the
+# row stores an empty id as null); the unit separator keeps an empty id a field of its own on read-back.
+_parity_rows() {
+  python3 -I -c 'import json, sys
+for model in json.load(open(sys.argv[1]))[sys.argv[2]]:
+    print("null" if model is None else "str", model or "", json.dumps(model or None), sep="\x1f")' \
+    "${BATS_TEST_DIRNAME}/fixtures/model-id-pricing-parity.json" "${1}"
 }
 
-# Case 9: empty model (field absent) is allowlisted (no advisory, no DATA-183)
+# Case 8: every zero-cost parity id is allowlisted (no advisory, no DATA-183, $0 row)
 
-@test "missing model field emits no unknown advisory and no DATA-183, records \$0 row" {
-  local tx stderr_file
-  tx="${TEST_TMP}/no-model.jsonl"
-  stderr_file="${TEST_TMP}/err9.txt"
-  _make_transcript_no_model "${tx}"
-  _run_hook "${tx}" "${FRESH_TODAY}" "${stderr_file}"
-  [[ "${status}" -eq 0 ]]
-  local err
-  err="$(cat "${stderr_file}")"
-  [[ ! "${err}" =~ "model=unknown" ]]
-  [[ ! "${err}" =~ "DATA-183" ]]
-  # Zero-cost allowlist: a model-less usage row is a legitimate $0 event —
-  # the resolution chain is never walked (no fallback pricing, no advisory).
-  # Verified against core.cost_events: every empty-model row carries 0 tokens,
-  # so the clean $0 is value-identical to the former fallback-rate-times-zero.
-  _run_parser "${tx}" "${FRESH_TODAY}"
-  [[ "${status}" -eq 0 ]]
-  # Trailing comma pins the full value (bare '0.0' could prefix-match floats).
-  [[ "${output}" == *'"cost_usd": 0.0,'* ]]
-  [[ "${output}" == *'"model": null'* ]]
-  [[ "${output}" == *'"parse_error": false'* ]]
+@test "an id the parity table prices at zero emits no unknown advisory and no DATA-183, records a \$0 row" {
+  local rows kind model model_json tx stderr_file err
+  rows="$(_parity_rows zero_cost_ids)"
+  while IFS=$'\x1f' read -r kind model model_json; do
+    tx="${TEST_TMP}/zero-${kind}-${#model}.jsonl"
+    stderr_file="${tx}.err"
+    # Billable usage, so only the allowlist (never 0 tokens) can make the row $0.
+    if [[ "${kind}" == "null" ]]; then _make_transcript_no_model "${tx}"; else _make_transcript "${model}" "${tx}"; fi
+    _run_hook "${tx}" "${FRESH_TODAY}" "${stderr_file}"
+    err="$(cat "${stderr_file}")"
+    [[ "${status}" -eq 0 && "${err}" != *"model=unknown"* && "${err}" != *"DATA-183"* ]] || {
+      echo "zero-cost ${kind} '${model}': status ${status}: ${err}"
+      return 1
+    }
+    _run_parser "${tx}" "${FRESH_TODAY}"
+    # Trailing comma pins the full value — bare '0.0' would prefix-match 0.0525.
+    [[ "${status}" -eq 0 && "${output}" == *'"cost_usd": 0.0,'* && "${output}" == *'"parse_error": false'* &&
+      "${output}" == *"\"model\": ${model_json}"* ]] || {
+      echo "zero-cost ${kind} '${model}': ${output}"
+      return 1
+    }
+  done <<<"${rows}"
+}
+
+# Case 9: a near miss of a zero-cost id walks the resolution chain (advisory + fallback price)
+
+@test "a near miss of a zero-cost id is priced by the fallback with an unknown advisory" {
+  local rows kind model tx stderr_file err
+  rows="$(_parity_rows rate_lookup_ids)"
+  while IFS=$'\x1f' read -r kind model _; do
+    tx="${TEST_TMP}/near-${kind}-${#model}.jsonl"
+    stderr_file="${tx}.err"
+    _make_transcript "${model}" "${tx}"
+    _run_hook "${tx}" "${FRESH_TODAY}" "${stderr_file}"
+    err="$(cat "${stderr_file}")"
+    [[ "${status}" -eq 0 && "${err}" == *"model=unknown:${model} "* ]] || {
+      echo "near miss ${kind} '${model}': status ${status}: ${err}"
+      return 1
+    }
+  done <<<"${rows}"
 }
 
 # Case 10: synthetic sonnet-5 launch window (fixture tier, intro rate through 2026-08-31)
@@ -453,6 +523,73 @@ _run_parser() {
   [[ ! "${err}" =~ "ModuleNotFoundError" ]]
   [[ ! "${err}" =~ '"error_code":"DATA-184"' ]]
   [[ "${err}" =~ "resolution=fallback" ]]
+}
+
+# Case 14: a pricing gap is an advisory, never a recorded write failure
+
+@test "an unknown model is priced by the fallback and advised on stderr without a hook_failures row" {
+  _eph_reset_db
+  local tx stderr_file err failures priced
+  tx="${TEST_TMP}/unknown-eph.jsonl"
+  stderr_file="${TEST_TMP}/err14.txt"
+  _make_transcript "claude-foobar-9-9" "${tx}"
+  _run_hook_eph "${tx}" "${stderr_file}"
+  err="$(cat "${stderr_file}")"
+  [[ "${status}" -eq 0 ]] || {
+    echo "exit ${status}: ${err}"
+    return 1
+  }
+  [[ "${err}" == *"model=unknown:claude-foobar-9-9"* && "${err}" == *'"error_code":"DATA-183"'* ]] || {
+    echo "advisory missing from stderr: ${err}"
+    return 1
+  }
+  failures="$(_eph_q "SELECT error_kind::text || '|' || payload_ref FROM core.hook_failures;")" || return 1
+  [[ -z "${failures}" ]] || {
+    echo "hook_failures rows: ${failures}"
+    return 1
+  }
+  # fallback fable-5 (10/50) → (1000*10 + 500*50)/1e6 = 0.035, stored under the raw model id
+  priced="$(_eph_q "SELECT count(*) FROM core.cost_events WHERE model = 'claude-foobar-9-9' AND cost_usd = 0.035;")" || return 1
+  [[ "${priced}" -eq 1 ]] || {
+    echo "fallback-priced cost rows: ${priced}"
+    return 1
+  }
+  # the batch writer's connection is the only one the hook opens
+  eph_assert_isolated 1
+}
+
+# Case 15: a real cost write failure keeps its one hook_failures record
+
+@test "a failed cost write records one hook_failures row naming the session, known model or unknown" {
+  local -a rows=('known|claude-opus-4-8' 'unknown|claude-foobar-9-9')
+  local row name model tx stderr_file failures
+  # UndefinedTable is neither IntegrityError nor OperationalError → kind unknown, after one retry
+  local want="cost-tracker|core.cost_events|unknown|sess-t13a|true"
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name model <<<"${row}"
+    _eph_reset_db
+    _eph_q "ALTER TABLE core.cost_events RENAME TO cost_events_offline;" || return 1
+    tx="${TEST_TMP}/write-fail-${name}.jsonl"
+    stderr_file="${TEST_TMP}/err15-${name}.txt"
+    _make_transcript "${model}" "${tx}"
+    _run_hook_eph "${tx}" "${stderr_file}"
+    [[ "${status}" -eq 0 ]] || {
+      echo "${name}: exit ${status}"
+      cat -- "${stderr_file}"
+      return 1
+    }
+    failures="$(_eph_q "SELECT hook_name || '|' || target_table || '|' || error_kind::text || '|'
+      || payload_ref || '|' || retry_attempted::text FROM core.hook_failures;")" || return 1
+    [[ "${failures}" == "${want}" ]] || {
+      echo "${name}: hook_failures rows: ${failures}"
+      return 1
+    }
+    # the batch writer's connection plus its one hook_failures record
+    eph_assert_isolated 2 || {
+      echo "${name}: isolation"
+      return 1
+    }
+  done
 }
 
 @test "the parser stderr temp never outlives the run, on a clean exit or a parser crash" {

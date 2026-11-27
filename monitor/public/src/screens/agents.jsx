@@ -32,13 +32,14 @@ const TASK_TYPE_COLUMNS = [
   { key: 'cleanup',   label: 'cleanup'   },
 ];
 
-// revision_count 분포 — server enum 순서 (stacked bar bottom→top).
+// revision_count 분포 — server enum 순서 (stacked bar left→right).
+// a quantity, not a severity → solid --data segments split by --elev separators, counts in visible text (spec 44084 §7, §1 --data floor)
 const REVISION_BUCKETS = [
-  { key: '0',  label: '0',  colorVar: '--ok'   },
-  { key: '1',  label: '1',  colorVar: '--info' },
-  { key: '2',  label: '2',  colorVar: '--warn' },
-  { key: '3',  label: '3',  colorVar: '--accent' },
-  { key: '4+', label: '4+', colorVar: '--crit' },
+  { key: '0',  label: '0'  },
+  { key: '1',  label: '1'  },
+  { key: '2',  label: '2'  },
+  { key: '3',  label: '3'  },
+  { key: '4+', label: '4+' },
 ];
 
 const MATRIX_AGENT_CAP = 25;
@@ -60,8 +61,6 @@ function lowInvocationThresholdForWindow(days) {
   return Math.max(1, Math.round(LOW_INVOCATION_PER_30D * (Number(days) || 30) / 30));
 }
 
-// Top-N failing — 매트릭스 green-bias 보완 (action-triggering compact view).
-const TOPN_FAILING_THRESHOLD = 0.95;
 const CIRCUIT_BREAKER_UNREADABLE_COPY = 'circuit-breaker state unreadable — check permissions on the hook data dir';
 // One slot for the top-N failing card and the lifecycle card it pairs with → the two fill one row height at xl.
 const PAIRED_CARD_SIZE = 'S';
@@ -118,7 +117,6 @@ const REGION_FEEDERS = {
 
 // Render order of the regions each read feeds → the first slot carries a failed read's card, the rest point at it.
 const FAILURE_SLOTS = [
-  [REGION_FEEDERS.summary, 'circuit-breaker state'],
   [REGION_FEEDERS.summary, 'unsafe to route'],
   [REGION_FEEDERS.failure, 'failed'],
   [REGION_FEEDERS.overage, 'over tool-use cap'],
@@ -137,12 +135,6 @@ const NOTE = {
     + 'No record (agent ledger) counts launches minus runs from the agent summary, so the two can differ.',
 };
 
-// On-page forms of NOTE (≤ 90 chars) → the full definition rides each card's info drawer.
-const NOTE_SHORT = {
-  NO_RECORD: 'No record = launches − runs · can differ from Unfinished',
-  UNFINISHED: 'Unfinished = started − completed',
-};
-
 // 'unknown' / 'subagent_stop_missing' — non-actionable agent ID 묶음 (radar / row 시각 분리).
 const NON_ACTIONABLE_AGENT_IDS = new Set([UNKNOWN_AGENT_ID, SYNTHETIC_SENTINEL_AGENT_ID]);
 
@@ -154,8 +146,12 @@ function isNonActionableAgentAg(agentId, visualSet = NON_ACTIONABLE_AGENT_IDS) {
   return visualSet.has(agentId);
 }
 
-// 카드 본문 flex 컨테이너 + 스크롤 — inline style 으로 빼두면 JSX 노이즈가 큼.
-const AGENTS_INLINE_CSS = '.ag-card-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; } '
+function getActionableAgentsAg(agents) {
+  return (Array.isArray(agents) ? agents : []).filter((a) => !isNonActionableAgentAg(a.agent_id));
+}
+
+// card body scroll + roving-row focus ring — kept out of inline style to cut JSX noise
+const AGENTS_INLINE_CSS = ''
   + '.ag-card-body-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; } '
   // row fills its scroller edge to edge → the global outset ring is clipped; inset keeps the focus-ring token visible
   + 'tr[data-roving-row]:focus-visible { outline-offset: calc(var(--focus-ring-width) * -1); }';
@@ -215,21 +211,19 @@ function ScreenAgents() {
     // G3 latency 서버 allowlist {1-30} — 캐핑.
     const latencyDays = Math.min(days, 30);
 
-    const tasks = [
-      runFetchAg(`/api/agents/summary?days=${days}&order=runs&limit=50`, ctrl, setSummaryState),
-      runFetchAg(`/api/agents/latency?days=${latencyDays}`, ctrl, setLatencyState),
-      runFetchAg(`/api/agents/success-rate?days=${days}`, ctrl, setSuccessState),
-      runFetchAg(`/api/agents/revision-distribution?days=${days}`, ctrl, setRevisionState),
-      runFetchAg(`/api/agents/review-flag-timeseries?days=${days}`, ctrl, setReviewState),
-      // CF1 P0 — Health Index review_flag 성분을 per-agent 실비율로 공급.
-      // 404 (pre-deploy) 시 error 상태 → buildQualityHealthRanking 이 revision 단독으로 graceful degrade.
-      runFetchAg(`/api/agents/review-flag-by-agent?days=${days}`, ctrl, setReviewByAgentState),
-      runFetchAg(`/api/agents/failure-patterns?days=${days}`, ctrl, setFailureState),
-      runFetchAg(`/api/agents/lifecycle-stats?days=${days}`, ctrl, setLifecycleState),
-      // budget_overages P95 막대 크로싱 표기 — days ∈ {7,30,90} 서버 allowlist 와 동일.
-      runFetchAg(`/api/agents/budget-overages?days=${days}`, ctrl, setOverageState),
-      runFetchAg(`/api/telemetry/activations?days=${days}&limit=1`, ctrl, setActivationState),
-    ];
+    runFetchAg(`/api/agents/summary?days=${days}&order=runs&limit=50`, ctrl, setSummaryState);
+    runFetchAg(`/api/agents/latency?days=${latencyDays}`, ctrl, setLatencyState);
+    runFetchAg(`/api/agents/success-rate?days=${days}`, ctrl, setSuccessState);
+    runFetchAg(`/api/agents/revision-distribution?days=${days}`, ctrl, setRevisionState);
+    runFetchAg(`/api/agents/review-flag-timeseries?days=${days}`, ctrl, setReviewState);
+    // CF1 P0 — Health Index review_flag 성분을 per-agent 실비율로 공급.
+    // 404 (pre-deploy) 시 error 상태 → buildQualityHealthRanking 이 revision 단독으로 graceful degrade.
+    runFetchAg(`/api/agents/review-flag-by-agent?days=${days}`, ctrl, setReviewByAgentState);
+    runFetchAg(`/api/agents/failure-patterns?days=${days}`, ctrl, setFailureState);
+    runFetchAg(`/api/agents/lifecycle-stats?days=${days}`, ctrl, setLifecycleState);
+    // budget_overages P95 막대 크로싱 표기 — days ∈ {7,30,90} 서버 allowlist 와 동일.
+    runFetchAg(`/api/agents/budget-overages?days=${days}`, ctrl, setOverageState);
+    runFetchAg(`/api/telemetry/activations?days=${days}&limit=1`, ctrl, setActivationState);
 
     return () => ctrl.abort();
   }, [days, refreshTick]);
@@ -358,9 +352,8 @@ function ScreenAgents() {
     setDrawerAgent(nextId);
   }, [sortedAgents, drawerAgent]);
 
-  const statusTiles = buildAgentStatusTiles({ days, summaryState, failureState, overageState, failureByAgent, overageByAgent });
+  const statusTiles = buildAgentStatusTiles({ summaryState, failureState, overageState, failureByAgent, overageByAgent });
 
-  // 6 카드 grid — 4-row layout (Row 2/4 col-span-full · Row 1/3 grid-cols-3).
   return (
     <div className="flex flex-col">
       {/* 공유 타입스케일(--fs 토큰 + fs 클래스) 마운트 — SPA 단일 screen 모델: agents 활성 시 토큰·클래스 가용화 (ui.jsx 정의 소비 · 미정의 시 클래스 no-op 회귀 차단 · 멱등). */}
@@ -369,7 +362,6 @@ function ScreenAgents() {
       <div className="flex-shrink-0">
         <PageHeader
           title="Agents"
-          sub="Triage — who is unsafe to route to, and what is breaking"
           freshness={<FreshnessStamp at={summaryAsOfAt} regions={regionStates}/>}
           range={
             <div className="seg" aria-label="Time range">
@@ -396,6 +388,7 @@ function ScreenAgents() {
         />
       </div>
 
+      <div className="flex flex-col gap-section">
       {sourceFailures.banner && (
         <PageErrorBanner sources={sourceFailures.banner.sources} error={sourceFailures.banner.error} onRetry={triggerRefresh}
           isBusy={isRetrying} focusTargetId={IDS.REGION_CARD.summary}/>
@@ -404,29 +397,23 @@ function ScreenAgents() {
       {/* held values stay on screen, dimmed, until the refresh settles */}
       <div
         aria-busy={isAnyRegionBusy ? 'true' : undefined}
-        className={isAnyRegionBusy && summaryAsOfAt != null ? 'opacity-70 motion-safe:transition-opacity motion-safe:duration-[120ms]' : undefined}>
-      <AgentPageVerdict
-        revisionState={revisionState}
-        reviewByAgentState={reviewByAgentState}
-        statusTiles={statusTiles}
-        days={days}
-        freshness={{ at: summaryAsOfAt, regions: regionStates }}/>
-
-      <AgentAlarmLane failures={sourceFailures} state={summaryState} onRetry={triggerRefresh}/>
+        className={`flex flex-col gap-section ${isAnyRegionBusy && summaryAsOfAt != null ? 'opacity-70 motion-safe:transition-opacity motion-safe:duration-[120ms]' : ''}`.trim()}>
+      <AgentAlarmLane state={summaryState}/>
 
       <AgentStatusBand failures={sourceFailures} tiles={statusTiles} onRetry={triggerRefresh}/>
 
       {/* Both "which agent is broken" lists side by side at xl, stacked below it. */}
-      <window.UI.SplitRow ratio="1:1" layout="equal" className="mb-4">
+      <window.UI.SplitRow ratio="1:1" layout="equal">
         <TopNFailingAgentsCard failures={sourceFailures} state={successState} days={days} onRetry={triggerRefresh} failureByAgent={failureByAgent}/>
         <LifecycleStatsCard failures={sourceFailures} state={lifecycleState} days={days} onSelect={setSelectedAgent} onRetry={triggerRefresh}/>
       </window.UI.SplitRow>
 
-      {/* Row 1 — 의사결정 진입점. 행 클릭 → 우측 슬라이드인 드로어 (인라인 사이드바 폐지 · full-width 테이블). */}
-      <div className="grid grid-cols-1 gap-4 mb-4 items-stretch">
+      {/* decision entry point — row click → right slide-in drawer */}
         <AgentSummaryCard
           failures={sourceFailures}
           state={summaryState}
+          revisionState={revisionState}
+          reviewByAgentState={reviewByAgentState}
           days={days}
           sortBy={sortBy}
           onSortChange={setSortBy}
@@ -439,11 +426,11 @@ function ScreenAgents() {
           failureStatus={failureState.status}
           trendStatus={successState.status}
         />
-      </div>
 
       <TaskTypeFold failures={sourceFailures} state={successState} days={days} onRetry={triggerRefresh}/>
 
-      <InstrumentationFold failures={sourceFailures} lifecycleState={lifecycleState} reviewState={reviewState} activationState={activationState} days={days} onRetry={triggerRefresh}/>
+      <InstrumentationFold failures={sourceFailures} reviewState={reviewState} activationState={activationState} onRetry={triggerRefresh}/>
+      </div>
       </div>
 
       {/* 행 클릭 시에만 마운트 (로드 시 자동 열림 없음). DetailSurface variant=drawer — focus-trap/scroll-lock/3 닫기 상속. */}
@@ -476,142 +463,83 @@ function ScreenAgents() {
   );
 }
 
-const INSTRUMENTATION_QUESTION = 'Is the measuring apparatus sound';
+// Ledger head: crit rows and agents past the fleet cut as counts, names on the rows; a clear fleet stays silent
+function HealthMarkAg({ agents, failureByAgent, revisionState, reviewByAgentState }) {
+  const { Icon, Cluster, TONE_ICON } = window.UI;
+  const marks = getAgentMarksAg(agents, failureByAgent, revisionState, reviewByAgentState);
+  const critCount = marks.filter((entry) => entry.mark === 'crit').length;
+  const watchCount = marks.filter((entry) => entry.mark === 'warn').length;
+  if (critCount === 0 && watchCount === 0) return null;
 
-// Page verdict — worst tone across the health rule and every status tile; the all-clear waits for every feeder.
-function AgentPageVerdict({ revisionState, reviewByAgentState, statusTiles, days, freshness }) {
-  const feeders = [getHealthFeederAg(revisionState, reviewByAgentState), ...statusTiles.map(getTileFeederAg)];
-  const verdict = getAgentVerdict(feeders, days);
-  if (!verdict) return null;
-
-  return <window.UI.PageVerdict tone={verdict.tone} label={verdict.label} freshness={freshness} className="mb-4">{verdict.text}</window.UI.PageVerdict>;
+  return (
+    <Cluster>
+      {critCount > 0 && (
+        <span className="fs-meta text-dim whitespace-nowrap" data-health-mark="crit">
+          <Icon name={TONE_ICON.crit} size={12} className="text-crit"/>{` ${critCount} ${critCount === 1 ? 'needs' : 'need'} attention`}
+        </span>
+      )}
+      {watchCount > 0 && (
+        <span className="fs-meta text-dim whitespace-nowrap" data-health-mark="warn">
+          <Icon name={TONE_ICON.warn} size={12} className="text-warn"/>{` ${watchCount} to watch`}
+        </span>
+      )}
+    </Cluster>
+  );
 }
 
-// feeder = { state: ready|pending|unchecked|thin, tone, clauses, source } — one per question the page answers
-function getHealthFeederAg(revisionState, reviewByAgentState) {
-  const states = [revisionState, reviewByAgentState];
-  const source = 'rework or review flags';
-  if (states.some((state) => window.UI.getRegionView(state) === 'loading')) return { state: 'pending', tone: null, clauses: [], source };
-  if (states.some((state) => state.status !== 'ready')) return { state: 'unchecked', tone: null, clauses: [], source };
-
-  const ranked = buildQualityHealthRanking(readyData(revisionState)?.rows ?? [], readyData(reviewByAgentState)?.rows ?? [], Number.MAX_SAFE_INTEGER);
-  if (ranked.length === 0) return { state: 'thin', tone: null, clauses: [], source };
-
-  const byTone = (tone) => ranked.filter((entry) => qualityHealthVerdict(entry.healthIndex).tone === tone).map((entry) => entry.agent);
-  const crit = byTone('crit');
-  const warn = byTone('warn');
-  const clauses = [
-    crit.length > 0 && `${formatAgentCountAg(crit.length)} ${crit.length === 1 ? 'needs' : 'need'} attention on ${source} (${formatAgentListAg(crit)})`,
-    warn.length > 0 && `${formatAgentCountAg(warn.length)} to watch on ${source} (${formatAgentListAg(warn)})`,
-  ].filter(Boolean);
-  return { state: 'ready', tone: crit.length ? 'crit' : warn.length ? 'warn' : 'ok', clauses, source, judged: ranked.length };
+// one mark per ledger row through getAgentMarkAg; an unread rework or flag source judges no health
+function getAgentMarksAg(agents, failureByAgent, revisionState, reviewByAgentState) {
+  const isHealthRead = revisionState?.status === 'ready' && reviewByAgentState?.status === 'ready';
+  const ranking = isHealthRead
+    ? buildQualityHealthRanking(readyData(revisionState)?.rows ?? [], readyData(reviewByAgentState)?.rows ?? [], Number.MAX_SAFE_INTEGER)
+    : [];
+  const healthByAgent = new Map(ranking.map((entry) => [entry.agent, entry]));
+  const p95Scale = getP95ScaleAg(agents);
+  const watchCut = getWatchCutAg(ranking);
+  return agents.map((agent) => ({
+    agent: agent.agent_id,
+    mark: getAgentMarkAg({ agent, failure: failureByAgent?.get(agent.agent_id) ?? null, p95Scale, health: healthByAgent.get(agent.agent_id) ?? null, watchCut }),
+  }));
 }
 
-function getTileFeederAg(tile) {
-  const { source, isCurrent } = tile;
-  if (tile.status === 'loading') return { state: 'pending', tone: null, clauses: [], source };
-  if (tile.status !== 'ready') return { state: 'unchecked', tone: null, clauses: [], source };
-
-  const isFlagged = tile.tone === 'warn' || tile.tone === 'crit';
-  return { state: 'ready', tone: isFlagged ? tile.tone : 'ok', clauses: isFlagged ? [tile.clause] : [], source, isCurrent };
-}
-
-// A known warn/crit stands; the all-clear waits until every feeder has answered. warn reads 'Watch', the drawer's word.
-function getAgentVerdict(feeders, days) {
-  const flagged = feeders.filter((feeder) => feeder.tone === 'warn' || feeder.tone === 'crit');
-  if (flagged.length > 0) {
-    const tone = window.UI.getWorstTone(flagged.map((feeder) => feeder.tone));
-    return { tone, label: tone === 'warn' ? 'Watch' : undefined, text: getFlaggedTextAg(flagged, days) };
-  }
-  if (feeders.some((feeder) => feeder.state === 'pending')) return null;
-
-  const unchecked = feeders.filter((feeder) => feeder.state === 'unchecked').map((feeder) => feeder.source);
-  if (unchecked.length > 0) return { tone: 'neutral', text: `Agent health is unknown — couldn't check ${unchecked.join(', ')}.` };
-
-  const health = feeders[0];
-  if (health.state === 'thin') {
-    return { tone: 'neutral', text: `No agent failed or is unsafe to route, but none has enough runs in the last ${days}d to judge rework — too few runs (needs ${window.UI.LOW_N_MIN} each).` };
-  }
-  const judged = health.judged === 1 ? 'the 1 agent with enough runs' : `all ${health.judged} agents with enough runs`;
-  return { tone: 'ok', text: `No agent failed or is unsafe to route, and ${judged} in the last ${days}d ${health.judged === 1 ? 'is' : 'are'} healthy on rework and review flags.` };
-}
-
-// current-state clauses lead · windowed clauses sit under one 'last Nd' prefix
-function getFlaggedTextAg(flagged, days) {
-  const currentClauses = flagged.filter((feeder) => feeder.isCurrent).flatMap((feeder) => feeder.clauses);
-  const windowClauses = flagged.filter((feeder) => !feeder.isCurrent).flatMap((feeder) => feeder.clauses);
-  const windowText = windowClauses.length > 0 ? `last ${days}d: ${windowClauses.join(' · ')}` : '';
-  const text = [...currentClauses, windowText].filter(Boolean).join(' · ');
-  return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
+// crit beats warn → a row showing Error, Too slow or a crit share is never also under Watch
+function getAgentMarkAg({ agent, failure, p95Scale, health, watchCut }) {
+  const isRowCrit = agent.status === 'error' || isTooSlowAg(agent, p95Scale)
+    || getSummaryRateAg(agent).tone === 'crit' || getBreakageToneAg(failure) === 'crit';
+  if (isRowCrit) return 'crit';
+  if (!health) return null;
+  const { tone } = qualityHealthVerdict(health.healthIndex, watchCut);
+  return tone === 'ok' ? null : tone;
 }
 
 function formatAgentCountAg(count) {
   return `${count} ${count === 1 ? 'agent' : 'agents'}`;
 }
 
-// names beyond the first three collapse to a count — the sentence stays one line
-function formatAgentListAg(agents) {
-  const names = agents.slice(0, 3).map((agent) => window.UI.getAgentDisplayName(agent));
-  return agents.length > 3 ? `${names.join(', ')} +${agents.length - 3} more` : names.join(', ');
-}
-
-// Status fold — open by default; the head carries the lead figure, the body every clause.
-function InstrumentationFold({ failures, lifecycleState, reviewState, activationState, days, onRetry }) {
-  const { tone, sub } = getInstrumentationVerdict(lifecycleState, reviewState, activationState);
-
+// Status fold — open by default; the head carries both shares, the body the chart alone.
+function InstrumentationFold({ failures, reviewState, activationState, onRetry }) {
   return (
-    <window.UI.Disclosure kind="status" title="Instrumentation" sub={sub} tone={tone} className="mb-4">
-      <p className="fs-meta text-dim mb-3">{getInstrumentationDetailAg(lifecycleState, reviewState, activationState, days)}</p>
-      <ReviewFlagTimelineCard failures={failures} state={reviewState} days={days} onRetry={onRetry}/>
+    <window.UI.Disclosure kind="status" title="Instrumentation" sub={getInstrumentationSub(reviewState, activationState)}>
+      {/* id'd wrapper → the region failure's focus target */}
+      <div id={IDS.REGION_CARD.reviewFlags} className="min-w-0">
+        <QualityHealthTimeline failures={failures} state={reviewState} onRetry={onRetry}/>
+      </div>
     </window.UI.Disclosure>
   );
 }
 
-// unread activations → a stated gap, never a 0 % that reads as a clean result
-function getInstrumentationDetailAg(lifecycleState, reviewState, activationState, days) {
-  const clauses = getInstrumentationClausesAg(lifecycleState, reviewState, activationState).map((clause) => clause.full);
-  const read = clauses.length > 0 ? `${clauses.join(' · ')} · last ${days}d` : null;
-  return getActivationClauseAg(activationState) ? read : joinSubAg([read, 'Activation rate unavailable']);
+// unread review flags add nothing · unread activations → stated, never a 0 % that reads as clean
+function getInstrumentationSub(reviewState, activationState) {
+  const { flagged, total } = reviewState.status === 'ready' ? getReviewFlagTotalsAg(readyData(reviewState)?.rows ?? []) : { total: 0 };
+  return joinSubAg([total > 0 ? `${formatPctAg((flagged / total) * 100)} flagged` : null, getActivationClauseAg(activationState)]);
 }
 
 // zero activations → no rate: a % over an empty denominator also reads as clean
 function getActivationClauseAg(activationState) {
-  const rate = getActivationRateAg(activationState);
-  if (!rate) return null;
-  return rate.total === 0 ? 'no activations' : `activation false-positive ${rate.pct}% of ${formatIntAg(rate.total)} activations`;
-}
-
-function getActivationRateAg(activationState) {
   const summary = activationState?.status === 'ready' ? activationState.data?.summary : null;
-  if (!summary) return null;
-  return { total: Number(summary.total_activations) || 0, pct: ((Number(summary.overall_false_positive_rate) || 0) * 100).toFixed(1) };
-}
-
-// The head shows the first loaded source's lead (32-char meta cap); unfinished runs set the tone.
-function getInstrumentationVerdict(lifecycleState, reviewState, activationState) {
-  const [lead] = getInstrumentationClausesAg(lifecycleState, reviewState, activationState);
-  const tone = lifecycleState.status !== 'ready' ? 'neutral'
-    : getOrphanTotalAg(readyData(lifecycleState)?.rows ?? []) > 0 ? 'warn' : 'ok';
-  return { tone, sub: lead?.lead ?? INSTRUMENTATION_QUESTION };
-}
-
-// One clause per loaded source — an unread source adds nothing rather than a zero.
-function getInstrumentationClausesAg(lifecycleState, reviewState, activationState) {
-  const clauses = [];
-  if (lifecycleState.status === 'ready') {
-    const orphans = formatIntAg(getOrphanTotalAg(readyData(lifecycleState)?.rows ?? []));
-    clauses.push({ lead: `${orphans} runs with no record`, full: `${orphans} runs with no completion record` });
-  }
-  if (reviewState.status === 'ready') {
-    const { flagged, total } = getReviewFlagTotalsAg(readyData(reviewState)?.rows ?? []);
-    if (total > 0) {
-      const share = `${((flagged / total) * 100).toFixed(1)}% flagged`;
-      clauses.push({ lead: share, full: share });
-    }
-  }
-  const rate = getActivationRateAg(activationState);
-  if (rate) clauses.push({ lead: rate.total === 0 ? 'no activations' : `${rate.pct}% activation false-positive`, full: getActivationClauseAg(activationState) });
-  return clauses;
+  if (!summary) return 'activations not loaded';
+  const total = Number(summary.total_activations) || 0;
+  return total === 0 ? 'no activations' : `${formatPctAg((Number(summary.overall_false_positive_rate) || 0) * 100)} false-positive activations`;
 }
 
 function getOrphanTotalAg(rows) {
@@ -628,90 +556,94 @@ function getReviewFlagTotalsAg(rows) {
 // AgentSummary — row click → drawer · Runs and No record ride their own columns.
 // 추세 셀 = 50×20 MiniBars (runs per day 7d) · 실패 컬럼 = failure-patterns API 흡수 (failureByAgent client-side merge).
 
-// Detail fold toned by its worst pair → a crit pair opens it on load.
+// Untoned detail fold → collapsed on load whatever its pairs: Most-failing pairs is the one first-paint place for a failing pair.
+// Flush body → the matrix edge cells and the inset blocks share one card-pad column.
 function TaskTypeFold({ failures, state, days, onRetry }) {
-  const tone = useMemoAg(() => getTaskTypeTone(state), [state]);
-
   return (
-    <window.UI.Disclosure kind="detail" title="By task type" sub="Success rate, agent × task type" tone={tone} className="mb-4">
-      <SuccessRateMatrixCard failures={failures} state={state} days={days} onRetry={onRetry}/>
+    <window.UI.Disclosure kind="detail" isFlush title="By task type" sub={`Success rate · last ${days} days`}>
+      <SuccessRateMatrixRegion failures={failures} state={state} days={days} onRetry={onRetry}/>
     </window.UI.Disclosure>
   );
 }
 
-// unread → no tone, so a fold never claims ok before the matrix loads
-function getTaskTypeTone(state) {
-  if (state.status !== 'ready') return undefined;
-
-  const cells = Object.values(buildSuccessRateMatrix(readyData(state)?.rows ?? []).cells);
-  return cells.some((cell) => getCellFailShareTone(cell) === 'crit') ? 'crit' : 'ok';
+// off-target = a pair at the matrix crit glyph · agents in matrix order, pairs in column order, clear agents left out
+function getOffTargetRowsAg(matrix) {
+  return matrix.agents
+    .map((agent) => ({
+      agent,
+      pairs: TASK_TYPE_COLUMNS
+        .map((column) => ({ taskType: column.label, cell: matrix.cells[`${agent}|${column.key}`] }))
+        .filter(({ cell }) => getCellFailShareTone(cell) === 'crit'),
+    }))
+    .filter((row) => row.pairs.length > 0);
 }
 
 // Alarm lane — one row per suspended or streaking agent, nothing when the fleet
 // is clear. An unreadable state dir renders unavailable; it is never a zero.
-function AgentAlarmLane({ failures, state, onRetry }) {
-  const { Badge } = window.UI;
+// A failed read renders nothing: the Unsafe to route stat reads the same source and speaks for it.
+function AgentAlarmLane({ state }) {
+  const { Badge, Card, Cluster, Stack } = window.UI;
   const view = window.UI.getRegionView(state);
 
   if (view === 'loading') {
     return (
-      <div className="card mb-4" aria-busy="true">
-        <div className="card-body text-faint fs-meta">Checking circuit-breaker state…</div>
+      <div aria-busy="true">
+        <Card><span className="text-faint fs-meta">Checking circuit-breaker state…</span></Card>
       </div>
     );
   }
-  if (view === 'error') {
-    return (
-      <div className="card mb-4">
-        <div className="card-body">
-          <window.UI.RegionFailure source={REGION_FEEDERS.summary} region="circuit-breaker state" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.status} onRetry={onRetry}/>
-        </div>
-      </div>
-    );
-  }
+  if (view === 'error') return null;
 
   const breaker = readyData(state)?.meta?.circuit_breaker ?? null;
   if (!breaker) return null;
 
   if (breaker.source === 'unavailable') {
     return (
-      <div className="card mb-4">
-        <div className="card-body flex items-center gap-2">
+      <Card>
+        <Cluster>
           <Badge role="status" tone="warn">unavailable</Badge>
           <span className="text-faint fs-meta">{CIRCUIT_BREAKER_UNREADABLE_COPY}</span>
-        </div>
-      </div>
+        </Cluster>
+      </Card>
     );
   }
   if (breaker.alarms.length === 0) return null;
 
   return (
-    <div className="card mb-4" role="region" aria-label="Agent alarms">
-      <div className="card-body flex flex-col gap-2">
-        {breaker.alarms.map((alarm) => (
-          <AgentAlarmRow key={alarm.agent} alarm={alarm}/>
-        ))}
-      </div>
+    <div role="region" aria-label="Agent alarms">
+      <Card>
+        <Stack gap="list">
+          {breaker.alarms.map((alarm) => (
+            <AgentAlarmRow key={alarm.agent} alarm={alarm}/>
+          ))}
+        </Stack>
+      </Card>
     </div>
   );
 }
 
 function AgentAlarmRow({ alarm }) {
   const { Badge, AgentName } = window.UI;
+  const nextStep = getAlarmNextStepAg(alarm);
 
   return (
-    <div className="flex items-center gap-2">
+    <window.UI.Cluster>
       <Badge role="status" tone={getBreakerTone(alarm)}>{getBreakerLabel(alarm)}</Badge>
-      <AgentName name={alarm.agent} className="font-mono"/>
+      <AgentName name={alarm.agent}/>
       <span className="text-faint fs-meta">
         {formatConsecutiveFails(alarm.consecutive_fails)}
-        {alarm.suspended_at ? ` · since ${alarm.suspended_at}` : ''}
+        {alarm.suspended_at && <> · since <SuspendedStampAg iso={alarm.suspended_at}/></>}
       </span>
-      <span className="text-faint fs-meta">
-        {alarm.suspended ? 'stop routing · clear the marker, then edit the body' : 'one more fail suspends it'}
-      </span>
-    </div>
+      {nextStep && <span className="text-faint fs-meta">{nextStep}</span>}
+    </window.UI.Cluster>
   );
+}
+
+// the next-fail claim needs the fail count it was read with → an unread count makes no claim;
+// the payload carries no suspension threshold, so a streak never names how many fails remain
+function getAlarmNextStepAg(alarm) {
+  if (alarm.suspended) return 'stop routing · clear the marker, then edit the body';
+  return Number.isFinite(alarm.consecutive_fails) ? 'more fails suspend it' : null;
 }
 
 /**
@@ -726,20 +658,22 @@ function getAgentSourceFailures(regionEntries) {
   return window.UI.getSourceFailures([...slotRows, ...readRows]);
 }
 
-// Status band — the four fleet questions the first screenful answers. Each tile
-// carries its own payload state so one unloaded source never reads as a zero.
+// Status band — the four fleet questions the first screenful answers, one stat row.
+// Each stat carries its own payload state so one unloaded source never reads as a zero.
 function AgentStatusBand({ failures, tiles, onRetry }) {
+  const cardId = IDS.REGION_CARD.status;
+  const notes = tiles.filter((tile) => tile.info).map((tile) => ({ key: tile.key, label: tile.label, info: tile.info }));
   return (
-    <div id={IDS.REGION_CARD.status} className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-4 items-stretch">
-      {tiles.map((tile) => (
-        <AgentStatusTile key={tile.key} {...tile} failures={failures} cardId={`agents-tile-${tile.key}`} onRetry={onRetry}/>
-      ))}
+    <div id={cardId} className="min-w-0">
+      <window.UI.Card title="Status" info={<window.UI.StatNotes stats={notes}/>} infoLabel="How the status counts work">
+        <window.UI.StatRow stats={tiles.map((tile) => buildStatusStatAg({ ...tile, failures, cardId, onRetry }))}/>
+      </window.UI.Card>
     </div>
   );
 }
 
-// One tile list feeds the band and the page verdict → the verdict can never clear what a tile flags.
-function buildAgentStatusTiles({ days, summaryState, failureState, overageState, failureByAgent, overageByAgent }) {
+// One tile per fleet question, each with its own feeder → one unread source blanks only its stat.
+function buildAgentStatusTiles({ summaryState, failureState, overageState, failureByAgent, overageByAgent }) {
   const summary = readyData(summaryState);
   const breaker = summary?.meta?.circuit_breaker ?? null;
   const unsafeCount = breaker && breaker.source === 'loaded' ? breaker.suspended_count + breaker.streak_count : null;
@@ -760,60 +694,51 @@ function buildAgentStatusTiles({ days, summaryState, failureState, overageState,
       key: 'unsafe',
       feeder: REGION_FEEDERS.summary,
       label: 'Unsafe to route',
-      source: 'routing safety',
-      isCurrent: true,
       sub: breaker && breaker.source === 'loaded' ? `now · of ${breaker.registry_agents} registered agents` : 'circuit-breaker state · now',
       unavailableSub: CIRCUIT_BREAKER_UNREADABLE_COPY,
       status: summaryView !== 'ready' ? summaryView : unsafeCount === null ? 'unavailable' : 'ready',
       busy: summaryState.busy,
       value: unsafeCount,
       tone: unsafeCount ? (breaker.suspended_count ? 'crit' : 'warn') : 'ok',
-      clause: `${unsafeCount} unsafe to route now`,
       error: summaryState.error,
     },
     {
       key: 'failed',
       feeder: REGION_FEEDERS.failure,
       label: 'Failed',
-      source: 'failed runs',
       // runs, not agents → the tile sums to the ledger's Failed or blocked column over the same window
       sub: blocked?.agents
-        ? `last ${days}d · ${formatIntAg(blocked.runs)} blocked runs in ${formatAgentCountAg(blocked.agents)}`
-        : `agents with a failed run · last ${days}d`,
-      info: 'Agents with at least one failed run. Blocked runs are a compliant halt, not a defect: they count in the ledger\'s Failed or blocked column, never in this tile.',
+        ? `${formatIntAg(blocked.runs)} blocked runs in ${formatAgentCountAg(blocked.agents)}`
+        : 'agents with a failed run',
+      info: 'Agents with at least one failed run. Blocked runs are a compliant halt, not a defect. The ledger counts them under Failed or blocked.',
       status: window.UI.getRegionView(failureState),
       busy: failureState.busy,
       value: failedAgents ? failedAgents.length : null,
       tone: failedAgents?.length ? 'crit' : 'ok',
-      clause: failedAgents ? `${formatAgentCountAg(failedAgents.length)} with a failed run (${formatAgentListAg(failedAgents)})` : '',
       error: failureState.error,
     },
     {
       key: 'overCap',
       feeder: REGION_FEEDERS.overage,
       label: 'Over tool-use cap',
-      source: 'tool-use overruns',
-      sub: joinSubAg([getRunRateTextAg(overCapCount, totalRuns), `last ${days}d`]),
-      info: 'Runs that crossed their tool-use budget, over every run in the window.',
+      sub: getRunRateTextAg(overCapCount, totalRuns),
+      info: 'Runs over their tool-use budget, as a share of all runs.',
       status: window.UI.getRegionView(overageState),
       busy: overageState.busy,
       value: overCapCount,
       tone: getRunRateToneAg(overCapCount, totalRuns),
-      clause: `${formatIntAg(overCapCount)} runs over the tool-use cap`,
       error: overageState.error,
     },
     {
       key: 'needsContext',
       feeder: REGION_FEEDERS.summary,
       label: 'Needs info',
-      source: 'needs-context runs',
-      sub: joinSubAg([getRunRateTextAg(needsContextCount, totalRuns), `last ${days}d`]),
-      info: 'needs_context outcomes over every run in the window. A high rate points at the delegation prompt.',
+      sub: getRunRateTextAg(needsContextCount, totalRuns),
+      info: 'needs_context outcomes as a share of all runs. A high rate points at the delegation prompt.',
       status: summaryView,
       busy: summaryState.busy,
       value: needsContextCount,
       tone: getRunRateToneAg(needsContextCount, totalRuns),
-      clause: `${formatIntAg(needsContextCount)} needs_context outcomes`,
       error: summaryState.error,
     },
   ];
@@ -838,82 +763,105 @@ function getRunRateToneAg(count, runs) {
 
 function getRunRateTextAg(count, runs) {
   if (count == null || !(runs > 0)) return '';
-  return `${((count / runs) * 100).toFixed(1)}% of ${formatIntAg(runs)} runs`;
+  return `${formatPctAg((count / runs) * 100)} of ${formatIntAg(runs)} runs`;
 }
 
 function joinSubAg(parts) {
   return parts.filter(Boolean).join(' · ');
 }
 
-// The hint stays one short line; the counting rule behind it opens from the ⓘ trigger.
-function AgentStatusTile({ failures, feeder, label, sub, info, unavailableSub, status, value, tone, error, busy, cardId, onRetry }) {
-  const { Badge, KpiValue, CardInfo } = window.UI;
-  const labelId = `${cardId}-label`;
-
-  return (
-    <div id={cardId} className="card h-full flex flex-col min-h-0">
-      <div className="card-body flex flex-col gap-1">
-        <div className="flex items-center gap-1 min-h-[32px]">
-          <span id={labelId} className="text-faint fs-meta">{label}</span>
-          {info && <CardInfo label={`How ${label} is counted`} describedBy={labelId}>{info}</CardInfo>}
-        </div>
-        {status === 'loading' && <span className="text-faint" aria-busy="true">…</span>}
-        {status === 'error' && (
-          <window.UI.RegionFailure source={feeder} region={label.toLowerCase()} error={error} isBusy={busy} failures={failures} focusTargetId={cardId} onRetry={onRetry}/>
-        )}
-        {status === 'unavailable' && <Badge role="status" tone="warn">unavailable</Badge>}
-        {status === 'ready' && <KpiValue tone={tone}>{value}</KpiValue>}
-        <span className="text-faint fs-meta">{status === 'unavailable' ? (unavailableSub ?? sub) : sub}</span>
-      </div>
-    </div>
-  );
+// tile model → one StatRow stat; the counting rules ride the card head's one ⓘ
+function buildStatusStatAg({ key, label, sub, info, unavailableSub, status, failures, cardId, onRetry, ...state }) {
+  const isCovered = status === 'error' && isStatCoveredAg(failures, state.feeder, label.toLowerCase());
+  const cause = isCovered ? window.UI.getReadFailureCause(state.error) : null;
+  return {
+    key,
+    label,
+    value: <StatusStatValueAg label={label} status={status} isCovered={isCovered} failures={failures} cardId={cardId} onRetry={onRetry} {...state}/>,
+    context: cause ?? (status === 'unavailable' ? (unavailableSub ?? sub) : sub),
+  };
 }
 
-// Unread payload mark — a dash would read as a loaded zero.
-function NotLoadedMarkAg({ title }) {
-  return <span className="text-faint fs-meta" title={title}>not loaded</span>;
+// RegionFailure's covered test → false when this stat is the slot that speaks
+function isStatCoveredAg(failures, source, region) {
+  if (failures?.banner?.sources?.includes(source)) return true;
+  const speaker = failures?.speakers.get(source);
+  return speaker != null && speaker !== region;
+}
+
+// Calm is silence → only a crit or warn count carries a glyph, its word for screen readers.
+// A covered failed read → the faint Not loaded word; the banner's Retry still lands on this card
+function StatusStatValueAg({ label, status, isCovered, feeder, value, tone, error, busy, failures, cardId, onRetry }) {
+  const { Badge, Icon, TONE_ICON } = window.UI;
+  if (status === 'loading') return <span className="text-faint" aria-busy="true">…</span>;
+  if (status === 'error' && isCovered) {
+    return <span data-covered-card-id={failures?.banner?.sources?.includes(feeder) ? cardId : undefined}>{getUnreadValueAg({ error }, feeder)}</span>;
+  }
+  if (status === 'error') {
+    return <window.UI.RegionFailure source={feeder} region={label.toLowerCase()} error={error} isBusy={busy} failures={failures} focusTargetId={cardId} onRetry={onRetry}/>;
+  }
+  if (status === 'unavailable') return <Badge role="status" tone="warn">unavailable</Badge>;
+  const count = typeof value === 'number' ? formatIntAg(value) : value;
+  if (tone !== 'crit' && tone !== 'warn') return count;
+  return <>
+    <span className={`text-${tone} mr-label-inline`} aria-hidden="true"><Icon name={TONE_ICON[tone]} size={13}/></span>
+    <span className="sr-only">{tone === 'crit' ? 'Needs attention: ' : 'Watch: '}</span>
+    {count}
+  </>;
 }
 
 function getNotLoadedTitleAg(what, status) {
   return status === 'error' ? `${what} failed to load` : `${what} still loading`;
 }
 
-const SUMMARY_SORT_OPTIONS = [
-  { value: 'name',     label: 'Name (A–Z)' },
-  { value: 'runs',     label: 'Most runs' },
-  { value: 'success',  label: 'Success rate'   },
-  { value: 'failures', label: 'Most failures'    },
-  { value: 'p95',      label: 'P95 ↓'      },
-];
+// sort key → its one direction, the aria-sort value its column head carries
+const SUMMARY_SORT_DIR = {
+  name: 'ascending',
+  runs: 'descending',
+  success: 'descending',
+  failures: 'descending',
+  p95: 'descending',
+};
 
 const MINIBAR_WIDTH = 50;
 const MINIBAR_HEIGHT = 20;
 
-function AgentSummaryCard({ failures, state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
-  const { CardHead, Badge } = window.UI;
+function AgentSummaryCard({ failures, state, revisionState, reviewByAgentState, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
+  const { Card } = window.UI;
   const data = readyData(state);
   const totalAgents = data?.meta?.total_agents ?? 0;
   const subText = data
-    ? `${totalAgents} active`
+    ? formatAgentCountAg(totalAgents)
     : (window.UI.getRegionView(state) === 'loading' ? 'Loading…' : "Couldn't load");
 
-  // the sort control is the card's action → it rides the head's right cluster (card-head contract), only while there are rows to order
+  // the sort lives on the column heads → the head's right cluster keeps only the fallback-order note, while there are rows to order
   const hasRows = (data?.agents ?? []).length > 0;
 
   return (
-    <div id={IDS.REGION_CARD.summary} className="card h-full flex flex-col min-h-0 min-w-0 mb-0">
-      <CardHead
+    <div id={IDS.REGION_CARD.summary} className="min-w-0">
+      <Card
+        className="[&>.card-body]:max-h-none [&>.card-body]:overflow-y-visible"
+        isFlush={window.UI.hasRegionRows(state, data?.agents ?? [])}
         title="Performance by agent"
         sub={subText}
         info={NOTE.NO_RECORD}
         infoLabel="How No record is counted"
-        right={hasRows && <SummarySortAg sortBy={sortBy} onSortChange={onSortChange} note={getSummarySortNoteAg(sortBy, failureStatus)}/>}
-      />
+        right={hasRows && (
+          <window.UI.Cluster gap="control-group">
+            <HealthMarkAg
+              agents={getActionableAgentsAg(data?.agents)}
+              failureByAgent={failureStatus === 'ready' ? failureByAgent : null}
+              revisionState={revisionState}
+              reviewByAgentState={reviewByAgentState}/>
+            <SummarySortNoteAg note={getSummarySortNoteAg(sortBy, failureStatus)}/>
+          </window.UI.Cluster>
+        )}>
       <AgentSummaryBody
         failures={failures}
         state={state}
         days={days}
         sortBy={sortBy}
+        onSortChange={onSortChange}
         selectedAgent={selectedAgent}
         onSelect={onSelect}
         onRetry={onRetry}
@@ -923,7 +871,7 @@ function AgentSummaryCard({ failures, state, days, sortBy, onSortChange, selecte
         failureStatus={failureStatus}
         trendStatus={trendStatus}
       />
-      {data && <CountDefinitionAg note={NOTE_SHORT.NO_RECORD}/>}
+      </Card>
     </div>
   );
 }
@@ -933,59 +881,54 @@ function getSummarySortNoteAg(sortBy, failureStatus) {
   return sortBy === 'failures' && failureStatus !== 'ready' ? 'Breakages not loaded — rows in run order' : '';
 }
 
-// The ledger's sort order in the card head: the fallback note (a live region, kept mounted so a change is announced), then the select.
-// The note carries its own trailing gap → while empty it adds no width beside the info button.
-function SummarySortAg({ sortBy, onSortChange, note }) {
+// The fallback-order note in the card head — a live region, kept mounted so a change is announced.
+function SummarySortNoteAg({ note }) {
+  return <span role="status" className="fs-meta text-dim whitespace-nowrap">{note}</span>;
+}
+
+// unread breakages → rows in run order, so the Runs head carries the sort the rows really have
+function getSummarySortKeyAg(sortBy, failureStatus) {
+  return sortBy === 'failures' && failureStatus !== 'ready' ? 'runs' : sortBy;
+}
+
+// A sortable head's label is its sort button: the sorted column draws its arrow, the others the two-way icon.
+function SummarySortButtonAg({ label, isActive, direction, onClick }) {
+  const { Icon } = window.UI;
+  const icon = !isActive ? 'arrow-up-down' : direction === 'ascending' ? 'arrow-up' : 'arrow-down';
   return (
-    <div className="flex items-center fs-meta text-faint">
-      <span role="status" className={`font-mono whitespace-nowrap${note ? ' mr-2' : ''}`}>{note}</span>
-      <div className="flex items-center gap-1">
-        <span>Sort:</span>
-        <select
-          className="field field-select"
-          value={sortBy}
-          onChange={(e) => onSortChange(e.target.value)}
-          aria-label="Agent sort order">
-          {SUMMARY_SORT_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-      </div>
-    </div>
+    <button type="button" className="btn ghost sm tbl-sort" onClick={onClick}>
+      {label}
+      <Icon name={icon} size={12} className={isActive ? '' : 'text-faint'}/>
+    </button>
   );
 }
 
-// A count whose sibling card counts differently states its definition beside it, not only in a header tooltip.
-function CountDefinitionAg({ note }) {
-  return <p className="card-body pt-0 mb-0 fs-meta text-dim">{note}</p>;
-}
-
-function AgentSummaryBody({ failures, state, days, sortBy, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
+function AgentSummaryBody({ failures, state, days, sortBy, onSortChange, selectedAgent, onSelect, onRetry, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <div className="card-body"><window.UI.LoadingPlaceholder label="agent performance" minHeight={240}/></div>;
+    return <window.UI.LoadingPlaceholder label="agent performance" minHeight={240}/>;
   }
   if (view === 'error') {
-    return <div className="card-body"><window.UI.RegionFailure source={REGION_FEEDERS.summary} region="agent performance" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.summary} onRetry={onRetry}/></div>;
+    return <window.UI.RegionFailure source={REGION_FEEDERS.summary} region="agent performance" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.summary} onRetry={onRetry}/>;
   }
   const agents = readyData(state)?.agents ?? [];
   if (agents.length === 0) {
-    return <div className="card-body"><EmptyStateAg message={`No agent activity in the last ${days} days.`}/></div>;
+    return <window.UI.EmptyState message={`No agent activity in the last ${days} days.`}/>;
   }
 
   // pseudo-agent(subagent_stop_missing / unknown) 는 정렬 대상 아님 → 하단 collapsed footer 로 분리.
-  const actionable = agents.filter((a) => !isNonActionableAgentAg(a.agent_id));
+  const actionable = getActionableAgentsAg(agents);
   const pseudoAgents = agents.filter((a) => isNonActionableAgentAg(a.agent_id));
   // unread breakages → run order; the card head announces it (getSummarySortNoteAg)
   const sorted = sortAgentSummary(actionable, sortBy, failureStatus === 'ready' ? failureByAgent : null);
 
   return (
-    // page scroll only — the card-body 70vh cap cut the last row and hid the Warning agents below it
-    <div className="card-body flush" style={{ maxHeight: 'none', overflowY: 'visible' }}>
       <AgentSummaryTable
         agents={sorted}
         pseudoAgents={pseudoAgents}
         days={days}
+        sortBy={sortBy}
+        onSortChange={onSortChange}
         selectedAgent={selectedAgent}
         onSelect={onSelect}
         trendByAgent={trendByAgent}
@@ -994,25 +937,44 @@ function AgentSummaryBody({ failures, state, days, sortBy, selectedAgent, onSele
         failureStatus={failureStatus}
         trendStatus={trendStatus}
       />
-    </div>
   );
 }
 
-// Footer colSpan — Agent · Runs · No record · Success · Failed or blocked · P95 · Trend.
-const SUMMARY_TABLE_COLSPAN = 7;
+const SUMMARY_COLUMNS = [
+  { key: 'agent', sortKey: 'name', label: 'Agent' },
+  { key: 'runs', sortKey: 'runs', isNumeric: true, label: <span title="Times the agent finished and reported a result (outcome records)">Runs</span> },
+  { key: 'noRecord', isNumeric: true, label: <span title={NOTE.NO_RECORD}>No record</span> },
+  { key: 'success', sortKey: 'success', isNumeric: true, label: 'Success rate' },
+  { key: 'failed', sortKey: 'failures', isNumeric: true, label: <span title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</span> },
+  { key: 'p95', sortKey: 'p95', isNumeric: true, label: <span title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</span> },
+  { key: 'trend', label: 'Runs, 7d' },
+];
 
-function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
-  const { TableHead } = window.UI;
+function getSummaryColumnsAg(sortKey, onSortChange) {
+  return SUMMARY_COLUMNS.map((column) => (column.sortKey ? {
+    ...column,
+    sort: column.sortKey === sortKey ? SUMMARY_SORT_DIR[sortKey] : 'none',
+    label: <SummarySortButtonAg
+      label={column.label}
+      isActive={column.sortKey === sortKey}
+      direction={SUMMARY_SORT_DIR[column.sortKey]}
+      onClick={() => onSortChange(column.sortKey)}/>,
+  } : column));
+}
+
+function AgentSummaryTable({ agents, pseudoAgents, days, sortBy = 'failures', onSortChange = () => {}, selectedAgent, onSelect, trendByAgent, failureByAgent, overageByAgent, failureStatus, trendStatus }) {
+  const { Table, TableRow, TableCell } = window.UI;
   const [showPseudo, setShowPseudo] = useStateAg(false);
   const [activeIndex, setActiveIndex] = useStateAg(0);
   const [activePseudoIndex, setActivePseudoIndex] = useStateAg(0);
   const pseudoRows = Array.isArray(pseudoAgents) ? pseudoAgents : [];
-  const p95WarnSec = getP95WarnSecAg(agents);
+  const p95Scale = getP95ScaleAg(agents);
 
   // one roving set per tbody — arrow keys walk the rows of the set they start in
-  const renderRow = (a, index, rowSet) => (
+  const renderRow = (view, a, index, rowSet) => (
     <AgentSummaryRow
       key={a.agent_id}
+      view={view}
       focusProps={window.UI.getRowFocusProps({
         index,
         activeIndex: rowSet === agents ? activeIndex : activePseudoIndex,
@@ -1027,58 +989,46 @@ function AgentSummaryTable({ agents, pseudoAgents, days, selectedAgent, onSelect
       trend={trendByAgent ? trendByAgent.get(a.agent_id) : null}
       failure={failureByAgent ? failureByAgent.get(a.agent_id) : null}
       overage={overageByAgent ? overageByAgent.get(a.agent_id) : null}
-      p95WarnSec={p95WarnSec}
+      p95Scale={p95Scale}
       failureStatus={failureStatus}
       trendStatus={trendStatus}
     />
   );
 
-  return (
-    <div className="agent-table-minibars overflow-x-auto">
-      <table className="tbl">
-        <thead>
-          <tr>
-            <TableHead isSticky>Agent <span className="text-faint">· activity</span></TableHead>
-            <TableHead isSticky isNumeric><span title="Times the agent finished and reported a result (outcome records)">Runs</span></TableHead>
-            <TableHead isSticky isNumeric><span title={NOTE.NO_RECORD}>No record</span></TableHead>
-            <TableHead isSticky isNumeric>Success rate</TableHead>
-            <TableHead isSticky isNumeric><span title="Failed or blocked = fail + blocked (blocked = a compliant halt, not a defect)">Failed or blocked</span></TableHead>
-            <TableHead isSticky isNumeric><span title="p95 of paired Start→Stop durations — the response-time card folded into this column">P95</span></TableHead>
-            <TableHead isSticky>Trend</TableHead>
-          </tr>
-        </thead>
-        <tbody>
-          {agents.map(renderRow)}
-        </tbody>
-        {pseudoRows.length > 0 && (
-          <tbody>
-            <tr>
-              <td colSpan={SUMMARY_TABLE_COLSPAN} className="border-t border-line">
-                <window.UI.DisclosureButton
-                  isOpen={showPseudo}
-                  onToggle={() => setShowPseudo((v) => !v)}
-                  className="w-full text-left fs-meta px-1"
-                  label={`${pseudoRows.length} non-actionable ${pseudoRows.length === 1 ? 'bucket' : 'buckets'} (unpaired / unidentified — not real agents)`}
-                />
-              </td>
-            </tr>
-            {showPseudo && pseudoRows.map(renderRow)}
-          </tbody>
-        )}
-      </table>
-    </div>
-  );
+  const pseudoBody = {
+    key: 'pseudo',
+    rows: (view) => (
+      <>
+        <TableRow view={view}>
+          <TableCell view={view} kind="span">
+            <window.UI.DisclosureButton
+              isOpen={showPseudo}
+              onToggle={() => setShowPseudo((v) => !v)}
+              className="w-full text-left fs-meta"
+              label={`${pseudoRows.length} non-actionable ${pseudoRows.length === 1 ? 'bucket' : 'buckets'} (unpaired / unidentified — not real agents)`}
+            />
+          </TableCell>
+        </TableRow>
+        {showPseudo && pseudoRows.map((a, i) => renderRow(view, a, i, pseudoRows))}
+      </>
+    ),
+  };
+  const agentBody = { key: 'agents', rows: (view) => agents.map((a, i) => renderRow(view, a, i, agents)) };
+  const bodies = [agentBody, ...(pseudoRows.length > 0 ? [pseudoBody] : [])];
+
+  const columns = getSummaryColumnsAg(getSummarySortKeyAg(sortBy, failureStatus), onSortChange);
+  return <Table caption="Performance by agent" isHeadSticky columns={columns} bodies={bodies}/>;
 }
 
-function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95WarnSec = P95_AGENT.WARN_SEC, failureStatus = 'ready', trendStatus = 'ready' }) {
-  const { MiniBars, Bar, BulletBar, formatPctWithDenominator, LOW_N_MIN, Icon, TONE_ICON, AgentName } = window.UI;
+function AgentSummaryRow({ view, agent, days, isSelected, onSelect, focusProps, trend, failure, overage, p95Scale = { cutSec: P95_AGENT.FLOOR, maxSec: null }, failureStatus = 'ready', trendStatus = 'ready' }) {
+  const { MiniBars, Bar, LOW_N_MIN, Icon, TONE_ICON, AgentName, TableRow, TableCell } = window.UI;
   // non-actionable 묶음을 2종으로 분기 — synthetic sentinel 은 'legacy/deprecated' 가 아님 (CF6).
   const isSyntheticAgent = agent.agent_id === SYNTHETIC_SENTINEL_AGENT_ID;
   const isUnknownAgent = isNonActionableAgentAg(agent.agent_id);
   const nonActionableLabel = isSyntheticAgent ? SYNTHETIC_SENTINEL_LABEL : UNKNOWN_AGENT_LABEL;
   const nonActionableTitle = isSyntheticAgent ? SYNTHETIC_SENTINEL_TITLE : UNKNOWN_AGENT_TITLE;
   const {
-    successPct, needsContextCount, denominator: successDenominator, numerator: successNumerator, isLowSample, tone: failShareTone,
+    needsContextCount, denominator: successDenominator, numerator: successNumerator, isLowSample, tone: failShareTone,
   } = getSummaryRateAg(agent);
   const successTitle = successDenominator > 0
     ? `passed ${successNumerator} ÷ denominator ${successDenominator} (done+dwc+blocked+fail) · needs_context ${needsContextCount} excluded${isLowSample ? ` · small sample (n=${successDenominator} < ${LOW_N_MIN})` : ''}`
@@ -1086,16 +1036,14 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
   // invocations = window 상대 spawn 빈도 (invocations_30d 는 deprecated alias — 1 release 유지).
   const invocations = agent.invocations !== undefined ? agent.invocations : agent.invocations_30d;
   const p95Sec = agent.p95_ms == null ? null : Number(agent.p95_ms) / 1000;
-  const p95Tone = p95LatencyTone(p95Sec, p95WarnSec);
-  const p95Glyph = p95GlyphTone(p95Sec, p95WarnSec);
+  const isTooSlow = isTooSlowAg(agent, p95Scale);
   // Budget crossing folds into the P95 fill-bar label — a separate pill beside a ✓ glyph read as a contradiction.
   const overageCount = overage ? Number(overage.overage_count) || 0 : 0;
   const overageNote = overageCount > 0
-    ? `${overageCount} tool_use-budget crossing${overageCount === 1 ? '' : 's'} in the last ${days}d · peak ${Number(overage.max_crossed_pct) || 0}% of budget`
+    ? `${overageCount} tool_use-budget crossing${overageCount === 1 ? '' : 's'} in the last ${days}d · peak ${formatPctAg(Number(overage.max_crossed_pct) || 0)} of budget`
     : null;
   // 추세 데이터 — null 이면 미렌더 (추정값 주입 금지).
   const hasTrend = Array.isArray(trend) && trend.length > 0;
-  const trendColor = trendBarColor(agent.status, failShareTone);
   const runs = Number(agent.runs) || 0;
   const noRecord = { count: invocations == null ? null : Math.max(0, Number(invocations) - runs) };
   noRecord.title = noRecord.count == null
@@ -1105,167 +1053,127 @@ function AgentSummaryRow({ agent, days, isSelected, onSelect, focusProps, trend,
     count: failure ? Number(failure.total_breakages) || 0 : 0,
     rate: failure ? failure.breakage_rate : 0,
   };
-  const failedCount = failure ? Number(failure.fail_count) || 0 : 0;
   const blockedCount = failure ? Number(failure.blocked_count) || 0 : 0;
-  // blocked is a compliant halt — only the failed share drives the tone
-  const failTone = failureTone(failedCount, getFailedRateAg(failure));
+  const failTone = getBreakageToneAg(failure);
   const isFailureRead = failureStatus === 'ready';
   const isTrendRead = trendStatus === 'ready';
   const failTitle = !isFailureRead ? getNotLoadedTitleAg('breakage data', failureStatus) : failure
-    ? `breakages ${failure.total_breakages} = fail ${failure.fail_count} + blocked ${failure.blocked_count} · rate ${(breakage.rate * 100).toFixed(1)}%`
+    ? `breakages ${failure.total_breakages} = fail ${failure.fail_count} + blocked ${failure.blocked_count} · rate ${formatPctAg(breakage.rate * 100)}`
     : 'no breakages (fail+blocked)';
 
   const handleClick = () => onSelect(agent.agent_id);
 
   return (
-    <tr
+    <TableRow
+      view={view}
       {...focusProps}
       onClick={handleClick}
       aria-current={isSelected ? 'true' : undefined}
       className={isSelected ? 'bg-sunken' : ''}
-      style={isUnknownAgent ? { opacity: 0.65 } : undefined}
       title={isUnknownAgent ? nonActionableTitle : `Show details for ${agent.agent_name}`}>
-      <td>
+      <TableCell view={view}>
         {/* an agent name is an ID → one line; a narrow page scrolls the table sideways instead of breaking it at its hyphens */}
-        <div className="flex items-center gap-1.5 whitespace-nowrap">
-          <ActivityMark status={agent.status} lastRunAt={agent.last_run_at}/>
+        <div className="flex items-center gap-label-inline whitespace-nowrap">
           {isUnknownAgent
-            ? <span className="font-medium">{nonActionableLabel}</span>
+            ? <span className="font-medium text-dim">{nonActionableLabel}</span>
             : <AgentName name={agent.agent_name} className="font-medium"/>}
-          <CompatibilityBadge compatibility={agent.compatibility}/>
+          <ActivityMark status={agent.status} lastRunAt={agent.last_run_at}/>
+          {getActivityWordAg(agent.status) && agent.compatibility && <span className="fs-meta text-faint" aria-hidden="true">·</span>}
+          <CompatibilityMark compatibility={agent.compatibility}/>
         </div>
-      </td>
-      <td className="num">{formatIntAg(runs)}</td>
-      <td className="num" title={`${noRecord.title} · ${formatInvocationsTitle(invocations, days)}`}>
-        {noRecord.count == null ? <span className="text-faint">—</span> : formatIntAg(noRecord.count)}
-      </td>
-      <td className="num tbl-bar-cell" title={successTitle}>
-        <span className="inline-flex items-center justify-end gap-1">
+      </TableCell>
+      <TableCell view={view} isNumeric>{formatIntAg(runs)}</TableCell>
+      <TableCell view={view} isNumeric title={`${noRecord.title} · ${formatInvocationsTitle(invocations, days)}`}>
+        {noRecord.count == null ? <window.UI.AbsentValue kind="none"/> : formatIntAg(noRecord.count)}
+      </TableCell>
+      <TableCell view={view} isNumeric title={successTitle}>
+        <span className="inline-flex items-center justify-end gap-label-inline">
           <FailShareGlyph tone={failShareTone}/>
-          <span className={successDenominator > 0 ? '' : 'text-faint'}>
-            {formatPctWithDenominator(successNumerator, successDenominator)}
-          </span>
+          <span className={successDenominator > 0 ? '' : 'text-faint'}>{formatRateAg(successNumerator, successDenominator)}</span>
           {isLowSample && <span className="fs-meta text-faint">low sample</span>}
         </span>
-        {successDenominator > 0 && (
-          <BulletBar
-            value={getSuccessWindowAg(successPct)}
-            target={SUCCESS_WINDOW.TARGET}
-            tone={failShareTone || 'neutral'}
-            showValue={false}
-            ariaLabel={`success rate ${successPct.toFixed(1)}% · bar spans ${SUCCESS_WINDOW.FLOOR_PCT}–100%, tick at 95%`}
-          />
-        )}
-      </td>
-      <td className="num tbl-bar-cell" title={failTitle}>
+      </TableCell>
+      <TableCell view={view} isNumeric title={failTitle}>
         {!isFailureRead ? (
-          <NotLoadedMarkAg title={failTitle}/>
+          <window.UI.AbsentValue kind="not-loaded" title={failTitle}/>
         ) : breakage.count > 0 ? (
-          <span className="inline-flex items-baseline justify-end gap-1.5">
+          <span className="inline-flex items-baseline justify-end gap-label-inline">
             <FailShareGlyph tone={failTone} label={getFailShareLabel('failed')}/>
-            <span className={failedCount > 0 ? '' : 'text-faint'}>{failedCount > 0 ? formatIntAg(failedCount) : '—'}</span>
-            {blockedCount > 0 && <span className="fs-meta text-dim">{formatIntAg(blockedCount)} blocked</span>}
+            <span>{formatIntAg(breakage.count)}</span>
+            {blockedCount > 0 && <span className="fs-meta text-faint">{formatIntAg(blockedCount)} blocked</span>}
           </span>
         ) : (
-          <span className="text-faint">—</span>
+          <window.UI.AbsentValue kind="none"/>
         )}
-        {/* 0 → dash, no bar · ≥1 → bar always present (min-width floor), width = breakage_rate, tone = failed tone. */}
-        {isFailureRead && breakage.count > 0 && (
-          <Bar
-            value={Math.max(breakage.rate, 0.01)}
-            tone={failTone}
-            ariaLabel={`breakage rate ${(breakage.rate * 100).toFixed(1)}%`}
-          />
-        )}
-      </td>
-      <td
-        className="num tbl-bar-cell"
-        title={p95Sec == null ? undefined : [`p95 latency tier: ${p95Glyph} (warn >${Math.round(p95WarnSec / 60)}m, fleet p75 · crit >${P95_AGENT.CRIT_SEC / 60}m)`, overageNote].filter(Boolean).join(' · ')}>
-        {/* tier 글리프 — 초-도메인 톤(p95GlyphTone warn=fleet p75·하한 600s / crit 1200s) KEY 의 ✓/⚠/✕ (shape = 색 외 인코딩).
-            종전 StatusDot 은 tone KEY 를 status enum 으로 오인받아 의미가 흐려졌고, 컷 도메인까지 어긋나
-            전 에이전트가 단일 티어였다 — 글리프 + 분-도메인 컷으로 230s vs 1695s 가 가시적으로 분기.
-            글리프는 옆 초 수치(스크린리더 가독)를 강화하는 장식 → aria-hidden. 측정 불가(null)면 미렌더. */}
-        <span className="inline-flex items-center justify-end gap-1.5">
-          {p95Sec != null ? (
-            <span className="inline-flex items-center gap-1">
-              <span className={p95Tone || 'text-ok'} aria-hidden="true">
-                <Icon name={TONE_ICON[p95Glyph]} size={13}/>
-              </span>
-              <span>{formatDurationSecAg(p95Sec)}</span>
-            </span>
-          ) : (
-            <span className="text-faint">—</span>
+      </TableCell>
+      <TableCell view={view}
+        isNumeric
+        className="tbl-bar-cell"
+        title={[isTooSlow && `Over ${P95_AGENT.MEDIAN_MULTIPLE}× the fleet median (cut ${formatDurationSecAg(p95Scale.cutSec)})`, overageNote].filter(Boolean).join(' · ') || undefined}>
+        <span className="inline-flex items-center justify-end gap-label-inline">
+          {isTooSlow && (
+            <>
+              <span className="text-crit" aria-hidden="true"><Icon name={TONE_ICON.crit} size={13}/></span>
+              <span className="sr-only">Too slow</span>
+            </>
           )}
+          {p95Sec != null ? <span>{formatDurationSecAg(p95Sec)}</span> : <window.UI.AbsentValue kind="none"/>}
         </span>
-        {/* Fill-bar against the crit cut — the response-time card's comparison, per row. */}
         {p95Sec != null && (
           <Bar
-            value={Math.min(p95Sec / P95_AGENT.CRIT_SEC, 1)}
-            tone={barToneFromClass(p95Tone)}
+            value={p95Sec / (p95Scale.maxSec || p95Sec)}
+            tone="neutral"
             ariaLabel={[`p95 ${formatDurationSecAg(p95Sec)}`, overageNote].filter(Boolean).join(' · ')}
           />
         )}
-      </td>
-      <td>
+      </TableCell>
+      <TableCell view={view}>
         {!isTrendRead ? (
-          <NotLoadedMarkAg title={getNotLoadedTitleAg('7-day trend', trendStatus)}/>
+          <window.UI.AbsentValue kind="not-loaded" title={getNotLoadedTitleAg('7-day trend', trendStatus)}/>
         ) : hasTrend ? (
-          <MiniBars data={trend} w={MINIBAR_WIDTH} h={MINIBAR_HEIGHT} color={trendColor} label={`${agent.agent_name} runs per day, last 7 days`}/>
+          <MiniBars data={trend} w={MINIBAR_WIDTH} h={MINIBAR_HEIGHT} color="rgb(var(--data))" label={`${agent.agent_name} runs per day, last 7 days`}/>
         ) : (
-          <span className="text-faint fs-meta font-mono" title="no 7-day daily success-rate breakdown">—</span>
+          <window.UI.AbsentValue kind="none" title="no 7-day daily success-rate breakdown"/>
         )}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
 // registry compatibility 필드 시각화 — 행 chip (trunc + tooltip) · 상세 패널 (full 텍스트).
 // 미선언 agent 미렌더 (UI noise 회피).
 
-function CompatibilityBadge({ compatibility }) {
+// short tag in the row → the full requirement rides its title, screen-reader text and the drawer
+function CompatibilityMark({ compatibility }) {
   if (!compatibility) return null;
-  const { Badge } = window.UI;
   const text = String(compatibility);
-  // Short tag in the row; the full requirement lives in the tooltip, screen-reader text and drawer.
   return (
-    <Badge role="status" tone="info" icon title={`Requires: ${text}`} className="agent-compatibility-badge whitespace-nowrap">
+    <span className="fs-meta text-faint" title={`Requires: ${text}`}>
       Requires setup<span className="sr-only">: {text}</span>
-    </Badge>
-  );
-}
-
-// Activity only — health lives in the success column, so the mark takes no ok/warn tone.
-const ACTIVITY_MARK = {
-  active:   { word: 'Active',   glyph: '●', tone: 'text-dim' },
-  idle:     { word: 'Idle',     glyph: '◐', tone: 'text-faint' },
-  inactive: { word: 'Inactive', glyph: '○', tone: 'text-faint' },
-  error:    { word: 'Error',    glyph: '✕', tone: 'text-crit' },
-};
-const UNKNOWN_ACTIVITY_MARK = { word: 'Unknown', glyph: '–', tone: 'text-faint' };
-
-function ActivityMark({ status, lastRunAt }) {
-  const mark = Object.hasOwn(ACTIVITY_MARK, status) ? ACTIVITY_MARK[status] : UNKNOWN_ACTIVITY_MARK;
-  const lastRun = lastRunAt ? ` · last run ${formatRelativeTimeAg(lastRunAt)}` : '';
-  const label = `Activity: ${mark.word}${lastRun}`;
-
-  return (
-    <span className={`inline-block leading-none ${mark.tone}`} title={label}>
-      <span aria-hidden="true">{mark.glyph}</span>
-      <span className="sr-only">{label}</span>
     </span>
   );
 }
 
-function CompatibilityDetailBlock({ compatibility }) {
-  const { SubCard } = window.UI;
-  if (!compatibility) return null;
+// Activity only — health lives in the success column, so the mark takes no ok/warn tone.
+// active is the calm state → no mark; any other state names itself in a word
+const ACTIVITY_WORD = { idle: 'Idle', inactive: 'Inactive', error: 'Error' };
+
+function getActivityWordAg(status) {
+  if (status === 'active') return null;
+  return Object.hasOwn(ACTIVITY_WORD, status) ? ACTIVITY_WORD[status] : 'Unknown';
+}
+
+// an error adds the table's 13px crit glyph before the same faint word
+function ActivityMark({ status, lastRunAt }) {
+  const { Icon, TONE_ICON } = window.UI;
+  const word = getActivityWordAg(status);
+  if (!word) return null;
+  const title = lastRunAt ? `Last run ${formatRelativeTimeAg(lastRunAt)}` : undefined;
   return (
-    <div className="mb-4 agent-compatibility-detail">
-      <div className="fs-meta text-faint mb-2">Requires</div>
-      <SubCard sunken className="fs-body leading-relaxed text-dim">
-        {compatibility}
-      </SubCard>
-    </div>
+    <span className="inline-flex items-center gap-label-inline" title={title}>
+      {status === 'error' && <span className="text-crit" aria-hidden="true"><Icon name={TONE_ICON.crit} size={13}/></span>}
+      <span className="fs-meta text-faint">{word}</span>
+    </span>
   );
 }
 
@@ -1283,16 +1191,16 @@ function LatencyBars({ agents }) {
   const maxMs = agents.reduce((m, a) => Math.max(m, Number(a.p99_ms) || 0), 0) || 1;
 
   return (
-    <div className="latency-bars space-y-3">
+    <div className="latency-bars space-y-list">
       {agents.map((a) => {
         const p50 = Number(a.p50_ms) || 0;
         const p95 = Number(a.p95_ms) || 0;
         const p99 = Number(a.p99_ms) || 0;
         return (
           <div key={a.agent_id} className="fs-body">
-            <div className="flex items-center gap-2 mb-1.5">
+            <div className="flex items-center gap-label mb-stack">
               <window.UI.AgentName name={a.agent_name} className="flex-1 truncate"/>
-              <span className="font-mono text-faint fs-meta">P95 {formatDurationMsAg(p95)}</span>
+              <span className="text-faint fs-meta tnum">P95 {formatDurationMsAg(p95)}</span>
             </div>
             <div
               className="h-2.5 bg-sunken rounded-full relative overflow-hidden"
@@ -1300,7 +1208,7 @@ function LatencyBars({ agents }) {
               {LATENCY_LAYERS.map((layer) => (
                 <div
                   key={layer.key}
-                  className="absolute h-full bg-info rounded-full"
+                  className="absolute h-full bg-data rounded-full"
                   style={{ width: `${((Number(a[layer.field]) || 0) / maxMs) * 100}%`, opacity: layer.opacity }}
                 />
               ))}
@@ -1308,10 +1216,10 @@ function LatencyBars({ agents }) {
           </div>
         );
       })}
-      <div className="flex gap-3 mt-2 fs-meta text-faint pt-2 border-t border-line">
+      <div className="flex gap-control-group mt-block fs-meta text-faint">
         {LATENCY_LAYERS.slice().reverse().map((layer) => (
-          <span key={layer.key} className="flex items-center gap-1">
-            <span className="w-2 h-2 bg-info rounded-full" style={{ opacity: layer.opacity }}/>
+          <span key={layer.key} className="flex items-center gap-label-inline">
+            <span className="w-2 h-2 bg-data rounded-full" style={{ opacity: layer.opacity }}/>
             {layer.label}
           </span>
         ))}
@@ -1367,12 +1275,12 @@ function AgentDetailDrawer({
 
   // DetailSurface names the dialog by this whole node → sr-only commas keep name, activity and health apart
   const title = (
-    <span className="flex items-center gap-2 flex-wrap">
+    <span className="flex items-center gap-control flex-wrap">
       <AgentDrawerNameAg name={agentName}/>
       <span className="sr-only">, </span>
       <ActivityMark status={agent?.status} lastRunAt={agent?.last_run_at}/>
       <span className="sr-only">, </span>
-      <QualityHealthVerdictPill entry={headerHealthEntry} hasSignal={headerHasSignal}
+      <QualityHealthVerdictPill entry={headerHealthEntry} hasSignal={headerHasSignal} watchCut={getWatchCutAg(healthRanking)}
         failure={failureState.status === 'ready' ? failureByAgent.get(drawerAgent) : null}/>
     </span>
   );
@@ -1430,7 +1338,7 @@ function AgentDetailDrawer({
       {isDeletable && (
         <button className="btn sm" style={DELETE_OUTLINE_STYLE} onClick={startConfirm} aria-label={`Delete ${agentName}`}>Delete</button>
       )}
-      <div className="fs-meta text-dim font-mono mr-auto">
+      <div className="fs-meta text-dim tnum mr-auto">
         {idx >= 0 ? `${idx + 1} of ${sortedAgents.length} agents` : 'not in the current list'}
       </div>
       <button className="btn sm primary" onClick={onClose} aria-label="Close">Close</button>
@@ -1455,15 +1363,13 @@ function AgentDetailDrawer({
           onChange={setConfirmText}
         />
       ) : (
-        <div className="space-cards">
+        <window.UI.Stack gap="block">
           <AgentDrawerSection id={IDS.DRAWER_SECTION.overview} title="Overview">
             <AgentCircuitBreakerLine agent={agent} summaryState={summaryState}/>
             <AgentOverviewSection
               agent={agent}
               drawerAgent={drawerAgent}
               summaryState={summaryState}
-              revisionState={revisionState}
-              reviewByAgentState={reviewByAgentState}
               onRetry={onRetry}
             />
           </AgentDrawerSection>
@@ -1501,12 +1407,12 @@ function AgentDetailDrawer({
               onRetry={onRetry}
             />
             {/* The composite ranking lives on Learning, which owns the improvement answer. */}
-            <a className="btn ghost sm" href="#improvement">Open in Learning</a>
+            <a className="btn ghost sm self-start" href="#improvement">Open in Learning</a>
           </AgentDrawerSection>
           <AgentDrawerSection id={IDS.DRAWER_SECTION.recent} title="Recent">
             <AgentRecentActivitySection recentState={recentState} days={days} onRetry={onRetry}/>
           </AgentDrawerSection>
-        </div>
+        </window.UI.Stack>
       )}
     </DetailSurface>
   );
@@ -1526,20 +1432,20 @@ function AgentDrawerNameAg({ name }) {
 // typed-name 삭제 확인 패널 — drawer 본문 서브상태.
 // full name 정확 일치 시에만 푸터 커밋 버튼 활성 (비가역 작업 게이트는 푸터가 소유 · 여기선 입력+공시).
 function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange }) {
-  const { AlertCard } = window.UI;
+  const { AlertCard, MachineString } = window.UI;
   const matches = value === agentName;
   return (
-    <div className="space-y-4">
+    <div className="space-y-block">
       <AlertCard
         tone="warn"
         surface="inset"
         title="This removes a real agent."
-        body={<>Moves <span className="font-mono text-ink">{agentName}</span>'s file to the Trash and unwires it from the system.</>}/>
+        body={<>Moves <MachineString className="text-ink">{agentName}</MachineString>'s file to the Trash and unwires it from the system.</>}/>
 
       <div>
         <div className="fs-meta font-medium text-ink">Type the agent name to confirm</div>
-        <div className="fs-meta text-faint mt-0.5 mb-1">
-          Type <span className="font-mono text-ink">{agentName}</span> exactly
+        <div className="fs-meta text-faint mt-stack mb-label">
+          Type <MachineString className="text-ink">{agentName}</MachineString> exactly
         </div>
         <input
           type="text"
@@ -1551,7 +1457,7 @@ function AgentDeleteConfirmPanel({ agentName, value, committing, error, onChange
           aria-label="Type the agent name to confirm deletion"
         />
         {value.length > 0 && !matches && (
-          <div className="fs-meta text-crit mt-1">That doesn't match the agent name yet</div>
+          <div className="fs-meta text-crit mt-stack">That doesn't match the agent name yet</div>
         )}
       </div>
 
@@ -1569,14 +1475,14 @@ function AgentCircuitBreakerLine({ agent, summaryState }) {
 
   const view = window.UI.getRegionView(summaryState);
   if (view === 'loading') {
-    return <div className="text-faint fs-meta mb-2" aria-busy="true">Checking circuit-breaker state…</div>;
+    return <div className="text-faint fs-meta" aria-busy="true">Checking circuit-breaker state…</div>;
   }
   if (view === 'error') {
-    return <div className="text-faint fs-meta mb-2">Circuit-breaker state not loaded — the summary request failed.</div>;
+    return <div className="text-faint fs-meta">Circuit-breaker state not loaded — the summary request failed.</div>;
   }
   if (!breaker) {
     return (
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-label">
         <Badge role="status" tone="warn">unavailable</Badge>
         <span className="text-faint fs-meta">circuit-breaker state not loaded for this agent</span>
       </div>
@@ -1584,37 +1490,47 @@ function AgentCircuitBreakerLine({ agent, summaryState }) {
   }
 
   return (
-    <div className="flex items-center gap-2 mb-2">
+    <div className="flex items-center gap-label">
       <Badge role="status" tone={getBreakerTone(breaker)}>{getBreakerLabel(breaker)}</Badge>
       <span className="text-faint fs-meta">
         {formatConsecutiveFails(breaker.consecutive_fails)}
-        {breaker.suspended_at ? ` · suspended ${breaker.suspended_at}` : ''}
+        {breaker.suspended_at && <> · suspended <SuspendedStampAg iso={breaker.suspended_at}/></>}
       </span>
     </div>
   );
 }
 
+// the breaker marker's raw server stamp → the shared Day + time form, the full stamp on hover
+function SuspendedStampAg({ iso }) {
+  const { formatKstDateTime, formatKstFull } = window.UI;
+  return <span title={formatKstFull(iso)}>{formatKstDateTime(iso)}</span>;
+}
+
+// a reading without its fail count claims no state → neutral, never ok / safe to route
 function getBreakerTone(breaker) {
   if (breaker.suspended) return 'crit';
+  if (!Number.isFinite(breaker.consecutive_fails)) return 'neutral';
   return breaker.consecutive_fails > 0 ? 'warn' : 'ok';
 }
 
 function getBreakerLabel(breaker) {
   if (breaker.suspended) return 'suspended';
+  if (!Number.isFinite(breaker.consecutive_fails)) return 'count not loaded';
   return breaker.consecutive_fails > 0 ? 'fail streak' : 'safe to route';
 }
 
+// an alarm read without its count → Not loaded, never a printed `undefined`
 function formatConsecutiveFails(count) {
+  if (!Number.isFinite(count)) return <window.UI.AbsentValue kind="not-loaded" title="The breaker reading carries no fail count"/>;
   return `${count} consecutive ${count === 1 ? 'fail' : 'fails'}`;
 }
 
-// 드로어 섹션 래퍼 — 공용 SubCard(ring + 16px padding + uppercase --dim 라벨) 로 5 섹션을 각각
-// 독립 면으로 분리 (1px-hairline 합쳐보임 해소 #region). SubCard 가 라벨/패딩/면 idiom 단일 소유.
 function AgentDrawerSection({ id, title, children }) {
-  const { SubCard } = window.UI;
+  const { SectionLabel, Stack } = window.UI;
   return (
     <section id={id}>
-      <SubCard label={title} labelLevel={2}>{children}</SubCard>
+      <SectionLabel level={2}>{title}</SectionLabel>
+      <Stack gap="block">{children}</Stack>
     </section>
   );
 }
@@ -1629,9 +1545,9 @@ function DrawerSectionSkeleton({ rows = 2, label }) {
 
 function DrawerSectionEmpty({ message }) {
   return (
-    <div className="rounded-md border border-dashed border-line px-3 py-3 fs-meta font-mono text-faint">
+    <p className="fs-meta text-faint">
       <window.UI.DayTokens>{message}</window.UI.DayTokens>
-    </div>
+    </p>
   );
 }
 
@@ -1639,9 +1555,9 @@ function DrawerSectionEmpty({ message }) {
 // hasSignal=false (R1 low-N 억제 또는 entry 부재) → "No signal" neutral verdict (수치/driver 없음).
 // 양 badge site(Overview hero · drawer header name-row) 공유 → verdict 문구 단일 SoT.
 //   shape/tone 은 공용 Badge(role=status)가 소유 — 본 wrapper 는 verdict label+driver+index 산출만 담당.
-function QualityHealthVerdictPill({ entry, hasSignal, failure }) {
+function QualityHealthVerdictPill({ entry, hasSignal, failure, watchCut }) {
   const { Badge } = window.UI;
-  const verdict = getDrawerHealthVerdictAg(entry, hasSignal, failure);
+  const verdict = getDrawerHealthVerdictAg(entry, hasSignal, failure, watchCut);
   return (
     <Badge role="status" tone={verdict.tone}>
       {verdict.label}
@@ -1652,7 +1568,7 @@ function QualityHealthVerdictPill({ entry, hasSignal, failure }) {
 }
 
 // Page rule: a failed run lists the agent under Failed (crit) whatever its rework index · blocked = compliant halt → no effect.
-function getDrawerHealthVerdictAg(entry, hasSignal, failure) {
+function getDrawerHealthVerdictAg(entry, hasSignal, failure, watchCut = WATCH_AGENT.FLOOR) {
   const failCount = Number(failure?.fail_count) || 0;
   const failDriver = failCount > 0 ? `${formatIntAg(failCount)} failed` : '';
   if (!hasSignal) {
@@ -1661,39 +1577,28 @@ function getDrawerHealthVerdictAg(entry, hasSignal, failure) {
       : { tone: 'neutral', label: 'No signal', driver: '', indexPct: null };
   }
 
-  const health = qualityHealthVerdict(entry.healthIndex);
-  const indexPct = (entry.healthIndex * 100).toFixed(0);
+  const health = qualityHealthVerdict(entry.healthIndex, watchCut);
+  const indexPct = formatDecimalAg(entry.healthIndex * 100, 0);
   const driver = [failDriver, qualityHealthDriverPhrase(entry.dominantDriver)].filter(Boolean).join(' · ');
   if (failCount > 0) return { tone: 'crit', label: 'Needs attention', driver, indexPct };
   return { tone: health.tone, label: health.label, driver, indexPct };
 }
 
-// 라벨/값 한 줄 — Identity·Lifecycle 의 메타 나열 공통.
-// 라벨 = proportional(mono 아님, #6a) · 값 = mono+tnum 으로 자릿수 정렬 (#5c).
+// one label/value line — shared meta listing of Identity and Lifecycle
+// label = proportional · value = sans tnum → digit alignment
 function DrawerInfoRow({ label, value, title }) {
   return (
-    <div className="flex items-start justify-between gap-3 fs-body" title={title}>
+    <div className="flex items-start justify-between gap-label fs-body" title={title}>
       <span className="fs-meta text-faint shrink-0">{label}</span>
-      <span className="text-dim text-right min-w-0 break-words font-mono tnum">{value}</span>
+      <span className="text-dim text-right min-w-0 break-words tnum">{value}</span>
     </div>
   );
 }
 
-// 1. Overview (hero) — identity + 단일 health verdict + 단일 success-rate hero number (디자인 #46399 §4.3).
+// 1. Overview (hero) — identity + 단일 success-rate hero number (디자인 #46399 §4.3).
 // success-rate 는 패널 전체에서 단 한 번 (Performance 의 중복 박스 폐지) · 비용/모델 disclaimer 는 섹션 끝으로 후퇴.
-// health index 는 buildQualityHealthRanking(공식 1−(0.6×min(1,revision÷0.5)+0.4×review_flag)) — peer-independent 절대 척도.
-function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState, reviewByAgentState, onRetry }) {
-  const { formatPctWithDenominator, LOW_N_MIN, Pill, BulletBar, Badge } = window.UI;
-
-  // health entry 는 revision/review fetch 페어 — summary 와 독립 degrade. summary 에러는 hero 자체를 막음.
-  const ranking = useMemoAg(
-    () => buildQualityHealthRanking(
-      readyData(revisionState)?.rows ?? [],
-      readyData(reviewByAgentState)?.rows ?? [],
-      Number.MAX_SAFE_INTEGER,
-    ),
-    [revisionState, reviewByAgentState],
-  );
+function AgentOverviewSection({ agent, drawerAgent, summaryState, onRetry }) {
+  const { formatPctWithDenominator, Badge } = window.UI;
 
   const view = window.UI.getRegionView(summaryState);
   if (view === 'loading') {
@@ -1706,31 +1611,19 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
     return <DrawerSectionEmpty message={`No summary row for ${drawerAgent} in this window.`}/>;
   }
 
-  const statusTone = mapStatusToTone(agent.status);
-  const lastRun = agent.last_run_at ? formatRelativeTimeAg(agent.last_run_at) : '—';
+  const lastRun = agent.last_run_at ? formatRelativeTimeAg(agent.last_run_at) : <window.UI.AbsentValue kind="none"/>;
   const phaseLabel = agent.dual_phase ? 'dual-phase' : 'single-phase';
 
   // 단일 success-rate hero — Performance 의 분모 산식 동일 (needs_context 제외).
   const { denominator: successDenominator, numerator: successNumerator, tone: failShareTone } = getSummaryRateAg(agent);
   const successTone = successDenominator > 0 ? '' : 'text-faint';
 
-  // 단일 health verdict — buildQualityHealthRanking entry 의 verdict + dominantDriver inline 노출 (R4).
-  // R1 low-N 억제: outcome 표본 < LOW_N_MIN → entry 무시하고 기존 "No signal" neutral verdict.
-  const healthEntry = ranking.find((a) => a.agent === drawerAgent) || null;
-  const healthSampleN = healthEntry ? healthEntry.totalRevisions : 0;
-  const healthHasSignal = !!healthEntry && healthSampleN >= LOW_N_MIN;
-  const healthIndex = healthEntry ? healthEntry.healthIndex : null;
-  const healthPct = healthHasSignal ? (healthIndex * 100).toFixed(0) : '—';
-
   return (
-    <div className="space-y-3">
-      {/* 식별(이름·뱃지·verdict)은 항상-노출 헤더가 단독 소유 — hero 는 고유 KPI 로 직행 (중복 제거 #dup).
-          at-a-glance — success-rate hero(지배 수치, 비대칭 2fr) + health index(축소 보조 1fr).
-          두 박스 동일 DetailMetric chrome 공유 → hero 는 값 크기로만 차별 (#3 twin 통합). */}
+    <div className="space-y-block">
+      {/* 식별(이름·뱃지·verdict)은 항상-노출 헤더가 단독 소유 → 본문은 success-rate hero(DetailMetric) 하나로 시작 */}
       <DetailMetric
         label="Success rate"
         tone={successTone}
-        hero
         value={<>
           <FailShareGlyph tone={failShareTone}/>
           {formatPctWithDenominator(successNumerator, successDenominator)}
@@ -1743,21 +1636,21 @@ function AgentOverviewSection({ agent, drawerAgent, summaryState, revisionState,
         <div className="fs-body text-dim leading-relaxed truncate" title={agent.description}>{agent.description}</div>
       )}
 
-      {/* status + last-run 1 메타 라인. 설명 부재 → 같은 줄 끝에 조용한 em-dash 로 신호 (#4). */}
-      <div className="fs-meta font-mono text-dim">
-        {agent.status || 'unknown'} · last run <span title={agent.last_run_at || undefined}>{lastRun}</span>
+      {/* last-run 1 메타 라인 (activity 단어는 drawer head 소유). 설명 부재 → 같은 줄 끝에 조용한 em-dash 로 신호. */}
+      <div className="fs-meta text-dim">
+        Last run <span title={agent.last_run_at || undefined}>{lastRun}</span>
         {!agent.description && (
           <span className="text-faint" title="No role description in the agent .md frontmatter."> · — no role description</span>
         )}
       </div>
 
-      <CompatibilityDetailBlock compatibility={agent.compatibility}/>
+      <window.UI.DetailField label="Requires" value={agent.compatibility}/>
 
       {/* config 한 줄 — dual-phase + origin pill · 부재 origin 은 dashed muted 변형 → present 데이터보다 조용하게 */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <Pill tone="neutral">{phaseLabel}</Pill>
+      <div className="flex items-center gap-list flex-wrap">
+        <Badge role="metadata">{phaseLabel}</Badge>
         {agent.origin ? (
-          <Pill tone="neutral">origin: {agent.origin}</Pill>
+          <Badge role="metadata">origin: {agent.origin}</Badge>
         ) : (
           <Badge role="metadata" absent title="Agent origin (agent-registry.json) — not recorded">origin: unknown</Badge>
         )}
@@ -1803,29 +1696,28 @@ function AgentQualitySignalsSection({ drawerAgent, revisionState, reviewByAgentS
 
   const { Bar } = window.UI;
   const flagRatio = entry.reviewFlagRatio;
-  const flagPct = (flagRatio * 100).toFixed(1);
+  const flagPct = formatPctAg(flagRatio * 100);
   // high-when-bad 지표 — 낮은 비율은 neutral(녹색 불필요), 높을수록 warn→crit.
   const flagBarTone = flagRatio >= 0.5 ? 'crit' : flagRatio >= 0.25 ? 'warn' : 'neutral';
 
   return (
-    <div className="space-y-3">
-      {/* 두 info-row = tight pair → 8px (space-y-2, 4-multiple, #5a). */}
-      <div className="space-y-2">
+    <div className="space-y-block">
+      <div className="space-y-list">
         <DrawerInfoRow
           label="reworks"
-          value={`${formatIntAg(entry.buckets.weightedRevisions)} in ${formatIntAg(entry.totalRevisions)} runs (avg ${entry.avgRevision.toFixed(2)})`}
+          value={`${formatIntAg(entry.buckets.weightedRevisions)} in ${formatIntAg(entry.totalRevisions)} runs (avg ${formatDecimalAg(entry.avgRevision)})`}
           title="sum of revision_count across runs (a 4+ bucket counts as 4) — higher means more user-requested rework"
         />
         <DrawerInfoRow
           label="review_flag rate"
-          value={`${flagPct}%`}
+          value={flagPct}
           title="share of outcomes auto-flagged for review"
         />
         {/* review_flag-rate 비례 막대 — 위 텍스트(Track B driver) 유지한 채 % shape 보강. */}
         <Bar
           value={flagRatio}
           tone={flagBarTone}
-          ariaLabel={`review_flag rate ${flagPct}%`}
+          ariaLabel={`review_flag rate ${flagPct}`}
         />
       </div>
       <RevisionInlineMiniBar buckets={entry.buckets} total={entry.totalRevisions}/>
@@ -1854,17 +1746,20 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
   // latency 행 (p50/p95/p99) — 미페어 시 error/empty 독립 표기.
   const latency = (readyData(latencyState)?.agents ?? []).find((a) => a.agent_id === drawerAgent) || null;
   const p95Sec = latency?.p95_ms != null ? Number(latency.p95_ms) / 1000 : null;
-  const p95Display = p95Sec == null ? '—' : formatDurationSecAg(p95Sec);
+  // no P95 in a read latency payload → None; an unread payload → its loading look or Not loaded
+  const p95Display = readyData(latencyState)
+    ? (p95Sec == null ? <window.UI.AbsentValue kind="none"/> : formatDurationSecAg(p95Sec))
+    : getUnreadValueAg(latencyState, 'response-time');
   const trend = trendByAgent ? trendByAgent.get(drawerAgent) : null;
   const hasTrend = Array.isArray(trend) && trend.length > 0;
   const crossing = getCrossingMetricsAg(overageState, overageByAgent, drawerAgent);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-block">
       {/* 단일 2-col 리듬 — success-rate 박스 제거 (hero 소유). */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-block">
         <DetailMetric label="Total runs" value={formatIntAg(agent.runs)}/>
-        <DetailMetric label="Launches" value={invocations == null ? '—' : formatIntAg(invocations)}/>
+        <DetailMetric label="Launches" value={invocations == null ? <window.UI.AbsentValue kind="not-loaded" title="Launch count is not in the loaded agent summary"/> : formatIntAg(invocations)}/>
         <DetailMetric label="Needs info" value={formatIntAg(needsContextCount)}/>
         <DetailMetric label="P95" value={p95Display}/>
         <DetailMetric label="Budget crossings" value={crossing.count}/>
@@ -1875,13 +1770,12 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
 
       {/* 7일 성공-기반 추세 — 데이터 없으면 미렌더 (추정값 주입 금지). */}
       <div>
-        <div className="fs-meta text-faint mb-2">Runs per day · last <window.UI.NoWrap>7 days</window.UI.NoWrap></div>
+        <div className="fs-meta text-faint mb-label">Runs per day · last <window.UI.NoWrap>7 days</window.UI.NoWrap></div>
         {hasTrend ? (
           <TrendChart
             label={`${agent.agent_name || drawerAgent} runs per day`}
             points={trend.map((value, i) => ({ label: trendDates?.[i] ?? '', value }))}
             kind="bars"
-            tone={getTrendTone(agent.status, getSummaryRateAg(agent).tone)}
             formatValue={(v) => `${formatIntAg(v)} runs`}
           />
         ) : (
@@ -1892,12 +1786,23 @@ function AgentPerformanceSection({ agent, drawerAgent, summaryState, latencyStat
   );
 }
 
-// unread overage source → unavailable, never a 0 that reads as no crossing
+// unread overage source → its loading look or Not loaded, never a 0 that reads as no crossing
 function getCrossingMetricsAg(overageState, overageByAgent, agentId) {
-  if (overageState?.status !== 'ready') return { count: 'unavailable', peak: 'unavailable' };
+  if (overageState?.status !== 'ready') {
+    const unread = getUnreadValueAg(overageState, 'budget-crossing');
+    return { count: unread, peak: unread };
+  }
   const overage = overageByAgent?.get(agentId);
   const count = overage ? overage.overage_count : 0;
-  return { count: formatIntAg(count), peak: count > 0 ? `${formatIntAg(overage.max_crossed_pct)}% of budget` : '—' };
+  return { count: formatIntAg(count), peak: count > 0 ? `${formatPctAg(overage.max_crossed_pct)} of budget` : <window.UI.AbsentValue kind="none"/> };
+}
+
+// a drawer value whose read has not landed: in flight → the loading look; failed → Not loaded, its cause on hover
+function getUnreadValueAg(state, source) {
+  const { getRegionView, getErrorCopy, LoadingPlaceholder, AbsentValue } = window.UI;
+  if (getRegionView(state) === 'loading') return <LoadingPlaceholder label={source} className="justify-start"/>;
+  const { sentence, detail } = getErrorCopy(state?.error, `the ${source} read`);
+  return <AbsentValue kind="not-loaded" title={`${sentence} ${detail}`}/>;
 }
 
 // latency p50/p95/p99 한 줄 — 페어링 없으면 inline empty (Performance 내부 독립 degrade).
@@ -1912,10 +1817,10 @@ function AgentLatencyRow({ latency, state, onRetry }) {
   if (!latency || (latency.p50_ms == null && latency.p95_ms == null && latency.p99_ms == null)) {
     return <DrawerSectionEmpty message="No paired response-time data (no Start↔Stop events)."/>;
   }
-  const fmt = (ms) => ms == null ? '—' : formatDurationMsAg(ms);
+  const fmt = (ms) => ms == null ? <window.UI.AbsentValue kind="none"/> : formatDurationMsAg(ms);
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-3 gap-3">
+    <div className="space-y-block">
+      <div className="grid grid-cols-3 gap-block">
         <DetailMetric label="P50" value={fmt(latency.p50_ms)}/>
         <DetailMetric label="P95" value={fmt(latency.p95_ms)}/>
         <DetailMetric label="P99" value={fmt(latency.p99_ms)}/>
@@ -1926,14 +1831,13 @@ function AgentLatencyRow({ latency, state, onRetry }) {
   );
 }
 
-// 3. Reliability — Failures + Lifecycle 를 한 섹션 두 sub-block 으로 병합 (hairline 분리, 디자인 #46399 §4.3).
-// (a) Breakages = headline pill + Failed/Blocked 2-col + last-breakage + top-concerns + keyword 분류(끝 muted 강등).
-// (b) Lifecycle = unfinished pill + Started/Finished 2-col + duration triplet 1 mono 라인 (2번째 3-box grid 폐지).
+// 3. Reliability — Failures + Lifecycle as one section of two sub-blocks
+// (a) Breakages = Failed/Blocked/Rate metrics + last breakage + top concerns + keyword classes (muted at the end)
+// (b) Lifecycle = unfinished pill + Started/Finished 2-col + duration triplet on one line
 function AgentReliabilitySection({ agent, drawerAgent, failureByAgent, failureState, detailState, blockedState, lifecycleState, days, onRetry }) {
-  // 단일 separator 전략 (#6b) — top-hairline 은 AgentDrawerSection 경계에만. 두 sub-block 은
-  // 순수 spacing(space-y-6=24px, section step)으로 분리, 내부 border-t 폐지 (divider 어휘 하나).
+  // one separator at the AgentDrawerSection edge — the two sub-blocks split by gap-block spacing only (one divider vocabulary)
   return (
-    <div className="space-y-6">
+    <div className="space-y-block">
       <AgentReliabilityBreakages
         drawerAgent={drawerAgent}
         failureByAgent={failureByAgent}
@@ -1955,7 +1859,6 @@ function AgentReliabilitySection({ agent, drawerAgent, failureByAgent, failureSt
 
 // (a) Breakages — failure-patterns(필터) 요약 + 기존 MergedBreakageSection(fail/blocked 키워드 분류) 재사용.
 function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, detailState, blockedState, days, onRetry }) {
-  const { Badge } = window.UI;
   const view = window.UI.getRegionView(failureState);
   if (view === 'loading') {
     return <DrawerSectionSkeleton rows={2} label="failures"/>;
@@ -1968,63 +1871,44 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
   // failure-patterns row 의 top_concerns — failureByAgent map 은 미보유 → 원본 rows 에서 직접 조회.
   const raw = (readyData(failureState)?.rows ?? []).find((r) => r.agent === drawerAgent) || null;
   const topConcerns = Array.isArray(raw?.top_concerns) ? raw.top_concerns : [];
-  const split = failure ? getWriterBreakageSplit(failure) : null;
-  const rateText = failure ? `${(failure.breakage_rate * 100).toFixed(1)}%` : '';
-
   return (
-    <div className="space-y-3">
-      <div className="fs-meta text-faint mb-1">Breakages</div>
-      {failure && failure.total_breakages > 0 ? (
-        <>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Badge role="status" tone={failureTone(failure.total_breakages, failure.breakage_rate)}>
-              {formatIntAg(split.breakages)} failed or blocked{failure.reconstructed > 0 ? '' : ` · ${rateText}`}
-            </Badge>
-            {split.blocked.max > 0 && (
-              <span className="fs-meta text-dim">
-                of which {split.blocked.min === split.blocked.max ? '' : 'up to '}{formatIntAg(split.blocked.max)} blocked — a compliant halt, not a defect
-              </span>
-            )}
-            {failure.reconstructed > 0 && (
-              <span
-                className="fs-meta font-mono"
-                style={{ color: 'rgb(var(--faint))' }}
-                title="Harness-reconstructed records (recovery artifacts) excluded from the writer-emitted breakage headline">
-                ↺ {formatIntAg(failure.reconstructed)} reconstructed, left out of this count
-              </span>
-            )}
-          </div>
-          {/* rate + Failed/Blocked are all-records figures → captioned apart from the writer-basis headline */}
-          <div>
-            {failure.reconstructed > 0 && (
-              <div className="fs-meta text-faint">
-                All records, {formatIntAg(failure.reconstructed)} reconstructed included · {rateText} of outcomes
+    <div className="space-y-block">
+      <div>
+        <div className="fs-meta text-faint mb-label">Breakages</div>
+        {failure && failure.total_breakages > 0 ? (
+          <div className="space-y-block">
+            <div>
+              {failure.reconstructed > 0 && (
+                <div className="fs-meta text-faint">
+                  All records, {formatIntAg(failure.reconstructed)} reconstructed included
+                </div>
+              )}
+              <div className="grid grid-cols-3 gap-block">
+                <DetailMetric label="Failed" value={formatIntAg(failure.fail_count)}/>
+                <DetailMetric label="Blocked" value={formatIntAg(failure.blocked_count)}/>
+                <DetailMetric label="Rate" value={formatPctAg(failure.breakage_rate * 100)}/>
+              </div>
+            </div>
+            <DrawerInfoRow
+              label="last breakage"
+              value={failure.last_breakage_at ? formatRelativeTimeAg(failure.last_breakage_at) : <window.UI.AbsentValue kind="none"/>}
+              title={failure.last_breakage_at || undefined}
+            />
+            {topConcerns.length > 0 && (
+              <div>
+                <div className="fs-meta text-faint mb-label">Top concerns</div>
+                <ul className="flex flex-col gap-stack">
+                  {topConcerns.map((c, i) => (
+                    <li key={i} className="fs-body text-dim leading-snug" style={CONCERN_CLAMP_STYLE} title={c}>{getConcernTextAg(c)}</li>
+                  ))}
+                </ul>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-3">
-              <DetailMetric label="Failed" value={formatIntAg(failure.fail_count)}/>
-              <DetailMetric label="Blocked" value={formatIntAg(failure.blocked_count)}/>
-            </div>
           </div>
-          <DrawerInfoRow
-            label="last breakage"
-            value={failure.last_breakage_at ? formatRelativeTimeAg(failure.last_breakage_at) : '—'}
-            title={failure.last_breakage_at || undefined}
-          />
-          {topConcerns.length > 0 && (
-            <div>
-              <div className="fs-meta text-faint mb-2">Top concerns</div>
-              <ul className="flex flex-col gap-1">
-                {topConcerns.map((c, i) => (
-                  <li key={i} className="fs-body text-dim leading-snug" style={CONCERN_CLAMP_STYLE} title={c}>{getConcernTextAg(c)}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </>
-      ) : (
-        <DrawerSectionEmpty message={`No fail or blocked outcomes in the last ${days} days.`}/>
-      )}
+        ) : (
+          <DrawerSectionEmpty message={`No fail or blocked outcomes in the last ${days} days.`}/>
+        )}
+      </div>
 
       {/* fail/blocked 키워드 원인 분류 — 기존 컴포넌트 재사용. */}
       <MergedBreakageSection
@@ -2035,22 +1919,6 @@ function AgentReliabilityBreakages({ drawerAgent, failureByAgent, failureState, 
       />
     </div>
   );
-}
-
-/**
- * Writer-emitted breakage headline with its blocked part bounded inside it.
- * The payload does not say which result the reconstructed rows carry → the blocked part is a range:
- * each reconstructed row hides at most one blocked row, and the part never exceeds the headline.
- */
-function getWriterBreakageSplit(failure) {
-  const reconstructed = failure.reconstructed || 0;
-  const breakages = Math.max(0, failure.total_breakages - reconstructed);
-  const blocked = failure.blocked_count || 0;
-
-  return {
-    breakages,
-    blocked: { min: Math.max(0, blocked - reconstructed), max: Math.min(blocked, breakages) },
-  };
 }
 
 // concerns arrive cut mid-sentence → drop the closers, separators and emptied pairs a cut leaves in front; a real opener stays
@@ -2070,14 +1938,16 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
 
   // agent_type == agent_id == drawerAgent (현 cycle convention).
   const row = (readyData(lifecycleState)?.rows ?? []).find((r) => r.agent_type === drawerAgent) || null;
-  const lastRun = agent?.last_run_at ? formatRelativeTimeAg(agent.last_run_at) : '—';
+  const lastRun = agent?.last_run_at ? formatRelativeTimeAg(agent.last_run_at) : <window.UI.AbsentValue kind="none"/>;
 
   if (!row) {
     return (
-      <div className="space-y-3">
-        <div className="fs-meta text-faint mb-1">Lifecycle</div>
-        <DrawerInfoRow label="last active" value={lastRun} title={agent?.last_run_at || undefined}/>
-        <DrawerSectionEmpty message="No SubagentStart/Stop lifecycle events for this agent."/>
+      <div>
+        <div className="fs-meta text-faint mb-label">Lifecycle</div>
+        <div className="space-y-block">
+          <DrawerInfoRow label="last active" value={lastRun} title={agent?.last_run_at || undefined}/>
+          <DrawerSectionEmpty message="No SubagentStart/Stop lifecycle events for this agent."/>
+        </div>
       </div>
     );
   }
@@ -2092,32 +1962,33 @@ function AgentReliabilityLifecycle({ agent, drawerAgent, lifecycleState, onRetry
   // finished/started 비율 — orphanTone(누수 심각도)을 fill 톤으로 재사용, BulletBar 의 shape 보강.
   const finishedRatio = startCount > 0 ? completedCount / startCount : 0;
 
-  const fmtDur = (sec) => sec == null ? '—' : formatDurationSecAg(sec);
+  const fmtDur = (sec) => sec == null ? <window.UI.AbsentValue kind="none"/> : formatDurationSecAg(sec);
 
   return (
-    <div className="space-y-3">
-      <div className="fs-meta text-faint mb-1">Lifecycle</div>
-      <div className="flex items-center gap-2 flex-wrap">
-        <Badge role="status" tone={orphanTone}>
-          {formatIntAg(orphans)} unfinished · {(orphanRatio * 100).toFixed(0)}%
-        </Badge>
-      </div>
-      {/* started 대비 finished 비례 막대 — 비율 숫자 옆 완주율 shape (높을수록 누수 적음). */}
-      {startCount > 0 && (
-        <BulletBar
-          value={finishedRatio}
-          tone={orphanTone}
-          ariaLabel={`finished ${completedCount} of started ${startCount} (${(finishedRatio * 100).toFixed(0)}%)`}
-        />
-      )}
-      {/* 단일 2-col — Started/Finished (2번째 3-box grid 폐지). */}
-      <div className="grid grid-cols-2 gap-3">
-        <DetailMetric label="Started" value={formatIntAg(startCount)}/>
-        <DetailMetric label="Finished" value={formatIntAg(completedCount)}/>
-      </div>
-      {/* duration triplet — 3-box grid 대신 1 mono 라인 (tnum 자릿수 정렬, #5c). */}
-      <div className="fs-meta font-mono text-dim tnum" title="avg takes in the slowest runs beyond p95, so a long tail can lift it above p95">
-        avg {fmtDur(row.avg_duration_sec)} · p95 {fmtDur(row.p95_duration_sec)} · max {fmtDur(row.max_duration_sec)}
+    <div>
+      <div className="fs-meta text-faint mb-label">Lifecycle</div>
+      <div className="space-y-block">
+        <div className="flex items-center gap-list flex-wrap">
+          <Badge role="status" tone={orphanTone}>
+            {formatIntAg(orphans)} unfinished · {formatPctAg(orphanRatio * 100)}
+          </Badge>
+        </div>
+        {/* finished-vs-started bar — completion shape beside the ratio (higher = less leakage) */}
+        {startCount > 0 && (
+          <BulletBar
+            value={finishedRatio}
+            tone={orphanTone}
+            ariaLabel={`finished ${completedCount} of started ${startCount} (${formatPctAg(finishedRatio * 100)})`}
+          />
+        )}
+        <div className="grid grid-cols-2 gap-block">
+          <DetailMetric label="Started" value={formatIntAg(startCount)}/>
+          <DetailMetric label="Finished" value={formatIntAg(completedCount)}/>
+        </div>
+        {/* duration triplet on one line — tnum digit alignment */}
+        <div className="fs-meta text-dim tnum" title="avg takes in the slowest runs beyond p95, so a long tail can lift it above p95">
+          avg {fmtDur(row.avg_duration_sec)} · p95 {fmtDur(row.p95_duration_sec)} · max {fmtDur(row.max_duration_sec)}
+        </div>
       </div>
     </div>
   );
@@ -2137,7 +2008,7 @@ function AgentRecentActivitySection({ recentState, days, onRetry }) {
     return <DrawerSectionEmpty message="No outcomes recorded for this agent."/>;
   }
   return (
-    <div className="space-y-2">
+    <div className="divide-y divide-line">
       {rows.map((r) => (
         <RecentActivityRow key={r.id} row={r}/>
       ))}
@@ -2156,18 +2027,18 @@ function resultToneAg(result) {
 }
 
 function RecentActivityRow({ row }) {
-  const { Badge, Icon, TONE_ICON } = window.UI;
+  const { Badge, Icon, TONE_ICON, MachineString } = window.UI;
   const revision = Number(row.revision_count) || 0;
   return (
-    <div className="flex items-center justify-between gap-2 rounded border border-line px-3 py-2 fs-body">
-      <div className="flex items-center gap-2 min-w-0">
+    <div className="flex items-center justify-between gap-label min-h-[var(--row-h)] fs-body">
+      <div className="flex items-center gap-label min-w-0">
         <Badge role="status" tone={resultToneAg(row.result)}>{row.result}</Badge>
-        <span className="font-mono fs-meta text-dim truncate">{row.task_type}</span>
+        <MachineString className="fs-meta text-dim truncate">{row.task_type}</MachineString>
       </div>
-      <div className="flex items-center gap-2 shrink-0 fs-meta font-mono text-faint tnum">
+      <div className="flex items-center gap-label shrink-0 fs-meta text-faint tnum">
         {row.confidence && <span title="confidence">{row.confidence}</span>}
         {revision > 0 && (
-          <span title="revision_count" className="inline-flex items-center gap-1">
+          <span title="revision_count" className="inline-flex items-center gap-label-inline">
             <span className="text-warn inline-flex" aria-hidden="true"><Icon name={TONE_ICON.warn} size={11}/></span>
             rev {revision}
           </span>
@@ -2193,7 +2064,7 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
   return (
     <div>
       <div
-        className="fs-meta text-faint mb-2 flex items-center gap-1"
+        className="fs-meta text-faint mb-label flex items-center gap-label-inline"
         title="Combined result IN ('fail','blocked') — same scope as the summary Failed or blocked column (needs_context excluded)">
         <Icon name="x" size={12}/>
         Why tasks failed · fail+blocked ({days}d)
@@ -2210,36 +2081,31 @@ function MergedBreakageSection({ detailState, blockedState, days, onRetry }) {
 }
 
 function MergedBreakageBody({ merged, days }) {
-  const { Icon, EmptyState } = window.UI;
+  const { EmptyState, MachineString } = window.UI;
   if (!merged || merged.total === 0) {
     return <EmptyState message={`No failed or blocked tasks in the last ${days} days`}/>;
   }
 
   return (
-    <div>
-      <div className="fs-meta font-mono text-dim mb-2">
-        Total {formatIntAg(merged.total)} = <span className="inline-flex items-center gap-1"><span className="text-crit inline-flex" aria-hidden="true"><Icon name="x" size={11}/></span>fail {formatIntAg(merged.failTotal)}</span> + <span className="inline-flex items-center gap-1"><span className="text-info inline-flex" aria-hidden="true"><Icon name="info" size={11}/></span>blocked {formatIntAg(merged.blockedTotal)}</span>
-      </div>
-      <div className="space-y-2">
-        {merged.reasons.map((r) => {
-          const pct = merged.total > 0 ? (r.count / merged.total) * 100 : 0;
-          return (
-            <div key={r.category} className="fs-body">
-              <div className="flex justify-between mb-1">
-                <span className="font-mono">{r.category}</span>
-                <span
-                  className="font-mono text-dim tnum"
-                  title={`fail ${r.failCount} + blocked ${r.blockedCount}`}>
-                  {r.count} · {pct.toFixed(0)}%
-                </span>
-              </div>
-              <div className="h-1.5 bg-sunken rounded-full overflow-hidden">
-                <div className="h-full bg-crit/70" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}/>
-              </div>
+    <div className="space-y-list">
+      {merged.reasons.map((r) => {
+        const pct = merged.total > 0 ? (r.count / merged.total) * 100 : 0;
+        return (
+          <div key={r.category} className="fs-body">
+            <div className="flex justify-between mb-stack">
+              <MachineString>{r.category}</MachineString>
+              <span
+                className="text-dim tnum"
+                title={`fail ${r.failCount} + blocked ${r.blockedCount}`}>
+                {r.count} · {formatPctAg(pct, 0)}
+              </span>
             </div>
-          );
-        })}
-      </div>
+            <div className="h-1.5 bg-sunken rounded-full overflow-hidden">
+              <div className="h-full bg-data" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}/>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -2265,51 +2131,44 @@ function mergeBreakageReasons(failData, blockedData) {
   addReasons(failData, 'failCount');
   addReasons(blockedData, 'blockedCount');
 
-  const failTotal    = Number(failData?.meta?.total_failures) || 0;
-  const blockedTotal = Number(blockedData?.meta?.total_failures) || 0;
   const reasons = Array.from(byCategory.values()).sort((a, b) => b.count - a.count);
-  return { reasons, failTotal, blockedTotal, total: failTotal + blockedTotal };
+  return { reasons, total: (Number(failData?.meta?.total_failures) || 0) + (Number(blockedData?.meta?.total_failures) || 0) };
 }
 
-// Drawer metric — label over a mono value, flat on its section (no card inside the section card); hero enlarges the value only.
-function DetailMetric({ label, value, tone = '', hero = false }) {
+// Drawer metric — label over a sans tnum value, flat on its section (no card inside the section card).
+function DetailMetric({ label, value, tone = '' }) {
   return (
-    <div className="flex flex-col py-1">
+    <div className="flex flex-col">
       <div className="fs-meta text-faint min-h-[2.5em] leading-tight">{label}</div>
-      <div className={`font-mono font-semibold mt-0.5 tnum ${hero ? 'hero-stat' : 'fs-title'} ${tone}`}>{value}</div>
+      <div className={`font-semibold mt-stack tnum fs-title ${tone}`}>{value}</div>
     </div>
   );
 }
 
-// Panel 1: Success-rate matrix (small multiples)
+// Panel 1: Success-rate matrix — the "By task type" fold is its card, so the region draws none of its own
 
-function SuccessRateMatrixCard({ failures, state, days, onRetry }) {
-  const { CardHead, Pill } = window.UI;
+function SuccessRateMatrixRegion({ failures, state, days, onRetry }) {
+  return (
+    <div id={IDS.REGION_CARD.successRates} className="min-w-0">
+      <SuccessRateMatrixBody failures={failures} state={state} days={days} onRetry={onRetry}/>
+    </div>
+  );
+}
 
-  const data = readyData(state);
-  // 서버 SUCCESS_RATE_LIMIT 포화 (M8) — 행이 잘려 매트릭스 불완전 → silent 누락 대신 disclosure (cost.jsx 세션 분포 카드와 동일 규칙).
-  const isTruncated = data?.truncated === true;
-  const subText = `Last ${days} days`;
+// non-table blocks of the flush fold → the card-pad inset the table's edge cells carry
+function MatrixInsetAg({ children }) {
+  return <div className="px-card-pad pb-card-pad"><window.UI.Stack gap="block">{children}</window.UI.Stack></div>;
+}
+
+// server SUCCESS_RATE_LIMIT saturated → rows cut, matrix incomplete · status = glyph + word, tone on the glyph only
+function MatrixRowLimitNote() {
+  const { Icon, TONE_ICON } = window.UI;
 
   return (
-    <div id={IDS.REGION_CARD.successRates} className="card min-w-0">
-      <CardHead
-        title="Success by agent"
-        sub={subText}
-        right={
-          <>
-            {isTruncated && (
-              <Pill tone="warn" className="pill--ctl-h" title="Server row limit hit — matrix incomplete. Shorten the time range for complete data.">
-                Row limit hit — some rows missing
-              </Pill>
-            )}
-          </>
-        }
-      />
-      <div className="card-body" style={MATRIX_BODY_STYLE}>
-        <SuccessRateMatrixBody failures={failures} state={state} days={days} onRetry={onRetry}/>
-      </div>
-    </div>
+    <p className="inline-flex items-center gap-label-inline fs-meta text-dim" title="Server row limit hit — matrix incomplete. Shorten the time range for complete data.">
+      <span aria-hidden="true" className="text-warn inline-flex"><Icon name={TONE_ICON.warn} size={12}/></span>
+      Row limit hit — some rows missing
+    </p>
   );
 }
 
@@ -2322,99 +2181,151 @@ function SuccessRateMatrixBody({ failures, state, days, onRetry }) {
 
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
-    return <window.UI.LoadingPlaceholder label="success matrix" minHeight={280}/>;
+    return <MatrixInsetAg><window.UI.LoadingPlaceholder label="success matrix" minHeight={280}/></MatrixInsetAg>;
   }
   if (view === 'error') {
-    return <window.UI.RegionFailure source={REGION_FEEDERS.success} region="success rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.successRates} onRetry={onRetry}/>;
-  }
-  if (matrix.agents.length === 0) {
-    return <EmptyStateAg message={`No success-rate events in the last ${days} days.`}/>;
+    return <MatrixInsetAg><window.UI.RegionFailure source={REGION_FEEDERS.success} region="success rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.successRates} onRetry={onRetry}/></MatrixInsetAg>;
   }
 
-  return <SuccessRateMatrixTable matrix={matrix}/>;
+  const notice = readyData(state)?.truncated === true && <MatrixRowLimitNote/>;
+  if (matrix.agents.length === 0) {
+    return <MatrixInsetAg>{notice}<window.UI.EmptyState message={`No success-rate events in the last ${days} days.`}/></MatrixInsetAg>;
+  }
+  return <SuccessRateMatrixPanel matrix={matrix} notice={notice}/>;
 }
 
-// every row on the page — the matrix scrolls sideways only, its agent column pinned.
-const MATRIX_BODY_STYLE = { maxHeight: 'none', overflowY: 'visible' };
-const MATRIX_CORNER_TH_STYLE = {
-  position: 'sticky', left: 0, top: 0, background: 'rgb(var(--elev))', minWidth: 140, zIndex: 2,
-};
-const MATRIX_HEADER_TH_STYLE = {
-  position: 'sticky', top: 0, background: 'rgb(var(--elev))', minWidth: SPARK_WIDTH + 24, zIndex: 1,
-};
+const MATRIX_FULL_ID = 'agents-success-matrix-full';
 
-function SuccessRateMatrixTable({ matrix }) {
+// off-target list first, every pair behind a collapsed disclosure → the table mounts only once opened, so its sparklines cost nothing until asked for
+function SuccessRateMatrixPanel({ matrix, notice }) {
+  const [isOpen, setOpen] = useStateAg(false);
+  const agentCount = matrix.agents.length;
+
   return (
     <>
-      <SuccessRateLegend/>
-      <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Success rate per agent and task type — scrolls sideways">
-        <table className="w-full fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-          <thead className="tbl-head">
-            <tr>
-              <th
-                scope="col"
-                className={`text-left ${HEAD.CLASS.TABLE}`}
-                style={MATRIX_CORNER_TH_STYLE}>
-                Agent
-              </th>
-              {TASK_TYPE_COLUMNS.map((c) => (
-                <th
-                  key={c.key}
-                  scope="col"
-                  className={`text-center ${HEAD.CLASS.TABLE}`}
-                  style={MATRIX_HEADER_TH_STYLE}>
-                  {c.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {matrix.agents.map((agent) => <SuccessRateMatrixRow key={agent} agent={agent} cells={matrix.cells}/>)}
-          </tbody>
-        </table>
+      <MatrixInsetAg>
+        {notice}
+        <SuccessRateOffTargetList rows={getOffTargetRowsAg(matrix)}/>
+        <window.UI.Cluster gap="control-group" className="items-center">
+          <window.UI.DisclosureButton
+            isOpen={isOpen}
+            onToggle={() => setOpen((v) => !v)}
+            controls={MATRIX_FULL_ID}
+            className="fs-meta"
+            label={`Full matrix — ${agentCount} ${agentCount === 1 ? 'agent' : 'agents'} × ${TASK_TYPE_COLUMNS.length} task types`}
+          />
+          <window.UI.CardInfo label="How the task-type matrix is counted"><SuccessRateLegend/></window.UI.CardInfo>
+        </window.UI.Cluster>
+      </MatrixInsetAg>
+      <div id={MATRIX_FULL_ID} hidden={!isOpen}>
+        {isOpen && <SuccessRateMatrixTable matrix={matrix}/>}
       </div>
     </>
   );
 }
 
-function SuccessRateMatrixRow({ agent, cells }) {
-  // unknown row = PG fallback (legacy/deprecated) — opacity + sunken bg + italic 라벨로 시각 분리.
-  const isUnknownAgent = agent === UNKNOWN_AGENT_ID;
-  const labelCellBg = isUnknownAgent ? 'rgb(var(--sunken))' : 'rgb(var(--elev))';
+function SuccessRateOffTargetList({ rows }) {
+  if (rows.length === 0) {
+    return <p className="fs-meta text-faint">{`No agent × task type pair at ${getFailShareLabel()}.`}</p>;
+  }
+
   return (
-    <tr
-      style={isUnknownAgent ? { opacity: 0.65 } : undefined}
-      aria-label={isUnknownAgent ? UNKNOWN_AGENT_TITLE : undefined}>
-      <td
-        className="text-ink px-2 py-1.5 border-b border-line truncate"
-        style={{ position: 'sticky', left: 0, background: labelCellBg, maxWidth: 200 }}
-        title={isUnknownAgent ? UNKNOWN_AGENT_TITLE : agent}>
-        {isUnknownAgent
-          ? <span className="text-dim italic">{UNKNOWN_AGENT_LABEL}</span>
-          : <window.UI.AgentName name={agent}/>}
-      </td>
-      {TASK_TYPE_COLUMNS.map((c) => (
-        <SuccessRateCell key={c.key} agent={agent} taskType={c.label} cell={cells[`${agent}|${c.key}`]}/>
-      ))}
-    </tr>
+    <ul aria-label="Off-target pairs per agent" className="divide-y divide-line">
+      {rows.map((row) => <SuccessRateOffTargetRow key={row.agent} agent={row.agent} pairs={row.pairs}/>)}
+    </ul>
   );
 }
 
+function SuccessRateOffTargetRow({ agent, pairs }) {
+  const isUnknownAgent = agent === UNKNOWN_AGENT_ID;
+
+  return (
+    <li className="flex flex-wrap items-center gap-control min-h-[var(--row-h)]">
+      <span className="text-ink min-w-0 truncate" title={isUnknownAgent ? UNKNOWN_AGENT_TITLE : agent}>
+        {isUnknownAgent
+          ? <span className="text-dim">{UNKNOWN_AGENT_LABEL}</span>
+          : <window.UI.AgentName name={agent}/>}
+      </span>
+      <ul aria-label={`${agent} off-target task types`} className="flex flex-wrap gap-control">
+        {pairs.map(({ taskType, cell }) => <SuccessRateOffTargetPair key={taskType} taskType={taskType} cell={cell}/>)}
+      </ul>
+    </li>
+  );
+}
+
+function SuccessRateOffTargetPair({ taskType, cell }) {
+  return (
+    <li className="inline-flex items-center gap-label-inline fs-meta tnum whitespace-nowrap"
+      title={`${taskType} — ${cell.failureCount} of ${cell.rateDenominator} failed or blocked`}>
+      <FailShareGlyph tone="crit"/>
+      <span>{taskType}</span>
+      <span className="font-semibold">{formatPctAg(cell.pooledRate * 100)}</span>
+      <span className="text-dim">n={cell.rateDenominator}</span>
+    </li>
+  );
+}
+
+const MATRIX_COLUMNS = [
+  { key: 'agent', label: 'Agent' },
+  ...TASK_TYPE_COLUMNS.map((c) => ({ key: c.key, label: c.label, isNumeric: true })),
+];
+// agent-name width the threshold reserves — a budget, not a cell width: the row-header cell has none and wraps anywhere
+const MATRIX_AGENT_NAME_PX = 132;
+const MATRIX_CELL_PAD_PX = 12; // --space-3 on each side of a cell
+const MATRIX_EDGE_PAD_PX = 16; // --card-pad on the outer side of the first and last cell
+// agent name + sparklines + every cell's padding, edge cells' card-pad surplus included → narrower than this, rows stack rather than clip a column
+const MATRIX_STACK_BELOW_PX = MATRIX_AGENT_NAME_PX
+  + TASK_TYPE_COLUMNS.length * SPARK_WIDTH
+  + (TASK_TYPE_COLUMNS.length + 1) * 2 * MATRIX_CELL_PAD_PX
+  + 2 * (MATRIX_EDGE_PAD_PX - MATRIX_CELL_PAD_PX);
+
+function SuccessRateMatrixTable({ matrix }) {
+  return (
+    <window.UI.Table
+      caption="Success rate per agent and task type"
+      columns={MATRIX_COLUMNS}
+      isHeadSticky
+      stackBelowPx={MATRIX_STACK_BELOW_PX}
+      bodies={[{ key: 'agents', rows: (view) => matrix.agents.map((agent) => <SuccessRateMatrixRow key={agent} view={view} agent={agent} cells={matrix.cells}/>) }]}/>
+  );
+}
+
+function SuccessRateMatrixRow({ view, agent, cells }) {
+  const { TableRow, TableCell } = window.UI;
+  const isUnknownAgent = agent === UNKNOWN_AGENT_ID;
+
+  return (
+    <TableRow view={view} aria-label={isUnknownAgent ? UNKNOWN_AGENT_TITLE : undefined}>
+      <TableCell view={view} kind="row-header" title={isUnknownAgent ? UNKNOWN_AGENT_TITLE : agent}>
+        {isUnknownAgent
+          ? <span className="text-dim">{UNKNOWN_AGENT_LABEL}</span>
+          : <window.UI.AgentName name={agent}/>}
+      </TableCell>
+      {TASK_TYPE_COLUMNS.map((c) => (
+        <SuccessRateCell key={c.key} view={view} agent={agent} taskType={c.label} cell={cells[`${agent}|${c.key}`]}/>
+      ))}
+    </TableRow>
+  );
+}
+
+// ⓘ body of the task-type fold → glyph legend + counting method off the page
 function SuccessRateLegend() {
   return (
-    <div className="flex items-center gap-3 mb-3 fs-meta text-dim flex-shrink-0">
-      <span className="text-faint">Legend</span>
-      <LegendSwatch colorVar="--crit"  label={getFailShareLabel()}/>
-      <LegendSwatch colorVar="--faint" label={`below that, or n < ${window.UI.LOW_N_MIN}`}/>
-      <span className="text-faint">n = passed + failed; reconstructed records and other results are left out, so it can sit below the ledger's count</span>
-    </div>
+    <window.UI.Stack gap="label" className="fs-meta text-dim">
+      <window.UI.Cluster gap="control-group" className="items-center">
+        <span className="text-faint">Legend</span>
+        <LegendSwatch colorVar="--crit"  label={getFailShareLabel()}/>
+        <LegendSwatch colorVar="--data"  label={`below that, or n < ${window.UI.LOW_N_MIN}`}/>
+      </window.UI.Cluster>
+      <p>n = passed + failed; reconstructed records and other results are left out, so it can sit below the ledger's count</p>
+    </window.UI.Stack>
   );
 }
 
 function LegendSwatch({ colorVar, label }) {
   return (
-    <span className="flex items-center gap-1.5">
-      <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${colorVar}) / 0.45)`, border: `1px solid rgb(var(${colorVar}))` }}/>
+    <span className="inline-flex items-center gap-label-inline">
+      <span aria-hidden="true" className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(var(${colorVar}) / 0.45)`, border: `1px solid rgb(var(${colorVar}))` }}/>
       {label}
     </span>
   );
@@ -2426,56 +2337,47 @@ function getCellFailShareTone(cell) {
   return getFailShareTone(cell.failureCount, cell.rateDenominator);
 }
 
-function SuccessRateCell({ agent, taskType, cell }) {
-  // 데이터 없음.
-  if (!cell || cell.totalCount === 0) {
-    return (
-      <td
-        className="text-center text-faint px-2 py-1.5 border-b border-line"
-        title={`${agent} · ${taskType} — no data`}>
-        —
-      </td>
-    );
-  }
+function SuccessRateCell({ view, agent, taskType, cell }) {
+  const cellProps = { view, textRole: 'meta', label: taskType, isNumeric: true };
 
-  // 분모 0 (success/fail 외 result 만 존재) → 비율 미정의 — 0% 날조 대신 '—' (A7).
+  if (!cell || cell.totalCount === 0) {
+    return <window.UI.TableCell {...cellProps} title={`${agent} · ${taskType} — no data`}><window.UI.AbsentValue kind="none"/></window.UI.TableCell>;
+  }
+  // denominator 0 (only non-success/fail results) → rate undefined — None, never a fabricated 0%
   if (cell.pooledRate === null) {
     return (
-      <td
-        className="text-center text-faint px-2 py-1.5 border-b border-line"
-        title={`${agent} · ${taskType} — nothing conclusive to rate (no success/fail · ${cell.totalCount} total)`}>
-        — · {cell.totalCount}
-      </td>
+      <window.UI.TableCell {...cellProps} title={`${agent} · ${taskType} — nothing conclusive to rate (no success/fail · ${cell.totalCount} total)`}>
+        <window.UI.AbsentValue kind="none"/> <span className="text-dim">· {cell.totalCount}</span>
+      </window.UI.TableCell>
     );
   }
 
   const isLowSample = cell.rateDenominator < window.UI.LOW_N_MIN;
   const failShareTone = getCellFailShareTone(cell);
   const isCrit = failShareTone === 'crit';
-  const colorVar = isCrit ? '--crit' : '--faint';
+  const isStacked = view?.isStacked ?? false;
   const ariaLabel =
-    `${agent} ${taskType} — pooled success rate ${(cell.pooledRate * 100).toFixed(0)}% (${cell.successCount}/${cell.rateDenominator}), ` +
+    `${agent} ${taskType} — pooled success rate ${formatPctAg(cell.pooledRate * 100, 0)} (${cell.successCount}/${cell.rateDenominator}), ` +
     `${cell.totalCount} total` +
     (isLowSample ? ' (small sample)' : '') +
     (isCrit ? ` (${getFailShareLabel()} — check this pair)` : '');
 
   return (
-    <td
-      className="text-center px-1 py-1.5 border-b border-line relative"
-      title={`${agent} · ${taskType}\npooled ${(cell.pooledRate * 100).toFixed(1)}% (${cell.successCount}/${cell.rateDenominator})${isLowSample ? ` · small sample (n=${cell.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''} · ${cell.totalCount} total${cell.reconstructed > 0 ? ` · ${cell.reconstructed} reconstructed excluded` : ''}`}
+    <window.UI.TableCell {...cellProps}
+      title={`${agent} · ${taskType}\npooled ${formatPctAg(cell.pooledRate * 100)} (${cell.successCount}/${cell.rateDenominator})${isLowSample ? ` · small sample (n=${cell.rateDenominator} < ${window.UI.LOW_N_MIN})` : ''} · ${cell.totalCount} total${cell.reconstructed > 0 ? ` · ${cell.reconstructed} reconstructed excluded` : ''}`}
       aria-label={ariaLabel}>
-      <div className="flex flex-col items-center gap-0.5">
-        <SuccessRateSparkline points={cell.points} colorVar={colorVar} name={`${agent} ${taskType}`}/>
-        {/* rate over sample, each unbroken → the column is as wide as its longest line, so all nine fit at 1440 */}
-        <div className="flex items-center gap-1 fs-meta whitespace-nowrap">
+      {/* wide: sparkline over rate over sample, each unbroken → a column is as wide as its longest line · stacked: one inline fact, no sparkline */}
+      <div className={isStacked ? 'inline-flex items-center gap-label-inline' : 'flex flex-col items-end gap-stack'}>
+        {!isStacked && <SuccessRateSparkline points={cell.points} colorVar={isCrit ? '--crit' : '--data'} name={`${agent} ${taskType}`}/>}
+        <div className="flex items-center gap-label-inline whitespace-nowrap">
           <FailShareGlyph tone={failShareTone}/>
-          <span className="font-semibold">{(cell.pooledRate * 100).toFixed(0)}%</span>
+          <span className="font-semibold">{formatPctAg(cell.pooledRate * 100, 0)}</span>
         </div>
-        <div className="fs-meta text-dim whitespace-nowrap">
+        <div className="text-dim whitespace-nowrap">
           {isLowSample ? <window.UI.LowSampleMark n={cell.rateDenominator}/> : `n=${cell.rateDenominator}`}
         </div>
       </div>
-    </td>
+    </window.UI.TableCell>
   );
 }
 
@@ -2508,17 +2410,12 @@ function SuccessRateSparkline({ points, colorVar, name }) {
 // Panel 1b: Top-N failing (agent, task_type) pairs.
 // 매트릭스 companion — 합산 성공률 < threshold 쌍만 노출 → 대부분 green 이어도 action item 가시 유지 (research R2).
 
-// Ledger `.tbl th` face for the dense mono tables → one header idiom per page.
-const HEAD_FACE = 'font-sans uppercase tracking-wider fs-meta text-dim font-medium';
-// TABLE carries its own cell geometry; the PAIRED S tables sit on .tbl--own-face, so .tbl gives theirs and they take the face alone
-const HEAD = { FACE: HEAD_FACE, CLASS: { TABLE: `${HEAD_FACE} px-2 border-b border-line`, PAIRED: HEAD_FACE } };
-
 function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent }) {
   const [isShowingAll, setShowingAll] = useStateAg(false);
 
   // 매트릭스와 동일 row 입력 — duplicate fetch 회피 · every failing pair kept, the slot decides how many show.
   const { failingPairs, failingTotal, measuredPairs } = useMemoAg(
-    () => buildTopNFailing(readyData(state)?.rows ?? [], TOPN_FAILING_THRESHOLD, Number.POSITIVE_INFINITY),
+    () => buildTopNFailing(readyData(state)?.rows ?? [], Number.POSITIVE_INFINITY),
     [state],
   );
   const { rows, hiddenCount } = window.UI.getSlotRows(failingPairs, PAIRED_CARD_SIZE);
@@ -2531,9 +2428,8 @@ function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent 
         title="Most-failing pairs"
         sub={getFailingPairsSub(state.status, failingTotal, measuredPairs, days)}
         isFlush={window.UI.hasRegionRows(state, failingPairs)}
-        foot={state.status === 'ready' && (
-          <PairedCardFootAg note={`Below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · solid samples first`} total={failingPairs.length}
-            hiddenCount={hiddenCount} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
+        foot={state.status === 'ready' && (hiddenCount > 0 || isShowingAll) && (
+          <PairedCardFootAg total={failingPairs.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
         )}>
         <TopNFailingAgentsBody failures={failures} state={state} days={days} onRetry={onRetry} pairs={isShowingAll ? failingPairs : rows} failureByAgent={failureByAgent}/>
       </window.UI.Card>
@@ -2541,33 +2437,27 @@ function TopNFailingAgentsCard({ failures, state, days, onRetry, failureByAgent 
   );
 }
 
-// Loaded-only `n of N` head — a never-loaded zero is forbidden by the state contract.
+// Loaded-only `n of N` head — a never-loaded zero is forbidden by the state contract; no failing pair → no sub, the body says so
 function getFailingPairsSub(status, failingTotal, measuredCount, days) {
   if (status === 'loading') return `last ${days} days`;
   if (status !== 'ready') return 'Unavailable — not loaded';
-  return `${failingTotal} of ${measuredCount} below ${(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}% · ${days}d`;
+  if (failingTotal === 0) return null;
+  return `${formatIntAg(failingTotal)} of ${formatIntAg(measuredCount)} pairs at or below ${getOffTargetRateLabelAg()}`;
 }
 
 /**
- * Pinned foot of a paired S card: one short note, then "Show all N" while rows sit past the slot.
+ * Pinned foot of a paired S card: "Show all N" while rows sit past the slot.
  * @param total - every row the card holds; the toggle opens them in the card itself
  */
-function PairedCardFootAg({ note, total, hiddenCount, isShowingAll, onToggle }) {
+function PairedCardFootAg({ total, isShowingAll, onToggle }) {
   return (
-    <>
-      <span className="truncate">{note}</span>
-      {(hiddenCount > 0 || isShowingAll) && (
-        <button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={onToggle}>
-          {isShowingAll ? `Show top ${window.UI.CARD_SLOTS[PAIRED_CARD_SIZE].rowCount}` : `Show all ${total}`}
-        </button>
-      )}
-    </>
+    <button type="button" className="btn ghost sm ml-auto shrink-0" aria-expanded={isShowingAll} onClick={onToggle}>
+      {isShowingAll ? `Show top ${window.UI.CARD_SLOTS[PAIRED_CARD_SIZE].rowCount}` : `Show all ${total}`}
+    </button>
   );
 }
 
 function TopNFailingAgentsBody({ failures, state, days, onRetry, pairs, failureByAgent }) {
-  const { Badge } = window.UI;
-
   const view = window.UI.getRegionView(state);
   if (view === 'loading') {
     return <window.UI.LoadingPlaceholder label="most-failing pairs" minHeight={200}/>;
@@ -2576,16 +2466,7 @@ function TopNFailingAgentsBody({ failures, state, days, onRetry, pairs, failureB
     return <window.UI.RegionFailure source={REGION_FEEDERS.success} region="failure rates" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.failingPairs} onRetry={onRetry}/>;
   }
   if (pairs.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center" style={{ minHeight: 180 }}>
-        <Badge role="status" tone="ok" icon>
-          Every (agent, task_type) success_rate ≥ {(TOPN_FAILING_THRESHOLD * 100).toFixed(0)}%
-        </Badge>
-        <div className="fs-meta text-faint mt-3 font-mono">
-          Nothing under the threshold in the last <window.UI.NoWrap>{days} days</window.UI.NoWrap>
-        </div>
-      </div>
-    );
+    return <window.UI.EmptyState message={`No pair at or below ${getOffTargetRateLabelAg()}.`}/>;
   }
 
   return <TopNFailingAgentsTable pairs={pairs} failureByAgent={failureByAgent} days={days}/>;
@@ -2603,90 +2484,75 @@ function resolveLastBreakage(pair, failureByAgent) {
     return { text: formatRelativeTimeAg(serverTs), title: `Last failure (fail+blocked) ${window.UI.formatKstFull(serverTs)}`, fromServer: true };
   }
   if (pair.lastFailureDate) {
-    return { text: pair.lastFailureDate, title: `Last fail event_date (client-derived · blocked not included) ${pair.lastFailureDate}`, fromServer: false };
+    return { text: window.UI.formatKstDay(pair.lastFailureDate), title: `Last fail event_date (client-derived · blocked not included) ${pair.lastFailureDate}`, fromServer: false };
   }
-  return { text: '—', title: 'no failure data', fromServer: false };
+  return { text: window.UI.EMPTY_VALUE_TEXT, title: 'no failure data', fromServer: false };
 }
 
 // thead 컬럼 driver — alignment / width / 라벨만 다르고 sticky 스타일은 공통.
 const TOPN_FAILING_COLUMNS = [
-  { key: 'agent',   label: 'Agent',   align: 'left',  width: undefined, title: undefined },
-  { key: 'task',    label: 'Task',    align: 'left',  width: undefined, title: undefined },
-  { key: 'success', label: 'Success', align: 'right', width: 'w-28',    title: undefined },
+  { key: 'agent',   label: 'Agent',   align: 'left',  width: 'auto', title: undefined },
+  { key: 'task',    label: 'Task',    align: 'left',  width: 'auto', title: undefined },
+  { key: 'success', label: 'Success', align: 'right', width: '7rem', title: undefined },
   // failure-patterns last_breakage_at (서버 MAX(record_ts) · blocked 포함) 우선 채택.
-  { key: 'last',    label: 'Last failure', align: 'right', width: 'w-24',    title: 'Most recent failure per agent — failure-patterns last_breakage_at (fail+blocked) preferred · falls back to success-rate event_date (fail only)' },
+  { key: 'last',    label: 'Last failure', align: 'right', width: '6rem', title: 'Most recent failure per agent — failure-patterns last_breakage_at (fail+blocked) preferred · falls back to success-rate event_date (fail only)' },
 ];
 
 function TopNFailingAgentsTable({ pairs, failureByAgent, days }) {
-  const { TableHead } = window.UI;
+  const { Table, TableRow, TableCell } = window.UI;
   const lowN = window.UI.LOW_N_MIN;
   const solidPairs = pairs.filter((p) => p.rateDenominator >= lowN);
   const lowPairs = pairs.filter((p) => p.rateDenominator < lowN);
 
-  const renderPairRow = (p) => {
+  const renderPairRow = (p, view) => {
     const breakage = resolveLastBreakage(p, failureByAgent);
     const isLowSample = p.rateDenominator < lowN;
     return (
-      <tr key={`${p.agent}|${p.task_type}`}>
-        <td className="text-ink truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
+      <TableRow view={view} key={`${p.agent}|${p.task_type}`}>
+        <TableCell view={view} className="text-ink truncate" style={{ maxWidth: 160 }} title={`Open ${p.agent} · ${p.task_type} in Task results`}>
           <a className="inline-target max-w-full underline decoration-dotted" href={getPairOutcomesHref(p, days)}>
             <window.UI.AgentName name={p.agent} className="truncate"/>
           </a>
-        </td>
-        <td className="text-dim">
+        </TableCell>
+        <TableCell view={view} textRole="meta" className="text-dim">
           {p.task_type}
-        </td>
-        <td
-          className="text-right font-semibold whitespace-nowrap tbl-bar-cell"
+        </TableCell>
+        <TableCell view={view}
+          isNumeric
           title={`pooled passed ${p.successCount} / (passed+failed) ${p.rateDenominator} · ${p.totalCount} total${isLowSample ? ` · small sample (n=${p.rateDenominator} < ${lowN})` : ''}`}>
-          {/* every listed pair is failing → the glyph marks it whatever its sample size */}
-          <span className="inline-flex items-center justify-end gap-1">
-            <FailShareGlyph tone="crit"/>
-            {window.UI.formatPctWithDenominator(p.successCount, p.rateDenominator)}
-          </span>
+          {window.UI.formatPctWithDenominator(p.successCount, p.rateDenominator)}
           {isLowSample && <window.UI.LowSampleMark n={p.rateDenominator}/>}
-          {/* Pair success-rate bar — crit like the matrix, except n < LOW_N_MIN, which the legend keeps neutral. */}
-          <window.UI.Bar
-            value={p.pooledRate}
-            tone={isLowSample ? 'neutral' : 'crit'}
-            ariaLabel={`pair success rate ${(p.pooledRate * 100).toFixed(0)}%`}
-          />
-        </td>
-        <td
-          className={`text-right whitespace-nowrap ${breakage.fromServer ? 'text-dim' : 'text-faint'}`}
+        </TableCell>
+        <TableCell view={view}
+          isNumeric
+          textRole="meta"
+          className={breakage.fromServer ? 'text-dim' : 'text-faint'}
           title={breakage.title}>
           {breakage.text}
-        </td>
-      </tr>
+        </TableCell>
+      </TableRow>
     );
   };
 
-  return (
-    <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
-      <table className="tbl tbl--own-face fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-        <thead>
-          <tr>
-            {TOPN_FAILING_COLUMNS.map((c) => (
-              <TableHead key={c.key} isSticky className={`text-${c.align} ${HEAD.CLASS.PAIRED} whitespace-nowrap${c.width ? ' ' + c.width : ''}`}>
-                <span title={c.title}>{c.label}</span>
-              </TableHead>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {solidPairs.map(renderPairRow)}
-          {lowPairs.length > 0 && (
-            <tr>
-              <td colSpan={TOPN_FAILING_COLUMNS.length} className="fs-meta text-dim">
-                Low sample — n under {lowN}, read as a hint
-              </td>
-            </tr>
-          )}
-          {lowPairs.map(renderPairRow)}
-        </tbody>
-      </table>
-    </div>
-  );
+  const renderPairRows = (view) => <>
+    {solidPairs.map((p) => renderPairRow(p, view))}
+    {lowPairs.length > 0 && (
+      <TableRow view={view}>
+        <TableCell view={view} kind="span" className="fs-meta text-dim">
+          Low sample — n under {lowN}, read as a hint
+        </TableCell>
+      </TableRow>
+    )}
+    {lowPairs.map((p) => renderPairRow(p, view))}
+  </>;
+
+  return <Table caption="Most-failing pairs" isHeadSticky columns={getPairedColumnsAg(TOPN_FAILING_COLUMNS)}
+    widths={TOPN_FAILING_COLUMNS.map((c) => c.width)} bodies={[{ key: 'pairs', rows: renderPairRows }]}/>;
+}
+
+// Paired column specs → Table columns: a right-aligned column is numeric, its title rides the label.
+function getPairedColumnsAg(specs) {
+  return specs.map((c) => ({ key: c.key, isNumeric: c.align === 'right', label: <span title={c.title}>{c.label}</span> }));
 }
 
 // AgentQualityHealth (col-span-full) — 자가개선 신호 단일화.
@@ -2720,27 +2586,13 @@ const QH_TIMELINE = Object.freeze({
       value: 'Rate (%)',
       angle: 90,
       position: 'insideRight',
-      fill: 'rgb(var(--crit))',
+      fill: 'rgb(var(--dim))',
       style: { textAnchor: 'middle', fontSize: 'var(--fs-meta)' },
     },
   },
   // an SVG presentation attribute cannot resolve a var() → the meta token rides the CSS style
-  TICK_STYLE: { fill: 'rgb(var(--faint))', fontFamily: 'JetBrains Mono, monospace', style: { fontSize: 'var(--fs-meta)' } },
+  TICK_STYLE: { fill: 'rgb(var(--faint))', style: { fontSize: 'var(--fs-meta)', fontVariantNumeric: 'tabular-nums' } },
 });
-
-// Titled like its Lifecycle sibling → the flagged total never reads as an orphan tile.
-function ReviewFlagTimelineCard({ failures, state, days, onRetry }) {
-  const { CardHead } = window.UI;
-
-  return (
-    <div id={IDS.REGION_CARD.reviewFlags} className="card flex flex-col min-h-0">
-      <CardHead title="Review flags" sub={`Flag reasons and rate · ${days} days`}/>
-      <div className="card-body ag-card-body">
-        <QualityHealthTimeline failures={failures} state={state} onRetry={onRetry}/>
-      </div>
-    </div>
-  );
-}
 
 function QualityHealthTimeline({ failures, state, onRetry }) {
   const view = window.UI.getRegionView(state);
@@ -2752,10 +2604,8 @@ function QualityHealthTimeline({ failures, state, onRetry }) {
   }
   const rows = readyData(state)?.rows ?? [];
   if (rows.length === 0) {
-    return <EmptyStateAg message="No review_flag data."/>;
+    return <window.UI.EmptyState message="No review flags."/>;
   }
-
-  const { flagged: totalFlagged, total: totalEvents } = getReviewFlagTotalsAg(rows);
 
   const chartRows = rows.map((r) => ({
     date: typeof r.event_date === 'string' ? r.event_date.slice(5) : '',
@@ -2771,13 +2621,7 @@ function QualityHealthTimeline({ failures, state, onRetry }) {
 
   return (
     <>
-      <div className="flex items-baseline gap-3 mb-2 flex-wrap flex-shrink-0">
-        <div className="font-mono fs-stat font-semibold tracking-tight">
-          {formatIntAg(totalFlagged)}
-        </div>
-        {/* 합산 발생률 (총 flag ÷ 총 event) — 일별 비율 평균 아님 → '평균' 라벨 금지 (A5). */}
-        <div className="fs-meta text-dim">Total flagged · rate {window.UI.formatPctWithDenominator(totalFlagged, totalEvents)}</div>
-      </div>
+      <div className="fs-meta text-dim tnum mb-label">{formatIntAg(getReviewFlagTotalsAg(rows).flagged)} flagged</div>
       <QualityHealthTimelineChart rows={chartRows}/>
     </>
   );
@@ -2792,7 +2636,7 @@ function QualityHealthTimelineChart({ rows }) {
   const ratePoints = rows.map((r) => ({ label: r.fullDate, value: r.review_flag_ratio_pct }));
 
   return (
-    <div style={REVIEW_FLAG_CHART_STYLE} {...window.UI.getChartImageProps('Daily flagged rate', ratePoints, formatRatePctAg)}>
+    <div style={REVIEW_FLAG_CHART_STYLE} {...window.UI.getChartImageProps('Daily flagged rate', ratePoints, formatPctAg)}>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
           <CartesianGrid stroke="rgb(var(--line))" strokeDasharray="3 3" vertical={false}/>
@@ -2815,35 +2659,26 @@ function QualityHealthTimelineChart({ rows }) {
             yAxisId="ratio"
             orientation="right"
             domain={[0, 100]}
-            tickFormatter={(v) => v.toFixed(0) + '%'}
+            tickFormatter={(v) => formatPctAg(v)}
             label={QH_TIMELINE.AXIS_LABEL.RATIO}
             tick={QH_TIMELINE.TICK_STYLE}
             axisLine={{ stroke: 'rgb(var(--line))' }}
             tickLine={false}
             width={56}
           />
-          <Tooltip content={<QualityHealthTimelineTooltip/>} cursor={{ fill: 'rgb(var(--accent) / 0.06)' }} isAnimationActive={false}/>
-          <Bar yAxisId="count" dataKey="empty_metric_count"   stackId="rf" fill={`rgb(var(--warn) / 0.85)`}   isAnimationActive={false}/>
-          <Bar yAxisId="count" dataKey="polar_mismatch_count" stackId="rf" fill={`rgb(var(--accent) / 0.85)`} isAnimationActive={false}/>
-          <Line
-            yAxisId="ratio"
-            type="monotone"
-            dataKey="review_flag_ratio_pct"
-            stroke="rgb(var(--crit))"
-            strokeWidth={1.5}
-            strokeDasharray="4 3"
-            dot={false}
-            isAnimationActive={false}
-          />
+          <Tooltip content={<QualityHealthTimelineTooltip/>} cursor={{ fill: 'rgb(var(--ink) / 0.06)' }} isAnimationActive={false}/>
+          {/* one quantity per day (flag reasons) → one data colour; the tooltip names each reason's count */}
+          <Bar yAxisId="count" dataKey="empty_metric_count"   stackId="rf" fill="rgb(var(--data))" isAnimationActive={false}/>
+          <Bar yAxisId="count" dataKey="polar_mismatch_count" stackId="rf" fill="rgb(var(--data))" isAnimationActive={false}/>
+          {/* card-ground under-stroke → the ink rate line clears 3:1 where it crosses a --data bar (design.md §4.3) */}
+          <Line yAxisId="ratio" type="linear" dataKey="review_flag_ratio_pct" stroke="rgb(var(--elev))" strokeWidth={3.5} dot={false} activeDot={false} legendType="none" isAnimationActive={false}/>
+          <Line yAxisId="ratio" type="linear" dataKey="review_flag_ratio_pct" stroke="rgb(var(--ink))" strokeWidth={1.5} dot={false} isAnimationActive={false}/>
         </ComposedChart>
       </ResponsiveContainer>
     </div>
   );
 }
 
-function formatRatePctAg(pct) {
-  return `${pct.toFixed(1)}%`;
-}
 
 function QualityHealthTimelineTooltip({ active, payload }) {
   if (!active || !payload || payload.length === 0) {
@@ -2851,60 +2686,68 @@ function QualityHealthTimelineTooltip({ active, payload }) {
   }
   const row = payload[0].payload;
   return (
-    <div style={tooltipStyle}>
-      <div style={{ color: 'rgb(var(--ink))', marginBottom: 4, fontWeight: 600 }}>{row.fullDate}</div>
-      <div style={{ color: 'rgb(var(--dim))' }}>
+    <div className={tooltip.className} style={tooltip.style}>
+      <div className="mb-label text-ink font-semibold">{row.fullDate}</div>
+      <div className="text-dim">
         flagged {formatIntAg(row.review_flagged_count)} / {formatIntAg(row.total_count)}
       </div>
       {/* reasons count over every run of the day, flagged or not → not a split of the flagged figure */}
       {/* no self-check = metric_pass empty, mismatch needs one set → disjoint, so the two add up */}
-      <div style={{ color: 'rgb(var(--dim))', marginTop: 4 }}>
+      <div className="mt-stack text-dim">
         {formatIntAg(row.empty_metric_count + row.polar_mismatch_count)} of {formatIntAg(row.total_count)} have a recorded reason
       </div>
-      <div style={tooltipRowStyle}>
-        <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--warn))' }}/>
+      <div className={tooltip.rowClassName}>
+        <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--data))' }}/>
         No self-check {formatIntAg(row.empty_metric_count)} of {formatIntAg(row.total_count)} runs
-        <span style={{ color: 'rgb(var(--faint))' }}>· {row.empty_metric_ratio_pct.toFixed(1)}%</span>
+        <span style={{ color: 'rgb(var(--faint))' }}>· {formatPctAg(row.empty_metric_ratio_pct)}</span>
       </div>
-      <div style={tooltipRowStyle}>
-        <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--accent))' }}/>
+      <div className={tooltip.rowClassName}>
+        <span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgb(var(--data))' }}/>
         Confidence mismatch {formatIntAg(row.polar_mismatch_count)} of {formatIntAg(row.total_count)} runs
       </div>
-      <div style={{ ...tooltipRowStyle, marginTop: 4 }}>
-        <span style={{ width: 10, borderTop: '1.5px dashed rgb(var(--crit))' }}/>
-        Flagged rate {row.review_flag_ratio_pct.toFixed(1)}%
+      <div className={`${tooltip.rowClassName} mt-stack`}>
+        <span style={{ width: 10, borderTop: '1.5px solid rgb(var(--ink))' }}/>
+        Flagged rate {formatPctAg(row.review_flag_ratio_pct)}
       </div>
     </div>
   );
 }
 
-// revision_count 분포 inline mini-bar — 0/1/2/3/4+ 5색 stacked horizontal bar.
+// revision_count 분포 inline mini-bar — one --data hue; position + separators split the buckets, the line below names each count.
 function RevisionInlineMiniBar({ buckets, total }) {
   if (total === 0) {
     return <div className="fs-meta text-faint">no revision data</div>;
   }
+  const drawn = REVISION_BUCKETS.filter((b) => (buckets[`bucket_${b.key}`] || 0) > 0);
   return (
-    <div
-      className="flex h-1.5 rounded-full overflow-hidden bg-sunken"
-      role="img"
-      aria-label={`revision distribution — ${total} total`}>
-      {REVISION_BUCKETS.map((b) => {
-        const count = buckets[`bucket_${b.key}`] || 0;
-        if (count === 0) return null;
-        const widthPct = (count / total) * 100;
-        return (
-          <div
-            key={b.key}
-            style={{
-              width: `${widthPct}%`,
-              background: `rgb(var(${b.colorVar}) / 0.85)`,
-            }}
-            title={`revision=${b.label}: ${count} (${widthPct.toFixed(0)}%)`}
-          />
-        );
-      })}
+    <div className="space-y-label">
+      <div className="flex h-1.5 rounded-full overflow-hidden bg-sunken" aria-hidden="true">
+        {drawn.map((b, i) => {
+          const count = buckets[`bucket_${b.key}`];
+          const widthPct = (count / total) * 100;
+          return (
+            <div
+              key={b.key}
+              style={{
+                width: `${widthPct}%`,
+                background: 'rgb(var(--data))',
+                ...(i > 0 && { borderLeft: '1px solid rgb(var(--elev))' }),
+              }}
+              title={`revision=${b.label}: ${count} (${formatPctAg(widthPct)})`}
+            />
+          );
+        })}
+      </div>
+      <p className="fs-meta text-dim tnum">{getRevisionMixText(drawn, buckets)}</p>
     </div>
   );
+}
+
+// every drawn bucket in words → the mix reads on screen and to a screen reader, never from the bar alone
+function getRevisionMixText(drawn, buckets) {
+  return drawn
+    .map((b) => `${b.label} revision${b.label === '1' ? '' : 's'} ${formatIntAg(buckets[`bucket_${b.key}`])}`)
+    .join(' · ');
 }
 
 // LifecycleStats (col-span-2) — orphan spawn gap + duration 분포 (/api/agents/lifecycle-stats).
@@ -2915,7 +2758,6 @@ const ORPHAN_RATIO_CRIT_THRESHOLD = 0.35;
 const ORPHAN_RATIO_WARN_THRESHOLD = 0.2;
 
 function LifecycleStatsCard({ failures, state, days, onSelect, onRetry }) {
-  const { Pill } = window.UI;
   const [isShowingAll, setShowingAll] = useStateAg(false);
 
   const readyRows = readyData(state)?.rows ?? [];
@@ -2930,16 +2772,12 @@ function LifecycleStatsCard({ failures, state, days, onSelect, onRetry }) {
       <window.UI.Card
         size={PAIRED_CARD_SIZE}
         title="No completion record"
-        sub={`Last ${days} days`}
+        sub={totalOrphans > 0 && <window.UI.HeadStatus tone="warn">{formatIntAg(totalOrphans)} unfinished</window.UI.HeadStatus>}
         isFlush={window.UI.hasRegionRows(state, lifecycleRows)}
         info={NOTE.UNFINISHED}
         infoLabel="How Unfinished is counted"
-        right={state.status === 'ready' && totalOrphans > 0
-          ? <Pill tone="warn" className="pill--ctl-h">{formatIntAg(totalOrphans)} unfinished</Pill>
-          : null}
-        foot={state.status === 'ready' && (
-          <PairedCardFootAg note={NOTE_SHORT.UNFINISHED} total={lifecycleRows.length}
-            hiddenCount={hiddenCount} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
+        foot={state.status === 'ready' && (hiddenCount > 0 || isShowingAll) && (
+          <PairedCardFootAg total={lifecycleRows.length} isShowingAll={isShowingAll} onToggle={() => setShowingAll((v) => !v)}/>
         )}>
         <LifecycleStatsBody failures={failures} state={state} days={days} rows={isShowingAll ? lifecycleRows : rows} onSelect={onSelect} onRetry={onRetry}/>
       </window.UI.Card>
@@ -2963,7 +2801,7 @@ function LifecycleStatsBody({ failures, state, days, rows, onSelect, onRetry }) 
     return <window.UI.RegionFailure source={REGION_FEEDERS.lifecycle} region="lifecycle stats" error={state.error} isBusy={state.busy} failures={failures} focusTargetId={IDS.REGION_CARD.lifecycle} onRetry={onRetry}/>;
   }
   if (rows.length === 0) {
-    return <EmptyStateAg message={`No lifecycle events in the last ${days} days.`}/>;
+    return <window.UI.EmptyState message={`No lifecycle events in the last ${days} days.`}/>;
   }
   return <LifecycleStatsTable rows={rows} onSelect={onSelect}/>;
 }
@@ -2978,103 +2816,78 @@ const LIFECYCLE_COLUMNS = [
 ];
 
 function LifecycleStatsTable({ rows, onSelect }) {
-  const { TableHead } = window.UI;
+  const { Table } = window.UI;
   const [activeIndex, setActiveIndex] = useStateAg(0);
   // a row with no completion has nothing for the drawer to show → out of the roving order
   const openable = rows.filter((r) => (Number(r.completed_count) || 0) > 0);
 
-  return (
-    <div className="overflow-auto" style={{ flex: '1 1 auto', minHeight: 0 }}>
-      <table className="tbl tbl--own-face fs-meta font-mono" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
-        <thead>
-          <tr>
-            {LIFECYCLE_COLUMNS.map((c) => (
-              <TableHead key={c.key} isSticky className={`text-${c.align} ${HEAD.CLASS.PAIRED}`}>
-                <span title={c.title}>{c.label}</span>
-              </TableHead>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const index = openable.indexOf(r);
-            return (
-              <LifecycleStatsRow
-                key={r.agent_type}
-                row={r}
-                onSelect={index < 0 ? null : onSelect}
-                focusProps={index < 0 ? null : window.UI.getRowFocusProps({
-                  index, activeIndex, count: openable.length, onActivate: () => onSelect(r.agent_type), onActiveChange: setActiveIndex,
-                })}
-              />
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
+  const renderRows = (view) => rows.map((r) => {
+    const index = openable.indexOf(r);
+    return (
+      <LifecycleStatsRow
+        key={r.agent_type}
+        view={view}
+        row={r}
+        onSelect={index < 0 ? null : onSelect}
+        focusProps={index < 0 ? null : window.UI.getRowFocusProps({
+          index, activeIndex, count: openable.length, onActivate: () => onSelect(r.agent_type), onActiveChange: setActiveIndex,
+        })}
+      />
+    );
+  });
+
+  return <Table caption="No completion record" isHeadSticky columns={getPairedColumnsAg(LIFECYCLE_COLUMNS)} bodies={[{ key: 'rows', rows: renderRows }]}/>;
 }
 
-function LifecycleStatsRow({ row, onSelect, focusProps }) {
+function LifecycleStatsRow({ view, row, onSelect, focusProps }) {
   const startCount = Number(row.start_count) || 0;
   const completedCount = Number(row.completed_count) || 0;
   const orphanCount = Math.max(0, startCount - completedCount);
   const orphanRatio = startCount > 0 ? orphanCount / startCount : 0;
   const orphanTone = orphanRatioTone(orphanRatio);
   const p95Sec = row.p95_duration_sec == null ? null : Number(row.p95_duration_sec);
-  const { StatusDot } = window.UI;
+  const { StatusDot, TableRow, TableCell } = window.UI;
 
   const handleClick = onSelect ? () => onSelect(row.agent_type) : undefined;
 
   return (
-    <tr
+    <TableRow
+      view={view}
       {...focusProps}
       onClick={handleClick}
       className={onSelect ? 'cursor-pointer hover:bg-sunken motion-safe:transition-colors motion-safe:duration-[120ms]' : undefined}
-      title={`${row.agent_type} — start ${startCount} · stop ${formatIntAg(row.stop_count)} · completed ${completedCount} · orphan ${orphanCount} (${(orphanRatio * 100).toFixed(0)}%)`}>
-      <td className="text-ink truncate" style={{ maxWidth: 160 }}>
-        <span className="flex items-center gap-1.5">
+      title={`${row.agent_type} — start ${startCount} · stop ${formatIntAg(row.stop_count)} · completed ${completedCount} · orphan ${orphanCount} (${formatPctAg(orphanRatio * 100)})`}>
+      <TableCell view={view} className="text-ink truncate" style={{ maxWidth: 160 }}>
+        <span className="flex items-center gap-label-inline">
           <window.UI.AgentName name={row.agent_type} className="truncate"/>
         </span>
-      </td>
-      <td className="text-right text-dim">{formatIntAg(startCount)}</td>
-      <td className="text-right text-dim">{formatIntAg(completedCount)}</td>
-      <td className={`text-right font-semibold ${orphanTone ? 'text-ink' : 'text-dim'}`}>
+      </TableCell>
+      <TableCell view={view} isNumeric textRole="meta" className="text-dim">{formatIntAg(startCount)}</TableCell>
+      <TableCell view={view} isNumeric textRole="meta" className="text-dim">{formatIntAg(completedCount)}</TableCell>
+      <TableCell view={view} isNumeric className={`font-semibold ${orphanTone ? 'text-ink' : 'text-dim'}`}>
         {orphanTone && <StatusDot status={orphanTone}/>}
-        {orphanCount > 0 ? `${formatIntAg(orphanCount)} · ${(orphanRatio * 100).toFixed(0)}%` : '0'}
-      </td>
-      <td className="text-right text-dim">
-        {p95Sec == null ? '—' : formatDurationSecAg(p95Sec)}
-      </td>
-    </tr>
+        {orphanCount > 0 ? `${formatIntAg(orphanCount)} · ${formatPctAg(orphanRatio * 100, 0)}` : '0'}
+      </TableCell>
+      <TableCell view={view} isNumeric textRole="meta" className="text-dim">
+        {p95Sec == null ? <window.UI.AbsentValue kind="none"/> : formatDurationSecAg(p95Sec)}
+      </TableCell>
+    </TableRow>
   );
 }
 
 // Shared chrome
 
-function EmptyStateAg({ message }) {
-  const { EmptyState } = window.UI;
-  return <EmptyState message={message} />;
-}
-
 // Pure helpers
 
-const tooltipStyle = {
-  background: 'rgb(var(--overlay-surface))',
-  border: '1px solid rgb(var(--line))',
-  borderRadius: 'var(--radius-tile)',
-  padding: '8px 12px',
-  // 툴팁 = HTML DOM div → 11.5px→var(--fs-meta)(11px) 매핑 (밀도 높은 보조 콘텐츠 tier · cost.jsx tooltipStyle 동일 선례).
-  fontSize: 'var(--fs-meta)',
-  fontFamily: 'JetBrains Mono, monospace',
-  boxShadow: 'var(--shadow-overlay)',
-};
-
-const tooltipRowStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  color: 'rgb(var(--dim))',
+const tooltip = {
+  className: 'p-card-pad border border-line fs-meta tabular-nums',
+  rowClassName: 'flex items-center gap-label-inline text-dim',
+  // overlay-surface paint only, inline — overlay-surface is no Tailwind colour key
+  style: {
+    background: 'rgb(var(--overlay-surface))',
+    borderRadius: 'var(--radius-tile)',
+    boxShadow: 'var(--shadow-overlay)',
+  },
 };
 
 async function fetchJsonAg(url, signal) {
@@ -3206,12 +3019,12 @@ function buildSuccessRateMatrix(rows) {
   return { agents, cells: Object.fromEntries(cellMap) };
 }
 
-// flat row → per-pair stats · threshold 미달만 반환 · pooledRate ASC sort · limit cap.
-// 합산 비율 + 최소 표본 floor (분모 < TOPN_MIN_SAMPLE 쌍 랭킹 제외, A5).
-// server 가 last_failure_at 미반환 → failure_count > 0 row 의 event_date 로 client-side 도출.
-function buildTopNFailing(rows, threshold, limit) {
+// flat rows → per-pair stats · only pairs at or past the crit fail-share step (the step the matrix crit glyph reads) · solid samples (n ≥ LOW_N_MIN) first, then pooledRate ASC · limit cap
+// pooled rate + min-sample floor → a pair with denominator < TOPN_MIN_SAMPLE stays unranked
+// server returns no last_failure_at → derived client-side from the event_date of failure_count > 0 rows
+function buildTopNFailing(rows, limit) {
   if (!Array.isArray(rows) || rows.length === 0) {
-    return { failingPairs: [], measuredPairs: 0 };
+    return { failingPairs: [], failingTotal: 0, measuredPairs: 0 };
   }
 
   const pairMap = new Map();
@@ -3263,7 +3076,7 @@ function buildTopNFailing(rows, threshold, limit) {
     measuredPairs += 1;
 
     const pooledRate = writerSuccess / rateDenominator;
-    if (pooledRate < threshold) {
+    if (getFailShareTone(agg.failureCount, rateDenominator) === 'crit') {
       failingPairs.push({
         agent: agg.agent,
         task_type: agg.task_type,
@@ -3469,20 +3282,11 @@ function nullableNumber(value) {
 
 // 공용 포매터 위임 (ui.jsx SoT) — 로컬 재구현 폐기
 const formatIntAg = window.UI.formatInt;
+const formatPctAg = window.UI.formatPct;
+const formatDecimalAg = window.UI.formatDecimal;
 const formatRelativeTimeAg = window.UI.formatRelativeTime;
 
 // Tone / formatting helpers
-
-// /api/agents/summary status → StatusDot tone (dashboard.jsx mapAgentStatus 동일).
-function mapStatusToTone(status) {
-  switch (status) {
-    case 'active':   return 'ok';
-    case 'idle':     return 'info';
-    case 'inactive': return 'warn';
-    case 'error':    return 'crit';
-    default:         return 'info';
-  }
-}
 
 // One Agents rate scale — the shared breakage crit step over a surface's own failed count; steady state stays neutral.
 // Low-N guard stays at each call site.
@@ -3491,11 +3295,11 @@ function getFailShareTone(failedCount, denominator) {
   return outcomeShareTone(failedCount, denominator, OUTCOME_BREAKAGE_CRIT_SHARE, 'crit');
 }
 
-// Success rates cluster near the top of the scale, where a 0–100 bar reads flat → a 90–100 window, the 95% target mid-bar.
-const SUCCESS_WINDOW = { FLOOR_PCT: 90, TARGET: 0.5 };
-
-function getSuccessWindowAg(pct) {
-  return Math.min(Math.max((pct - SUCCESS_WINDOW.FLOOR_PCT) / (100 - SUCCESS_WINDOW.FLOOR_PCT), 0), 1);
+// a rate alone — its passed ÷ denominator fraction stays in the cell's tooltip
+function formatRateAg(numerator, denominator) {
+  const den = Number(denominator);
+  if (!Number.isFinite(den) || den <= 0) return window.UI.EMPTY_VALUE_TEXT;
+  return formatPctAg(((Number(numerator) || 0) / den) * 100, 1);
 }
 
 // Summary-row counts — passed ÷ (done+dwc+blocked+fail), the server success_pct population.
@@ -3509,8 +3313,13 @@ function getSummaryRateAg(agent) {
   return { successPct, needsContextCount, denominator, numerator, isLowSample, tone };
 }
 
+// success side of the same crit step → the rate Most-failing pairs names, so its copy and the matrix glyph share one boundary
+function getOffTargetRateLabelAg() {
+  return formatPctAg((1 - window.UI.OUTCOME_BREAKAGE_CRIT_SHARE) * 100);
+}
+
 function getFailShareLabel(outcome = 'failed or blocked') {
-  return `${outcome} ≥ ${(window.UI.OUTCOME_BREAKAGE_CRIT_SHARE * 100).toFixed(0)}%`;
+  return `${outcome} ≥ ${formatPctAg(window.UI.OUTCOME_BREAKAGE_CRIT_SHARE * 100)}`;
 }
 
 // Tone rides a glyph beside the success numeral, never the numeral itself.
@@ -3526,37 +3335,37 @@ function FailShareGlyph({ tone, label = getFailShareLabel() }) {
   );
 }
 
-// P95 응답시간(초) → 톤 (null=faint / >20s crit / >10s warn / 무톤).
-// 서브에이전트 작업 p95 지연은 분(minute) 도메인 — 라이브 분포 58s~1695s(중앙값 ~11분).
-// 종전 10s/20s 컷은 전 에이전트를 crit 단일 티어로 뭉개 spread 가 0 이었다(웹 p95 도메인 값을 잘못 차용).
-// 작업 지연 기준으로 재조정: warn=fleet p75 컷(하한 10분·600s)·crit=20분(1200s) → 라이브에서 ok/warn/crit 3티어 실제 분포.
-const P95_AGENT = { WARN_SEC: 600, CRIT_SEC: 1200, WARN_MIN_FLEET: 4 };
+// §12.4 owner cut: a p95 over twice the fleet median (nearest rank) is too slow, never under 20 minutes (FLOOR in seconds).
+const P95_AGENT = { FLOOR: 1200, MEDIAN_MULTIPLE: 2, MIN_FLEET: 4 };
 
-// Warn cut = fleet p75 of per-agent p95 (nearest rank), floored at 10m → at most a quarter of the fleet warns.
-function getP95WarnSecAg(agents) {
-  const secs = (Array.isArray(agents) ? agents : [])
+// Watch marks only agents past a fleet cut, as Too slow does → health penalty (1 − index) over twice the fleet median (nearest rank), never under the warn band's penalty
+const WATCH_AGENT = { FLOOR: 1 - QH_HEALTH_WARN_MAX, MEDIAN_MULTIPLE: 2, MIN_FLEET: 4 };
+
+// ascending values → MEDIAN_MULTIPLE × nearest-rank median, never under FLOOR; a fleet under MIN_FLEET → FLOOR
+function getFleetCutAg(sorted, { FLOOR, MEDIAN_MULTIPLE, MIN_FLEET }) {
+  if (sorted.length < MIN_FLEET) return FLOOR;
+  return Math.max(MEDIAN_MULTIPLE * sorted[Math.ceil(sorted.length / 2) - 1], FLOOR);
+}
+
+function getWatchCutAg(ranking) {
+  return getFleetCutAg(ranking.map((entry) => 1 - entry.healthIndex).sort((x, y) => x - y), WATCH_AGENT);
+}
+
+function getP95SecsAg(agents) {
+  return (Array.isArray(agents) ? agents : [])
     .filter((a) => a && a.p95_ms != null && Number.isFinite(Number(a.p95_ms)))
     .map((a) => Number(a.p95_ms) / 1000)
     .sort((x, y) => x - y);
-  if (secs.length < P95_AGENT.WARN_MIN_FLEET) return P95_AGENT.WARN_SEC;
-  return Math.max(P95_AGENT.WARN_SEC, secs[Math.ceil(secs.length * 0.75) - 1]);
 }
 
-function p95LatencyTone(p95Sec, warnSec = P95_AGENT.WARN_SEC) {
-  if (p95Sec == null)            return 'text-faint';
-  if (p95Sec > P95_AGENT.CRIT_SEC) return 'text-crit';
-  if (p95Sec > warnSec) return 'text-dim'; // warn cut = fleet p75 floored at 600s → shape only, amber would bury the crit rows
-  return '';
+function isTooSlowAg(agent, p95Scale) {
+  return agent.p95_ms != null && Number(agent.p95_ms) / 1000 > p95Scale.cutSec;
 }
 
-// 동일 초-도메인 컷 → TONE_GLYPH KEY. 빠른 구간을 명시적 'ok'(✓)로 매핑한다 —
-// p95LatencyTone 의 '' 무톤은 색 노이즈 회피용이라 barToneFromClass 로는 neutral(ℹ)이 되어
-// "빠름"을 표현하지 못한다. 글리프 인디케이터는 별도로 ok/warn/crit 3키를 직접 산출.
-function p95GlyphTone(p95Sec, warnSec = P95_AGENT.WARN_SEC) {
-  if (p95Sec == null)              return 'neutral';
-  if (p95Sec > P95_AGENT.CRIT_SEC) return 'crit';
-  if (p95Sec > warnSec)            return 'warn';
-  return 'ok';
+// cut + slowest → one scale every ledger row reads, so the mark and bar follow the selected range
+function getP95ScaleAg(agents) {
+  const secs = getP95SecsAg(agents);
+  return { cutSec: getFleetCutAg(secs, P95_AGENT), maxSec: secs.length > 0 ? secs[secs.length - 1] : null };
 }
 
 // Failed-or-blocked share → tone KEY for its glyph and bar — the one Agents rate scale over the agent's outcomes (population = count ÷ rate).
@@ -3564,15 +3373,6 @@ function failureTone(count, rate) {
   const population = count > 0 && rate > 0 ? Math.round(count / rate) : 0;
   if (population < window.UI.LOW_N_MIN) return 'neutral';
   return getFailShareTone(count, population) === 'crit' ? 'crit' : 'neutral';
-}
-
-// CSS-class 톤('text-ok' 등 · ''=무톤) → Bar/StatusDot KEY(ok|warn|crit|neutral) 변환.
-// 텍스트 톤 helper 는 class 를 돌려주나 Bar atom 은 KEY 를 받는다 — 'text-faint'/'' 는 neutral 로.
-function barToneFromClass(cls) {
-  if (cls === 'text-ok')   return 'ok';
-  if (cls === 'text-warn') return 'warn';
-  if (cls === 'text-crit') return 'crit';
-  return 'neutral';
 }
 
 // 호출 컬럼 hover title — null vs 0 vs >0 분기 명시 (시각만으로는 ambiguous).
@@ -3590,11 +3390,11 @@ function formatInvocationsTitle(count, days) {
   return `${count} SubagentStart events in the last ${days} days`;
 }
 
-// Quality Health Index → verdict {tone, label} SoT — 3 consumer(Overview/Quality-signals/TopN) 공유.
-// tone = TONE_GLYPH 키(crit/warn/ok) · label = self-explaining 문구 (Critical→Needs attention 재명명).
-function qualityHealthVerdict(index) {
+// Quality Health Index → verdict {tone, label} SoT — ledger head 와 drawer 공유.
+// tone = TONE_GLYPH 키(crit/warn/ok) · Watch = penalty 가 fleet cut(getWatchCutAg) 초과일 때만.
+function qualityHealthVerdict(index, watchCut) {
   if (index < QH_HEALTH_CRIT_MAX) return { tone: 'crit', label: 'Needs attention' };
-  if (index < QH_HEALTH_WARN_MAX) return { tone: 'warn', label: 'Watch' };
+  if (1 - index > watchCut) return { tone: 'warn', label: 'Watch' };
   return { tone: 'ok', label: 'Healthy' };
 }
 
@@ -3602,8 +3402,8 @@ function qualityHealthVerdict(index) {
 // rework = avg revision 수치 · flag = review_flag % — 페널티 지배 성분 하나만 노출.
 function qualityHealthDriverPhrase(driver) {
   if (!driver) return '';
-  if (driver.kind === 'flag') return `flag ${(driver.value * 100).toFixed(0)}%`;
-  return `high rework ${driver.value.toFixed(2)}`;
+  if (driver.kind === 'flag') return `flag ${formatPctAg(driver.value * 100)}`;
+  return `high rework ${formatDecimalAg(driver.value)}`;
 }
 
 // orphan spawn 비율(start 대비 미완) → StatusDot tone KEY — 높을수록 누수 심각, 미달 = null.
@@ -3619,17 +3419,6 @@ const formatDurationSecAg = (sec) => window.UI.formatDuration(sec);
 // latency_ms → 인간화 (<1s "NNNms" · ≥60s "Mm Ss") — 공용 formatDuration('ms') 위임, p50/p95/p99 표시.
 const formatDurationMsAg = (ms) => window.UI.formatDuration(ms, 'ms');
 
-// MiniBars 추세 색상 — error → crit · 그 외 fail-share tone · 미판정 → neutral.
-// 추세 verdict → tone KEY → registry CSS 색(rgb(var(--tone))). 하드코딩 rgb 리터럴 제거 →
-//   테마/톤 토큰 변경 시 trend bar 자동 리페인트 (색 SoT = ui.jsx toneVarColor/tokens.css).
-function trendBarColor(status, failShareTone) {
-  return window.UI.toneVarColor(getTrendTone(status, failShareTone));
-}
-
-function getTrendTone(status, failShareTone) {
-  return status === 'error' ? 'crit' : failShareTone || 'neutral';
-}
-
 // Last seven reported dates, oldest first — shared by the series map and the drawer's day labels.
 function getTrendDates(rows) {
   const dates = new Set();
@@ -3639,8 +3428,8 @@ function getTrendDates(rows) {
   return Array.from(dates).sort().slice(-7);
 }
 
-// MiniBars 추세 — 일별 실행 수(total_count) 합계를 agent × date 로 group → 최근 7일 series.
-// 7일 모두 0 인 agent → trendMap 미수록 → row 측 "—" 렌더 (정도 점검: 추정값 주입 금지).
+// MiniBars trend — daily run count (total_count) summed per agent × date → last-7-day series.
+// agent at 0 on all 7 days → absent from trendMap → its row renders "None" (no estimated value injected)
 function buildAgentTrendMap(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return new Map();
 
@@ -3669,8 +3458,8 @@ function buildAgentTrendMap(rows) {
   return trendMap;
 }
 
-// SUMMARY_SORT_OPTIONS value → comparator. p95 null 은 가장 뒤로 (음수 magic 으로 sentinel).
-// failures comparator 는 외부 map 의존 → sortAgentSummary 에서 closure 로 wrapping.
+// SUMMARY_SORT_DIR key → comparator · null p95 sorts last (negative magic sentinel)
+// failures comparator depends on an outside map → wrapped in a closure inside sortAgentSummary.
 const AGENT_SUMMARY_COMPARATORS = {
   name:    (a, b) => String(a.agent_name || '').localeCompare(String(b.agent_name || '')),
   runs:    (a, b) => (Number(b.runs)        || 0) - (Number(a.runs)        || 0),
@@ -3701,6 +3490,11 @@ function getFailureSortKeyAg(failure) {
 }
 
 // breakage_rate = breakages / outcomes → failed share of the same population.
+// failed share → the breakages cell's tone; blocked is a compliant halt
+function getBreakageToneAg(failure) {
+  return failureTone(failure ? Number(failure.fail_count) || 0 : 0, getFailedRateAg(failure));
+}
+
 function getFailedRateAg(failure) {
   const breakages = failure ? Number(failure.total_breakages) || 0 : 0;
   const rate = failure ? Number(failure.breakage_rate) || 0 : 0;

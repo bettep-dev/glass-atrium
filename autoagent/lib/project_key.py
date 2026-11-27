@@ -1,7 +1,6 @@
 """Project-isolation key resolver for the self-improvement learning loop.
 
 Deterministic key generator to isolate learning signals per project.
-Storage layout: ``~/.glass-atrium/data/learning/<project_key>/`` (in-vault artifact dir).
 
 3-tier fallback order:
   - Tier 1 (git): ``git remote get-url origin`` → SHA-256 → first 12 hex
@@ -9,7 +8,6 @@ Storage layout: ``~/.glass-atrium/data/learning/<project_key>/`` (in-vault artif
   - Tier 3 (host): ``socket.gethostname()`` → SHA-256 → first 12 hex (when cwd fails)
 
 Each tier is wrapped in its own try/except, falling through to the next on failure.
-Stays inside ``~/.glass-atrium/data/learning/`` (no external path).
 """
 
 from __future__ import annotations
@@ -18,26 +16,14 @@ import hashlib
 import os
 import socket
 import subprocess
-import sys
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
-# The home-anchored data/log-root seam lives under hooks/; pin its dir on sys.path
-# so the import resolves from this autoagent/lib module too (shared SoT with shell).
-_HOOKS_DIR = Path(__file__).resolve().parent.parent.parent / "hooks"
-if str(_HOOKS_DIR) not in sys.path:
-    sys.path.insert(0, str(_HOOKS_DIR))
-import ga_paths  # noqa: E402 — sys.path insert immediately above
-
-# Key length — first 12 chars of the SHA-256 hex digest (collisions negligible + shorter path).
+# Key length — first 12 chars of the SHA-256 hex digest (collisions negligible).
 _KEY_HEX_LEN = 12
 
 # git remote lookup timeout — guards against hangs (local config read, not a network call).
 _GIT_REMOTE_TIMEOUT_SEC = 5
-
-# Learning-signal storage root — inside the vault (no external path).
-_LEARNING_ROOT = ga_paths.get_data_root() / "learning"
 
 # Fallback tier identifier used by resolve (diagnostic).
 ProjectKeyTier = Literal["git", "cwd", "host"]
@@ -132,24 +118,6 @@ def resolve_project_key() -> ProjectKey:
 
     # final fallback — always succeeds
     return ProjectKey(key=_hash12(_hostname()), tier="host")
-
-
-def learning_dir(project_key: str) -> Path:
-    """Return the per-project learning-signal directory path (creating it if absent).
-
-    - Path: ``~/.glass-atrium/data/learning/<project_key>/``.
-    - First access does a parent-inclusive mkdir (idempotent — exist_ok).
-    - Stays inside the vault (no external path).
-
-    Args:
-        project_key: resolve_project_key().key (12 hex) or an arbitrary identifier.
-
-    Returns:
-        Created directory Path.
-    """
-    target = _LEARNING_ROOT / project_key
-    target.mkdir(parents=True, exist_ok=True)
-    return target
 
 
 if __name__ == "__main__":  # pragma: no cover

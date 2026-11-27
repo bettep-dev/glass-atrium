@@ -1,0 +1,488 @@
+// Owner images on orders, report replies and decision answers: upload (type by content, byte size, pixel bounds, page origin), serve
+// (image-only headers), the link from a send, reply or answer to its images (count, reuse, age), the views that return them, the session-side paths.
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/queue.images.route.test.ts
+
+import test, { after, before, describe } from "node:test";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import "dotenv/config";
+
+import Fastify, { type FastifyInstance, type LightMyRequestResponse } from "fastify";
+
+import type { Prisma } from "../src/generated/prisma/client.js";
+import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { IMAGE_BYTES_MAX, UNCLAIMED_IMAGES_MAX, getUnusedCutoff } from "../src/server/queue/images.js";
+import { registerRequestGuards } from "../src/server/request-guards.js";
+import { registerQueueRoutes } from "../src/server/routes/queue.js";
+import { deleteDirectory } from "./lib/remove-dir.js";
+import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
+
+const PORT = 16145;
+const HOST = `127.0.0.1:${PORT}`;
+const SAME_ORIGIN = { "sec-fetch-site": "same-origin" } as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Real 3 × 2 files (PNG built by zlib, JPEG and GIF converted from it by sips); WebP is a real 1 × 1 lossless file
+const IMAGE = {
+  png: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEElEQVR4nGP4z8AAQQxwFgBB0gX7h/C5SAAAAABJRU5ErkJggg==", "base64"),
+  gif: Buffer.from("R0lGODdhAwACAJEAAAAAAP8AAP///wAAACH5BAQAAAAALAAAAAADAAIAAAICjF8AOw==", "base64"),
+  webp: Buffer.from("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "base64"),
+  jpeg: Buffer.from(
+    "/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAA6ADAAQAAAABAAAAAgAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAAgADAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAgICAgICAwICAwUDAwMFBgUFBQUGCAYGBgYGCAoICAgICAgKCgoKCgoKCgwMDAwMDA4ODg4ODw8PDw8PDw8PD//bAEMBAgICBAQEBwQEBxALCQsQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEP/dAAQAAf/aAAwDAQACEQMRAD8A+L6KKK/lM/38P//Z",
+    "base64",
+  ),
+} as const;
+
+const fixtureRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "queue-images-")));
+const imageDir = path.join(fixtureRoot, "images");
+const trackedSessionIds: string[] = [];
+const trackedImageIds: string[] = [];
+let app: FastifyInstance;
+
+before(async () => {
+  await lockQueueRows();
+  app = Fastify({ logger: false });
+  // the app's own guard order (app.ts → buildApp): text/plain gone before any route → the upload sees production parsers
+  registerRequestGuards(app);
+  await registerQueueRoutes(app, { port: PORT, homeDir: path.join(fixtureRoot, "home"), cliPath: "/opt/atrium-test/scripts/atrium-queue.sh", imageDir, scannerPath: "/opt/atrium-test/scripts/lib/secret-scan.sh" });
+  await app.ready();
+});
+
+after(async () => {
+  await app.close();
+  const prisma = getPrisma();
+  await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
+  await prisma.queueImage.deleteMany({ where: { id: { in: trackedImageIds } } });
+  await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
+  await unlockQueueRows();
+  await disconnectPrisma();
+  deleteDirectory(fixtureRoot);
+});
+
+function send(method: "GET" | "POST", url: string, body?: object, headers: Record<string, string> = SAME_ORIGIN): Promise<LightMyRequestResponse> {
+  return app.inject({ method, url, headers: { host: HOST, ...headers }, ...(body === undefined ? {} : { payload: body }) });
+}
+
+async function upload(bytes: Buffer, name: string, contentType: string, headers: Record<string, string> = SAME_ORIGIN): Promise<LightMyRequestResponse> {
+  const response = await app.inject({
+    method: "POST",
+    url: `/api/queue/owner/images?name=${encodeURIComponent(name)}`,
+    headers: { host: HOST, "content-type": contentType, ...headers },
+    payload: bytes,
+  });
+  if (response.statusCode === 201) trackedImageIds.push(response.json().id);
+  return response;
+}
+
+async function uploadPngId(name = "shot-1.png"): Promise<string> {
+  const response = await upload(IMAGE.png, name, "image/png");
+  assert.equal(response.statusCode, 201, response.body);
+  return response.json().id;
+}
+
+async function seedSession(): Promise<string> {
+  const sessionId = randomUUID();
+  trackedSessionIds.push(sessionId);
+  await getPrisma().queueSession.create({
+    data: {
+      sessionId,
+      isConfigDirSet: false,
+      profileLabel: "default",
+      cwd: "/Users/owner/Desktop/git/glass-atrium/monitor",
+      processStartTime: "Mon Nov  9 08:01:12 2026",
+      state: "live",
+      lastSeenAt: new Date(),
+      pid: 700_000 + Math.floor(Math.random() * 100_000),
+    },
+  });
+  return sessionId;
+}
+
+async function seedReport(sessionId: string, overrides: Partial<Prisma.QueueItemUncheckedCreateInput> = {}): Promise<bigint> {
+  const item = await getPrisma().queueItem.create({
+    data: { kind: "report", sessionId, title: "Build finished", body: "All 12 suites green.", isFreeTextAllowed: true, ...overrides },
+  });
+  return item.id;
+}
+
+function getStoredNames(): string[] {
+  try {
+    return readdirSync(imageDir);
+  } catch {
+    return [];
+  }
+}
+
+describe("image upload", () => {
+  const rows = [
+    { name: "a PNG", bytes: IMAGE.png, declared: "image/png", type: "png", file: "png", width: 3, height: 2 },
+    { name: "a JPEG", bytes: IMAGE.jpeg, declared: "image/jpeg", type: "jpeg", file: "jpg", width: 3, height: 2 },
+    { name: "a WebP", bytes: IMAGE.webp, declared: "image/webp", type: "webp", file: "webp", width: 1, height: 1 },
+    { name: "a GIF", bytes: IMAGE.gif, declared: "image/gif", type: "gif", file: "gif", width: 3, height: 2 },
+    { name: "a PNG declared as JPEG", bytes: IMAGE.png, declared: "image/jpeg", type: "png", file: "png", width: 3, height: 2 },
+    { name: "a PNG declared as octet-stream", bytes: IMAGE.png, declared: "application/octet-stream", type: "png", file: "png", width: 3, height: 2 },
+  ];
+  for (const row of rows) {
+    test(`${row.name} is stored under a server-made name with the type and pixel size its bytes carry`, async () => {
+      const response = await upload(row.bytes, "../../etc/passwd shot.png", row.declared);
+      assert.equal(response.statusCode, 201, response.body);
+      const view = response.json();
+      assert.deepEqual(
+        { type: view.type, bytes: view.bytes, width: view.width, height: view.height, name: view.name },
+        { type: row.type, bytes: row.bytes.length, width: row.width, height: row.height, name: "../../etc/passwd shot.png" },
+      );
+      const stored = path.join(imageDir, `${view.id}.${row.file}`);
+      assert.deepEqual(readFileSync(stored), row.bytes);
+      assert.equal(statSync(stored).mode & 0o777, 0o600);
+      assert.equal(statSync(imageDir).mode & 0o777, 0o700);
+    });
+  }
+
+  test("content that is not one of the four image types is refused and nothing is stored", async () => {
+    const refused = [
+      { name: "a PDF named and declared as PNG", bytes: Buffer.from("%PDF-1.7\n1 0 obj << >> endobj\n"), declared: "image/png" },
+      { name: "an SVG declared as PNG", bytes: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), declared: "image/png" },
+      { name: "a PNG cut inside its header", bytes: IMAGE.png.subarray(0, 20), declared: "image/png" },
+      { name: "an empty body", bytes: Buffer.alloc(0), declared: "image/png" },
+    ];
+    for (const row of refused) {
+      const before = getStoredNames().length;
+      const response = await upload(row.bytes, "plan.png", row.declared);
+      assert.equal(response.statusCode, 415, `${row.name}: ${response.body}`);
+      assert.equal(response.json().error, "unsupported_image", row.name);
+      assert.equal(getStoredNames().length, before, row.name);
+    }
+  });
+
+  test("a declared type outside the image types never reaches the upload", async () => {
+    for (const declared of ["text/plain", "multipart/form-data; boundary=x", "image/svg+xml"]) {
+      const response = await upload(IMAGE.png, "shot.png", declared);
+      assert.equal(response.statusCode, 415, `${declared}: ${response.body}`);
+    }
+  });
+
+  test("a body over the size limit is refused and nothing is stored", async () => {
+    const before = getStoredNames().length;
+    const oversized = Buffer.concat([IMAGE.png, Buffer.alloc(IMAGE_BYTES_MAX - IMAGE.png.length + 1)]);
+    const response = await upload(oversized, "huge.png", "image/png");
+    assert.equal(response.statusCode, 413, response.body);
+    assert.equal(getStoredNames().length, before);
+  });
+
+  test("an upload without the monitor page's origin is refused", async () => {
+    const response = await upload(IMAGE.png, "shot.png", "image/png", {});
+    assert.equal(response.statusCode, 403, response.body);
+  });
+
+  test("a missing or multi-line name is refused", async () => {
+    for (const url of ["/api/queue/owner/images", `/api/queue/owner/images?name=${encodeURIComponent("a\nb.png")}`]) {
+      const response = await app.inject({ method: "POST", url, headers: { host: HOST, "content-type": "image/png", ...SAME_ORIGIN }, payload: IMAGE.png });
+      assert.equal(response.statusCode, 400, `${url}: ${response.body}`);
+    }
+  });
+});
+
+// Small bodies declaring a large canvas: the store reads the header alone, so no large file is needed
+describe("pixel bounds", () => {
+  function buildPng(width: number, height: number): Buffer {
+    const bytes = Buffer.from(IMAGE.png);
+    bytes.writeUInt32BE(width, 16);
+    bytes.writeUInt32BE(height, 20);
+    return bytes;
+  }
+
+  function buildJpeg(width: number, height: number): Buffer {
+    const bytes = Buffer.from(IMAGE.jpeg);
+    const frame = bytes.indexOf(Buffer.from([0xff, 0xc0]));
+    bytes.writeUInt16BE(height, frame + 5);
+    bytes.writeUInt16BE(width, frame + 7);
+    return bytes;
+  }
+
+  // GIF89a, 2-colour table, NETSCAPE2.0 loop, two 1 × 1 frames
+  function buildAnimatedGif(width: number, height: number): Buffer {
+    const screen = Buffer.alloc(13);
+    screen.write("GIF89a", 0, "latin1");
+    screen.writeUInt16LE(width, 6);
+    screen.writeUInt16LE(height, 8);
+    screen.writeUInt8(0x80, 10);
+    const loop = Buffer.concat([Buffer.from([0x21, 0xff, 0x0b]), Buffer.from("NETSCAPE2.0", "latin1"), Buffer.from([0x03, 0x01, 0x00, 0x00, 0x00])]);
+    const frame = Buffer.from([0x21, 0xf9, 0x04, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0x02, 0x02, 0x44, 0x01, 0x00]);
+    return Buffer.concat([screen, Buffer.from([0, 0, 0, 0xff, 0xff, 0xff]), loop, frame, frame, Buffer.from([0x3b])]);
+  }
+
+  // VP8X with the animation flag, ANIM, two ANMF frames each holding the 1 × 1 lossless bitstream
+  function buildAnimatedWebp(width: number, height: number): Buffer {
+    const canvas = Buffer.alloc(18);
+    canvas.write("VP8X", 0, "latin1");
+    canvas.writeUInt32LE(10, 4);
+    canvas.writeUInt8(0x02, 8);
+    canvas.writeUIntLE(width - 1, 12, 3);
+    canvas.writeUIntLE(height - 1, 15, 3);
+    const anim = Buffer.alloc(14);
+    anim.write("ANIM", 0, "latin1");
+    anim.writeUInt32LE(6, 4);
+    const bitstream = IMAGE.webp.subarray(12);
+    const frame = Buffer.alloc(24);
+    frame.write("ANMF", 0, "latin1");
+    frame.writeUInt32LE(16 + bitstream.length, 4);
+    frame.writeUIntLE(100, 20, 3);
+    const body = Buffer.concat([Buffer.from("WEBP", "latin1"), canvas, anim, frame, bitstream, frame, bitstream]);
+    const riff = Buffer.alloc(8);
+    riff.write("RIFF", 0, "latin1");
+    riff.writeUInt32LE(body.length, 4);
+    return Buffer.concat([riff, body]);
+  }
+
+  test("an upload whose header declares a side past 16,384 or an area past 50 megapixels is refused and nothing is stored", async () => {
+    const refused = [
+      { name: "a PNG one pixel wider than a side may be", bytes: buildPng(16_385, 1), declared: "image/png" },
+      { name: "a PNG one pixel taller than a side may be", bytes: buildPng(1, 16_385), declared: "image/png" },
+      { name: "a JPEG one pixel wider than a side may be", bytes: buildJpeg(16_385, 2), declared: "image/jpeg" },
+      { name: "a PNG with both sides inside whose area passes", bytes: buildPng(10_000, 5_001), declared: "image/png" },
+      { name: "a PNG wider than the int4 pixel column", bytes: buildPng(0x80000000, 1), declared: "image/png" },
+      { name: "an animated GIF whose canvas passes a side", bytes: buildAnimatedGif(16_385, 1), declared: "image/gif" },
+      { name: "an animated WebP whose canvas passes the area", bytes: buildAnimatedWebp(16_384, 16_384), declared: "image/webp" },
+    ];
+    for (const row of refused) {
+      const before = getStoredNames().length;
+      const response = await upload(row.bytes, "plan.png", row.declared);
+      assert.equal(response.statusCode, 422, `${row.name}: ${response.body}`);
+      assert.equal(response.json().error, "image_too_large", row.name);
+      assert.equal(getStoredNames().length, before, row.name);
+    }
+  });
+
+  test("an upload at the side or the area bound is stored with its header's canvas, an animation's included", async () => {
+    const taken = [
+      { name: "a PNG at the side bound", bytes: buildPng(16_384, 3_051), declared: "image/png", type: "png", width: 16_384, height: 3_051 },
+      { name: "a PNG at the area bound", bytes: buildPng(10_000, 5_000), declared: "image/png", type: "png", width: 10_000, height: 5_000 },
+      { name: "an animated GIF at the area bound", bytes: buildAnimatedGif(10_000, 5_000), declared: "image/gif", type: "gif", width: 10_000, height: 5_000 },
+      { name: "an animated WebP at the side bound", bytes: buildAnimatedWebp(16_384, 3_051), declared: "image/webp", type: "webp", width: 16_384, height: 3_051 },
+    ];
+    for (const row of taken) {
+      const response = await upload(row.bytes, "plan.png", row.declared);
+      assert.equal(response.statusCode, 201, `${row.name}: ${response.body}`);
+      const view = response.json();
+      assert.deepEqual({ type: view.type, width: view.width, height: view.height }, { type: row.type, width: row.width, height: row.height }, row.name);
+    }
+  });
+});
+
+describe("unclaimed upload cap", () => {
+  // Rows as an upload leaves them; `bytes` carries the stored size without writing the file.
+  async function seedUnclaimed(count: number, bytes: number, createdAt = new Date()): Promise<void> {
+    const ids = Array.from({ length: count }, () => randomUUID());
+    trackedImageIds.push(...ids);
+    await getPrisma().queueImage.createMany({ data: ids.map((id) => ({ id, name: "seed.png", type: "png", bytes, width: 3, height: 2, createdAt })) });
+  }
+
+  async function getUnclaimedUsage(): Promise<{ count: number; bytes: number }> {
+    const usage = await getPrisma().queueImage.aggregate({ where: { usedAt: null, createdAt: { gt: getUnusedCutoff(new Date()) } }, _count: true, _sum: { bytes: true } });
+    return { count: usage._count, bytes: usage._sum.bytes ?? 0 };
+  }
+
+  async function deleteUnclaimed(): Promise<void> {
+    await getPrisma().queueImage.deleteMany({ where: { id: { in: trackedImageIds }, usedAt: null } });
+  }
+
+  test("an upload past the unclaimed count cap is refused and stores nothing; past-window uploads do not count", async () => {
+    await deleteUnclaimed();
+    await seedUnclaimed(5, 1, new Date(Date.now() - DAY_MS - 60_000));
+    await seedUnclaimed(UNCLAIMED_IMAGES_MAX.count - 1 - (await getUnclaimedUsage()).count, 1);
+    await uploadPngId("last-free.png");
+    const before = getStoredNames().length;
+    const response = await upload(IMAGE.png, "one-over.png", "image/png");
+    assert.equal(response.statusCode, 429, response.body);
+    assert.equal(response.json().error, "unclaimed_images_full");
+    assert.equal(getStoredNames().length, before);
+    await deleteUnclaimed();
+  });
+
+  test("an upload is taken up to the unclaimed byte cap and refused one byte past it", async () => {
+    await deleteUnclaimed();
+    const free = UNCLAIMED_IMAGES_MAX.bytes - (await getUnclaimedUsage()).bytes;
+    await seedUnclaimed(1, free - IMAGE.png.length);
+    await uploadPngId("exact-fit.png");
+    await getPrisma().queueImage.deleteMany({ where: { id: trackedImageIds.at(-1) } });
+    await getPrisma().queueImage.updateMany({ where: { id: trackedImageIds.at(-2) }, data: { bytes: free - IMAGE.png.length + 1 } });
+    const response = await upload(IMAGE.png, "one-byte-over.png", "image/png");
+    assert.equal(response.statusCode, 429, response.body);
+    assert.equal(response.json().error, "unclaimed_images_full");
+    await deleteUnclaimed();
+  });
+});
+
+describe("image serve", () => {
+  test("a stored image is served back with its checked type, as an image no other site can embed", async () => {
+    const id = await uploadPngId();
+    const response = await send("GET", `/api/queue/owner/images/${id}`, undefined, {});
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.rawPayload, IMAGE.png);
+    assert.equal(response.headers["content-type"], "image/png");
+    assert.equal(response.headers["x-content-type-options"], "nosniff");
+    assert.equal(response.headers["content-disposition"], `inline; filename="${id}.png"`);
+    assert.equal(response.headers["cross-origin-resource-policy"], "same-origin");
+    assert.match(String(response.headers["content-security-policy"]), /default-src 'none'/);
+  });
+
+  test("an unknown id answers 404 and a malformed id 400", async () => {
+    assert.equal((await send("GET", `/api/queue/owner/images/${randomUUID()}`, undefined, {})).statusCode, 404);
+    assert.equal((await send("GET", "/api/queue/owner/images/..%2F..%2Fetc%2Fpasswd", undefined, {})).statusCode, 400);
+  });
+});
+
+describe("images on a send", () => {
+  test("every copy of one send carries the same images, in the order sent, in the item view and the history read", async () => {
+    const targets = [await seedSession(), await seedSession()];
+    const ids = [await uploadPngId("first.png"), await uploadPngId("second.png")];
+    const sent = await send("POST", "/api/queue/owner/messages/send", { sessionIds: targets, text: "Fix the header.", attachmentIds: ids });
+    assert.equal(sent.statusCode, 201, sent.body);
+    for (const created of sent.json().items) {
+      const view = (await send("GET", `/api/queue/owner/items/${created.id}`, undefined, {})).json();
+      assert.deepEqual(view.attachments.map((image: { id: string; name: string }) => [image.id, image.name]), [[ids[0], "first.png"], [ids[1], "second.png"]]);
+    }
+    const history = (await send("GET", `/api/queue/owner/orders?sessionIds=${targets[0]}`, undefined, {})).json();
+    assert.deepEqual(history.items[0].attachments.map((image: { id: string }) => image.id), ids);
+  });
+
+  test("a send naming an image it cannot take creates nothing and leaves its other images free", async () => {
+    const target = await seedSession();
+    const used = await uploadPngId();
+    assert.equal((await send("POST", "/api/queue/owner/messages/send", { sessionIds: [target], text: "First.", attachmentIds: [used] })).statusCode, 201);
+    const old = await uploadPngId();
+    await getPrisma().queueImage.update({ where: { id: old }, data: { createdAt: new Date(Date.now() - DAY_MS - 60_000) } });
+    const rows = [
+      { name: "an image another send already used", taken: used },
+      { name: "an upload older than the clean-up window", taken: old },
+      { name: "an id no upload has", taken: randomUUID() },
+    ];
+    for (const row of rows) {
+      const free = await uploadPngId();
+      const before = await getPrisma().queueItem.count({ where: { sessionId: target } });
+      const response = await send("POST", "/api/queue/owner/messages/send", { sessionIds: [target], text: "Second.", attachmentIds: [free, row.taken] });
+      assert.equal(response.statusCode, 409, `${row.name}: ${response.body}`);
+      assert.equal(response.json().error, "image_unavailable", row.name);
+      assert.equal(await getPrisma().queueItem.count({ where: { sessionId: target } }), before, row.name);
+      assert.equal((await getPrisma().queueImage.findUniqueOrThrow({ where: { id: free } })).usedAt, null, row.name);
+    }
+  });
+
+  test("a send takes at most 8 images, each named once, and never images without text", async () => {
+    const target = await seedSession();
+    const ids = Array.from({ length: 9 }, () => randomUUID());
+    const rows = [
+      { name: "9 images", body: { sessionIds: [target], text: "Look.", attachmentIds: ids }, path: "attachmentIds" },
+      { name: "one image twice", body: { sessionIds: [target], text: "Look.", attachmentIds: [ids[0], ids[0]] }, path: "attachmentIds" },
+      { name: "images with a blank text", body: { sessionIds: [target], text: "  ", attachmentIds: [ids[0]] }, path: "text" },
+    ];
+    for (const row of rows) {
+      const response = await send("POST", "/api/queue/owner/messages/send", row.body);
+      assert.equal(response.statusCode, 400, `${row.name}: ${response.body}`);
+      assert.deepEqual(response.json().issues.map((issue: { path: string }) => issue.path), [row.path], row.name);
+    }
+  });
+});
+
+describe("images on a report reply", () => {
+  test("a reply links its images to the report", async () => {
+    const reportId = await seedReport(await seedSession());
+    const id = await uploadPngId("marked.png");
+    const response = await send("POST", `/api/queue/owner/items/${reportId}/reply`, { text: "See the red box.", attachmentIds: [id] });
+    assert.equal(response.statusCode, 200, response.body);
+    const view = (await send("GET", `/api/queue/owner/items/${reportId}`, undefined, {})).json();
+    assert.deepEqual(view.attachments.map((image: { id: string }) => image.id), [id]);
+  });
+
+  test("a reply that loses the open race links nothing and leaves its image free", async () => {
+    const reportId = await seedReport(await seedSession(), { status: "seen" });
+    const id = await uploadPngId();
+    const response = await send("POST", `/api/queue/owner/items/${reportId}/reply`, { text: "Too late.", attachmentIds: [id] });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal((await getPrisma().queueImage.findUniqueOrThrow({ where: { id } })).usedAt, null);
+    assert.equal(await getPrisma().queueItemImage.count({ where: { itemId: reportId } }), 0);
+  });
+});
+
+describe("images on a decision answer", () => {
+  const OPTIONS = [
+    { code: "R1", label: "Keep the index", pros: "fast reads", cons: "slower writes" },
+    { code: "R2", label: "Drop the index", pros: "fast writes", cons: "slow reads" },
+  ];
+  const seedDecision = (sessionId: string, overrides: Partial<Prisma.QueueItemUncheckedCreateInput> = {}) =>
+    seedReport(sessionId, { kind: "decision", title: "Keep the index?", options: OPTIONS, recommendedCode: "R1", ...overrides });
+  const getAttachedIds = (view: { attachments: Array<{ id: string }> }) => view.attachments.map((image) => image.id);
+
+  test("an answer's images, an approval's included, reach the owner's item view, the done list and the session", async () => {
+    for (const isApprovalClass of [false, true]) {
+      const sessionId = await seedSession();
+      const decisionId = await seedDecision(sessionId, { isApprovalClass });
+      const id = await uploadPngId("marked.png");
+      const response = await send("POST", `/api/queue/owner/items/${decisionId}/answer`, { code: "R1", text: "See the red box.", attachmentIds: [id] });
+      assert.equal(response.statusCode, 200, `approval ${isApprovalClass}: ${response.body}`);
+      const ownerView = (await send("GET", `/api/queue/owner/items/${decisionId}`, undefined, {})).json();
+      const done = (await send("GET", `/api/queue/owner/orders?kind=item&sessionIds=${sessionId}`, undefined, {})).json();
+      const session = (await send("GET", `/api/queue/items/${decisionId}?sessionId=${sessionId}`, undefined, {})).json();
+      assert.deepEqual(
+        [getAttachedIds(ownerView), getAttachedIds(done.items[0]), session.attachments.map((image: { path: string }) => image.path)],
+        [[id], [id], [path.join(imageDir, `${id}.png`)]],
+        `approval ${isApprovalClass}`,
+      );
+    }
+  });
+
+  test("an answer with images is refused where the decision takes no words, and with neither a code nor a text", async () => {
+    const sessionId = await seedSession();
+    const rows = [
+      { name: "a decision that takes an option code only", seed: { isFreeTextAllowed: false }, body: { code: "R1" }, error: "free_text_not_allowed", reason: "this item takes an option code only" },
+      { name: "neither a code nor a text", seed: {}, body: {}, error: "invalid_input", reason: "an option code or free text is required" },
+    ];
+    for (const row of rows) {
+      const decisionId = await seedDecision(sessionId, row.seed);
+      const id = await uploadPngId();
+      const response = await send("POST", `/api/queue/owner/items/${decisionId}/answer`, { ...row.body, attachmentIds: [id] });
+      assert.equal(response.statusCode, 400, `${row.name}: ${response.body}`);
+      const { error, reason, issues } = response.json();
+      assert.deepEqual([error, reason ?? issues[0].message], [row.error, row.reason], row.name);
+      assert.equal((await getPrisma().queueItem.findUniqueOrThrow({ where: { id: decisionId } })).status, "open", row.name);
+      assert.equal((await getPrisma().queueImage.findUniqueOrThrow({ where: { id } })).usedAt, null, row.name);
+    }
+  });
+
+  test("an answer naming an image it cannot take records no answer", async () => {
+    const sessionId = await seedSession();
+    const decisionId = await seedDecision(sessionId);
+    const response = await send("POST", `/api/queue/owner/items/${decisionId}/answer`, { code: "R2", text: "Drop it.", attachmentIds: [randomUUID()] });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(response.json().error, "image_unavailable");
+    const item = await getPrisma().queueItem.findUniqueOrThrow({ where: { id: decisionId } });
+    assert.deepEqual([item.status, item.answerCode, item.answerText, item.answeredAt], ["open", null, null, null]);
+  });
+
+  test("an answer that loses the open race links nothing and leaves its image free", async () => {
+    const decisionId = await seedDecision(await seedSession(), { status: "answered" });
+    const id = await uploadPngId();
+    const response = await send("POST", `/api/queue/owner/items/${decisionId}/answer`, { code: "R1", attachmentIds: [id] });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal((await getPrisma().queueImage.findUniqueOrThrow({ where: { id } })).usedAt, null);
+    assert.equal(await getPrisma().queueItemImage.count({ where: { itemId: decisionId } }), 0);
+  });
+});
+
+describe("images on the session-side read", () => {
+  test("the owning session gets each image's absolute file path; another session gets nothing", async () => {
+    const owner = await seedSession();
+    const id = await uploadPngId();
+    const sent = (await send("POST", "/api/queue/owner/messages/send", { sessionIds: [owner], text: "Fix it.", attachmentIds: [id] })).json();
+    const itemId = sent.items[0].id;
+    const own = await send("GET", `/api/queue/items/${itemId}?sessionId=${owner}`, undefined, {});
+    assert.equal(own.statusCode, 200, own.body);
+    assert.deepEqual(own.json().attachments.map((image: { path: string }) => image.path), [path.join(imageDir, `${id}.png`)]);
+    const other = await send("GET", `/api/queue/items/${itemId}?sessionId=${await seedSession()}`, undefined, {});
+    assert.equal(other.statusCode, 404);
+  });
+});

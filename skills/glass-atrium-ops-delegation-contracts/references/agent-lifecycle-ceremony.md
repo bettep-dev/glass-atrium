@@ -16,7 +16,6 @@
 2. **Create-vs-extend approval (HUMAN PAUSE)** — present the dry-run verdict and a create-vs-extend recommendation; author only on explicit approval to create.
 3. **Author body** — delegate: glass-atrium-intel-researcher (domain/capability research) + glass-atrium-meta-prompt-engineer (system prompt per CRISP) → authored body file.
 4. **Foreground-commit approval (HUMAN PAUSE)** — Harness Path Protection Rule 1: the user explicitly OKs the path + change before the commit runs.
-   - Rule 2's staged lane does not apply: the commit is a main-session foreground Bash call, not an Agent spawn, and the user watches it run.
 5. **Commit via direct Bash CLI** — `python3 -m agent_lifecycle add <name> --scope DEV --origin user --domains "…" --gate-q1 <v> --gate-q2 <v> --body-file <path>`.
    - It writes the registry entry `~/.glass-atrium/agent-registry.json` and the body `~/.glass-atrium/agents/<name>.md`, then symlinks the body into the `~/.claude/agents/` farm — the only write Harness Path Protection covers.
 6. **Reconcile (MANDATORY post-commit gate)** — run skill `glass-atrium-ops-reconcile-inject` (`python3 -m agent_lifecycle sync-inject`) to fill the tracked roster arrays.

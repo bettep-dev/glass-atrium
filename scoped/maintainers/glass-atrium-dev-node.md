@@ -14,7 +14,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | Reader | What it reads | Consequence |
 |---|---|---|
 | `hooks/inject-scope-rules.sh` → `read_max_turns` | `^maxTurns:` at column 0 of the frontmatter | the turn-budget meter is sized from it |
-| `hooks/enforce-harness-critical.sh` | live-install frontmatter identity keys (name, tools, scope) and the fence-line count | a live edit touching either is blocked for every caller (LLM06) |
+| `lib/ga-doctor.sh` → `get_integrity_drift` | live frontmatter identity keys (name, tools, scope) and text outside EDITABLE regions | a live edit to either is reported as drift, never blocked |
 
 ## `## Prohibitions` is not a required heading
 

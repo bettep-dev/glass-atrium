@@ -1,6 +1,6 @@
 // Models & budgets controls on their DESIGN.md §7.15 tiers, measured in a real browser on the shipped tokens.css, base.css and type
-// scale, rendered from the shipped components: the file-count fold on the interactive pill, the save-results fold on the disclosure
-// atom — each keeps one box closed, open and in every pointer/keyboard state (§7.16) — the Cost & usage links as 24 targets, and a
+// scale, rendered from the shipped components: the save-results fold on the disclosure
+// atom — each keeps one box closed, open and in every pointer/keyboard state (§7.16) — the Cost & usage links as 24 targets, the agent selection bar at one height in every tick state, and a
 // field's inline Reset as a 24 target in a saved line that keeps its height whether the field is overridden or not.
 // Runner: npx tsx --test test/model-config.control-tiers.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
@@ -13,6 +13,7 @@ import { chromium } from "playwright";
 
 import { createReactStub, collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 import { createControlProbe } from "./lib/control-probe.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STYLES = resolve(HERE, "..", "public", "styles");
@@ -32,7 +33,7 @@ const TYPE_SCALE_CSS = findNodes(renderScreen(UI.TypeScaleStyle({})), (n) => n.t
   .map((n) => collectText(n))
   .join("\n");
 
-// The app loads Tailwind preflight and utilities from its CDN; these are the rules the measured geometry depends on, at their shipped values.
+// The app loads Tailwind preflight and utilities from its CDN; these are the rules the measured geometry depends on, at their shipped values — role keys come from the shared shim.
 const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 solid; }
   html { line-height: 1.5; font-family: ui-sans-serif, system-ui, sans-serif; }
   svg { display: block; vertical-align: middle; }
@@ -42,11 +43,11 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   summary { display: list-item; }
   .flex { display: flex; } .inline-flex { display: inline-flex; } .flex-col { flex-direction: column; } .flex-wrap { flex-wrap: wrap; }
   .items-center { align-items: center; } .min-w-0 { min-width: 0; } .max-w-full { max-width: 100%; } .shrink-0 { flex-shrink: 0; }
-  .gap-1 { gap: 0.25rem; } .gap-1\\.5 { gap: 0.375rem; } .gap-2 { gap: 0.5rem; } .gap-x-2 { column-gap: 0.5rem; } .gap-x-3 { column-gap: 0.75rem; }
-  .gap-y-1 { row-gap: 0.25rem; } .mt-1 { margin-top: 0.25rem; } .pl-3 { padding-left: 0.75rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
+  .gap-1 { gap: 0.25rem; } .gap-1\\.5 { gap: 0.375rem; } .gap-2 { gap: 0.5rem; }
+  .mt-1 { margin-top: 0.25rem; } .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
   .py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; } .border { border-width: 1px; } .border-b { border-bottom-width: 1px; }
   .underline { text-decoration-line: underline; } .underline-offset-2 { text-underline-offset: 2px; }
-  .text-right { text-align: right; } .whitespace-nowrap { white-space: nowrap; } .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
+  .text-right { text-align: right; } .table-fixed { table-layout: fixed; } .tabular-nums { font-variant-numeric: tabular-nums; } .whitespace-nowrap { white-space: nowrap; } .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
   .font-medium { font-weight: 500; } .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }`;
 
@@ -54,14 +55,13 @@ const noop = () => undefined;
 const MODEL = "claude-opus-5-5";
 const DOMAINS = [
   {
-    domain: "model.dev",
+    domain: "model.daemon_cycle_worker",
     desired: MODEL,
     actual: MODEL,
     drift: false,
-    apply_mode: "next-spawn",
+    apply_mode: "next-cycle",
     editable: true,
     pricing_known: true,
-    files: ["agents/glass-atrium-dev-front.md", "agents/glass-atrium-dev-react.md"].map((file) => ({ file, model: MODEL })),
   },
 ];
 const BUDGETS = [{ domain: "budget.worker_max_usd", desired: "10.00", actual: "10.00", drift: false, apply_mode: "next-cycle" }];
@@ -69,8 +69,8 @@ const MODELS = getMarkup("DomainsSectionMC", {
   state: "ready",
   domains: DOMAINS,
   knownModels: [MODEL],
-  form: { models: { "model.dev": MODEL } },
-  baseline: { models: { "model.dev": MODEL } },
+  form: { models: { "model.daemon_cycle_worker": MODEL } },
+  baseline: { models: { "model.daemon_cycle_worker": MODEL } },
   errors: {},
   isStale: false,
   onModelChange: noop,
@@ -84,34 +84,41 @@ const CAPS = getMarkup("BudgetsSectionMC", {
   isStale: false,
   onBudgetChange: noop,
 });
-const RESULTS = getMarkup("SurfaceResultsCardMC", {
-  results: [
-    { status: "skipped", surface: "agents/glass-atrium-dev-front.md", reason: "file is read-only" },
-    { status: "ok", surface: "agents/glass-atrium-dev-react.md" },
-  ],
-  onDismiss: noop,
+
+const AGENTS = getMarkup("AgentModelsSectionMC", {
+  state: "ready",
+  agents: [{ name: "glass-atrium-dev-android", file: "glass-atrium-dev-android.md", role: "Android apps in Kotlin and Compose", pin: MODEL, registered: true }],
+  unreadable: [],
+  knownModels: [MODEL],
+  onAgentsRead: noop,
+  showToast: noop,
 });
 
-// a field's saved line: overridden (Saved value + Reset) and back at the saved value (the empty slot)
-const getSavedLine = (overridden: boolean) => getMarkup("GhostResetMC", { overridden, defaultValue: overridden ? MODEL : null, onReset: noop });
+// the selection bar in its card slot: nothing ticked, three ticked, and Apply pressed with no model chosen
+const getBar = (count: number, isModelMissing: boolean) =>
+  `<div class="card-bar">${getMarkup("AgentBarMC", { count, model: "", knownModels: [MODEL], isModelMissing, isApplying: false, onModel: noop, onApply: noop, onClear: noop })}</div>`;
+const BAR_STATES = { idle: getBar(0, false), ticked: getBar(3, false), missing: getBar(3, true) } as const;
+// the widest one-line content (99 ticked → `Apply to 99 agents`), and the three states again for the narrow form; widths set per test
+const NARROW_BARS = { fit: getBar(99, false), idle: getBar(0, false), ticked: getBar(99, false), missing: getBar(99, true) } as const;
 
-const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
+// a field's line slot: overridden (Saved value + Reset) and back at the saved value (the empty slot)
+const getSavedLine = (overridden: boolean) =>
+  getMarkup("LiveValueMC", { value: MODEL, overridden, savedValue: overridden ? MODEL : null, onReset: noop });
+
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="models" style="width: 760px; padding: 24px;">${MODELS}</div>
+  <div id="agents" style="width: 1100px; padding: 24px;">${AGENTS}</div>
+${Object.entries(BAR_STATES).map(([state, bar]) => `  <div id="bar-${state}" style="width: 1100px; padding: 24px;">${bar}</div>`).join("\n")}
+${Object.entries(NARROW_BARS).map(([state, bar]) => `  <div id="bar-narrow-${state}">${bar}</div>`).join("\n")}
   <div id="caps" style="width: 560px; padding: 24px;">${CAPS}</div>
-  <div id="results" style="width: 560px; padding: 24px;">${RESULTS}</div>
   <div id="saved-overridden" style="width: 280px; padding: 24px;">${getSavedLine(true)}</div>
   <div id="saved-empty" style="width: 280px; padding: 24px;">${getSavedLine(false)}</div>
 </body></html>`;
 
-const FILES = "#models td details";
-const FILES_SUMMARY = `${FILES} > summary`;
-const RESULTS_FOLD = "#results details";
-const RESULTS_SUMMARY = `${RESULTS_FOLD} > summary`;
-
 let browser: Browser;
 let page: Page;
 let cdp: CDPSession;
-const { readBox, readStyle, assertBoxHeldAcrossStates, assertFoldOnOneBox } = createControlProbe(() => page, () => cdp);
+const { readBox, readStyle } = createControlProbe(() => page, () => cdp);
 
 before(async () => {
   browser = await chromium.launch();
@@ -120,6 +127,7 @@ before(async () => {
   await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
   await page.addStyleTag({ path: resolve(STYLES, "base.css") });
   await page.addStyleTag({ content: TYPE_SCALE_CSS });
+  await page.addStyleTag({ content: getRoleKeyCss() });
   cdp = await page.context().newCDPSession(page);
   await cdp.send("DOM.enable");
   await cdp.send("CSS.enable");
@@ -127,35 +135,6 @@ before(async () => {
 
 after(async () => {
   await browser?.close();
-});
-
-describe("the In effect file-count fold sits on the interactive pill", () => {
-  test("its summary is a 32 bordered pill whose chevron alone marks it open", () => assertFoldOnOneBox(FILES, FILES_SUMMARY));
-
-  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(FILES_SUMMARY));
-
-  test("it draws the pill edge and inline padding", async () => {
-    assert.equal(await readStyle(FILES_SUMMARY, "border-top-width"), "1px");
-    assert.equal(await readStyle(FILES_SUMMARY, "padding-left"), "8px");
-  });
-
-  // the pill makes the In effect cell a control cell → its first line still centres on the row's Model select
-  test("the In effect first line centres on the Model select in its row", async () => {
-    const offset = await page.$eval("#models tbody tr", (tr) => {
-      const select = tr.querySelector("select")!.getBoundingClientRect();
-      const range = document.createRange();
-      range.selectNodeContents(tr.querySelector("td:last-child .tbl-first-line")!);
-      const line = range.getClientRects()[0];
-      return line.top + line.height / 2 - (select.top + select.height / 2);
-    });
-    assert.ok(Math.abs(offset) <= 0.5, `first line ${offset}px off the select centre`);
-  });
-});
-
-describe("the save-results fold opens on the disclosure atom", () => {
-  test("its summary is a 32 disclosure whose chevron alone marks it open", () => assertFoldOnOneBox(RESULTS_FOLD, RESULTS_SUMMARY));
-
-  test("hover, focus-visible and active keep its box", () => assertBoxHeldAcrossStates(RESULTS_SUMMARY));
 });
 
 // engine floors the half-leading → only a whole-pixel line box keeps any face within 0.5; the line-height check is face-independent
@@ -175,8 +154,8 @@ const assertTextOnTargetCentre = async (selector: string) => {
 
 describe("the Cost & usage links are 24 targets", () => {
   for (const [name, selector] of [
-    ["the model card's Cost & usage link", "#models a[href='#cost']"],
-    ["a cap's Recent costs link", "#caps a[href='#cost']"],
+    ["the agent card's Cost & usage link", "#agents a[href='#cost']"],
+    ["the caps card's Recent costs link", "#caps a[href='#cost']"],
   ] as const) {
     test(`${name} is 24 tall with its text on the box's centre line`, () => assertTextOnTargetCentre(selector));
   }
@@ -184,7 +163,7 @@ describe("the Cost & usage links are 24 targets", () => {
 
 describe("a field's inline Reset is a 24 target in a slot that holds its height", () => {
   const RESET = "#saved-overridden button[aria-label='Reset this field to the saved value']";
-  const SLOT = (state: "overridden" | "empty") => `#saved-${state} [data-slot='saved-line']`;
+  const SLOT = (state: "overridden" | "empty") => `#saved-${state} [data-slot='line-slot']`;
 
   test("Reset is 24 tall with its text on the box's centre line", () => assertTextOnTargetCentre(RESET));
 
@@ -192,5 +171,69 @@ describe("a field's inline Reset is a 24 target in a slot that holds its height"
     const overridden = await readBox(SLOT("overridden"));
     const empty = await readBox(SLOT("empty"));
     assert.equal(overridden.height, empty.height, `overridden ${overridden.height} vs empty ${empty.height}`);
+  });
+});
+
+describe("the selection bar never moves a row as ticks come and go", () => {
+  test("idle, three ticked and the missing-model alert lay the bar out at one 48 height", async () => {
+    const heights = await Promise.all(Object.keys(BAR_STATES).map(async (state) => [state, (await readBox(`#bar-${state} .card-bar`)).height] as const));
+    assert.deepEqual(Object.fromEntries(heights), { idle: 48, ticked: 48, missing: 48 });
+  });
+
+  test("the count cell keeps its width when the missing-model alert takes its place", async () => {
+    const cell = (state: string) => readBox(`#bar-${state} .agent-bar-line > :first-child`);
+    const [count, alert] = await Promise.all([cell("ticked"), cell("missing")]);
+    assert.equal(alert.width, count.width, `count ${count.width} vs alert ${alert.width}`);
+  });
+});
+
+// the bar's break width, read from the shipped @container rule → the hosts are sized against it, card padding added
+async function setNarrowHosts(offsetPx: number): Promise<number> {
+  return page.evaluate((offset) => {
+    const rule = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]).find((r) => r instanceof CSSContainerRule && r.containerName === "agent-bar") as CSSContainerRule | undefined;
+    const breakPx = Number(/(\d+(?:\.\d+)?)px/.exec(rule?.containerQuery ?? "")?.[1]);
+    const pad = parseFloat(getComputedStyle(document.querySelector("#bar-narrow-fit .card-bar")!).paddingLeft);
+    for (const host of document.querySelectorAll<HTMLElement>("[id^=bar-narrow-]")) host.style.width = `${breakPx + offset + 2 * pad}px`;
+    return breakPx;
+  }, offsetPx);
+}
+
+async function readBarParts(host: string) {
+  return page.evaluate((id) => {
+    const root = document.getElementById(id)!;
+    const box = root.querySelector(".agent-bar")!.getBoundingClientRect();
+    const parts = ["select", ".btn.primary", ".agent-bar-line > :last-child", ".agent-bar-line > :first-child"].map((sel) => root.querySelector(sel)!.getBoundingClientRect());
+    const [select, apply, clear, count] = parts.map((r) => ({ top: r.top, bottom: r.bottom, left: r.left, right: r.right, mid: (r.top + r.bottom) / 2 }));
+    return { select, apply, clear, count, right: box.right, left: box.left };
+  }, host);
+}
+
+describe("the selection bar keeps one line while its content fits, and two arranged lines below that", () => {
+  test("at the break width the widest ticked bar is one line inside the card", async () => {
+    const breakPx = await setNarrowHosts(0);
+    const bar = await readBarParts("bar-narrow-fit");
+
+    assert.ok(breakPx > 0, "the bar's @container break is shipped");
+    for (const part of [bar.select, bar.apply, bar.clear]) assert.ok(Math.abs(part.mid - bar.count.mid) <= 1, `one line: ${part.mid} vs ${bar.count.mid}`);
+    assert.ok(bar.clear.right <= bar.right + 0.5, `Clear ends at ${bar.clear.right}, inside the bar's ${bar.right}`);
+  });
+
+  test("one px under the break, the count and Clear lead and the select and Apply follow on a second line", async () => {
+    await setNarrowHosts(-1);
+    const bar = await readBarParts("bar-narrow-ticked");
+
+    assert.ok(Math.abs(bar.clear.mid - bar.count.mid) <= 1, `line 1 holds count and Clear: ${bar.clear.mid} vs ${bar.count.mid}`);
+    assert.ok(Math.abs(bar.clear.right - bar.right) <= 1, `Clear ends at the bar's end: ${bar.clear.right} vs ${bar.right}`);
+    assert.ok(bar.select.top >= Math.max(bar.count.bottom, bar.clear.bottom), "the select sits under line 1");
+    assert.ok(Math.abs(bar.apply.mid - bar.select.mid) <= 1, "Apply shares the select's line");
+    assert.ok(Math.abs(bar.select.left - bar.left) <= 1, `line 2 starts at the bar's start: ${bar.select.left} vs ${bar.left}`);
+  });
+
+  test("under the break, idle, ticked and the missing-model alert hold one bar height", async () => {
+    await setNarrowHosts(-1);
+    const heights = await Promise.all(["idle", "ticked", "missing"].map(async (state) => (await readBox(`#bar-narrow-${state} .card-bar`)).height));
+
+    assert.ok(heights[1] > 48, `the ticked bar takes two lines (${heights[1]})`);
+    assert.deepEqual(heights, [heights[1], heights[1], heights[1]], `idle / ticked / missing: ${heights}`);
   });
 });

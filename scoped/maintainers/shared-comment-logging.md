@@ -25,6 +25,7 @@ Maintainer-facing material for that rule file. Nothing here binds an agent; the 
   - `hooks/test/inject-scope-single-delivery.bats` → `RETIRED_BLOCKS` names that anchor, and `get_needle` matches it as a substring (`grep -F`), never at line start.
   - The whole matching line becomes the needle, asserted once per member and zero times otherwise.
   - `hooks/test/inject-scope-rules-nodrop.bats` → `RETIRED_NEEDLES` asserts the phrase `Comment-rule core` absent from slot 1; the check proves nothing once the phrase is gone from the source.
+- **Keep the Reach line** under **Single Source of Truth**: the rest of the rule file governs comments and logs only, so without it a reviewer reads README prose as out of scope.
 
 ## Removed as redundant — do not re-add
 

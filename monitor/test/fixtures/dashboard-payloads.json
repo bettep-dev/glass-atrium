@@ -430,36 +430,6 @@
       ]
      },
      {
-      "matcher": "Write",
-      "hooks": [
-       {
-        "command": "~/.glass-atrium/hooks/block-doc-routing-leak.sh",
-        "type": "command",
-        "timeout": null
-       }
-      ]
-     },
-     {
-      "matcher": "Write",
-      "hooks": [
-       {
-        "command": "~/.glass-atrium/hooks/block-md-creation.sh",
-        "type": "command",
-        "timeout": null
-       }
-      ]
-     },
-     {
-      "matcher": "Bash",
-      "hooks": [
-       {
-        "command": "~/.glass-atrium/hooks/block-no-verify.sh",
-        "type": "command",
-        "timeout": null
-       }
-      ]
-     },
-     {
       "matcher": "Bash",
       "hooks": [
        {
@@ -473,27 +443,7 @@
       "matcher": "Write|Edit",
       "hooks": [
        {
-        "command": "~/.glass-atrium/hooks/enforce-config-protection.sh",
-        "type": "command",
-        "timeout": null
-       }
-      ]
-     },
-     {
-      "matcher": "Write|Edit",
-      "hooks": [
-       {
         "command": "~/.glass-atrium/hooks/enforce-delegation.sh",
-        "type": "command",
-        "timeout": null
-       }
-      ]
-     },
-     {
-      "matcher": "Agent",
-      "hooks": [
-       {
-        "command": "~/.glass-atrium/hooks/enforce-foreground-harness.sh",
         "type": "command",
         "timeout": null
        }
@@ -593,16 +543,6 @@
       "matcher": "Bash",
       "hooks": [
        {
-        "command": "~/.glass-atrium/hooks/enforce-harness-critical.sh",
-        "type": "command",
-        "timeout": null
-       }
-      ]
-     },
-     {
-      "matcher": "Bash",
-      "hooks": [
-       {
         "command": "~/.glass-atrium/hooks/advisory-egress-secret.sh",
         "type": "command",
         "timeout": null
@@ -624,16 +564,6 @@
       "hooks": [
        {
         "command": "~/.glass-atrium/hooks/validate-pre-write-raw.sh",
-        "type": "command",
-        "timeout": null
-       }
-      ]
-     },
-     {
-      "matcher": "Write|Edit|MultiEdit",
-      "hooks": [
-       {
-        "command": "~/.glass-atrium/hooks/enforce-harness-critical.sh",
         "type": "command",
         "timeout": null
        }
@@ -1768,7 +1698,12 @@
    "total_count": 4682,
    "period_start": "2026-08-12",
    "period_end": "2026-08-19",
-   "timezone": "Asia/Seoul"
+   "timezone": "Asia/Seoul",
+   "bucket_dates": {
+    "first": "2026-08-12",
+    "last": "2026-08-19",
+    "count": 8
+   }
   },
   "fetched_at": "2026-08-19T09:03:06.153Z"
  }

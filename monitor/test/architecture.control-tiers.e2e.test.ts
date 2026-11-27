@@ -66,14 +66,14 @@ const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 soli
   svg { display: block; vertical-align: middle; }
   button { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; background-color: transparent; }
   summary { display: list-item; }
-  .font-mono { font-family: ui-monospace, SFMono-Regular, monospace; }
+  code { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 1em; }
   .fs-meta { font-size: var(--fs-meta); line-height: 1.4; } .rotate-90 { transform: rotate(90deg); }`;
 
 // reference atoms the System map controls must match
 const REFERENCES = `<button id="ref-btn-icon" type="button" class="btn icon"><svg width="14" height="14"></svg></button>
   <button id="ref-btn-sm" type="button" class="btn sm">Reset</button>
   <button id="ref-disclosure" type="button" class="group disclosure fs-meta"><span>Runs</span></button>`;
-const PAGE = `<!doctype html><html data-theme="dark"><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0;">
   <div id="refs" style="padding: 24px; display: flex; gap: 8px;">${REFERENCES}</div>
   <div style="width: 900px; height: 520px; padding: 24px; display: flex; flex-direction: column;">${CANVAS}</div>
   <div style="width: 420px; padding: 24px;">${HOOK_CHAIN}</div>

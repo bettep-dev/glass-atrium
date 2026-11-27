@@ -12,7 +12,8 @@ import contextlib
 import math
 import random
 import statistics
-from collections.abc import Sequence
+from collections.abc import Callable, Collection, Sequence
+from fractions import Fraction
 from functools import cache
 from statistics import NormalDist
 from typing import NamedTuple
@@ -33,6 +34,7 @@ _GRID_POINTS = 201  # odd → Simpson's rule
 _TAIL_SDS = 10.0
 _SEARCH_TOLERANCE = 1e-10
 _BOUNDARY_SEARCH_MAX = 40.0
+_OBSERVED_DRAW = 0  # the observed draw's member index in a randomization reference; re-draws count from 1
 
 # (score-scale point, Simpson weight x sub-density) pairs of the continuation region
 _Mass = list[tuple[float, float]]
@@ -61,12 +63,34 @@ class ArmDesignEffect(NamedTuple):
     replicates: int  # defined resamples; an undefined one (an arm empty, no variance) is dropped
 
 
+class RandomizationLook(NamedTuple):
+    """One look of the follow-up count's randomization test."""
+
+    statistic: float | None  # the observed draw's; None = undefined at this look
+    critical: float | None  # None = no member can cross at this look
+    budget: int  # members the alpha spent through this look admits as crossed; 0 = too few re-draws for it
+    crossed: frozenset[int]  # members past a cut at or before this look
+
+    @property
+    def is_crossed(self) -> bool:
+        """The observed draw crossed at or before this look."""
+        return _OBSERVED_DRAW in self.crossed
+
+
 class _ArmTotals(NamedTuple):
     """One session's per-arm sufficient statistics, indexed by arm (0 control, 1 treatment)."""
 
     counts: tuple[int, int]
     sums: tuple[float, float]
     squares: tuple[float, float]
+
+
+class _ArmDifference(NamedTuple):
+    """The treatment-minus-control mean beside both variance forms of it."""
+
+    value: float
+    clustered: float  # Σ over sessions of (Σ z)²
+    independent: float  # Σ z²
 
 
 def get_fixed_sample_size(
@@ -338,8 +362,152 @@ def _get_arm_totals(clusters: Sequence[Sequence[tuple[int, float]]]) -> list[_Ar
     return totals
 
 
+def get_independent_z(spawns: Sequence[tuple[int, float]]) -> float | None:
+    """The treatment-minus-control mean over its independent-spawn standard error.
+
+    Spawns hold (arm, outcome), arm 0 control / 1 treatment; their sessions are not read. None
+    when undefined: an empty arm, or no spread in either arm in exact arithmetic. ValueError on
+    an arm outside 0/1.
+    """
+    if not {0, 1} <= {arm for arm, _ in spawns}:
+        return None
+    # one spawn per session → the clustered term is the independent one, and its exact zero test serves
+    totals = _get_arm_totals([[spawn] for spawn in spawns])
+    difference = _get_arm_difference(totals)
+    if difference.independent <= 0 or _is_clustered_zero(totals):
+        return None
+    return difference.value / math.sqrt(difference.independent)
+
+
+def get_randomization_look(
+    clusters: Sequence[Sequence[tuple[str, int, float]]],
+    *,
+    get_arm: Callable[[str, str], int],
+    salt_namespace: str,
+    redraws: int,
+    fraction: float,
+    crossed: Collection[int] = (),
+    alpha: float = DEFAULT_ALPHA,
+) -> RandomizationLook:
+    """One look of the follow-up count's randomization test, upward only.
+
+    Clusters hold (agent_id, arm, follow-ups) per spawn, one cluster per session. The reference is the
+    observed draw plus ``redraws`` re-draws; re-draw i takes ``get_arm(salt, agent_id)`` under a salt of
+    ``salt_namespace`` and i alone, so it keeps that salt at every look. ``crossed`` is the look before's
+    result: with it, the members past a cut at or before this look never exceed the alpha spent through
+    ``fraction``. An undefined statistic never crosses; an empty session or an arm outside 0/1 raises.
+    """
+    _check_alpha(alpha)
+    carried = frozenset(crossed)
+    statistic = _get_studentized_difference(
+        [[(arm, follow_ups) for _, arm, follow_ups in cluster] for cluster in clusters]
+    )
+    defined = _get_redraw_statistics(clusters, get_arm, salt_namespace, redraws, carried)
+    if statistic is not None and _OBSERVED_DRAW not in carried:
+        defined[_OBSERVED_DRAW] = statistic
+    budget = math.floor(_get_spent_alpha(alpha, fraction) * (redraws + 1))
+    admitted = budget - len(carried)
+    ranked = sorted(defined.values(), reverse=True)
+    if not 0 < admitted < len(ranked):
+        return RandomizationLook(statistic, None, budget, carried)
+    critical = ranked[admitted]  # strictly above it → at most ``admitted`` members; a tie at the cut never crosses
+    passed = {member for member, value in defined.items() if value > critical}
+    return RandomizationLook(statistic, critical, budget, carried | passed)
+
+
+def get_randomization_looks(
+    looks: Sequence[Sequence[Sequence[tuple[str, int, float]]]],
+    *,
+    get_arm: Callable[[str, str], int],
+    salt_namespace: str,
+    redraws: int,
+    alpha: float = DEFAULT_ALPHA,
+    look_fractions: Sequence[float] = LOOK_FRACTIONS,
+) -> list[RandomizationLook]:
+    """get_randomization_look over each look's clusters in order, every cut carrying the crossings before it."""
+    results: list[RandomizationLook] = []
+    crossed: frozenset[int] = frozenset()
+    for clusters, fraction in zip(looks, _get_checked_fractions(look_fractions)):
+        look = get_randomization_look(
+            clusters,
+            get_arm=get_arm,
+            salt_namespace=salt_namespace,
+            redraws=redraws,
+            fraction=fraction,
+            crossed=crossed,
+            alpha=alpha,
+        )
+        results.append(look)
+        crossed = look.crossed
+    return results
+
+
+def _get_redraw_statistics(
+    clusters: Sequence[Sequence[tuple[str, int, float]]],
+    get_arm: Callable[[str, str], int],
+    salt_namespace: str,
+    redraws: int,
+    carried: frozenset[int],
+) -> dict[int, float]:
+    """Each uncrossed re-draw's statistic where defined, by its member index."""
+    defined: dict[int, float] = {}
+    for index in range(1, redraws + 1):
+        if index in carried:
+            continue
+        salt = f"{salt_namespace}:{index}:"  # the separators keep it off every decimal arm salt
+        value = _get_studentized_difference(
+            [[(get_arm(salt, agent_id), follow_ups) for agent_id, _, follow_ups in cluster] for cluster in clusters]
+        )
+        if value is not None:
+            defined[index] = value
+    return defined
+
+
+def _get_studentized_difference(clusters: Sequence[Sequence[tuple[int, float]]]) -> float | None:
+    """The treatment-minus-control mean over its session-clustered standard error, clusters as
+    get_arm_difference_design_effect takes them. None when undefined: fewer than 2 clusters, an
+    empty arm, or a clustered variance of 0 in exact arithmetic; an empty cluster raises."""
+    if len(clusters) < 2:
+        return None
+    totals = _get_arm_totals(clusters)
+    if any(all(total.counts[arm] == 0 for total in totals) for arm in (0, 1)):
+        return None
+    return _get_z(totals)
+
+
+def _get_z(totals: Sequence[_ArmTotals]) -> float | None:
+    difference = _get_arm_difference(totals)
+    if difference.clustered <= 0 or _is_clustered_zero(totals):
+        return None
+    return difference.value / math.sqrt(difference.clustered)
+
+
+def _is_clustered_zero(totals: Sequence[_ArmTotals]) -> bool:
+    """Whether every session's term of the clustered variance is 0 in exact arithmetic over the
+    per-session totals; the float form keeps a residue where an arm mean has no exact float."""
+    sizes = [sum(total.counts[arm] for total in totals) for arm in (0, 1)]
+    sums = [sum(_get_exact(total.sums[arm]) for total in totals) for arm in (0, 1)]
+    return all(
+        (_get_exact(total.sums[1]) * sizes[1] - total.counts[1] * sums[1]) * sizes[0] ** 2
+        == (_get_exact(total.sums[0]) * sizes[0] - total.counts[0] * sums[0]) * sizes[1] ** 2
+        for total in totals
+    )
+
+
+def _get_exact(value: float) -> int | Fraction:
+    """The float's own value as an exact number: an int where it is whole → int arithmetic."""
+    return int(value) if value.is_integer() else Fraction(value)
+
+
 def _get_arm_ratio(totals: Sequence[_ArmTotals]) -> float:
     """Σ over sessions of (Σ z)² over Σ z², z = (outcome − arm mean) / arm size, signed + on treatment."""
+    difference = _get_arm_difference(totals)
+    if difference.independent <= 0:
+        raise ValueError("no variance in either arm: arm-difference design effect undefined")
+    return difference.clustered / difference.independent
+
+
+def _get_arm_difference(totals: Sequence[_ArmTotals]) -> _ArmDifference:
     sizes = [sum(total.counts[arm] for total in totals) for arm in (0, 1)]
     if min(sizes) == 0:
         raise ValueError(f"an arm has no spawns, sizes {sizes}: arm difference undefined")
@@ -358,9 +526,7 @@ def _get_arm_ratio(totals: Sequence[_ArmTotals]) -> float:
         for total in totals
         for arm in (0, 1)
     )
-    if independent <= 0:
-        raise ValueError("no variance in either arm: arm-difference design effect undefined")
-    return clustered / independent
+    return _ArmDifference(means[1] - means[0], clustered, independent)
 
 
 def _get_interval(draws: list[float]) -> tuple[float | None, float | None]:
@@ -378,7 +544,7 @@ def get_rate_harm(
     power: float = DEFAULT_POWER,
     design_effect: float = 1.0,
 ) -> float:
-    """Minimum detectable fold rise of a rate guardrail (emit failure, verified_fail, re-delegation).
+    """Minimum detectable fold rise of a rate guardrail (emit failure, verified_fail).
 
     One-sided two-proportion test at the per-arm sample over the design effect; ``math.inf`` when
     no rate below 1 is detectable at that sample.
@@ -417,6 +583,23 @@ def get_tool_use_harm(
     tail = alpha if is_overage_primary else alpha / 2
     critical_sum = _STANDARD_NORMAL.inv_cdf(1 - tail) + _STANDARD_NORMAL.inv_cdf(power)
     return critical_sum * sd * math.sqrt(2 / effective)
+
+
+def get_follow_up_harm(
+    sd: float,
+    per_arm: float,
+    *,
+    alpha: float = DEFAULT_ALPHA,
+    power: float = DEFAULT_POWER,
+    design_effect: float = 1.0,
+) -> float:
+    """Minimum detectable rise in follow-ups per spawn: the mean-shift form, upward only.
+
+    Raises on a non-positive ``sd``, as the mean-shift form does.
+    """
+    return get_tool_use_harm(
+        sd, per_arm, is_overage_primary=True, alpha=alpha, power=power, design_effect=design_effect
+    )
 
 
 def _get_mean_squares(clusters: Sequence[Sequence[float]], sizes: list[int]) -> tuple[float, float]:

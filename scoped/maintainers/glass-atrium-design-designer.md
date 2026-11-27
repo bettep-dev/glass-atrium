@@ -14,9 +14,8 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | Reader | What it reads | Consequence |
 |---|---|---|
 | `hooks/inject-scope-rules.sh` → `read_max_turns` | `^maxTurns:` at column 0 of the frontmatter | the turn-budget meter is sized from it |
-| `hooks/enforce-harness-critical.sh` | live frontmatter identity keys (name, tools, scope) | live edits to them are blocked for every caller (LLM06) |
+| `lib/ga-doctor.sh` → `get_integrity_drift` | live frontmatter identity keys (name, tools, scope) and text outside EDITABLE regions | a live edit to either is reported as drift, never blocked |
 | `autoagent/lib/editable_merge.py` | EDITABLE region count, local vs release | a count change routes the merge to the manual structural-change ceremony |
-| `hooks/test/enforce-harness-critical-frontmatter.bats`, `-pathnorm.bats` | `hooks/test/corpus/agents-blocklist/glass-atrium-design-designer.md`, a frontmatter copy | its body is synthetic, so body edits are invisible to it; mirror a frontmatter edit there |
 | `manifest.json` | the body's sha256 | any edit needs a manifest regeneration |
 
 - No suite reads this body's prose; `scripts/test/test_inject_sync.py` and `hooks/test/h2-untrusted-ingest.bats` name the agent in injector rosters only.
@@ -27,6 +26,14 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | Body text | Cited from |
 |---|---|
 | `### AI Slop Tropes (forbidden patterns — Single SoT for all DEV agents)` | **AI Slop Tropes citers** |
+| `#### Admin-console tropes (data screens)` | **Admin-console tropes citers** |
+| `##### Owner-review signatures` | `## Pre-Emit 5-Axis Self-Critique` → **Admin-console recheck** |
+| `##### Tables and pagination` | `agents/glass-atrium-intel-reporter.md` → `### Comparison Tables (MUST ≤5 columns)` why line |
+| **Canvas/color tropes** → the `Replacement` sub-bullet (flat surfaces and the brand-purple exception) | **Replacement sub-bullet citers** |
+| **Canvas/color tropes** (the hue-to-hue gradient and gradient-text entry) | `scoped/scope-report.md` → `### Visual-Maximization Floor` → **SoT** |
+| **Placeholder First** · **Scale minimums** · **Visual Vocabulary Match** · the trope group leads | `agents/references/design-slop-landing.md` |
+| **Scarcity as rationale** (the product-UI default) | 5-axis-critique skill → **Restraint** prompt |
+| `### UI priorities` → **Spacing rhythm** | body-internal: **Layout/container tropes** → the off-ladder spacing bullet |
 | `## Red Flags` (WCAG AA not verified · **Color & contrast** derive-then-verify) | `scoped/maintainers/scope-design.md` · AI Slop Tropes citers' heading paths |
 | `## Pre-Emit 5-Axis Self-Critique` (axes · band rubric · emit gate) | 5-axis-critique skill, whose `**Gate**: PASS (all ≥7)` line reads the band rubric · `scoped/scope-design.md` |
 | `## Design Evaluation 4-Axis (1-5 each, 20 total)` | 5-axis-critique skill · `scoped/scope-qa.md` |
@@ -37,7 +44,11 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 | `### Figma Make + MCP Integration Guardrails` (LLM Output Validation line · Vendor-Routing line) | `scoped/maintainers/scope-design.md` |
 | `## Pre-Execution Verification` contrast row | `scoped/maintainers/scope-design.md` |
 
-- **AI Slop Tropes citers**: `git grep 'AI Slop Tropes'`; the `hooks/test/` hits are the frontmatter copy's `skills:` comment and `rationale` literal (`## Machine constraints on the body`), plus the `AC-B7 containment` fixture in `enforce-harness-critical-frontmatter.bats`, quoting the rationale.
+- **AI Slop Tropes citers**: `git grep 'AI Slop Tropes'`.
+- **Admin-console tropes citers** (citers of the heading and of its `#####` rows by path): `git grep 'Admin-console tropes'`.
+  - Hits: `skills/glass-atrium-design-anti-slop/SKILL.md` · `agents/glass-atrium-intel-reporter.md` → `### Comparison Tables (MUST ≤5 columns)` why line · `scoped/shared-design-token-consumption.md` → `## Mandatory Pre-Execution Gate`.
+  - Body-internal: `## Pre-Emit 5-Axis Self-Critique` → **Admin-console recheck** · **Lucide/Hero Icons uniform stroke-width** → **Source IDs**.
+- **Replacement sub-bullet citers**: body-internal `##### Color, type and decoration` → its first row · anti-slop skill → `## Severity Bands` (both banding tables).
 - **HTML Primary Co-Emission Role citers** (trigger · output fields · markup prohibition · veto line, its sole copy): `git grep 'HTML Primary Co-Emission Role'`.
 
 ## Copies kept in step with this body
@@ -45,9 +56,16 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 - **AI Slop Tropes mirrors** (a closed set — edit together):
   - `skills/glass-atrium-design-anti-slop/SKILL.md` → `## Pattern Categories (mirror glass-atrium-design-designer.md SoT)` — the detector layer, preloaded by the agent.
   - `agents/glass-atrium-dev-front.md` → `### Anti-AI-Slop (Mandatory — single SoT for full catalogue)` — pointer plus enforcement subset.
-  - `scoped/scope-report.md` → `### Visual-Maximization Floor` → **Residual anti-slop patterns** — a deliberate supplement of patterns the SoT lacks, not a copy.
+  - `scoped/scope-report.md` → `### Visual-Maximization Floor` → **Residual anti-slop patterns** — a deliberate supplement of patterns the SoT lacks, not a copy; its **SoT** line points gradients to **Canvas/color tropes**.
+  - `agents/templates/DESIGN.md` → `## 9. Anti-Patterns (Forbidden)` — the bundle-name list, one parenthetical per trope group.
+- **SoT extension**: `agents/references/design-slop-landing.md` holds the landing, hero, marketing-section and brand-mark rows — an extension, not a copy.
+  - Pointed to from **Community patterns** → **Landing, hero and brand-mark rows**, the anti-slop skill's `## Cross-References` and the template's §9 list.
+  - Its rows have no detector line of their own; lines written for SoT tropes reach some by overlap (the Brand mark rows through Flat surface and Decoration).
+    - The per-row reach list lives once, in the anti-slop skill's `## Cross-References`; re-check it when a landing row or a `## Detection Guidance` line changes.
+  - A row that gains a line of its own needs its mirror in the anti-slop skill in the same pass.
+- **unslop credit comments** (CC BY 4.0 — keep each while its file carries the adapted rows): the body · `agents/references/design-slop-landing.md` · both design skills · `agents/glass-atrium-dev-front.md` · `agents/templates/DESIGN.md`.
 - **Diverged, unreconciled** (the rule owner's call):
-  - the detector holds patterns absent from the SoT: three colour patterns (a white-on-dark text floor whose hex has no canonical home among them) and the 3-column equal-distribution layout;
+  - the detector holds patterns absent from the SoT: the achromatic + single-fluorescent-accent palette, a white-on-dark text floor whose hex has no canonical home, and the 3-column equal-distribution layout;
   - the SoT holds the pure-black `#000` text trope, the mixed-radius trope and the Workflow-tropes group, which the detector lacks.
 - **Default-style tropes are an open group**: a new one lands in the SoT and its detector mirror together.
 - **Token Architecture copies** — edit `### Token Architecture (3-tier)` together with:
@@ -77,6 +95,7 @@ Corpus-maintenance companion. The agent never reads this file; the body holds ag
 ## Decisions worth keeping
 
 - **No-self-approval kernel**: the canvas waits for the user's explicit go-ahead on both philosophy documents — a consent point, not a process step, so it stays in Guardrails.
+- **Admin-console heading anchors**: the admin-console bundle uses `####`/`#####` headings, unlike the bold-lead bundles above it, because other files cite its parts by heading — keep them headings.
 - The no-`completion_block` fallback stays in the body: neither `rules/glass-atrium/core-outcome-record.md` nor the emit-format block states it.
 - **Numbers that stay**:
   - WCAG ratios and the 44×44px target — WCAG criteria the contrast-check skill and the template use.
