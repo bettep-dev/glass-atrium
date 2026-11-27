@@ -183,7 +183,7 @@ clean_block() {
   write_parent_transcript "다시 해줘 please redo this" 0
   write_payload "$(emitted_correction_block)"
   run_hook
-  # SubagentStop has no block channel — the always-run scan must never change the exit status.
+  # the hook never takes SubagentStop's block channel — the always-run scan must never change the exit status.
   eq "0" "${status}" || return 1
   eq "2" "$(spooled_field revision_count)" || return 1
   eq "-1" "$(spooled_field evaluative_signal)" || return 1

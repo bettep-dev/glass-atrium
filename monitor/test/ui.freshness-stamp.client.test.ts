@@ -1,21 +1,25 @@
 // Shared freshness-stamp atom: four states, glyph-borne tone, a word for AT.
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_SRC = resolve(__dirname, "../public/src/ui.jsx");
+const BASE_CSS = resolve(__dirname, "../public/styles/base.css");
 
 type Component = (props: Record<string, unknown>) => unknown;
-type RegionInput = { busy?: boolean; error?: string | null };
+type RegionInput = { busy?: boolean; error?: string | null; status?: string };
 type FreshnessInput = { at?: string | null; loading?: boolean; failed?: boolean; regions?: RegionInput[]; staleAfterMs?: number; now?: number };
 
 const ui = await loadScreenModule(UI_SRC);
 const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
 const getFreshnessState = ui.getFreshnessState as (input: FreshnessInput) => string;
-const formatKstTime = ui.formatKstTime as (iso: string) => string;
+type Verdict = { state: string; tone: string; label?: string; note: string | null; isBusy: boolean };
+const getFreshnessVerdict = ui.getFreshnessVerdict as (input: FreshnessInput & { tone?: string; label?: string }) => Verdict;
+const formatRelativeTime = ui.formatRelativeTime as (iso: string | null | undefined, now?: number) => string;
 
 const NOW = Date.parse("2026-09-25T05:30:00.000Z");
 const STALE_MS = 5 * 60_000;
@@ -49,12 +53,10 @@ test("state follows the read history: never read → loading or not read, read �
   }
 });
 
-test("every state carries a distinct decorative glyph and names its state word exactly once", () => {
+test("every shown state carries a distinct decorative glyph and names its state word exactly once", () => {
   const inputs: Array<{ input: FreshnessInput; word: string }> = [
-    { input: { at: null, loading: true }, word: "Loading" },
     { input: { at: null }, word: "Not read" },
     { input: { at: isoAgo(STALE_MS + 60_000) }, word: "Stale" },
-    { input: { at: isoAgo(1_000) }, word: "Fresh" },
   ];
   const glyphs = new Set<string>();
   for (const { input, word } of inputs) {
@@ -69,14 +71,14 @@ test("every state carries a distinct decorative glyph and names its state word e
   assert.ok(![...glyphs].includes(""));
 });
 
-test("a first read in flight leaves the visible loading label to the paired Refresh control", () => {
-  const tree = renderStamp({ at: null, loading: true });
-  assert.equal(findNodes(tree, (n) => n.props["data-stamp-text"] === "true").length, 0);
-  assert.equal(collectText(findNodes(tree, (n) => String(n.props.className ?? "").includes("sr-only"))[0]).trim(), "Loading");
+test("a first read in flight renders no stamp — the paired Refresh label is the one busy cue", () => {
+  for (const input of [{ at: null, loading: true }, { at: null, regions: [{ busy: true }, { error: "down" }] }]) {
+    assert.equal(renderStamp(input).children.length, 0, JSON.stringify(input));
+  }
 });
 
 test("tone colours the glyph only — the stamp text stays in the neutral ink", () => {
-  for (const input of [{ at: isoAgo(1_000) }, { at: isoAgo(STALE_MS + 1) }, { at: null }]) {
+  for (const input of [{ at: isoAgo(STALE_MS + 1) }, { at: null }, { at: isoAgo(1_000), regions: [{ error: "down" }, {}] }]) {
     const tree = renderStamp(input);
     const toned = findNodes(tree, (n) => /\btext-(ok|warn|crit)\b/.test(String(n.props.className ?? "")));
     assert.equal(toned.length, 1, `${JSON.stringify(input)}: exactly one toned node`);
@@ -84,32 +86,72 @@ test("tone colours the glyph only — the stamp text stays in the neutral ink", 
   }
 });
 
-test("a read stamp shows the display-clock time of the read, whatever its age", () => {
-  for (const ageMs of [1_000, STALE_MS + 1, 3_600_000]) {
-    const at = isoAgo(ageMs);
-    const visible = findNodes(renderStamp({ at }), (n) => n.props["data-stamp-text"] === "true");
-    assert.equal(visible.length, 1);
-    assert.equal(collectText(visible[0]).trim(), `as of ${formatKstTime(at)}`);
+test("the stamp renders exactly when a settled read is not fresh — a refresh over a fresh read and a first read in flight stay hidden", () => {
+  const rows: Array<{ name: string; input: FreshnessInput; isShown: boolean }> = [
+    { name: "fresh, idle", input: { at: isoAgo(1_000) }, isShown: false },
+    { name: "fresh at the window edge", input: { at: isoAgo(STALE_MS) }, isShown: false },
+    { name: "fresh, refreshing", input: { at: isoAgo(1_000), loading: true }, isShown: false },
+    { name: "fresh, a region refreshing", input: { at: isoAgo(1_000), regions: [{ busy: true }, {}] }, isShown: false },
+    { name: "past the window", input: { at: isoAgo(STALE_MS + 1) }, isShown: true },
+    { name: "past the window, refreshing", input: { at: isoAgo(STALE_MS + 1), loading: true }, isShown: true },
+    { name: "the last read failed", input: { at: isoAgo(1_000), failed: true }, isShown: true },
+    { name: "some regions failed", input: { at: isoAgo(1_000), regions: [{ error: "down" }, {}] }, isShown: true },
+    { name: "never read", input: { at: null }, isShown: true },
+    { name: "first read in flight", input: { at: null, loading: true }, isShown: false },
+  ];
+  // the component node always wraps its output → shown means it rendered a child
+  for (const row of rows) assert.equal(renderStamp(row.input).children.length > 0, row.isShown, row.name);
+});
+
+test("a stale read reads as last known with its age, a read under a minute old as just now, whatever input made it stale", () => {
+  const rows = [
+    { name: "past the window", input: { at: isoAgo(STALE_MS + 60_000) }, age: "6m ago" },
+    { name: "an hour old", input: { at: isoAgo(3_600_000) }, age: "1h ago" },
+    { name: "a second old, then a failed read", input: { at: isoAgo(1_000), failed: true }, age: "just now" },
+    { name: "the same instant, then a failed read", input: { at: isoAgo(0), failed: true }, age: "just now" },
+    { name: "59 seconds old, then a failed read", input: { at: isoAgo(59_000), failed: true }, age: "just now" },
+    { name: "a minute old, then a failed read", input: { at: isoAgo(60_000), failed: true }, age: "1m ago" },
+  ];
+  for (const row of rows) {
+    const visible = findNodes(renderStamp(row.input), (n) => n.props["data-stamp-text"] === "true");
+    assert.equal(visible.length, 1, row.name);
+    assert.equal(collectText(visible[0]).trim(), `Last known · read ${row.age}`, row.name);
   }
 });
 
-test("the success tone appears only on an idle, unfailed, in-window read", () => {
-  const inputs: FreshnessInput[] = [
-    { at: null, loading: true },
-    { at: null },
-    { at: isoAgo(1_000), loading: true },
-    { at: isoAgo(1_000), failed: true },
-    { at: isoAgo(1_000), regions: [{ busy: true }] },
-    { at: isoAgo(1_000), regions: [{ error: "down" }, {}] },
-    { at: isoAgo(1_000), regions: [{ error: "down" }] },
-    { at: isoAgo(STALE_MS + 1) },
-    { at: isoAgo(1_000) },
+test("a never-read stamp shows the unread note: never tried, a first read that failed whole, or the failed share with no age", () => {
+  const rows: Array<{ name: string; input: FreshnessInput; note: string; glyph: string }> = [
+    { name: "never tried", input: { at: null }, note: "Nothing has been read yet.", glyph: "✕" },
+    { name: "first read failed", input: { at: null, failed: true }, note: "First read failed", glyph: "⚠" },
+    { name: "every region failed", input: { at: null, regions: [{ error: "down" }, { error: "down" }] }, note: "First read failed", glyph: "⚠" },
+    { name: "some regions failed", input: { at: null, regions: [{ error: "down" }, { error: "down" }, {}, {}, {}, {}, {}] }, note: "2 of 7 failed", glyph: "⚠" },
   ];
-  for (const input of inputs) {
-    const isFresh = getFreshnessState({ now: NOW, staleAfterMs: STALE_MS, ...input }) === "fresh";
-    const okNodes = findNodes(renderStamp(input), (n) => /\btext-ok\b/.test(String(n.props.className ?? "")));
-    assert.equal(okNodes.length, isFresh ? 1 : 0, JSON.stringify(input));
+  for (const row of rows) {
+    const tree = renderStamp(row.input);
+    const visible = findNodes(tree, (n) => n.props["data-stamp-text"] === "true");
+    const [glyph] = findNodes(tree, (n) => n.props["aria-hidden"] === "true");
+    assert.equal(collectText(visible[0]).trim(), row.note, row.name);
+    assert.equal(collectText(glyph).trim(), row.glyph, row.name);
   }
+});
+
+test("a partly failed read says Last known only when a failed region still holds data, then its age and the failed share", () => {
+  const rows: Array<{ name: string; failedRegion: RegionInput; text: string }> = [
+    { name: "the failed regions hold their last data", failedRegion: { error: "down", status: "ready" }, text: "Last known · read 3m ago · 2 of 7 failed" },
+    { name: "the failed regions never held data", failedRegion: { error: "down", status: "error" }, text: "read 3m ago · 2 of 7 failed" },
+  ];
+  for (const row of rows) {
+    const tree = renderStamp({ at: isoAgo(3 * 60_000), regions: [row.failedRegion, row.failedRegion, {}, {}, {}, {}, {}] });
+    const visible = findNodes(tree, (n) => n.props["data-stamp-text"] === "true");
+    const [glyph] = findNodes(tree, (n) => n.props["aria-hidden"] === "true");
+    assert.equal(collectText(visible[0]).trim(), row.text, row.name);
+    assert.equal(collectText(glyph).trim(), "⚠", row.name);
+  }
+});
+
+test("a first-read failure beside a read under a minute old reads just now with no Last known", () => {
+  const tree = renderStamp({ at: isoAgo(0), regions: [{ error: "down", status: "error" }, {}, {}, {}, {}, {}, {}] });
+  assert.equal(collectText(findNodes(tree, (n) => n.props["data-stamp-text"] === "true")[0]).trim(), "read just now · 1 of 7 failed");
 });
 
 test("a partial failure names how many regions failed out of how many, in text and for AT", () => {
@@ -120,13 +162,14 @@ test("a partial failure names how many regions failed out of how many, in text a
   assert.match(visible, /1 of 3 failed/);
 });
 
-test("a busy region marks the stamp busy and keeps the last stamp, whichever input carries the busy bit", () => {
-  const at = isoAgo(1_000);
+test("a busy region marks a shown stamp busy and keeps the last stamp, whichever input carries the busy bit", () => {
+  const at = isoAgo(STALE_MS + 60_000);
   for (const input of [{ at, loading: true }, { at, regions: [{ busy: true }, {}] }]) {
     const tree = renderStamp(input);
     assert.equal(findNodes(tree, (n) => n.props["aria-busy"] === "true").length, 1, JSON.stringify(input));
-    assert.match(collectText(tree), new RegExp(`as of ${formatKstTime(at)}`));
+    assert.match(collectText(tree), new RegExp(`Last known · read ${formatRelativeTime(at, NOW)}`));
     assert.match(collectText(findNodes(tree, (n) => String(n.props.className ?? "").includes("sr-only"))[0]), /Refreshing/);
+    assert.equal(collectText(findNodes(tree, (n) => n.props["aria-hidden"] === "true")[0]).trim(), "⚠", "the glyph of the state the refresh settles to");
   }
 });
 
@@ -179,19 +222,41 @@ test("the Refresh atom spins only while busy and only when motion is allowed", (
   assert.equal(findNodes(idle, (n) => /animate-spin/.test(String(n.props.className ?? ""))).length, 0);
 });
 
-test("getRegionSummary tallies busy and failed regions over any region list", () => {
-  const getRegionSummary = ui.getRegionSummary as (regions: unknown) => { isBusy: boolean; failedCount: number; regionCount: number };
+test("getRegionSummary tallies busy, failed and data-holding regions over any region list", () => {
+  type Summary = { isBusy: boolean; failedCount: number; regionCount: number; heldCount: number; heldFailedCount: number };
+  const getRegionSummary = ui.getRegionSummary as (regions: unknown) => Summary;
+  const regions = [
+    { busy: true, error: null, status: "loading" },
+    { busy: false, error: "x", status: "error" },
+    null,
+    { busy: false, error: "y", status: "ready" },
+    { busy: false, error: null, status: "ready" },
+  ];
   // spread → a plain object of this realm; the vm-loaded module returns objects with a foreign prototype
-  assert.deepEqual({ ...getRegionSummary(undefined) }, { isBusy: false, failedCount: 0, regionCount: 0 });
-  assert.deepEqual({ ...getRegionSummary([{ busy: true, error: null }, { busy: false, error: "x" }, null, { busy: false, error: null }]) }, { isBusy: true, failedCount: 1, regionCount: 3 });
+  assert.deepEqual({ ...getRegionSummary(undefined) }, { isBusy: false, failedCount: 0, regionCount: 0, heldCount: 0, heldFailedCount: 0 });
+  assert.deepEqual({ ...getRegionSummary(regions) }, { isBusy: true, failedCount: 2, regionCount: 4, heldCount: 2, heldFailedCount: 1 });
 });
 
-test("the PageHeader right cluster wraps under the title instead of overflowing", () => {
-  const tree = renderScreen(React.createElement(ui.PageHeader as Component, { title: "Cost", right: "controls" })) as RenderedNode;
-  const [outer] = findNodes(tree, (n) => n.type === "div");
-  const right = findNodes(tree, (n) => n.type === "div" && collectText(n) === "controls")[0];
-  for (const node of [outer, right]) assert.match(String(node.props.className), /\bflex-wrap\b/);
-  assert.match(String(right.props.className), /\bmin-w-0\b/);
+test("the PageHeader cluster wraps under the title instead of overflowing, Refresh right-most after freshness and range", () => {
+  const tree = renderScreen(React.createElement(ui.PageHeader as Component, {
+    title: "Cost", actions: "export", freshness: "stamp", range: "range", refresh: "refresh",
+  })) as RenderedNode;
+  const byClass = (name: string) => findNodes(tree, (n) => n.type === "div" && new RegExp(`(^|\\s)${name}(\\s|$)`).test(String(n.props.className ?? "")));
+  const [outer] = byClass("page-head");
+  const [cluster] = byClass("page-head-cluster");
+  const groups = byClass("page-head-group");
+  assert.ok(outer && cluster, "the header row and its right-hand cluster render");
+  assert.deepEqual(groups.map((g) => collectText(g)), ["export", "stamp range refresh"], "actions stand apart, then freshness · range · refresh");
+  // the wrap and shrink rules live on the classes → read them from the shared stylesheet
+  const css = readFileSync(BASE_CSS, "utf8");
+  // a rule whose selector list starts with `selector` (not a later line of a grouped list)
+  const rule = (selector: string) => css.match(new RegExp(`(?:^|(?<!,)\\n)${selector}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+  assert.match(rule("\\.page-head"), /flex-wrap:\s*wrap/);
+  const shared = rule("\\.page-head-cluster,\\s*\\.page-head-group");
+  assert.match(shared, /flex-wrap:\s*wrap/);
+  assert.match(shared, /min-width:\s*0/);
+  assert.match(rule("\\.page-head-cluster"), /column-gap:\s*var\(--space-6\)/, "24 between the actions and the status group");
+  assert.match(rule("\\.page-head-group"), /column-gap:\s*var\(--space-3\)/, "12 inside a group");
 });
 
 // Recording React whose state setter and effects the test drives by hand, plus a settable clock.
@@ -221,14 +286,14 @@ function createTickHarness(startMs: number) {
   return { clock, effects, timers, globals, getRerenders: () => rerenders };
 }
 
-test("with no injected clock, a read stamp re-checks its own age: time passing alone turns Fresh into Stale", async () => {
+test("with no injected clock, a read stamp re-checks its own age: time passing alone turns a hidden fresh stamp into a shown Stale one", async () => {
   const harness = createTickHarness(NOW);
   const tickUi = await loadScreenModule(UI_SRC, harness.globals);
   const at = isoAgo(1_000);
   const render = () => renderScreen(React.createElement(tickUi.FreshnessStamp as Component, { at, staleAfterMs: STALE_MS })) as RenderedNode;
   const srWord = (tree: RenderedNode) => collectText(findNodes(tree, (n) => String(n.props.className ?? "").includes("sr-only"))[0]).trim();
 
-  assert.equal(srWord(render()), "Fresh");
+  assert.equal(render().children.length, 0, "fresh → hidden");
   const cleanups = harness.effects.map((effect) => effect());
   const live = harness.timers.filter((t) => !t.cleared);
   assert.equal(live.length, 1, "one tick scheduled");
@@ -243,35 +308,95 @@ test("with no injected clock, a read stamp re-checks its own age: time passing a
   assert.ok(harness.timers.every((t) => t.cleared), "unmount clears the tick");
 });
 
-test("with no injected clock, the page verdict re-checks its age with the stamp: time passing alone drops an all-clear", async () => {
-  const harness = createTickHarness(NOW);
-  const tickUi = await loadScreenModule(UI_SRC, harness.globals);
-  const freshness = { at: isoAgo(1_000), staleAfterMs: STALE_MS };
-  const render = () => renderScreen(React.createElement(tickUi.PageVerdict as Component, { tone: "ok", label: "All clear", freshness })) as RenderedNode;
-  const word = (tree: RenderedNode) => collectText(findNodes(tree, (n) => n.props.className === "page-verdict-tone")[0]).replace(/^\S+\s*/, "").trim();
-
-  assert.equal(word(render()), "All clear");
-  const cleanups = harness.effects.map((effect) => effect());
-  const live = harness.timers.filter((t) => !t.cleared);
-  assert.equal(live.length, 1, "one tick scheduled");
-  assert.ok(live[0].ms <= STALE_MS / 2, `tick ${live[0].ms}ms is fine-grained enough to catch the stale edge`);
-
-  harness.clock.now = NOW + STALE_MS + 1;
-  live[0].fn();
-  assert.ok(harness.getRerenders() >= 1, "the tick requests a re-render");
-  assert.equal(word(render()), "Last known");
-
-  for (const cleanup of cleanups) if (typeof cleanup === "function") cleanup();
-  assert.ok(harness.timers.every((t) => t.cleared), "unmount clears the tick");
-});
-
 test("no tick is scheduled when nothing time-dependent is shown or the clock is injected", async () => {
   for (const props of [{ at: null }, { at: null, loading: true }, { at: isoAgo(1_000), now: NOW }]) {
     const harness = createTickHarness(NOW);
     const tickUi = await loadScreenModule(UI_SRC, harness.globals);
     renderScreen(React.createElement(tickUi.FreshnessStamp as Component, { staleAfterMs: STALE_MS, ...props }));
-    renderScreen(React.createElement(tickUi.PageVerdict as Component, { tone: "ok", freshness: { staleAfterMs: STALE_MS, ...props } }));
     harness.effects.forEach((effect) => effect());
     assert.equal(harness.timers.length, 0, JSON.stringify(props));
   }
+});
+
+describe("freshness-driven verdict", () => {
+  const freshAt = isoAgo(1_000);
+  const rows: Array<{ name: string; input: FreshnessInput; tone: string; label?: string; expectTone: string; expectLabel: RegExp; busy: boolean }> = [
+    { name: "never read", input: { at: null }, tone: "ok", expectTone: "neutral", expectLabel: /^No signal$/, busy: false },
+    { name: "first wave in flight", input: { at: null, loading: true }, tone: "ok", expectTone: "neutral", expectLabel: /^No signal$/, busy: true },
+    { name: "cold error", input: { at: null, regions: [{ error: "down" }] }, tone: "ok", expectTone: "neutral", expectLabel: /^No signal$/, busy: false },
+    { name: "fresh read", input: { at: freshAt }, tone: "ok", label: "All clear", expectTone: "ok", expectLabel: /^All clear$/, busy: false },
+    { name: "ok read past the stale window", input: { at: isoAgo(STALE_MS + 1) }, tone: "ok", label: "All clear", expectTone: "neutral", expectLabel: /^Last known$/, busy: false },
+    { name: "crit read then a failed read", input: { at: freshAt, failed: true }, tone: "crit", label: "3 daemons down", expectTone: "crit", expectLabel: /^Last known: 3 daemons down$/, busy: false },
+    { name: "warn read then a failed read", input: { at: freshAt, failed: true }, tone: "warn", expectTone: "warn", expectLabel: /^Last known: Needs attention$/, busy: false },
+    { name: "partial failure over an ok read", input: { at: freshAt, regions: [{ error: "down" }, {}] }, tone: "ok", expectTone: "neutral", expectLabel: /^Last known$/, busy: false },
+    { name: "refresh over a fresh read", input: { at: freshAt, loading: true }, tone: "ok", label: "All clear", expectTone: "ok", expectLabel: /^All clear$/, busy: true },
+    { name: "refresh over a warm error", input: { at: freshAt, regions: [{ busy: true, error: "down" }, { busy: true, error: "down" }] }, tone: "ok", expectTone: "neutral", expectLabel: /^Last known$/, busy: true },
+    { name: "refresh over a stale crit", input: { at: freshAt, loading: true, failed: true }, tone: "crit", expectTone: "crit", expectLabel: /^Last known: Action needed$/, busy: true },
+  ];
+
+  for (const row of rows) {
+    test(`${row.name} → ${row.expectTone} verdict${row.busy ? ", busy" : ""}`, () => {
+      const verdict = getFreshnessVerdict({ ...row.input, now: NOW, staleAfterMs: STALE_MS, tone: row.tone, label: row.label });
+
+      assert.equal(verdict.tone, row.expectTone);
+      assert.match(String(verdict.label), row.expectLabel);
+      assert.equal(verdict.isBusy, row.busy);
+    });
+  }
+
+  test("stale or partial data never raises an all-clear and never hides an alarm, and the stamp agrees on state, visibility and busy", () => {
+    for (const row of rows) {
+      for (const tone of ["ok", "warn", "crit"]) {
+        const input = { ...row.input, now: NOW, staleAfterMs: STALE_MS };
+        const verdict = getFreshnessVerdict({ ...input, tone });
+        const stampState = getFreshnessState(input);
+        const stamp = renderScreen(React.createElement(ui.FreshnessStamp as Component, input)) as RenderedNode;
+        const stampRoot = findNodes(stamp, (n: RenderedNode) => n.type === "span")[0];
+        const isRead = stampState !== "loading" && stampState !== "not-read";
+
+        assert.equal(verdict.state, stampState, `${row.name}/${tone}: one state`);
+        // a fresh settled read hides the stamp, and so does a first read in flight (the Refresh label carries it) → otherwise the stamp shows exactly the reads the verdict annotates
+        assert.equal(stampRoot !== undefined, verdict.note !== null && stampState !== "loading", `${row.name}/${tone}: stamp shown exactly when the verdict carries a note, a first read in flight aside`);
+        assert.equal(stampRoot?.props["aria-busy"] === "true", stampRoot !== undefined && verdict.isBusy, `${row.name}/${tone}: busy agrees`);
+        if (verdict.tone === "ok") assert.ok(stampState === "fresh" || stampState === "refreshing", `${row.name}: ok only over a fresh read`);
+        if (tone !== "ok" && isRead) assert.equal(verdict.tone, tone, `${row.name}/${tone}: alarm kept`);
+      }
+    }
+  });
+
+  test("a partial verdict names the failed count and a stale one names the read age", () => {
+    const partial = getFreshnessVerdict({ at: freshAt, regions: [{ error: "down" }, {}, {}], now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+    const stale = getFreshnessVerdict({ at: isoAgo(STALE_MS + 1), now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+
+    assert.match(String(partial.note), /1 of 3 sources failed/);
+    assert.equal(stale.note, "Read 5m ago", "the age is measured against the injected clock, not the wall clock");
+  });
+
+  test("a held read under a minute old notes its age as just now, never 0s ago", () => {
+    const verdict = getFreshnessVerdict({ at: isoAgo(0), failed: true, now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+
+    assert.equal(verdict.note, "Read just now");
+  });
+
+  test("an unread page says whether its first read failed or was never tried", () => {
+    const rows: Array<{ name: string; input: FreshnessInput; note: RegExp }> = [
+      { name: "never tried", input: { at: null }, note: /^Nothing has been read yet\.$/ },
+      { name: "first read failed", input: { at: null, failed: true }, note: /^First read failed$/ },
+      { name: "every first-read region failed", input: { at: null, regions: [{ error: "down" }, { error: "down" }] }, note: /^First read failed$/ },
+      { name: "one first-read region failed", input: { at: null, regions: [{ error: "down" }, {}] }, note: /^1 of 2 failed$/ },
+      { name: "first read in flight", input: { at: null, loading: true }, note: /^Checking the first read…$/ },
+    ];
+    for (const row of rows) {
+      const verdict = getFreshnessVerdict({ ...row.input, now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+
+      assert.equal(verdict.tone, "neutral", `${row.name}: no tone without a read`);
+      assert.match(String(verdict.note), row.note, row.name);
+    }
+  });
+
+  test("an unread page drops its note once any region holds data", () => {
+    const verdict = getFreshnessVerdict({ at: null, regions: [{ status: "ready" }, { error: "down", status: "error" }], now: NOW, staleAfterMs: STALE_MS, tone: "ok" });
+
+    assert.equal(verdict.note, null);
+  });
 });

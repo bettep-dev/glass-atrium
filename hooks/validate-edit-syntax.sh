@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# validate-edit-syntax.sh — PreToolUse(Write|Edit) syntax gate. Runs a language-native parse-only check
-# (bash -n / node --check / py_compile, by extension allowlist) on the post-write content, catching a
+# validate-edit-syntax.sh — PreToolUse(Write|Edit) syntax advisory. Runs a language-native parse-only check
+# (bash -n / node --check / py_compile, by extension allowlist) on the post-write content, flagging a
 # malformed edit BEFORE it lands rather than at the next run.
 #
-# ADVISORY-FIRST rollout: an invalid-syntax write WARNS on stderr and allows (exit 0) by default. The
-# exit-2 block arms only behind the burn-in flag SYNTAX_GATE_BLOCK=1, so it cannot wall off real work
-# during rollout. Instant kill switch: SYNTAX_GATE_OFF (non-empty) → exit 0.
+# Advisory only: an invalid-syntax write WARNS on stderr and allows (exit 0); it never blocks.
+# Instant kill switch: SYNTAX_GATE_OFF (non-empty) → exit 0.
 #
 # Extension allowlist (anything else → allow): .sh/.bash → bash -n · .js/.mjs/.cjs → node --check ·
 # .py → py_compile. Templates are EXEMPT (a path under templates/ or a template-suffixed basename holds
@@ -31,10 +30,6 @@ trap 'printf "[edit-syntax] internal error at line %d: %s — fail-open (exit 0)
 
 # Instant kill switch.
 [[ -n "${SYNTAX_GATE_OFF:-}" ]] && exit 0
-
-# Burn-in arm: block (exit 2) on an invalid write only when explicitly enabled.
-BLOCK_ARMED=0
-[[ "${SYNTAX_GATE_BLOCK:-}" == "1" ]] && BLOCK_ARMED=1
 
 INPUT="$(hook_read_input)"
 TOOL_NAME="$(hook_get_field "${INPUT}" "tool_name")"
@@ -82,7 +77,6 @@ command -v python3 >/dev/null 2>&1 || {
 }
 
 # Sandbox for the reconstructed source + any py_compile bytecode artifact; trap-cleaned.
-# Cleanup preserves the pending exit status (no exit in the trap) so the block path's exit 2 survives.
 work_dir="$(mktemp -d 2>/dev/null)" || exit 0
 # shellcheck disable=SC2329  # invoked from the EXIT trap string
 delete_work_dir() {
@@ -171,18 +165,7 @@ fi
 first_err=""
 [[ -s "${err_file}" ]] && first_err="$(grep -m1 -v '^[[:space:]]*$' "${err_file}" 2>/dev/null || true)"
 
-# Invalid syntax. Armed → block; else a non-blocking advisory.
-if [[ "${BLOCK_ARMED}" -eq 1 ]]; then
-  # DF-21: escape FILE_PATH before the ctx embed — a raw quote/backslash in the path
-  # would otherwise yield invalid JSON and degrade the context to {} in hook_emit_error.
-  esc_path="$(_hook_json_escape "${FILE_PATH}")"
-  esc_ext="$(_hook_json_escape "${ext}")"
-  emit_error "SYNTAX-001" "block" \
-    "Invalid ${ext} syntax blocked on write to ${basename_only}" \
-    "Fix the syntax error and retry the write${first_err:+ (checker: ${first_err})}. SYNTAX_GATE_BLOCK in Claude Code's launch environment arms this block; only the user can change it" \
-    "{\"file_path\":\"${esc_path}\",\"ext\":\"${esc_ext}\"}"
-  exit 2
-fi
+# Invalid syntax → a non-blocking advisory.
 printf '[edit-syntax] %s\n' \
-  "SYNTAX advisory: the ${ext} write to ${basename_only} has a syntax error (${checker[*]} failed)${first_err:+ — ${first_err}}. Non-blocking (advisory-first rollout; set SYNTAX_GATE_BLOCK=1 to enforce)." >&2
+  "SYNTAX advisory: the ${ext} write to ${basename_only} has a syntax error (${checker[*]} failed)${first_err:+ — ${first_err}}. Non-blocking." >&2
 exit 0

@@ -72,9 +72,10 @@
 # and a `git rm --cached` behind a new .gitignore entry leaves it on disk. Neither
 # arm reads git history, so generation and --check work on a depth-1 checkout.
 # Barred families (spine_is_retired_excluded_path) never enter the map at all.
-# Bare --check cannot see a key dropped from the committed map: the expected map
-# is carried forward from that same map. --check --reference FILE closes the gap
-# against a manifest the caller supplies (the PR target tip) — still no git history.
+# The expected map is carried forward from the working manifest's own map, so a
+# dropped key is caught only against a reference: every --check reads HEAD's
+# committed map (an uncommitted drop), and --check --reference FILE adds a manifest
+# the caller supplies (the PR target tip, the last release) — still no git history.
 #
 # Output is LC_ALL=C sorted and written atomically (temp + jq re-validation + mv).
 #
@@ -85,17 +86,18 @@
 #                                  HASH mismatch (content changed, path unchanged),
 #                                  an escaping files[] entry, a modes or hashes key
 #                                  set unequal to files, an ABSENT retired key, a
-#                                  retired key or value of invalid shape, OR a
-#                                  retired-map delta
+#                                  retired key or value of invalid shape, a
+#                                  retired-map delta, OR a retired key of HEAD's
+#                                  committed map the current map dropped
 #   generate-manifest.sh --check --reference FILE
-#                                  --check, plus exit 1 naming each retired key of
-#                                  FILE the current map dropped (reference_dropped_keys)
+#                                  --check, with FILE's retired keys held to the
+#                                  same drop rule (reference_dropped_keys)
 #   generate-manifest.sh --validate FILE
 #                                  structural validation of an arbitrary manifest
 #                                  against the same invariants the regeneration
 #                                  asserts on its temp before the swap
 #
-# Named exit codes: 1=--check divergence · 2=usage, or a --reference FILE that is
+# Named exit codes: 1=--check divergence or an unreadable HEAD manifest · 2=usage, or a --reference FILE that is
 # not a readable manifest with an object retired map · 3=git absent/not a work tree ·
 # 4=jq or sha256 tool absent · 5=manifest missing · 6=empty generation or a
 # manifest that fails structural validation · 7=apply-spine.sh or
@@ -106,7 +108,7 @@ set -euo pipefail
 # Single Atrium system version-of-record. Stamped into manifest.version on
 # regeneration and asserted by --check. The monitor health endpoint and the
 # update badge read THIS via the manifest (D1 — one version SoT).
-readonly ATRIUM_VERSION="1.0.2"
+readonly ATRIUM_VERSION="1.0.5"
 
 # Repo root = parent of this script's scripts/ dir (portable, same idiom as
 # the engine's root resolution).
@@ -382,13 +384,24 @@ build_retired_json() {
   } | LC_ALL=C sort -u | spine_build_retired_map
 }
 
-# Emit each retired key of reference manifest $1 that the current retired map $3
-# (compact JSON) lacks, unless the path is back in the generated files[] list $2
-# (the disjointness invariant) or belongs to a barred family.
+# Emit the manifest committed at HEAD — the reference every --check holds the current
+# retired map to; nothing on an unborn HEAD or one that does not track a manifest.
+# A tracked one git cannot read returns 1 with a named reason.
+read_head_manifest() {
+  git -C "${GA_ROOT}" cat-file -e HEAD:./manifest.json 2>/dev/null || return 0
+  git -C "${GA_ROOT}" show HEAD:./manifest.json || {
+    echo "generate-manifest --check: HEAD manifest unreadable (git show HEAD:./manifest.json failed)" >&2
+    return 1
+  }
+}
+
+# Emit each retired key of the reference manifests on stdin (a JSON stream) that the
+# current retired map $2 (compact JSON) lacks, unless the path is back in the generated
+# files[] list $1 (the disjointness invariant) or belongs to a barred family.
 reference_dropped_keys() {
-  local reference="$1" shipped_set=$'\n'"$2"$'\n' committed="$3" missing key
-  missing="$(jq -r --argjson cur "${committed}" '(.retired // {}) | keys - ($cur | keys) | .[]' \
-    -- "${reference}")"
+  local shipped_set=$'\n'"$1"$'\n' committed="$2" missing key
+  missing="$(jq -r -n --argjson cur "${committed}" \
+    '[inputs | (.retired // {}) | objects | keys[]] | unique - ($cur | keys) | .[]')"
   while IFS= read -r key; do
     [[ -n "${key}" ]] || continue
     if [[ "${shipped_set}" == *$'\n'"${key}"$'\n'* ]]; then continue; fi
@@ -614,14 +627,17 @@ run_check() {
     echo "generate-manifest --check: RETIRED delta (committed=$(jq -r 'length' <<<"${committed_retired}") keys, generated=$(jq -r 'length' <<<"${generated_retired}") keys)" >&2
     rc=1
   fi
-  if [[ -n "${reference}" ]]; then
-    reference_dropped="$(reference_dropped_keys "${reference}" "${files}" "${committed_retired}")"
-    if [[ -n "${reference_dropped}" ]]; then
-      reference_dropped_count="$(printf '%s\n' "${reference_dropped}" | wc -l | tr -d ' ')"
-      echo "generate-manifest --check: RETIRED-DROPPED (${reference_dropped_count}): reference retired keys absent from the current map:" >&2
-      printf '%s\n' "${reference_dropped}" | sed 's/^/  - /' >&2
-      rc=1
-    fi
+  # an unreadable HEAD manifest ends the check at exit 1 (pipefail + errexit), never a quietly skipped reference
+  reference_dropped="$({
+    # shellcheck disable=SC2310  # the || exit is the failure path: it ends the group with the status 1 of the function
+    read_head_manifest || exit
+    [[ -z "${reference}" ]] || cat -- "${reference}"
+  } | reference_dropped_keys "${files}" "${committed_retired}")"
+  if [[ -n "${reference_dropped}" ]]; then
+    reference_dropped_count="$(printf '%s\n' "${reference_dropped}" | wc -l | tr -d ' ')"
+    echo "generate-manifest --check: RETIRED-DROPPED (${reference_dropped_count}): reference retired keys absent from the current map:" >&2
+    printf '%s\n' "${reference_dropped}" | sed 's/^/  - /' >&2
+    rc=1
   fi
 
   if [[ "${rc}" -eq 0 ]]; then

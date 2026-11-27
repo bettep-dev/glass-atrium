@@ -35,11 +35,6 @@ interface PartRow {
   nodeIds: string[];
 }
 
-interface MapVerdict {
-  tone: string;
-  freshness: FreshnessInput;
-}
-
 interface StampSandbox {
   window: {
     UI: {
@@ -47,10 +42,9 @@ interface StampSandbox {
       getFreshnessVerdict: (input: FreshnessInput & { tone: string; now: number }) => { label: string };
     };
   };
-  getFreshnessInputAR: (healthAsOf: string | null, regions: RegionState[], hasMap: boolean) => FreshnessInput;
-  getPageVerdictAR: (partRows: PartRow[], caption: string, nodeIndex: null, freshness: FreshnessInput) => MapVerdict;
+  getFreshnessInputAR: (healthAsOf: string | null, regions: RegionState[], mapState: RegionState) => FreshnessInput;
+  getPartHealthStatusAR: (partRows: PartRow[], freshness: FreshnessInput & { now: number }) => { tone: string; text: string } | null;
   getPartStatusAR: (row: PartRow, freshness: FreshnessInput & { now: number }) => { tone: string | null; text: string };
-  getMapCopyNoteAR: (diagState: RegionState) => string | null;
 }
 
 const sandbox = await buildScreenSandbox<StampSandbox>(ARCH_SRC);
@@ -66,7 +60,7 @@ const FAILED_OVER_HELD: RegionState = { ...HELD, error: "HTTP 502" };
 const DOWN: RegionState = { status: "error", data: null, error: "HTTP 502", busy: false };
 
 function getState(healthAsOf: string | null, regions: RegionState[]): string {
-  return sandbox.window.UI.getFreshnessState({ ...sandbox.getFreshnessInputAR(healthAsOf, regions, true), now: NOW });
+  return sandbox.window.UI.getFreshnessState({ ...sandbox.getFreshnessInputAR(healthAsOf, regions, HELD), now: NOW });
 }
 
 test("the stamp answers for every region: a failure over held data shows, and reads in flight keep it busy", () => {
@@ -89,19 +83,17 @@ function getPart(id: string, tone: string | null): PartRow {
   return { id, name: id, tone, nodeIds: [] };
 }
 
-test("the map verdict follows the stamp's freshness: a failed re-read over an all-ok map reads Last known", () => {
-  const okParts = [getPart("pg", "ok"), getPart("hooks", "ok")];
+test("the System parts head status follows the stamp's freshness: a failed re-read over a flagged part reads Last known", () => {
+  const parts = [getPart("pg", "crit"), getPart("hooks", "ok")];
   const rows = [
-    { name: "settled read", regions: [HELD, HELD], expected: "Healthy" },
-    { name: "re-read failed over held data", regions: [FAILED_OVER_HELD, HELD], expected: "Last known" },
-    { name: "every re-read failed", regions: [FAILED_OVER_HELD, FAILED_OVER_HELD], expected: "Last known" },
+    { name: "settled read", regions: [HELD, HELD], expected: "1 critical" },
+    { name: "re-read failed over held data", regions: [FAILED_OVER_HELD, HELD], expected: "1 critical · Last known" },
+    { name: "every re-read failed", regions: [FAILED_OVER_HELD, FAILED_OVER_HELD], expected: "1 critical · Last known" },
   ];
 
   for (const row of rows) {
-    const freshness = sandbox.getFreshnessInputAR(READ_AT, row.regions, true);
-    const verdict = sandbox.getPageVerdictAR(okParts, "All 2 parts ok", null, freshness);
-    const shown = sandbox.window.UI.getFreshnessVerdict({ ...verdict.freshness, tone: verdict.tone, now: NOW });
-    assert.strictEqual(shown.label, row.expected, row.name);
+    const status = sandbox.getPartHealthStatusAR(parts, { at: READ_AT, regions: row.regions, now: NOW });
+    assert.strictEqual(status?.text, row.expected, row.name);
   }
 });
 
@@ -116,22 +108,7 @@ test("a part row's verdict follows the health stamp: an ok row under a failed re
   ];
 
   for (const row of rows) {
-    const shown = sandbox.getPartStatusAR(row.row, { ...sandbox.getFreshnessInputAR(READ_AT, row.regions, true), now: NOW });
+    const shown = sandbox.getPartStatusAR(row.row, { at: READ_AT, regions: row.regions, now: NOW });
     assert.deepStrictEqual({ tone: shown.tone, text: shown.text }, { tone: row.tone, text: row.text }, row.name);
-  }
-});
-
-test("the map carries a last-good-copy label exactly when a re-read failed over the held map", () => {
-  const rows = [
-    { name: "failed re-read over held map", state: FAILED_OVER_HELD, isLabelled: true },
-    { name: "held map, settled", state: HELD, isLabelled: false },
-    { name: "held map, re-reading", state: REREADING, isLabelled: false },
-    { name: "cold error, nothing held", state: DOWN, isLabelled: false },
-    { name: "first read in flight", state: FIRST_READ, isLabelled: false },
-  ];
-
-  for (const row of rows) {
-    const note = sandbox.getMapCopyNoteAR(row.state);
-    assert.strictEqual(/last good copy/i.test(note ?? ""), row.isLabelled, `${row.name}: ${note}`);
   }
 });

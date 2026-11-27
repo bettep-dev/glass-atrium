@@ -8,19 +8,19 @@ triggers:
   - 5-axis self-critique
 ---
 
-<!-- 5-axis rubric (Philosophy / Hierarchy / Execution / Specificity / Restraint) adapted from nexu-io/open-design `design-templates/critique/SKILL.md` (Apache 2.0). -->
+<!-- 5-axis rubric (Philosophy / Hierarchy / Execution / Specificity / Restraint) adapted from nexu-io/open-design `design-templates/critique/SKILL.md` (Apache 2.0). The Specificity name-swap question and the Restraint content-moment question adapt ideas from "unslop" by Damir Sokolovsky (@heydamir) — https://github.com/heydamir/unslop · https://heydamir.design/unslop — CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); reworded and restructured. -->
 
 # Design 5-Axis Critique
 
 ## Overview
 
 - Single-agent self-critique: glass-atrium-design-designer scores its own work before emit.
-- The axes, band rubric, emit-gate rule and iteration protocol live in `agents/glass-atrium-design-designer.md` → `## Pre-Emit 5-Axis Self-Critique`.
+- The axes, band rubric and emit-gate rule live in `agents/glass-atrium-design-designer.md` → `## Pre-Emit 5-Axis Self-Critique`.
 - This skill adds the per-axis evaluation prompts and the inline output shape.
 
 ## When to Use
 
-- Turn 3+ of glass-atrium-design-designer work — before emitting any canvas / motion-philosophy / DESIGN.md
+- glass-atrium-design-designer work, before emitting any canvas / motion-philosophy / DESIGN.md
 - Designer self-iteration loop
 
 ## Per-Axis Evaluation Prompts
@@ -29,7 +29,10 @@ triggers:
 - **Hierarchy**: On first 1-second glance, what does the eye land on? Is that the intended primary action? Are secondary / tertiary tiers visually distinguishable?
 - **Execution**: Are spacing values round multiples of a base unit (e.g., 4 / 8px)? Are color contrasts measured or guessed? Is motion timing easing-curved or default-linear?
 - **Specificity**: Pick any 3 visible strings — are they real project values or placeholder / lorem-ipsum / round-number stat-slop?
+  - A deliverable carrying a headline or hero (product UI, landing, brand): with the name of a product from an unrelated category swapped in, do the headline, the primary visual and one signature detail still fit?
+    - Any that still fits is Specificity evidence against the axis's project-specific bar; the palette is not a test object.
 - **Restraint**: Count attention-seeking gestures (gradient, glow, large animation, oversize hero element). >1 = overdesign — which is the signature, which gets removed?
+  - Does the kept flourish sit on a content moment the product supplies, or on chrome? Default and exemptions: `agents/glass-atrium-design-designer.md` → **Scarcity as rationale**.
 
 ## Output Format
 
@@ -47,12 +50,12 @@ Return inline in the response, in this shape:
 | Restraint | N | Exceptional | <evidence> |
 
 **Gate**: PASS (all ≥7) | ITERATE (axis < 7 listed)
-**Next action**: <revise dimension X per the iteration protocol>
+**Next action**: <revise dimension X, then re-score>
 ```
 
 ## Cross-References
 
-- `agents/glass-atrium-design-designer.md` → `## Pre-Emit 5-Axis Self-Critique` — SoT for the axes, band rubric, emit-gate rule and iteration protocol
+- `agents/glass-atrium-design-designer.md` → `## Pre-Emit 5-Axis Self-Critique` — SoT for the axes, band rubric and emit-gate rule
 - `agents/glass-atrium-design-designer.md` → `## Design Evaluation 4-Axis (1-5 each, 20 total)` — post-emit complement
 - `scoped/scope-qa.md` → `## D8 Visual Decision Sub-Pass (HTML Primary Deliverables) [QA]` — external-judge visual rubric
 - `glass-atrium-design-anti-slop` skill — paired use for Specificity axis evidence

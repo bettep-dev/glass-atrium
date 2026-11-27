@@ -23,7 +23,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
@@ -71,6 +71,8 @@ _PROBE_KINDS: dict[str, tuple[str, str]] = {
     "addfm": ("+name: ", "new"),
 }
 _CONTENTS: dict[str, str] = {"sensitive": _SENSITIVE, "benign": _BENIGN}
+# Characters str.splitlines ends a line at and git apply does not; "cr" never ends its line.
+_NON_NEWLINE_SEPARATORS: dict[str, str] = {"u2028": "\u2028", "u0085": "\u0085", "cr": "\r", "ff": "\f"}
 
 
 def _hunk(probe_prefix: str, side: str, content: str, *, valid: bool) -> str:
@@ -599,7 +601,7 @@ def _get_count(row: dict[str, object], column: str) -> int:
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
 class OffenderRowsReadAsBody(unittest.TestCase):
-    """Raw '+++'/'---' lines inside a hunk are body, exactly as git apply --recount applies them."""
+    """A hunk's lines are read as git apply --recount applies them: raw '+++'/'---' as body, a line ended by a newline alone."""
 
     def setUp(self) -> None:
         self.rows = _offender_rows()
@@ -630,6 +632,17 @@ class OffenderRowsReadAsBody(unittest.TestCase):
                 self.assertEqual(results["safety"], "safety")
                 self.assertEqual((results["added"], results["removed"]), (2, 2))
                 self.assertEqual((results["split_added"], results["split_removed"]), (2, 2))
+
+    def test_should_read_an_added_line_whole_when_a_non_newline_separator_sits_inside_it(self) -> None:
+        # git apply ends a line at "\n" alone
+        # backslash-led tail → a wider split reads it as a "\ No newline" marker, never scanned
+        for row_id, separator in _NON_NEWLINE_SEPARATORS.items():
+            with self.subTest(row_id):
+                added = f"note{separator}\\ {_SENSITIVE}"
+                diff = f"--- a/{_TARGET}\n+++ b/{_TARGET}\n@@ -1,1 +1,2 @@\n ctx\n+{added}\n"
+                self.assertIsNotNone(dc.match_sensitive_diff(diff))
+                self.assertEqual(dc._count_added_lines(diff), 1)
+                self.assertEqual(dc.get_canary_text(diff), f"{added}\n")
 
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
@@ -703,6 +716,15 @@ class HeaderSitesReadBodyLines(unittest.TestCase):
         diff = self.rows["offender_add3_eight_lines"]
         self.assertEqual(dc._iter_added_reference_lines(diff), [f"++ i{n}" for n in range(1, 9)])
         self.assertEqual(_count_landed_pieces(diff), 8)
+
+    def test_should_render_the_same_added_text_in_a_prior_attempt_as_in_landed_history(self) -> None:
+        for row_id, diff in {**_fixture_rows(), **self.rows}.items():
+            with self.subTest(row_id):
+                landed = dc._render_landed_history_block([("parity", diff)])
+                attempt = dc._render_prior_attempts_block(
+                    [dc.PriorAttempt(1, "parity", "applied", diff, None, None)]
+                )
+                self.assertTrue(attempt.endswith(landed.split("] ", 1)[1]))
 
     def test_should_count_a_column_zero_at_sign_body_line_as_context_as_git_recount_does(self) -> None:
         # git's recount_diff ends a hunk body only at "@@ " or "diff ", never at "@@x".
@@ -796,3 +818,76 @@ class NormalizerKeepsMarkdownDashAndPlusLines(unittest.TestCase):
             input=stored, text=True, check=True, capture_output=True,
         )
         self.assertEqual(self.target.read_text(encoding="utf-8"), self._AFTER)
+
+
+@unittest.skipIf(_IMPORT_ERROR is not None, f"import failed: {_IMPORT_ERROR}")
+class BodyComparatorsReadBodyLinesAsGitDoes(unittest.TestCase):
+    """How the body comparators split a body into lines.
+
+    - a non-newline separator inside a line → still one line to every comparator, as to git apply
+    - a CRLF ending → its CR dropped with the ending, never kept as the line's → a CRLF body keeps the LF body's
+      out-of-region verdict
+    """
+
+    _NAME = Path(_TARGET).name
+
+    def _write_body(self, *lines: str, ending: str = "\n") -> Path:
+        work_dir = tempfile.TemporaryDirectory(prefix="parity-body-")
+        self.addCleanup(work_dir.cleanup)
+        target = Path(work_dir.name) / self._NAME
+        target.write_bytes("".join(f"{line}{ending}" for line in lines).encode("utf-8"))
+        return target
+
+    def _diff(self, hunk: str) -> str:
+        return f"--- a/{self._NAME}\n+++ b/{self._NAME}\n{hunk}"
+
+    def test_should_find_an_applied_added_line_still_in_the_body(self) -> None:
+        for row_id, separator in _NON_NEWLINE_SEPARATORS.items():
+            with self.subTest(row_id):
+                landed = f"note{separator}tail"
+                target = self._write_body("keep", landed)
+                diff = self._diff(f"@@ -1,1 +1,2 @@\n keep\n+{landed}\n")
+                self.assertFalse(dc._is_applied_edit_gone(diff, str(target)))
+
+    def test_should_count_a_landed_added_line_as_already_applied(self) -> None:
+        for row_id, separator in _NON_NEWLINE_SEPARATORS.items():
+            with self.subTest(row_id):
+                landed = f"note{separator}tail"
+                target = self._write_body("keep", landed)
+                diff = self._diff(f"@@ -1,1 +1,2 @@\n keep\n+{landed}\n")
+                self.assertTrue(dc._stored_diff_already_applied(diff, target))
+
+    def test_should_not_call_an_applying_diff_stale_when_its_context_line_carries_the_separator(self) -> None:
+        for row_id, separator in _NON_NEWLINE_SEPARATORS.items():
+            with self.subTest(row_id):
+                context = f"note{separator}tail"
+                target = self._write_body("keep", context)
+                diff = self._diff(f"@@ -2,1 +2,2 @@\n {context}\n+added\n")
+                self.assertTrue(dc._diff_applies_to_file(diff, target), "fixture: git apply --recount --check")
+                self.assertFalse(dc._proposal_diff_is_stale(diff, target))
+
+    def test_should_find_the_evidence_of_an_in_region_removal_through_the_file_read(self) -> None:
+        for row_id, separator in _NON_NEWLINE_SEPARATORS.items():
+            with self.subTest(row_id):
+                removed = f"note{separator}tail"
+                target = self._write_body("<!-- EDITABLE:BEGIN -->", "keep", removed, "<!-- EDITABLE:END -->")
+                diff = self._diff(f"@@ -2,2 +2,1 @@\n keep\n-{removed}\n")
+                stdout = StringIO()
+                with redirect_stdout(stdout), redirect_stderr(StringIO()):
+                    dc._emit_removal_evidence(diff, target)
+                self.assertEqual(stdout.getvalue().split("\t")[0], dc.REMOVAL_VERDICT_OK)
+
+    def test_should_call_the_removal_of_a_line_outside_every_region_out_of_region(self) -> None:
+        for row_id, separator in _NON_NEWLINE_SEPARATORS.items():
+            with self.subTest(row_id):
+                protected = f"guard{separator}line"
+                target = self._write_body(protected, "<!-- EDITABLE:BEGIN -->", "keep", "<!-- EDITABLE:END -->")
+                diff = self._diff(f"@@ -1,1 +1,0 @@\n-{protected}\n")
+                self.assertTrue(dc._diff_modifies_out_of_region(diff, target))
+
+    def test_should_call_the_removal_of_a_line_outside_every_region_out_of_region_on_a_crlf_body(self) -> None:
+        target = self._write_body(
+            "guard line", "<!-- EDITABLE:BEGIN -->", "keep", "<!-- EDITABLE:END -->", ending="\r\n"
+        )
+        diff = self._diff("@@ -1,1 +1,0 @@\n-guard line\n")
+        self.assertTrue(dc._diff_modifies_out_of_region(diff, target))

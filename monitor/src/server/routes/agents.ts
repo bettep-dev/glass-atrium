@@ -21,6 +21,7 @@ import { loadAgentCircuitBreakerSnapshot } from "../agents/circuit-breaker.js";
 import { getPrisma } from "../db.js";
 import type { AuditChangeCarrier } from "../middleware/audit-log.js";
 import { respondDbFailure } from "../db-failure.js";
+import { putChildStdin } from "../child-stdin.js";
 import { TASK_TYPES } from "../task-types.js";
 import type {
   AgentMutationErrorBody,
@@ -1713,10 +1714,9 @@ function parseDaysParam(raw: string | undefined): AgentsWindowDays | null {
   return parsed as AgentsWindowDays;
 }
 
-// Canonical "last N days" window lower bound — repo-wide SoT semantics from
-// cost.ts buildWindowLowerBound: [CURRENT_DATE - (days-1) .. CURRENT_DATE]
-// inclusive = exactly `days` calendar days (today counted), so every "최근 N일"
-// card covers the identical day-set. Rolling NOW()-N is reserved for liveness
+// Agents-screen "last N days" window lower bound: CURRENT_DATE - (days-1), today counted
+// = exactly `days` calendar days of the PG session's CURRENT_DATE — not the bucket-tz
+// day of timezone.ts buildDayWindow, which the cost reads use. Rolling NOW()-N is reserved for liveness
 // fields only, never rate aggregates — /summary last_run_at/status stay liveness
 // signals but derive from rows inside this calendar window.
 // Prisma.raw is safe: `days` is allowlist/range-validated; `days - 1` is derived.
@@ -1901,7 +1901,7 @@ interface CliInvocation {
 // PYTHONUNBUFFERED) is inherited. stdin carries the preview JSON (commit passes
 // no stdin). Resolves with {code:0,...} on success; a non-zero exit rejects and
 // is normalized by parseCliError into the same shape.
-async function runCli(
+export async function runCli(
   args: string[],
   opts: { timeoutMs: number; stdin?: string },
 ): Promise<CliInvocation> {
@@ -1911,9 +1911,11 @@ async function runCli(
       timeout: opts.timeoutMs,
       maxBuffer: 4 * 1024 * 1024,
     });
-    if (opts.stdin !== undefined && child.child.stdin !== null) {
-      child.child.stdin.end(opts.stdin);
-    }
+    // exit code and stdout still decide the result
+    putChildStdin(child.child, opts.stdin, {
+      fields: { file: child.child.spawnfile, args },
+      message: "lifecycle CLI stdin not written: child closed its input",
+    });
     const { stdout, stderr } = await child;
     return { code: CLI_EXIT_OK, stdout, stderr };
   } catch (error) {

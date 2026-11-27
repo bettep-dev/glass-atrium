@@ -1,6 +1,6 @@
 // Integration tests for /api/improvement (unified endpoint).
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/improvement.route.test.ts
+// Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.route.test.ts
 //
 // Coverage:
 //   - GET /api/improvement happy path · 200 + shape
@@ -659,6 +659,24 @@ test("GET /api/improvement/stats: 30s in-process cache returns identical payload
 // stub does NOT touch PG — the daemon's own status flip is out of this route's
 // scope (these tests verify the exit-code → HTTP mapping, not the apply).
 
+test("POST approve: an apply script still running past the timeout is ended with its children → 504 apply_error", async () => {
+  const scriptPath = path.join(stubDir, "apply-hangs.sh");
+  // the script's own child holds the output pipes, as a real apply's python and git children do
+  writeFileSync(scriptPath, "#!/usr/bin/env bash\nsleep 6\nexit 0\n", "utf8");
+  chmodSync(scriptPath, 0o755);
+  process.env.AUTOAGENT_APPLY_SCRIPT = scriptPath;
+  process.env.AUTOAGENT_APPLY_TIMEOUT_MS = "300";
+  const started = Date.now();
+  try {
+    const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+    assert.strictEqual(res.statusCode, 504, res.body);
+    assert.strictEqual((res.json() as { status: string }).status, "apply_error");
+    assert.ok(Date.now() - started < 4000, "the route answers at the timeout, not when the child's children exit");
+  } finally {
+    delete process.env.AUTOAGENT_APPLY_TIMEOUT_MS;
+  }
+});
+
 test("POST approve: exit 0 → 200 { status: 'applied' }", async () => {
   process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-ok.sh", 0);
   const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
@@ -930,6 +948,66 @@ test("POST approve: exit 26 with no parseable cause → 200 record_missing, no s
   assert.doesNotMatch(body.reason ?? "", /Garbled|cause=/, "no stderr text is copied from an unparseable line");
 });
 
+// --- policy refusals (27/28): nothing applied, the row stays as it was -----------
+
+test("POST approve: exit 27 → 409 { status: 'live_trial' } naming the trial state that decides the actor", async () => {
+  // assert_trial_decision_state's refusal lines verbatim, one per state that refuses the click
+  const legs = [
+    ["won", "won — only the graduation actor daemon-apply-flip applies it"],
+    ["open", "open — no decision yet, no actor applies it"],
+    ["decided", "decided without a win — no actor applies it"],
+  ];
+  for (const [state, leg] of legs) {
+    process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+      `apply-live-trial-${state}.sh`,
+      27,
+      `[daemon-apply] REFUSED proposal id=4242 actor=monitor-user — its live trial is ${leg}; nothing applied, row left as it was`,
+    );
+    const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+    assert.strictEqual(res.statusCode, 409, `state ${state}: a policy refusal, never the infra 500`);
+    const body = res.json() as { status: string; id: number; reason: string };
+    assert.strictEqual(body.status, "live_trial");
+    assert.strictEqual(body.id, 4242);
+    assert.ok(body.reason.startsWith("nothing applied"), "the outcome leads, since the approve toast truncates");
+    assert.ok(body.reason.includes(`live trial is ${state}`), `reason names state ${state}`);
+  }
+});
+
+test("POST approve: exit 27 on an unread trial state → 500 { status: 'apply_error' }, a failed read and no refusal", async () => {
+  process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+    "apply-live-trial-unread.sh",
+    27,
+    "[daemon-apply] FATAL: proposal id=4242 live-trial decision state could not be read — nothing applied (never read as no trial)",
+  );
+  const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+  assert.strictEqual(res.statusCode, 500);
+  const body = res.json() as { status: string; reason: string };
+  assert.strictEqual(body.status, "apply_error");
+  assert.ok(body.reason.includes("could not be read"), "the daemon's stderr rides along for diagnosis");
+});
+
+test("POST approve: exit 28 → 409 { status: 'tier_not_auto' } naming the stored tier, or that it could not be read", async () => {
+  // assert_approval_tier's refusal lines verbatim
+  const legs = [
+    ["safety tier", "approval tier is user, not auto; only monitor-user applies it", "approval tier is user"],
+    ["unread tier", "approval tier could not be read — no actor applies it", "approval tier could not be read"],
+  ];
+  for (const [name, leg, named] of legs) {
+    process.env.AUTOAGENT_APPLY_SCRIPT = writeStderrStub(
+      `apply-tier-${name.replace(" ", "-")}.sh`,
+      28,
+      `[daemon-apply] REFUSED proposal id=4242 actor=monitor-user — its ${leg}; nothing applied, row left as it was`,
+    );
+    const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
+    assert.strictEqual(res.statusCode, 409, `${name}: a policy refusal, never the infra 500`);
+    const body = res.json() as { status: string; id: number; reason: string };
+    assert.strictEqual(body.status, "tier_not_auto");
+    assert.strictEqual(body.id, 4242);
+    assert.ok(body.reason.startsWith("nothing applied"), "the outcome leads, since the approve toast truncates");
+    assert.ok(body.reason.includes(named), `reason names the ${name}`);
+  }
+});
+
 test("POST approve: exit 2 (bad arg) → 500 { status: 'apply_error' }", async () => {
   process.env.AUTOAGENT_APPLY_SCRIPT = writeExitStub("apply-badarg.sh", 2);
   const res = await app.inject({ method: "POST", url: "/api/improvement/4242/approve" });
@@ -1069,8 +1147,7 @@ test("POST approve: hands the operator actor to daemon-apply instead of letting 
   );
 });
 
-// Source-contract assertion over the route's own SQL. Precedent for reading route
-// source rather than rendering it: test/daemon-status.enum-parity.test.ts.
+// Source-contract assertion over the route's own SQL.
 const ROUTE_SRC = readFileSync(
   fileURLToPath(new URL("../src/server/routes/improvement.ts", import.meta.url)),
   "utf8",

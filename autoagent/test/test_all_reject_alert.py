@@ -45,7 +45,12 @@ if str(_STUB_DIR) not in sys.path:
     sys.path.insert(0, str(_STUB_DIR))
 
 import _pg_stub_backend as stub  # noqa: E402 — stdlib-only, anchored above
-from _pg_seal import get_ephemeral_connection, seal_pg_reach, set_install_tree  # noqa: E402 — test dir anchored above
+from _pg_seal import (  # noqa: E402 — test dir anchored above
+    get_connection,
+    get_ephemeral_connection,
+    seal_pg_reach,
+    set_install_tree,
+)
 
 try:
     import daemon_cycle as dc
@@ -79,6 +84,7 @@ def _non_adjudicating_rationales() -> dict[str, str]:
         "auth-failure": "haiku auth failure — 401 from the CLI",
         "chronic-timeout": _backoff_rationale(),
         "below-floor → skipped": dc._BELOW_FLOOR_REJECT_PREFIX + " (0.21)",
+        "live-trial void → skipped": dc._TRIAL_DECISION.VOID_REASON + ": void (arm-imbalance)",
         "empty → skipped": "",
     }
 
@@ -558,9 +564,6 @@ class TestCycleVerdictsLivePg(unittest.TestCase):
 
     def setUp(self) -> None:
         get_ephemeral_connection().close()
-        import psycopg
-
-        self.psycopg = psycopg
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         self.reports_dir = Path(scratch.name) / "daemon-reports"
@@ -578,13 +581,11 @@ class TestCycleVerdictsLivePg(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def _run_admin(self, statement: str) -> None:
-        with self.psycopg.connect(
-            dbname="eph_bootstrap", connect_timeout=2, autocommit=True
-        ) as admin:
+        with get_connection("eph_bootstrap", autocommit=True) as admin:
             admin.execute(statement)
 
-    def _connect(self):  # noqa: ANN202 — psycopg is imported lazily
-        return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
+    def _connect(self):
+        return get_connection(self.dbname)
 
     def _execute(self, statement: str, params: tuple[object, ...] = ()) -> list[tuple]:
         with self._connect() as conn, conn.cursor() as cur:
@@ -606,14 +607,31 @@ class TestCycleVerdictsLivePg(unittest.TestCase):
     def _write_report(self, report: "dc.CycleReport") -> None:
         dc.emit_report(report, self.reports_dir / f"autoagent-{report.cycle_date}.json")
 
-    def _insert_proposal(self, cycle_date: str, status: str) -> None:
+    def _insert_proposal(self, cycle_date: str, status: str, reviewed_at: str | None = None) -> None:
         self._execute(
             "INSERT INTO core.autoagent_proposals (cycle_date, pattern_label, target_file, "
-            "classification, rationale, approval_tier, status, source_file, source_file_mtime) "
+            "classification, rationale, approval_tier, status, source_file, source_file_mtime, "
+            "reviewed_at) "
             "VALUES (%s, 'probe pattern', 'agents/probe-agent.md', 'reject', %s, 'auto', "
-            "%s, 'autoagent.json', 0) RETURNING id",
-            (cycle_date, _QUALITY_RATIONALE, status),
+            "%s, 'autoagent.json', 0, %s) RETURNING id",
+            (cycle_date, _QUALITY_RATIONALE, status, reviewed_at),
         )
+
+    def test_the_days_since_applied_leg_counts_from_the_apply_falling_back_to_the_cycle_date(
+        self,
+    ) -> None:
+        # a trialled row lands weeks after its pre-registration cycle_date: the apply resets the gap
+        apply_day, registered_day = "2026-11-05", "2026-10-06"
+        rows = (
+            ("applied today, registered 30 days ago", f"{apply_day} 03:00:00+00", False),
+            ("no apply stamp, registered 30 days ago", None, True),
+        )
+        for name, reviewed_at, is_regression in rows:
+            with self.subTest(name):
+                self._use_database(self._TEMPLATE.FULL)
+                self._insert_proposal(registered_day, "applied", reviewed_at)
+                report = _dated_report(apply_day, ["rejected"])
+                self.assertEqual(dc.is_systemic_regression(report), is_regression)
 
     def test_a_later_status_change_on_a_past_proposal_leaves_verdict_and_streak(
         self,

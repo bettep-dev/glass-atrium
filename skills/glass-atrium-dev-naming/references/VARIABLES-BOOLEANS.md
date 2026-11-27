@@ -1,10 +1,8 @@
 # Variables & Booleans — Detailed Rules
 
-Companion reference for `glass-atrium-dev-naming/SKILL.md`. Load when working on local variables, parameters, collections, maps, or boolean flags.
+Companion reference for `glass-atrium-dev-naming/SKILL.md`. Load when naming local variables, parameters, collections, maps, booleans, classes/types, enums or constants.
 
 ## Variable Names
-
-**S-I-D**: Short + Intuitive + Descriptive
 
 ### Scope-proportional length
 
@@ -24,7 +22,9 @@ Companion reference for `glass-atrium-dev-naming/SKILL.md`. Load when working on
 
 - **Acronyms**: treat as words (`loadHttpUrl` O / `loadHTTPURL` X)
 - **Short form allowed**: local variables with clear type (`const unit: OrganizationUnit` → `unit`)
-- **Parameters**: if function name + type provide enough context → no need to repeat type (`findUser(id)` O) · multiple → must disambiguate (`fromId, toId`) · a function's own parameters are never grouped (`scoped/shared-naming.md` → **Prefix-family grouping**)
+- **Parameters**: if function name + type provide enough context → no need to repeat type (`findUser(id)` O)
+  - Multiple parameters → must disambiguate (`fromId, toId`).
+  - A function's own parameters are never grouped (`scoped/shared-naming.md` → **Prefix-family grouping**).
 - **Collections**: prefer plural form (`users` O / `userList` X)
 - **Maps**: `valuesByKey` pattern (`userById` O / `userMap` X) where no other name shares its value noun.
   - Beside another name of its value noun, a map joins that family by key: `userById`/`userByEmail` → `user: { byId, byEmail }` · `userById`/`userId` → `user: { id, byId }` (`scoped/shared-naming.md` → **Prefix-family grouping**).
@@ -33,36 +33,29 @@ Companion reference for `glass-atrium-dev-naming/SKILL.md`. Load when working on
 
 The noun rule is `scoped/shared-naming.md` → **Identifier-kind binary**. The cases below settle what counts as verb form.
 
-- Standalone verb form forbidden: `processedData` X → `output`/`normalized` O · `calculatedTotal` X → `total` O · gerunds (`computing`, `loading`) X as a standalone variable name
-- **Legitimate qualifier exception** (NOT verb padding): a past-participle adjective MODIFYING a noun answers "what kind" and is correct — `sortedList`·`cachedValue`·`parsedToken`·`activeUsers`.
-  - The smell is the verb form STANDING ALONE as the whole name, not an adjective qualifying a noun.
+- Standalone verb form forbidden: a gerund as the whole variable name (`computing`, `loading`) X.
+- **Legitimate qualifier exception**: an adjective or past participle qualifying a noun is correct only when it answers "what kind" — `sortedList`·`cachedValue`·`parsedToken`·`activeUsers`.
+  - A qualifier every value of the noun carries answers nothing and is verb padding: `processedData` X → `output`/`normalized` O · `calculatedTotal` X → `total` O.
 - **Group members read with their group** (**Identifier-kind binary**): `request.pending`, `paymentRequest.failed` and `user.byId` pass — a member never stands alone.
-  - A member taken out of its group is renamed at extraction to rejoin its group's name: `{ id: userId } = user` · `{ byId: userById } = user` · `{ expiredAt: chargeExpiredAt } = charge` · `{ payment: paymentRequest } = request`.
-  - The rename is `:` in a destructuring read and `as` in an import.
-- `handle`/`process` as a NOUN (file handle, OS handle) is correct; the anti-pattern is `handle*`/`process*` as a verb prefix on a method.
+- `handle`/`process` as a noun (file handle, OS handle) is a correct data name; only their use as a method's verb prefix is padding.
 
 ### Forbidden
 
 - Letter-dropping abbreviation (`cstmrId` X)
 - Hungarian notation (`strName` X)
-- Single-char variables in 10+ line scope
 
 ## Booleans
 
-**Which form follows the stative-first prefix** (the stative-first rule itself: `scoped/shared-naming.md` → `## Core rules outside the delta-core`):
-
-- result state → `is` + past participle
-- current state → `is` + adjective
-- UI progress → `is` + present participle
+The stative-first rule itself: `scoped/shared-naming.md` → `## Core rules outside the delta-core`. The part of speech each prefix takes:
 
 | Prefix | Meaning | Following part of speech | Example |
 |--------|---------|--------------------------|---------|
-| `is` | State | adjective·past participle·present participle·noun | `isActive`·`isDeleted`·`isLoading`·`isAdmin` |
+| `is` | State | adjective (current state) · past participle (result state) · present participle (UI progress) · noun | `isActive`·`isDeleted`·`isLoading`·`isAdmin` |
 | `has` | Ownership/inclusion | noun only | `hasChildren`·`hasPermission` |
 | `can` | Permission/capability | verb infinitive | `canEdit`·`canDelete` |
 | `should` | Conditional | verb infinitive | `shouldRetry`·`shouldRender` |
 
-- `will` (future) · `did` (past) → exceptional cases only · prefer present tense substitution
+- `will` (future) · `did` (past) → restate in the present tense under a prefix from the table (`didLoad` → `isLoaded` · `willRetry` → `shouldRetry`)
 
 ## Classes/Types · Enums/Constants · Greppability
 
@@ -71,19 +64,21 @@ The noun rule is `scoped/shared-naming.md` → **Identifier-kind binary**. The c
 - **Allowed-suffix allowlist and the `I`-prefix ban**: stated in `scoped/shared-naming.md` → `## Core rules outside the delta-core`.
   - Worked case of the ban: `IUserService` X → `UserService` O
 - **Entity nouns**: class/type names are nouns naming the design intent — avoid verbified-noun fillers (`DataProcessor` → `Parser`/`Validator`/`Transformer`).
-  - Exception: `-able` capability contracts (`Runnable`, `Callable`, `Comparable`) and `-er` agent nouns (`Reader`, `Writer`) are legitimate, NOT the filler pattern.
-- **Forbidden suffixes**: `*Manager`·`*Helper`·`*Util`·`*Processor`·`*Wrapper`·`*Handler` — a qualifier (`ErrorHandler`) does not rescue one (`references/ANTI-PATTERNS.md` → `## Forbidden Class/Type Suffixes`)
-- **DTO**: class name = specify direction (`CreateUserRequest`·`UserResponse`) / filename = `.dto.ts` allowed
+  - Exception: `-able` capability contracts (`Runnable`, `Callable`, `Comparable`) and `-er` agent nouns (`Reader`, `Writer`) are legitimate, not the filler pattern.
+- **Forbidden suffixes**: the table in `references/ANTI-PATTERNS.md` → `## Forbidden Class/Type Suffixes`
+- **DTO**: class name = specify direction (`CreateUserRequest`·`UserResponse`)
+  - Filename: `.dto.ts` allowed.
 
 ### Enums/Constants
 
 - **Enum members**: SCREAMING_CASE or PascalCase — consistent within the team
 - **No type name repetition**: `Color.COLOR_RED` X → `Color.RED` O
-- **Constants**: SCREAMING_CASE · magic numbers → extract to named constants required
+- **Constants**: SCREAMING_CASE
+  - Magic numbers → extract to named constants required.
 
 ### Greppability
 
 The greppability and scope non-redundancy rules are stated in `scoped/shared-naming.md` → `## Core rules outside the delta-core`. Worked detail:
 
-- Dynamic string concatenation for identifiers forbidden (`${prefix}Handler` X)
+- Identifiers built by string concatenation are forbidden (`${prefix}Service` X): `references/ANTI-PATTERNS.md` → `## Anti-Pattern: Dynamic Identifier Construction`
 - Internal variables: brevity first / public identifiers: searchability first

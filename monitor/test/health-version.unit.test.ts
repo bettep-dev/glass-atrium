@@ -2,7 +2,7 @@
 // version sourced from ~/.glass-atrium/manifest.json `version`; the former
 // standalone 0.4.0 is gone. Covers the version resolver (graceful degrade to
 // "unknown") AND the AC: /api/health `version` equals the manifest version.
-// Runner: npx tsx --test test/health-version.unit.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/health-version.unit.test.ts
 
 import test, { after, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";

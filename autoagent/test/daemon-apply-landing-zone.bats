@@ -9,6 +9,15 @@
 #   * unreadable target      → read_error verdict → REJECT (fail-closed) + unchanged
 #   * mixed-hunk diff        → one in-region + one out-of-region hunk → REJECT the
 #                            WHOLE diff (no partial apply) + byte-unchanged
+#   * non-newline break      → an added line carrying U+2028 / U+0085 / FF / a lone
+#                            CR stays ONE line: a blank-anchored protected-zone hunk
+#                            → REJECT + byte-unchanged
+#   * lone-CR anchor         → a body line carrying a lone CR stays ONE line: an
+#                            in-region hunk anchored on it → ACCEPT
+#   * table split            → an in-region run of added non-pipe lines between two
+#                            table rows → REJECT (table_break) + unchanged; a
+#                            pipe-row insert or a run with one pipe-row neighbour
+#                            → ACCEPT
 #
 # GIT-FREE MODEL (P1-T2): the daemon no longer wraps applies in git commits. The
 # transaction is a before-image copy + `git apply --recount` (which lands a unified
@@ -191,7 +200,7 @@ b64() {
 }
 
 # write_proposal_row — the stored pending proposal the single lookup returns for
-# the given target + label + diff, in the lookup's eight fields. The diff gains a
+# the given target + label + diff, in the lookup's nine fields. The diff gains a
 # trailing newline to mirror the PG-sourced proposed_diff convention.
 write_proposal_row() {
   local target="$1" label="$2" diff="$3" label_b64 agent_b64 target_b64 diff_b64
@@ -199,7 +208,7 @@ write_proposal_row() {
   agent_b64="$(b64 probe)"
   target_b64="$(b64 "${target}")"
   diff_b64="$(b64 "${diff}"$'\n')"
-  printf '%s|2026-06-26|%s|%s|%s|%s|pending|ok\n' "${PROPOSAL_ID}" "${label_b64}" \
+  printf '%s|2026-06-26|%s|%s|%s|%s|pending|auto|ok\n' "${PROPOSAL_ID}" "${label_b64}" \
     "${agent_b64}" "${target_b64}" "${diff_b64}" >"${WORK}/proposal.row"
 }
 
@@ -457,7 +466,110 @@ applied_log_path() {
 }
 
 # ---------------------------------------------------------------------------
-# (h) SIGTERM mid-apply → the TERM trap releases the .apply-lock AND terminates
+# (h) the diff and the body are read at the newline alone, as git apply reads them
+# ---------------------------------------------------------------------------
+
+@test "a hunk anchored only on blank protected lines is rejected when its added line carries a non-newline break ahead of in-region text (byte-unchanged)" {
+  local names=('U+2028' 'U+0085' 'FF' 'CR not ending a line')
+  local seps=($'\xe2\x80\xa8' $'\xc2\x85' $'\f' $'\r')
+  local i diff
+  for i in 0 1 2 3; do
+    printf '%s\n' \
+      '# Probe Agent' '' '## Absolute Rules' '' '- protected rule line alpha' '' \
+      '## Goal' '<!-- EDITABLE:BEGIN -->' \
+      'editable rule alpha' 'editable rule beta' \
+      '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
+    snapshot_pristine "${AGENTS}/probe.md"
+
+    # text after the break → the rest of the ADDED line, never a context line
+    # the hunk's one anchor → the blank protected line 4
+    diff="$(printf '%s\n' '--- a/probe.md' '+++ b/probe.md' '@@ -4,1 +4,2 @@' \
+      "+new rule${seps[i]} editable rule alpha" ' ')"
+    write_proposal_row "${AGENTS}/probe.md" "probe-break-${i}" "${diff}"
+    run_apply
+
+    # The run's own output carries the verdict: the applied log appends across rows.
+    [[ "${output}" == *'landing_zone_reject verdict=out_of_region'* ]] \
+      || {
+        echo "${names[i]}: no out_of_region verdict"
+        echo "${output}"
+        return 1
+      }
+    cmp -s "${PRISTINE_SNAPSHOT}" "${AGENTS}/probe.md" \
+      || {
+        echo "${names[i]}: the target changed"
+        echo "${output}"
+        return 1
+      }
+  done
+}
+
+@test "an in-region hunk whose only anchor carries a lone CR lands (bytes applied, status=applied logged)" {
+  printf '%s\n' \
+    '# Probe Agent' '' '## Goal' '<!-- EDITABLE:BEGIN -->' \
+    $'editable anchor\rtail of the same line' 'editable goal line two' \
+    '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
+
+  local diff log
+  diff="$(printf '%s\n' '--- a/probe.md' '+++ b/probe.md' '@@ -5,1 +5,2 @@' \
+    '+inserted editable line' $' editable anchor\rtail of the same line')"
+  write_proposal_row "${AGENTS}/probe.md" "probe-cr-anchor" "${diff}"
+  run_apply
+
+  [[ "${status}" -eq 0 ]] || {
+    echo "${output}"
+    return 1
+  }
+  grep -q 'inserted editable line' "${AGENTS}/probe.md" || {
+    echo "${output}"
+    return 1
+  }
+  log="$(applied_log_path)"
+  grep -q '"status":"applied"' "${log}"
+}
+
+@test "an in-region insert is rejected only when its added non-pipe run has a table row on both sides" {
+  local names=('one non-pipe line between two rows' 'two non-pipe lines between two rows'
+    'a pipe row between two rows' 'a non-pipe line after the last row')
+  local anchors=(7 7 7 8)
+  local added=($'+loose note' $'+note one\n+note two' $'+| gamma | three |' $'+closing note')
+  local is_rejected=(1 1 0 0)
+  local i diff
+  for i in 0 1 2 3; do
+    printf '%s\n' \
+      '# Probe Agent' '' '## Goal' '<!-- EDITABLE:BEGIN -->' \
+      '| key | value |' '|-----|-------|' '| alpha | one |' '| beta | two |' \
+      'editable trailer line' '<!-- EDITABLE:END -->' >"${AGENTS}/probe.md"
+    snapshot_pristine "${AGENTS}/probe.md"
+
+    diff="$(printf '%s\n' '--- a/probe.md' '+++ b/probe.md' \
+      "@@ -${anchors[i]},2 +${anchors[i]},$((2 + $(grep -c '' <<<"${added[i]}"))) @@" \
+      " $(sed -n "${anchors[i]}p" "${AGENTS}/probe.md")" "${added[i]}" \
+      " $(sed -n "$((anchors[i] + 1))p" "${AGENTS}/probe.md")")"
+    write_proposal_row "${AGENTS}/probe.md" "probe-table-${i}" "${diff}"
+    run_apply
+
+    if ((is_rejected[i])); then
+      [[ "${output}" == *'landing_zone_reject verdict=table_break'* ]] \
+        && cmp -s "${PRISTINE_SNAPSHOT}" "${AGENTS}/probe.md" \
+        || {
+          echo "${names[i]}: not rejected as table_break with the target unchanged"
+          echo "${output}"
+          return 1
+        }
+    else
+      [[ "${status}" -eq 0 ]] && grep -qF -- "${added[i]#+}" "${AGENTS}/probe.md" \
+        || {
+          echo "${names[i]}: the insert did not land"
+          echo "${output}"
+          return 1
+        }
+    fi
+  done
+}
+
+# ---------------------------------------------------------------------------
+# (i) SIGTERM mid-apply → the TERM trap releases the .apply-lock AND terminates
 #     the daemon (exit 143, no post-signal mutations)
 # ---------------------------------------------------------------------------
 

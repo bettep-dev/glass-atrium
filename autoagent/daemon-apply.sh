@@ -75,15 +75,20 @@
 #                                     # "Auto-regen mode" below). No-op without
 #                                     # --proposal-id (batch path never auto-regens).
 #
-# Single-proposal mode (interactive approval UI):
+# Single-proposal mode (operator approval and graduation):
 #   --proposal-id N applies EXACTLY one proposal (id=N) instead of the batch
-#   backlog. It is invoked ONLY by an explicit user button-click in the monitor
-#   #improvement UI (POST /api/improvement/:id/approve shells out to this).
-#   Because that click IS the human-in-the-loop decision, this path BYPASSES
-#   the auto-tier gate AND the pre_verify_passed gate — a user MAY apply a
-#   safety/user-tier proposal here (the auto-batch path still excludes safety;
-#   only this explicit path bypasses). Selection: id=N only; the shell then
-#   branches on the row's status and generation outcome (exits 21/19/23/8/20 below).
+#   backlog. Two callers: a user button-click in the monitor #improvement UI
+#   (POST /api/improvement/:id/approve shells out to this as monitor-user), and
+#   the cycle's graduation of a won live trial (the machine actor).
+#   The click IS the human-in-the-loop decision, so for monitor-user alone this
+#   path BYPASSES the auto-tier gate; it bypasses the pre_verify_passed gate for
+#   every actor. Any other actor (the machine default, graduation) applies an
+#   `auto` row only; a non-auto row is refused (exit 28), so a safety/user-tier
+#   proposal lands only through the click. A proposal a live trial pre-registered
+#   is not the click's to apply: its trial's decision state picks the actor (exit 27).
+#   Selection: id=N only; the shell then branches on the row's status, the record
+#   table, its live trial's decision state, its approval tier and its generation
+#   outcome (exits 21/19/23/8/25/27/28/20 below).
 #   Reuses the SAME apply_diff + update_db_status path.
 #
 # Review actor — the reviewed_at/reviewed_by contract and the closed token set are
@@ -199,7 +204,7 @@
 #
 # Patch-source read exit codes. Single path: select_single_proposal, then
 # assert_generation_outcome after the parked guard, checked in the order
-# 21 → 19 → 23 → 8 → 17/18 → 20 so the most specific answer wins. Batch path: the
+# 21 → 19 → 23 → 8 → 25 → 27 → 28 → 17/18 → 20 so the most specific answer wins. Batch path: the
 # source read itself (21 backlog · 23 backlog row · 22 report), before any row is
 # judged — a source that could not be read never lands the zero-eligible heartbeat:
 #     19 — --proposal-id: no proposal with that id. No-op.
@@ -239,12 +244,32 @@
 #     25 — the record table could not be confirmed present: the probe answered anything but `t` (the
 #          monitor migration has not run) or the probe itself failed. Checked BEFORE the first apply,
 #          so nothing is applied and no row moves; one abort row lands (reason
-#          apply_record_table_unconfirmed). Does NOT collide with 0/2-24.
+#          apply_record_table_unconfirmed). --proposal-id: checked ahead of the live-trial read (27),
+#          whose table migrates after this one, so an un-migrated install answers 25.
+#          Does NOT collide with 0/2-24.
 #     26 — a landed apply's database record was NOT written: the INSERT failed, or a whole-file digest
 #          or the landed diff could not be computed. Raised AFTER the bytes landed and the row flipped
 #          applied, so the row cannot be re-applied, and its JSONL applied row holds the record. The
 #          drain stops at that row; one abort row lands (reason apply_record_failed).
 #          Does NOT collide with 0/2-25.
+#
+# Live-trial exit code (assert_trial_decision_state — every --proposal-id selection, a dry run and the
+# --auto-regen re-select included; a proposal no live pre-registration names is not judged):
+#     27 — --proposal-id: REFUSED on the decision state of the live trial that pre-registered the
+#          proposal, the leg named on stderr. open (no decision row) and decided without a win refuse
+#          every actor; won refuses every actor but the machine one, the cycle's graduation. A state
+#          read that fails or answers anything but one state line exits 27 too, never read as "no
+#          trial". Nothing applied, row left as it was. Does NOT collide with 0/2-26.
+#
+# Approval-tier exit code (assert_approval_tier — every --proposal-id selection, a dry run and the
+# --auto-regen re-select included):
+#     28 — --proposal-id: REFUSED on the row's approval tier. A non-auto tier applies for monitor-user
+#          alone (the click is the safety gate's human decision); every other actor, the machine
+#          default and graduation included, is refused. An empty tier field (an unreadable lookup)
+#          refuses every actor. Checked after the live-trial read (a non-auto row is never
+#          pre-registered, so 27 and 28 never compete on a real row) and ahead of the parked guard,
+#          so a refused leg makes no psycopg connect. Nothing applied, row left as it was.
+#          Does NOT collide with 0/2-27.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -603,183 +628,11 @@ except Exception:
     print("")
 '
 
-# -- Landing-zone guard Python source (hoisted module constant) ------------
-# Evaluated once at script load (not per-patch); referenced by
-# assert_diff_in_editable_region below. The quoted-delimiter `<<'PY'` heredoc —
-# not the function scope — is what makes capturing apostrophe-bearing source
-# safe (SC2259-safe). Rationale + verdict contract: that function's header.
-# Separated assignment then readonly (NOT `readonly X=$(...)`) so `cat`'s exit
-# code is not masked (SC2155).
-_PY_GUARD="$(cat <<'PY'
-import sys
-
-
-def _editable_regions(text):
-    """Body substrings between each EDITABLE BEGIN/END marker pair (doc order)."""
-    begin = "<!-- EDITABLE:BEGIN -->"
-    end = "<!-- EDITABLE:END -->"
-    regions = []
-    pos = 0
-    while True:
-        b = text.find(begin, pos)
-        if b == -1:
-            break
-        e = text.find(end, b + len(begin))
-        if e == -1:
-            break  # unbalanced trailing BEGIN with no END → ignore (no region)
-        regions.append(text[b + len(begin):e])
-        pos = e + len(end)
-    return regions
-
-
-def _row_is_pipe(body):
-    """A GFM table row/separator (incl. the '|---|' header rule): the stripped
-    line begins with '|'."""
-    return body.strip().startswith("|")
-
-
-def _breaks_table(hunks):
-    """True when a hunk inserts a contiguous run of ADDED non-pipe lines directly
-    between two GFM table rows (a pipe-row immediately before AND after the run).
-    Reasons on the POST-APPLY (new-side) view of each hunk — context + added
-    lines in document order, removed lines dropped — so it catches a diff that
-    lands inside an editable region yet splits a table block. Mirrors RC1: two
-    non-pipe lines relocated into an Error Recovery table interior. A pure
-    table-row addition (the added line is itself '|...|') and any insert NOT
-    bounded by pipe rows on both sides are admitted (no false positive on append-
-    after-table, prepend-before-table, or text between two separate tables)."""
-    for hunk in hunks:
-        new_side = []  # (is_added, body) in post-apply document order
-        for raw in hunk:
-            if not raw:
-                new_side.append((False, ""))  # blank context line
-                continue
-            marker, body = raw[0], raw[1:]
-            if marker == "-":
-                continue  # removed → absent post-apply
-            if marker == "+":
-                new_side.append((True, body))
-            elif marker == " ":
-                new_side.append((False, body))
-            # other markers ('\' no-newline-at-EOF) carry no table signal
-        n = len(new_side)
-        i = 0
-        while i < n:
-            is_added, body = new_side[i]
-            if is_added and not _row_is_pipe(body):
-                # extend over a run of consecutive added non-pipe lines (RC1
-                # inserted TWO) so the bounding pipe-rows are tested once.
-                run_end = i
-                while run_end < n and new_side[run_end][0] and not _row_is_pipe(new_side[run_end][1]):
-                    run_end += 1
-                before_pipe = i - 1 >= 0 and _row_is_pipe(new_side[i - 1][1])
-                after_pipe = run_end < n and _row_is_pipe(new_side[run_end][1])
-                if before_pipe and after_pipe:
-                    return True
-                i = run_end
-            else:
-                i += 1
-    return False
-
-
-def main():
-    target_path = sys.argv[1]
-    diff_text = sys.stdin.read()
-    lines = diff_text.splitlines()
-
-    # Header-less Strategy-B fragment → EOF append, outside any region. Reject.
-    has_minus_header = any(ln.startswith("--- ") for ln in lines)
-    has_plus_header = any(ln.startswith("+++ ") for ln in lines)
-    if not (has_minus_header and has_plus_header):
-        sys.stdout.write("header_less")
-        return
-
-    try:
-        with open(target_path, "r", encoding="utf-8") as fh:
-            current = fh.read()
-    except OSError:
-        sys.stdout.write("read_error")  # loud-fail: NEVER pass-through
-        return
-
-    regions = _editable_regions(current)
-    if not regions:
-        sys.stdout.write("no_marker")
-        return
-
-    def in_some_region(needle):
-        s = needle.strip()
-        if not s:
-            return True  # blank line carries no landing-zone signal
-        return any(s in region for region in regions)
-
-    # Hunk-aware scan. A unified diff lands each hunk by matching its ANCHOR
-    # lines (context + removed) against the current file at one position; the
-    # added lines are placed among those anchors. The landing zone of a hunk is
-    # decided by where its anchors sit:
-    #   1. Every removed/context line the file CONTAINS must sit inside an
-    #      editable region — an anchor in a protected zone = reject.
-    #   2. Each hunk MUST carry at least one anchor resolving inside a region.
-    #      A pure-add hunk with no in-region anchor cannot be confirmed to land
-    #      editable → reject (fail-closed).
-    hunks = []
-    current_hunk = None
-    for raw in lines:
-        if raw.startswith("@@"):
-            current_hunk = []
-            hunks.append(current_hunk)
-            continue
-        if current_hunk is None:
-            continue  # pre-hunk header lines
-        current_hunk.append(raw)
-
-    if not hunks:
-        sys.stdout.write("out_of_region")  # headers but no hunk body = malformed
-        return
-
-    for hunk in hunks:
-        anchor_in_region = False
-        for raw in hunk:
-            if not raw:
-                continue
-            marker, body = raw[0], raw[1:]
-            # Compute the landing-zone hit ONCE per line; both branches reuse it.
-            region_hit = in_some_region(body)
-            if marker == "-":
-                # Removed text must currently exist inside an editable region.
-                if body.strip() and not region_hit:
-                    sys.stdout.write("out_of_region")
-                    return
-                if body.strip() and region_hit:
-                    anchor_in_region = True
-            elif marker == " ":
-                # Context anchor. If the file holds it OUTSIDE every region the
-                # hunk sits in a protected zone → reject; inside → positive anchor.
-                if body.strip():
-                    if body in current and not region_hit:
-                        sys.stdout.write("out_of_region")
-                        return
-                    if region_hit:
-                        anchor_in_region = True
-            # Added lines carry no landing anchor of their own.
-        if not anchor_in_region:
-            sys.stdout.write("out_of_region")  # no in-region anchor → fail-closed
-            return
-
-    # Post-region structural integrity (RC1). Every hunk anchors in-region, but
-    # an in-region insert can STILL split a GFM table by dropping a non-pipe line
-    # between two table rows — invisible to the containment scan above. Reject on
-    # the post-apply table-break view (fail-closed, same as out_of_region).
-    if _breaks_table(hunks):
-        sys.stdout.write("table_break")
-        return
-
-    sys.stdout.write("ok")
-
-
-main()
-PY
-)"
-readonly _PY_GUARD
+# -- Landing-zone guard (lib/landing_zone_guard.py) -------------------------
+# Run by assert_diff_in_editable_region below; daemon_cycle imports the same file
+# for its trial gate → one copy, so the trial and the apply never diverge.
+LANDING_ZONE_GUARD_PY="${SCRIPT_DIR}/lib/landing_zone_guard.py"
+readonly LANDING_ZONE_GUARD_PY
 
 # -- Resolve report path ---------------------------------------------------
 # NOTE: report-existence is NOT checked here. The PG backlog is the PRIMARY
@@ -1330,11 +1183,11 @@ WHERE approval_tier      = 'auto'::core."ApprovalTier"
   -- candidate-tier apply is live by explicit user approval; this floor (not a
   -- blanket brake) is what keeps it safe. Widening the allowlist (adding
   -- 'mention') requires explicit user approval.
-  -- The floor token 'mention' (classify_promotion_tier's lowest
-  -- Beta-Binomial rung + the loop's fail-CLOSED floor state) is deliberately ABSENT, so
+  -- The floor token 'mention' (the label run_cycle stamps on every row + the
+  -- fail-CLOSED floor state of the loop) is deliberately ABSENT, so
   -- it is excluded. NULL (legacy/pre-feature rows) + '' (explicit BYPASS,
-  -- floorless) + the four above-floor tiers (the PromotionTier
-  -- enum minus 'mention') all PASS. Behaviorally identical to a plain
+  -- floorless) + the four above-floor labels (candidate / proposal /
+  -- instruction-edit / skill-candidate) all PASS. Behaviorally identical to a plain
   -- `IS DISTINCT FROM 'mention'` on current data, but stating the intent
   -- POSITIVELY makes a future column-default flip ('' -> 'mention') unable to
   -- silently INVERT flag-OFF behavior: an eligible row must MATCH the allowlist,
@@ -1344,8 +1197,8 @@ WHERE approval_tier      = 'auto'::core."ApprovalTier"
         promotion_tier IS NULL
      OR promotion_tier IN (
             '',                  -- BYPASS (operator OFF, floorless)
-            'candidate',         -- above floor (posterior >= candidate threshold)
-            'proposal',          -- above floor (intermediate ladder rung)
+            'candidate',         -- above floor (label only)
+            'proposal',          -- above floor (label only)
             'instruction-edit',  -- terminal: Tier-1 Auto (non-frontmatter)
             'skill-candidate'    -- terminal: Tier-2 user_pending (frontmatter)
         )
@@ -1372,15 +1225,15 @@ PSQL
 
 # extract_single_proposal — single-proposal lookup. Print the psql row for id=PROPOSAL_ID on stdout
 # (nothing when the id is absent); return 1 when the query fails. Row grammar: the backlog's 6 fields,
-# then status and haiku_status (NULL → ''), which select_single_proposal branches on.
+# then status, approval_tier and haiku_status (NULL → ''), which select_single_proposal branches on.
 #
 # Selection contract (DELIBERATELY different from the batch backlog):
-#   id = :'pid' ONLY          → no status / haiku_status predicate: a not-found, a terminal row and a
-#                               non-ok generation outcome each keep their own exit instead of all
-#                               reading as zero rows.
-#   NO approval_tier filter   → BYPASS the auto gate. This path is reached ONLY via an explicit user
-#                               button-click (the human-in-the-loop substitute for the safety gate),
-#                               so a user MAY apply a safety/user-tier proposal here.
+#   id = :'pid' ONLY          → no status / approval_tier / haiku_status predicate: a not-found, a
+#                               terminal row, a non-auto tier and a non-ok generation outcome each keep
+#                               their own exit instead of all reading as zero rows.
+#   approval_tier selected    → assert_approval_tier refuses a non-auto row to every actor but
+#                               monitor-user (exit 28): only the user's click substitutes for the safety
+#                               gate; graduation and the machine default reach this path too.
 #   NO pre_verify_passed filter → user judgment takes priority over the 4-axis pre-verify gate.
 # The generation outcome is NOT bypassed — assert_generation_outcome enforces it. Every field before
 # haiku_status is a psql scalar, base64 or an enum, so none can hold a '|'; haiku_status is last, so a
@@ -1402,6 +1255,7 @@ SELECT id,
        translate(encode(convert_to(target_file, 'UTF8'), 'base64'), E'\n', ''),
        translate(encode(convert_to(coalesce(proposed_diff, ''), 'UTF8'), 'base64'), E'\n', ''),
        status,
+       approval_tier,
        coalesce(haiku_status, '')
 FROM core.autoagent_proposals
 WHERE id::text = :'pid';
@@ -1424,12 +1278,15 @@ PSQL
 
 # select_single_proposal — set PATCH_ROWS to proposal PROPOSAL_ID and SINGLE_HAIKU_STATUS to its
 # generation outcome, or exit: 21 lookup failed · 19 not found · 23 row unreadable · 8 already
-# terminal. The outcome refusal (20) waits for the parked guard, whose exit 18 is the better remedy
+# terminal · 25 record table unconfirmed (not on a dry run) · 27 refused on its live trial's decision
+# state · 28 refused on its approval tier — both ahead of the parked guard and the outcome refusal,
+# whose remedy (Reject) is wrong for a row a trial or the tier gate holds.
+# The outcome refusal (20) waits for the parked guard, whose exit 18 is the better remedy
 # for a row tripping both. The lookup is captured, not read through `< <(…)`, which would drop its
 # return code. The row is reassembled before its status is trusted: a row that does not decode, or
 # answers for another id, has no status worth branching on.
 select_single_proposal() {
-    local lookup_out patch_row row_id cycle_date label agent target diff_b64 status haiku_status
+    local lookup_out patch_row row_id cycle_date label agent target diff_b64 status approval_tier haiku_status
     if ! lookup_out="$(extract_single_proposal)"; then
         printf '[daemon-apply] FATAL: proposal id=%s lookup failed — nothing applied (DB query error, not a no-op)\n' \
             "${PROPOSAL_ID}" >&2
@@ -1439,7 +1296,7 @@ select_single_proposal() {
         printf '[daemon-apply] proposal id=%s not found — no-op\n' "${PROPOSAL_ID}" >&2
         exit 19
     fi
-    IFS='|' read -r row_id cycle_date label agent target diff_b64 status haiku_status <<<"${lookup_out}"
+    IFS='|' read -r row_id cycle_date label agent target diff_b64 status approval_tier haiku_status <<<"${lookup_out}"
     if [[ "${row_id}" != "${PROPOSAL_ID}" ]] \
         || ! patch_row="$(reassemble_proposal_rows "${row_id}|${cycle_date}|${label}|${agent}|${target}|${diff_b64}")"; then
         printf '[daemon-apply] FATAL: proposal id=%s row is unreadable — nothing applied (stored row data, not a DB outage)\n' \
@@ -1454,8 +1311,85 @@ select_single_proposal() {
             ;;
         *) ;;
     esac
+    # record table first: its migration precedes the ledger's → an un-migrated install answers 25 + its remedy
+    if [[ "${DRY_RUN}" -eq 0 ]]; then
+        assert_apply_record_table
+    fi
+    assert_trial_decision_state
+    assert_approval_tier "${approval_tier}"
     PATCH_ROWS=("${patch_row}")
     SINGLE_HAIKU_STATUS="${haiku_status}"
+}
+
+# assert_trial_decision_state — exit 27 unless the live trial that pre-registered PROPOSAL_ID lets
+# REVIEW_ACTOR apply it: no such trial → any actor · won → the machine actor alone, the cycle's
+# graduation, carrying the pre-registered hash its landing must match (TRIAL_TEXT_SHA256) · open
+# or decided without a win → nobody. The row's status adds no leg: a won row
+# drained to snoozed is still the machine actor's alone. A read that fails or answers anything but
+# one state line is refused too — a trial that cannot be read is never "no trial".
+# Both lines from a subshell, for assert_approval_tier's reason: an EINTR'd in-shell printf would exit 1.
+assert_trial_decision_state() {
+    local answer leg grammar='^(open|won|decided)\|[0-9a-f]*$'
+    if ! answer="$(get_trial_decision_state)"; then
+        answer='unread'
+    fi
+    if [[ -n "${answer}" ]] && ! [[ "${answer}" =~ ${grammar} ]]; then
+        (printf '[daemon-apply] FATAL: proposal id=%s live-trial decision state could not be read — nothing applied (never read as no trial)\n' \
+            "${PROPOSAL_ID}") >&2 || true # GA-ABSORB[handled@exit 27]: the exit is the verdict
+        exit 27
+    fi
+    case "${answer%%|*}" in
+        '') return 0 ;;
+        won)
+            if [[ "${REVIEW_ACTOR}" == "${REVIEW_ACTOR_FLIP}" ]]; then
+                TRIAL_TEXT_SHA256="${answer#*|}"
+                return 0
+            fi
+            leg="won — only the graduation actor ${REVIEW_ACTOR_FLIP} applies it"
+            ;;
+        open) leg='open — no decision yet, no actor applies it' ;;
+        *) leg='decided without a win — no actor applies it' ;;
+    esac
+    (printf '[daemon-apply] REFUSED proposal id=%s actor=%s — its live trial is %s; nothing applied, row left as it was\n' \
+        "${PROPOSAL_ID}" "${REVIEW_ACTOR}" "${leg}") >&2 || true # GA-ABSORB[handled@exit 27]: the exit is the verdict
+    exit 27
+}
+
+# get_trial_decision_state — print `state|text_sha256` for the live pre-registration naming
+# PROPOSAL_ID, nothing when none does; non-zero when the read fails (psql's own stderr names why).
+# state: open = no <trial key>:decision row · won = that row holds a win · decided = any other
+# decision. text_sha256 is the pre-registered canary text's hash ('' when the payload holds none).
+get_trial_decision_state() {
+    psql -d glass_atrium -v ON_ERROR_STOP=1 -tAq -F'|' -v "pid=${PROPOSAL_ID}" <<'PSQL'
+SELECT CASE WHEN d.id IS NULL THEN 'open'
+            WHEN d.payload->'win' IS NOT NULL THEN 'won'
+            ELSE 'decided' END,
+       coalesce(p.payload->'canary'->>'text_sha256', '')
+FROM core.autoagent_trial_ledger p
+LEFT JOIN core.autoagent_trial_ledger d ON d.dedupe_key = p.trial_key || ':decision'
+WHERE p.event = 'live-preregistration'
+  AND p.payload->>'proposal_id' = :'pid';
+PSQL
+}
+
+# assert_approval_tier TIER — exit 28 unless TIER is auto, or REVIEW_ACTOR is monitor-user and TIER was read.
+# Refusal line from a subshell: prune_backup_retention's `< <(find …)` → an un-waited child by the
+# --auto-regen re-select → an EINTR'd in-shell printf would decide the exit under errexit.
+assert_approval_tier() {
+    local leg
+    case "$1" in
+        auto) return 0 ;;
+        '') leg='approval tier could not be read — no actor applies it' ;;
+        *)
+            if [[ "${REVIEW_ACTOR}" == monitor-user ]]; then
+                return 0
+            fi
+            leg="approval tier is $1, not auto; only monitor-user applies it"
+            ;;
+    esac
+    (printf '[daemon-apply] REFUSED proposal id=%s actor=%s — its %s; nothing applied, row left as it was\n' \
+        "${PROPOSAL_ID}" "${REVIEW_ACTOR}" "${leg}") >&2 || true # GA-ABSORB[handled@exit 28]: the exit is the verdict
+    exit 28
 }
 
 # verify_target_in_agents — sanity check: target_file MUST live under agents_dir.
@@ -1506,10 +1440,8 @@ verify_target_in_agents() {
 # Returns 0 ONLY on the 'ok' verdict; every other verdict → return 1 (fail-closed)
 # AFTER a loud named emit_log. The guard's OWN read must loud-fail — NO 2>/dev/null
 # absorption on the python call (a swallowed guard failure would silently pass-
-# through, the exact Precondition Loud-Fail anti-pattern). The python source is the
-# _PY_GUARD module constant (captured once at load via a quoted heredoc — SC2259-
-# safe; the source contains apostrophes a single-quoted bash assignment would
-# break) and the diff is fed on stdin.
+# through, the exact Precondition Loud-Fail anti-pattern). The guard is
+# lib/landing_zone_guard.py (LANDING_ZONE_GUARD_PY); the diff is fed on stdin.
 #
 # Args: target (the real, git-facing agent file) · diff (proposed_diff) ·
 #       label · diff_target (for the reject log attribution).
@@ -1521,10 +1453,10 @@ assert_diff_in_editable_region() {
 
     # Loud read: no 2>/dev/null absorption on the guard call, so a non-zero exit
     # or empty/non-ok verdict from python3 is treated as a fail-closed reject by
-    # the verdict check below. Source = _PY_GUARD module constant (captured once
-    # at load via a quoted heredoc); the diff is fed on stdin.
+    # the verdict check below. A missing guard file is such an exit; the diff is
+    # fed on stdin.
     local verdict
-    verdict="$(printf '%s' "${diff}" | python3 -c "${_PY_GUARD}" "${target}")"
+    verdict="$(printf '%s' "${diff}" | python3 "${LANDING_ZONE_GUARD_PY}" "${target}")"
 
     if [[ "${verdict}" == "ok" ]]; then
         return 0
@@ -1799,8 +1731,9 @@ sys.stdout.write("\n".join(out))
 # absence (the rules files and the global-rules file never carried frontmatter).
 # Checks: non-empty · one heading · present-before frontmatter kept · editable-
 # region marker COUNTS not reduced · the multiset of lines absent after the apply
-# equal to the declared removal set (gate-armed patches only) · not shrunk below
-# half the before-image line count.
+# equal to the declared removal set (gate-armed patches only) · a won trial's
+# landed lines equal to its pre-registered text (is_trialled_text_landed) · not
+# shrunk below half the before-image line count.
 #
 # Why the marker check COUNTS rather than tests presence: a patch that deletes one
 # END marker of several leaves markers present while silently merging two regions
@@ -1885,6 +1818,13 @@ verify_patched() {
         fi
     fi
 
+    # A won trial's graduation lands exactly its pre-registered bytes (rationale: is_trialled_text_landed).
+    if [[ -n "${TRIAL_TEXT_SHA256}" ]] && ! is_trialled_text_landed "${before}" "${target}"; then
+        printf '[daemon-apply] WARN verify_patched trialled_text_mismatch target=%s — the landed lines are not the pre-registered text (sha256 %s); failing verify\n' \
+            "${target}" "${TRIAL_TEXT_SHA256}" >&2
+        return 1
+    fi
+
     # Proportional shrink floor: keep at least half the before-image line count.
     # Guts a body-stripping patch while a normal edit (near-original size) passes.
     local before_lines after_lines
@@ -1895,6 +1835,44 @@ verify_patched() {
     fi
 
     return 0
+}
+
+# is_trialled_text_landed BEFORE TARGET — 0 when TARGET is BEFORE with the stored diff's added lines
+# inserted, in order, as git apply wrote them, and those bytes hash to TRIAL_TEXT_SHA256.
+# - written bytes, not get_canary_text → it drops an added line's CR git apply keeps → untrialled bytes, hash equal
+# - whole image, not the added lines alone → git apply's write can convert other lines (core.autocrlf, eol attribute)
+# - interleave, not a line diff → a diff aligns an added line equal to its neighbour either way (landing misread)
+_PY_TRIALLED_TEXT_LANDED='
+import hashlib, sys
+
+def get_lines(data):
+    lines = data.split(b"\n")
+    tail = lines.pop()
+    return [line + b"\n" for line in lines] + ([tail] if tail else [])
+
+before, after = (get_lines(open(path, "rb").read()) for path in sys.argv[1:3])
+written, kind = [], ""
+for line in get_lines(sys.stdin.buffer.read().rstrip(b"\n") + b"\n"):
+    if line.startswith(b"@@"):
+        kind = "hunk"
+    elif kind and line.startswith(b"+"):
+        written.append(line[1:])
+        kind = "added"
+    elif line.startswith(b"\\") and kind == "added":
+        written[-1] = written[-1].removesuffix(b"\n")
+    elif kind:
+        kind = "hunk"
+reach = {0} if len(after) == len(before) + len(written) else set()
+for k, line in enumerate(after):
+    reach = {i + 1 for i in reach if i < len(before) and before[i] == line} | {
+        i for i in reach if k - i < len(written) and written[k - i] == line}
+landed = len(before) in reach and hashlib.sha256(b"".join(written)).hexdigest() == sys.argv[3]
+sys.exit(0 if landed else 1)
+'
+# shellcheck disable=SC2329
+#   Called only from verify_patched, itself invoked indirectly as git_txn_apply's verify callback.
+is_trialled_text_landed() {
+    printf '%s' "${PATCH_DIFF}" | python3 -c "${_PY_TRIALLED_TEXT_LANDED}" "$1" "$2" "${TRIAL_TEXT_SHA256}"
 }
 
 # short_label — first 40 chars of pattern label, sanitised for commit message.
@@ -2487,8 +2465,10 @@ emit_zero_eligible_row() {
 }
 
 # Select the patch source. Three modes:
-#   SINGLE   = --proposal-id N: exactly one proposal, tier/pre_verify gate
-#              bypassed (explicit user approval). Highest priority.
+#   SINGLE   = --proposal-id N: exactly one proposal; pre_verify gate bypassed,
+#              tier gate bypassed for monitor-user alone (its click is the
+#              user's approval), any other actor refused on a non-auto tier
+#              (exit 28). Highest priority.
 #   BACKLOG  = cross-cycle PG backlog (oldest-first) — the default cron path.
 #   REPORT   = today's JSON report (when psql absent or dry-run).
 # PATCH_SOURCE drives the loud-fail contract: backlog AND single sources enforce
@@ -2501,6 +2481,8 @@ PATCH_SOURCE="report"
 BATCH_PATCH_LINES=""
 # Generation outcome (haiku_status) of the single proposal, set by select_single_proposal.
 SINGLE_HAIKU_STATUS=""
+# A won trial's pre-registered text hash, set by assert_trial_decision_state, read by verify_patched.
+TRIAL_TEXT_SHA256=""
 
 # Batch mode is closed until live trials: no flag, env or data-root input reopens it, so every install
 # selects nothing here — no backlog SELECT, no report read. The batch sources below stay for the
@@ -2557,7 +2539,7 @@ while IFS= read -r _row; do
 done <<<"${BATCH_PATCH_LINES}"
 
 # Empty here means a real empty backlog or report: a failed batch read exited 21/22/23 above, and the single
-# source exits 21/19/23/8 in select_single_proposal instead.
+# source exits 21/19/23/8/25/27/28 in select_single_proposal instead.
 if [[ ${#PATCH_ROWS[@]} -eq 0 ]]; then
     if [[ "${PATCH_SOURCE}" == "backlog" ]]; then
         printf '[daemon-apply] 0 pending backlog patches (source=PG)\n' >&2
@@ -3127,9 +3109,10 @@ run_regen_for_single() {
 
 # -- Apply-record table preflight (exit 25) --------------------------------
 # Before the first apply AND before any housekeeping write: the sources whose landing writes a table
-# record must find the table, else nothing is applied. A dry run writes no record, and the report
+# record must find the table, else nothing is applied. The single source was checked in
+# select_single_proposal, ahead of its live-trial read. A dry run writes no record, and the report
 # fallback applies only with psql absent, so neither is checked.
-if [[ "${DRY_RUN}" -eq 0 ]] && { [[ "${PATCH_SOURCE}" == "backlog" ]] || [[ "${PATCH_SOURCE}" == "single" ]]; }; then
+if [[ "${DRY_RUN}" -eq 0 ]] && [[ "${PATCH_SOURCE}" == "backlog" ]]; then
     assert_apply_record_table
 fi
 

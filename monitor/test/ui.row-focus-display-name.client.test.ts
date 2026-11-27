@@ -1,4 +1,4 @@
-// Row focus (one Tab stop per row set / chip group, arrows inside) and the shared display-name map with hidden empty fields.
+// Row focus (one Tab stop per row set, arrows inside) and the shared display-name map with hidden empty fields.
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -161,37 +161,6 @@ describe("row focus props drive DOM focus", () => {
   });
 });
 
-describe("chip group", () => {
-  const chips = [
-    { key: "all", label: "All", isPressed: true },
-    { key: "fail", label: "Failed", isPressed: false },
-    { key: "done", label: "Done", isPressed: false },
-  ];
-
-  test("is a named toolbar of toggle buttons with a single Tab stop", () => {
-    const tree = rendered("ChipGroup", { label: "Result filter", chips, onToggle: () => undefined });
-    const [toolbar] = findNodes(tree, (n) => n.props.role === "toolbar");
-    const buttons = findNodes(tree, (n) => n.type === "button");
-    assert.equal(toolbar.props["aria-label"], "Result filter");
-    assert.deepEqual(buttons.map((b) => b.props["aria-pressed"]), [true, false, false]);
-    assert.equal(buttons.filter((b) => b.props.tabIndex === 0).length, 1);
-    assert.equal(collectText(tree).replace(/\s+/g, ""), "AllFailedDone");
-  });
-
-  test("ArrowRight moves focus to the next chip", () => {
-    const focused: unknown[] = [];
-    const buttons = [0, 1, 2].map(() => {
-      const b = { focus: () => focused.push(b) };
-      return b;
-    });
-    const tree = rendered("ChipGroup", { label: "Result filter", chips, onToggle: () => undefined });
-    const [toolbar] = findNodes(tree, (n) => n.props.role === "toolbar");
-    const event = keyEvent("ArrowRight", { querySelectorAll: () => buttons }, buttons[0]);
-    (toolbar.props.onKeyDown as (e: unknown) => void)(event);
-    assert.equal(focused[0], buttons[1]);
-  });
-});
-
 describe("display names", () => {
   const rows = [
     { name: "a full model id reads as family and version", kind: "model", value: "claude-opus-5-5", label: "Opus 5.5" },
@@ -245,13 +214,19 @@ describe("empty fields are hidden", () => {
     assert.ok(text.includes("File path") && text.includes("hooks/a.sh"), text);
   });
 
-  test("a detail field label sits on the meta type step, never below the meta floor", () => {
-    const tree = rendered("DetailField", { label: "File path", value: "hooks/a.sh" });
-    const [label] = findNodes(tree, (n) => n.type === "div" && collectText(n) === "File path");
-    assert.ok(label, "the label renders");
-    const classes = String(label.props.className).split(/\s+/);
-    assert.ok(classes.includes("fs-meta"), String(label.props.className));
-    assert.ok(!classes.includes("fs-micro"), String(label.props.className));
+  test("a detail field is a description list pairing its label term with its value", () => {
+    const tree = rendered("DetailField", { label: "File path", value: "hooks/a.sh", mono: true });
+    const [list] = findNodes(tree, (n) => n.type === "dl");
+    assert.ok(list, "a dl renders");
+    const terms = findNodes(list, (n) => n.type === "dt").map(collectText);
+    const values = findNodes(list, (n) => n.type === "dd").map(collectText);
+    assert.deepEqual({ terms, values }, { terms: ["File path"], values: ["hooks/a.sh"] });
+  });
+
+  test("only a stacked detail field carries the stacked class", () => {
+    const getClass = (props: Record<string, unknown>) => findNodes(rendered("DetailField", { label: "Description", value: "Runs the nightly compile", ...props }), (n) => n.type === "dl")[0].props.className;
+
+    assert.deepEqual([getClass({}), getClass({ isStacked: true })], ["detail-fact", "detail-fact detail-fact--stacked"]);
   });
 
   test("a detail field with a placeholder value renders nothing", () => {

@@ -134,6 +134,7 @@ run_step() {
       set -Eeuo pipefail
       IFS=$'"'"'\n\t'"'"'
       source "$1"
+      source "${1%/*}/lib/apply-lock.sh"
       update_migrate_deploy_post_apply
     ' _ "${SKILL}"
 }
@@ -226,6 +227,7 @@ assert_prisma_never_ran() {
     bash -c '
       set -Eeuo pipefail
       source "$1"
+      source "${1%/*}/lib/apply-lock.sh"
       update_migrate_deploy_post_apply
     ' _ "${SKILL}"
   [[ "${status}" -eq 0 ]] || {
@@ -250,6 +252,7 @@ assert_prisma_never_ran() {
     bash -c '
       set -Eeuo pipefail
       source "$1"
+      source "${1%/*}/lib/apply-lock.sh"
       update_migrate_deploy_post_apply
     ' _ "${SKILL}"
   [[ "${status}" -eq 15 ]] || {
@@ -524,6 +527,7 @@ seed_e2e() {
   cat >"${INSTALL}/glass-atrium" <<STUB
 #!/usr/bin/env bash
 printf 'launcher %s\n' "\$*" >>"${CALLS}"
+[[ "\$1" != --help ]] || echo '  glass-atrium repair-config-binaries'
 exit 0
 STUB
   chmod +x "${INSTALL}/glass-atrium"
@@ -556,14 +560,12 @@ run_e2e() {
   }
   [[ "$(cat "${INSTALL}/scripts/tool.sh")" == "new content" ]] || return 1 # the apply landed first
 
-  # Ordering, read off the shared call log: the migrate deploy is the LAST recorded step, after the
-  # facade refresh and the hook wiring — which is what puts it before the monitor restart.
-  grep -qF 'launcher wire-hooks' "${CALLS}" || {
-    echo "wire-hooks never ran: $(cat -- "${CALLS}")" >&2
-    return 1
-  }
-  [[ "$(tail -n 1 "${CALLS}")" == prisma\ migrate\ deploy* ]] || {
-    echo "migrate deploy was not the last step: $(cat -- "${CALLS}")" >&2
+  # Ordering, read off the shared call log: the migrate deploy runs after the hook wiring and before the
+  # finalize, whose first step is the config binary repair — so the finalized monitor never runs an older schema.
+  local order
+  order="$(grep -oE '^(launcher wire-hooks|prisma migrate deploy|launcher repair-config-binaries)' "${CALLS}" | tr '\n' '|')"
+  [[ "${order}" == 'launcher wire-hooks|prisma migrate deploy|launcher repair-config-binaries|' ]] || {
+    echo "migrate deploy not between the wiring and the finalize: $(cat -- "${CALLS}")" >&2
     return 1
   }
 }

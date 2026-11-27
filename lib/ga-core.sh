@@ -50,6 +50,11 @@ source "${__ga_core_libdir}/ga-doctor.sh" || {
   printf "%s\n" "FATAL: cannot source ga-doctor.sh" >&2
   return 1
 }
+# shellcheck source=lib/ga-remote.sh
+source "${__ga_core_libdir}/ga-remote.sh" || {
+  printf "%s\n" "FATAL: cannot source ga-remote.sh" >&2
+  return 1
+}
 unset __ga_core_libdir
 
 # remove_node_modules — uninstall teardown: rm -rf monitor/node_modules to reclaim disk. node_modules
@@ -169,6 +174,15 @@ run_install() {
   # Runs before the symlink farm so a clean install has a rendered config ready.
   render_config
 
+  # remote access opt-in — after render_config (config.toml exists), before any env render reads it.
+  # Default No; a non-terminal install stays loopback-only; a failure never fails the install.
+  if "${DRY_RUN}"; then
+    log "dry-run: skipping the remote access opt-in"
+  else
+    # shellcheck disable=SC2310  # verdict branched on — a refusal leaves access off, never an abort
+    ga_remote_install_opt_in || log "remote access: not turned on (see above) — the monitor stays loopback-only"
+  fi
+
   # rendered launchd plists track the just-rendered config (file-write only —
   # loading stays manual, see render_plists)
   render_plists
@@ -181,6 +195,9 @@ run_install() {
   # dry-run (mutation-free staging).
   wire_hooks
 
+  # the owner queue's MCP server in every profile — printed always, written on --approve-profile-writes or a y typed at a terminal
+  put_queue_mcp_registration add
+
   # legacy-farm migration AFTER wire_hooks — repoint-first-THEN-sweep: the
   # settings.json bindings above already point at the in-place hooks dir, so
   # dropping the legacy bare-name-farm symlinks opens no hook-blackout window.
@@ -191,6 +208,9 @@ run_install() {
   # needs the schema in place at first start. Skipped in dry-run; fast-path
   # no-op when the DB already exists (see setup_database).
   setup_database
+
+  # after the remote access answer above, so a yes reaches the env the monitor starts with
+  render_monitor_env
 
   # launchd repoint is the only step gated by --repoint-launchd + never dry-run
   repoint_launchd
@@ -426,7 +446,8 @@ run_prune() {
       log "  prune: removed orphan GA symlink: ${link}"
     fi
     pruned=$((pruned + 1))
-  done < <(find "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
+    # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
+  done < <(find -H "${TARGET_HOME}" -type l -lname "${GA_ROOT}/*" 2>/dev/null || true)
 
   # STEP6 — summary. Empty candidate set is a no-op (rc 0) with a no-orphan line.
   if [[ "${candidates}" -eq 0 ]]; then
@@ -633,6 +654,9 @@ run_uninstall() {
   # procs. MUST run BEFORE the DB drop so the daemons release their DB connections
   # first. The postgres server + its socket are left untouched (never GA's to stop).
   stop_detached_daemons
+  # STEP1c — remote access: delete the device rows BEFORE the pre-drop backup copies them, remove the
+  # key dir, turn access off, tell the owner to drop each device's CA trust. Never fails the uninstall.
+  ga_remote_uninstall
   # STEP2 — back up, then drop, the GA databases (connections now drained).
   # BACKUP-BEFORE-DROP, fail-closed per DB: a failed/empty pre-drop pg_dump skips
   # that DB's drop (data preserved) — reinstall recreates a fresh, consistent DB.
@@ -657,6 +681,7 @@ run_uninstall() {
   # parity with install's additive wiring: un-wire ONLY the Atrium hook
   # bindings (matcher + Atrium-path scoped, backed up, additive-safe).
   unwire_hooks
+  put_queue_mcp_registration remove
 
   # inverse of install's preflight_persist_rc_line: strip the ` # glass-atrium`-marked
   # PATH-export lines from ~/.zshrc + ~/.bash_profile (marker-scoped, backed up first,

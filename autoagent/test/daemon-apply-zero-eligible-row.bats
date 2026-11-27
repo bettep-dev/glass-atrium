@@ -141,7 +141,7 @@ row() {
     "$(b64 "${STUB_TARGET:?}")" "${STUB_DIFF_B64:?}"
 }
 case "${sql}" in
-  *"id::text = :'pid'"*) printf '%s|pending|ok\n' "$(row 401)" ;;
+  *"id::text = :'pid'"*) printf '%s|pending|auto|ok\n' "$(row 401)" ;;
   *"ORDER BY cycle_date ASC, id ASC"*)
     case "${STUB_BACKLOG:-empty}" in
       empty) ;;

@@ -1,5 +1,5 @@
 // db-failure 분류기 + responder 테스트 (M2 taxonomy split 회귀 고정).
-// Runner: npx tsx --test test/db-failure.unit.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/db-failure.unit.test.ts
 //
 // Pinned invariant: SQLSTATE class 22/23 → 400 invalid_input(WARN) ·
 // 연결류/미상 → 503 database_unavailable(ERROR + sqlstate/kind 구조화 로그).

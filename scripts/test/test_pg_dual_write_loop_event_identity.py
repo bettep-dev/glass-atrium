@@ -11,8 +11,8 @@ directions; the refusal cases below pin that choke point, including the blank
 string, which is neither absence nor an identity and silently keys the verdict arm
 on "" where two subjects collapse onto one row.
 
-The four upsert cases drive the helper's REAL statement text through a stdlib SQL
-engine (see _pg_stub_backend); the five refusal cases are refused before a connection
+The upsert cases drive the helper's REAL statement text through a stdlib SQL
+engine (see _pg_stub_backend); the refusal cases are refused before a connection
 opens, so no statement reaches an engine there. Both run on the test-python-pytest
 gating leg and can fail the merge. What stays a live-Postgres step: PostgreSQL's own
 inference rules for a predicate-bearing conflict target, timestamptz typing, and
@@ -153,6 +153,31 @@ def test_when_a_spool_close_is_written_then_its_row_stores_both_counts_of_the_la
     events.close_spool(lines_read=12, lines_without_row=3)
 
     assert events.get_counts() == [(12, 3)]
+
+
+@pytest.mark.parametrize(
+    ("omitted_columns", "is_degraded"),
+    [
+        pytest.param((), False, id="schema with the count columns"),
+        pytest.param(_COUNT_COLUMNS, True, id="schema without the count columns"),
+    ],
+)
+def test_a_spool_close_names_a_degraded_write_only_when_the_count_columns_are_absent(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    omitted_columns: tuple[str, ...],
+    is_degraded: bool,
+):
+    # The DEGRADED line tells an operator to apply a migration; on a migrated schema it is false.
+    db_path = tmp_path / "autoagent_loop_events.sqlite"
+    backend.create_loop_events_table(db_path, omitted_columns=omitted_columns)
+    with backend.load_helper(db_path) as helper:
+        events = _LoopEvents(helper, db_path)
+
+        events.close_spool(lines_read=11, lines_without_row=2)
+
+    assert ("DEGRADED" in capsys.readouterr().err) is is_degraded
+    assert events.get_causes() == [_SPOOL_CLOSED]
 
 
 def test_when_a_verdict_cause_carries_no_subject_then_it_is_refused(

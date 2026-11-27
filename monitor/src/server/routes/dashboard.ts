@@ -17,7 +17,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { buildAgentMembershipFilter, loadCanonicalAgentKeys } from "../agents/registry.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
-import { DAY_BUCKET_TIMEZONE } from "../timezone.js";
+import { buildDayWindow, computeBucketTzToday, DAY_BUCKET_TIMEZONE } from "../timezone.js";
 import { nextOccurrenceUtc, DAEMON_CRON_SCHEDULE } from "../schedule-next-fire.js";
 import {
 	queryDaemonAggRows,
@@ -205,9 +205,8 @@ async function handleCostTimeseries(
     // (00:00–08:59 KST renders yesterday-as-today). Bound as a bind param (::date).
     const { day: todayIso, time: cutTime } = getBucketTzClock(new Date());
     const hasPriorWindow = request.query.prior_window === "1" || request.query.prior_window === "true";
-    // generate_series fills gap days with zero rows (LEFT JOIN). Interval embedded
-    // via Prisma.raw is safe here because `days` was validated against allowlist.
-    const windowLowerBound = buildWindowLowerBound(todayIso, days);
+    // generate_series fills gap days with zero rows (LEFT JOIN).
+    const dayWindow = buildDayWindow(todayIso, days);
     const [rows, priorWindow] = await Promise.all([
       prisma.$queryRaw<TimeseriesRow[]>`
       SELECT
@@ -218,12 +217,12 @@ async function handleCostTimeseries(
         COALESCE(SUM(c.cache_creation_tokens), 0)::bigint AS cache_creation_tokens,
         COALESCE(SUM(c.cost_usd), 0)::numeric(12,6) AS cost_usd,
         COUNT(DISTINCT c.session_id)::bigint AS session_count
-      FROM generate_series(${windowLowerBound}, ${todayIso}::date, '1 day') d
+      FROM generate_series(${dayWindow.firstDay}, ${dayWindow.lastDay}, '1 day') d
       LEFT JOIN core.cost_events c ON c.event_date = d::date
       GROUP BY d
       ORDER BY d ASC
     `,
-      hasPriorWindow ? findCostPriorWindow(windowLowerBound, days, cutTime) : undefined,
+      hasPriorWindow ? findCostPriorWindow(dayWindow.firstDay, days, cutTime) : undefined,
     ]);
 
     const points: CostTimeseriesPoint[] = rows.map((row) => ({
@@ -258,13 +257,13 @@ async function handleCostTimeseries(
  * Same row filter as the series (every kind) → a filtered prior alone would bias the delta.
  */
 async function findCostPriorWindow(
-  windowLowerBound: Prisma.Sql,
+  firstDay: Prisma.Sql,
   days: number,
   cutTime: string,
 ): Promise<CostTimeseriesPriorWindow> {
   const [row] = await getPrisma().$queryRaw<PriorWindowRow[]>`
     WITH bounds AS (
-      SELECT (${windowLowerBound})::date - ${days}::int AS period_start, (${windowLowerBound})::date AS period_end
+      SELECT (${firstDay})::date - ${days}::int AS period_start, (${firstDay})::date AS period_end
     )
     SELECT
       b.period_start,
@@ -364,20 +363,6 @@ function parseDaysParam(
   return parsed;
 }
 
-// Day-bucket timezone's "today" as an ISO calendar-day string (YYYY-MM-DD). The KPI
-// path pins its buckets to this timezone via SQL NOW() AT TIME ZONE; the timeseries
-// resolves the same bucket-tz wall-clock day here (en-CA → ISO format) so its series
-// bounds agree with the KPI buckets instead of drifting to session-tz CURRENT_DATE.
-// Deterministic given `now` — the frozen-clock route test asserts the KST-today bound.
-export function computeBucketTzToday(now: Date, timeZone: string = DAY_BUCKET_TIMEZONE): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-}
-
 /**
  * Bucket-tz calendar day + 24-hour wall-clock time of one instant.
  * The prior-window cut reads both off the same instant → a request straddling bucket-tz
@@ -403,16 +388,6 @@ export function getBucketTzClock(
   };
 }
 
-// Canonical "last N days" window lower bound, computed from the bucket-tz `today` bind
-// param (todayIso), NOT session-tz CURRENT_DATE.
-// Window = [today - (days-1) .. today] inclusive = exactly `days` calendar days (today
-// counted), where `today` is the bucket-tz day (bind param), so every "last N days"
-// card covers the same bucket-tz day-set as the KPI band.
-// Safe: `days` allowlist-validated ({7, 30, 90}); `days - 1` is a derived integer.
-function buildWindowLowerBound(todayIso: string, days: number): Prisma.Sql {
-  return Prisma.sql`${todayIso}::date - ${Prisma.raw(`INTERVAL '${days - 1} days'`)}`;
-}
-
 function bigintToNumber(value: bigint): number {
   // PG COUNT(*) returns bigint; values realistic for this app fit in safe-int range.
   // Guard against future scale: surface a clear error rather than silent truncation.
@@ -433,7 +408,7 @@ function decimalToNumber(value: Prisma.Decimal | null): number {
 // Narrows raw PG `core.DaemonStatus` enum string into the typed union.
 // Future enum additions on the DB side that aren't reflected here surface as
 // `null` (forces explicit type extension rather than silent type leakage).
-const KNOWN_DAEMON_STATUSES: ReadonlySet<DaemonStatusValue> = new Set([
+export const KNOWN_DAEMON_STATUSES: ReadonlySet<DaemonStatusValue> = new Set([
   "ok",
   "partial",
   "error",

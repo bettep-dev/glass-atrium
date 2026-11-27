@@ -192,14 +192,19 @@ ga_init_env() {
   # installer deploys the hook FILES; the user wires them via these bindings. The doctor check (run_doctor
   # §6) reads settings.json read-only + WARNS per missing binding (a deployed-but-unwired hook is dormant).
   readonly SETTINGS_JSON="${TARGET_HOME}/settings.json"
+  # the owner queue's MCP adapter as installed; every profile's user-scope entry runs it (put_queue_mcp_registration)
+  readonly QUEUE_MCP_ADAPTER="${GA_ROOT}/scripts/atrium-queue-mcp.sh"
+  # latest harness integrity verdict (lib/ga-doctor.sh → set_integrity_verdict); hooks/inject-session-context.sh
+  # reads the same path, pinned by hooks/test/inject-session-context.bats
+  readonly INTEGRITY_VERDICT="${GA_DATA_ROOT}/data/integrity/last-verdict"
 
   # expected hook->event bindings the user MUST register in settings.json for the deployed hooks to fire.
   # Each entry = "<event>\t<hook-basename>\t<matcher>" (events: PreToolUse / PostToolUse / SessionStart /
-  # UserPromptSubmit / Stop / SubagentStart / SubagentStop / PreCompact). Matched against the live
+  # UserPromptSubmit / Stop / SubagentStart / SubagentStop / PreCompact / SessionEnd). Matched against the live
   # settings.json .hooks[<event>][].hooks[].command by basename, SCOPED to its matcher
   # (command-WITHIN-matcher — the doctor binding check + wire_hooks idempotency key). The 3rd column
   # (matcher) is BOTH the UPSERT selector AND the bound/dormant scoping key; an empty 3rd column = "no
-  # matcher key" (SessionStart/Stop/UserPromptSubmit are unmatched). Per-matcher, so the SAME hook may
+  # matcher key" (SessionStart/SessionEnd/Stop/UserPromptSubmit are unmatched). Per-matcher, so the SAME hook may
   # appear in TWO rows under one event with different matchers
   # (e.g. validate-secret-scan.sh on Write|Edit AND Bash) — each wired + tracked independently.
   # Add a row here when a new hook is deployed. SINGLE SoT — wire_hooks/run_doctor AND unwire_hooks/verify_clean
@@ -212,12 +217,9 @@ ga_init_env() {
   # then exceeds the bindings actually wired. test/hook-matcher-shape-invariant.bats::binding_matchers is the
   # one parser that skips comments. Any note about a row belongs in THIS block, above the array.
   # MATCHER CONVENTION — a Write/Edit-family row is "Write|Edit", NEVER "Write|Edit|MultiEdit". MultiEdit has
-  # ZERO registrations on the recorded host, so adding it to a NEW row registers a token that guards nothing;
-  # test/hook-matcher-shape-invariant.bats pins a ONE-token legacy allowlist (MultiEdit) whose stated purpose is
-  # to stop exactly that set widening, and its row asserts the allowlist stays size 1. The single surviving
-  # Write|Edit|MultiEdit row (enforce-harness-critical.sh) is that grandfathered legacy, kept as forward-compat
-  # insurance and pointed at a deferred rewire — it is NOT a pattern to copy. So: if a design doc or an older
-  # sibling row shows MultiEdit, prefer the invariant's evidence over the design text and leave it out.
+  # ZERO registrations on the recorded host, so a row carrying it registers a token that guards nothing, and
+  # test/hook-matcher-shape-invariant.bats fails on any matcher alternative the recorded host does not emit.
+  # If a design doc or an older sibling row shows MultiEdit, prefer the invariant's evidence and leave it out.
   EXPECTED_HOOK_BINDINGS=(
     "PreToolUse	advisory-context-budget.sh	Agent"
     "PreToolUse	advisory-egress-secret.sh	Bash"
@@ -227,15 +229,8 @@ ga_init_env() {
     "PreToolUse	advisory-subagent-budget.sh	"
     "PreToolUse	advisory-worktree-writer-lock.sh	Write|Edit"
     "PreToolUse	block-dangerous-commands.sh	Bash"
-    "PreToolUse	block-doc-routing-leak.sh	Write"
-    "PreToolUse	block-md-creation.sh	Write"
-    "PreToolUse	block-no-verify.sh	Bash"
     "PreToolUse	enforce-commit-guard.sh	Bash"
-    "PreToolUse	enforce-config-protection.sh	Write|Edit"
     "PreToolUse	enforce-delegation.sh	Write|Edit"
-    "PreToolUse	enforce-foreground-harness.sh	Agent"
-    "PreToolUse	enforce-harness-critical.sh	Bash"
-    "PreToolUse	enforce-harness-critical.sh	Write|Edit|MultiEdit"
     "PreToolUse	enforce-verification-gate.sh	Agent"
     "PreToolUse	enforce-workflow-verify-stage.sh	Workflow"
     "PreToolUse	lint-workflow-template-literal.sh	Workflow"
@@ -257,11 +252,15 @@ ga_init_env() {
     "SessionStart	inject-session-context.sh	"
     "SessionStart	prune-security-warnings-state.sh	"
     "SessionStart	prune-session-spawns.sh	"
+    "SessionStart	queue-listener.sh	"
+    "SessionStart	queue-session-register.sh	"
     "SessionStart	validate-compliance-matrix.sh	"
     "UserPromptSubmit	inject-reply-language.sh	"
     "Stop	advisory-preedit-facts.sh	"
     "Stop	cost-tracker.sh	"
     "Stop	post-edit-typecheck.sh	"
+    "Stop	queue-listener.sh	"
+    "Stop	queue-turn-end-check.sh	"
     "SubagentStart	agent-tracker.sh	"
     "SubagentStart	inject-scope-rules.sh	"
     "SubagentStart	inject-scope-part-01.sh	"
@@ -281,8 +280,23 @@ ga_init_env() {
     "SubagentStop	post-edit-typecheck.sh	"
     "SubagentStop	track-outcome.sh	"
     "PreCompact	pre-compact.sh	"
+    "SessionEnd	queue-session-deregister.sh	"
   )
   readonly EXPECTED_HOOK_BINDINGS
+
+  # per-binding command options: "<event>\t<hook-basename>\t<options JSON object>", applied to every command
+  # of that (event, basename) under any matcher. A separate table, never a 4th EXPECTED_HOOK_BINDINGS column:
+  # tab is IFS whitespace, so an empty matcher collapses and every `read -r event hook matcher` reader would
+  # take the options as the matcher. Managed keys = the keys a row declares (asyncRewake, timeout —
+  # test/hook-bindings-complete.bats holds the allowlist); every other command key stays the user's own.
+  # Read through get_expected_binding_option_rows (lib/ga-config-hooks.sh), never directly.
+  # queue-listener.sh: the host SIGTERMs an asyncRewake hook at its timeout → one hour above the listener's own lifetime
+  # (scripts/atrium-queue.sh → LISTEN_LIFETIME_S); measured runs: scoped/shared-hook-capability-contract.md → 1c
+  EXPECTED_HOOK_BINDING_OPTIONS=(
+    "SessionStart	queue-listener.sh	{\"asyncRewake\":true,\"timeout\":86400}"
+    "Stop	queue-listener.sh	{\"asyncRewake\":true,\"timeout\":86400}"
+  )
+  readonly EXPECTED_HOOK_BINDING_OPTIONS
 
   # prune named exit codes (loud-fail, distinct from die's generic 1): 2 = no
   # target dir, 3 = manifest absent/unparseable, 4 = an orphan survived its unlink.
@@ -294,6 +308,8 @@ ga_init_env() {
   # manifest files[] key escapes the install root (empty · absolute · `..` segment) or is unreadable —
   # refused before any manifest loop by install / agents-only / uninstall / prune.
   readonly MANIFEST_EXIT_ESCAPING_KEY=25
+  # reload-launchd: an update or an autoagent apply holds the shared .apply-lock — nothing re-rendered or reloaded.
+  readonly RELOAD_EXIT_LOCKED=26
 
   # bootstrap exit-code semantics (distinct from die's generic 1):
   #   20 = monitor build failed   21 = monitor health gate failed (no 200 in window)
@@ -310,13 +326,14 @@ ga_init_env() {
   # can call the update-system helpers:
   #   * atrium-config.sh    — atrium_toml_get (doctor §9 [release].repo read)
   #   * apply-spine.sh       — spine_set_baseline / spine_get_baseline / spine_* (T24 capture · §9 probe)
+  #   * apply-lock.sh        — apply_lock_acquire / apply_lock_release (reload-launchd's writer serialization)
   # Both are PURE (function-only, no side effects / strict-mode mutation), so sourcing here defines the
   # functions without any file-scope action. Resolved under GA_ROOT/scripts/lib (GA_LIB_DIR overrides for
   # sandbox/CI). Loud-fail (die) on an absent lib — a missing E5 lib is a broken install, never a silent
   # skip (shared-self-improve-hygiene Precondition Loud-Fail Principle).
   readonly LIB_DIR="${GA_LIB_DIR:-${GA_ROOT}/scripts/lib}"
   local _e5_lib
-  for _e5_lib in atrium-config.sh apply-spine.sh; do
+  for _e5_lib in atrium-config.sh apply-spine.sh apply-lock.sh; do
     [[ -f "${LIB_DIR}/${_e5_lib}" ]] \
       || die "E5 lib missing: ${LIB_DIR}/${_e5_lib} (broken install — scripts/lib is incomplete)"
     # shellcheck source=/dev/null
@@ -359,6 +376,9 @@ ga_init_env() {
   SCAN_ONLY=false
   # shellcheck disable=SC2034
   PURGE_CONFIG=false
+  # the owner's explicit approval of the profile-level writes (put_queue_mcp_registration)
+  # shellcheck disable=SC2034
+  APPROVE_PROFILE_WRITES=false
   # shellcheck disable=SC2034
   VERIFY_CLEAN=false
   # shellcheck disable=SC2034  # consumed by the uninstall full-removal CLI gate (glass-atrium)
@@ -376,6 +396,27 @@ ga_init_env() {
 # Write in a childless subshell → no SIGCHLD can interrupt it (bash 3.2 EINTR).
 # Write status ignored → the caller's code path, never the write, decides the exit.
 log() { (printf '%s\n' "$*") >&2 || true; }
+
+# The queue MCP server as its adapter announces it → line 1 the server name, then one tool name per line; the single
+# source the installer, updater and doctor read — the name's owner is scripts/lib/queue-session.sh, the tools' the
+# adapter. Non-zero when the adapter answers no name or no tool. Call it only inside `$( )`: bash 3.2 fires an
+# inherited ERR trap in a substitution even under `if !`, so the trap cleared here must be that subshell's.
+get_queue_mcp_identity() {
+  local identity
+  trap - ERR
+  [[ -r "${GA_ROOT}/hooks/lib/session-entrypoint.sh" && -r "${QUEUE_MCP_ADAPTER}" ]] || return 1
+  identity="$(
+    # shellcheck source=hooks/lib/session-entrypoint.sh
+    source "${GA_ROOT}/hooks/lib/session-entrypoint.sh"
+    # shellcheck disable=SC2312  # pipefail carries the adapter status to the || below
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+      '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+      | CLAUDE_CODE_ENTRYPOINT="${OWNER_FACING_ENTRYPOINT}" /bin/bash "${QUEUE_MCP_ADAPTER}" \
+      | jq -rs '(.[] | select(.id == 1) | .result.serverInfo.name), (.[] | select(.id == 2) | .result.tools[].name)'
+  )" || return 1
+  [[ "${identity}" == *$'\n'* ]] || return 1
+  printf '%s\n' "${identity}"
+}
 
 die() {
   (printf 'FATAL: %s\n' "$*") >&2 || true

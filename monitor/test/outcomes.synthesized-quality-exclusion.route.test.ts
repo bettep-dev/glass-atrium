@@ -1,6 +1,6 @@
 // Regression tests for the /cross-analysis synthesized-row exclusion from the
 // quality signal (DWC-share numerator + denominator).
-// Runner: npx tsx --test test/outcomes.synthesized-quality-exclusion.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/outcomes.synthesized-quality-exclusion.route.test.ts
 //
 // Pinned invariants:
 //   (a) `reconstructed_total` — the response-level denominator subtrahend — is exactly

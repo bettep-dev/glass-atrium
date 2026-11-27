@@ -78,19 +78,21 @@ function mountDisclosure() {
 const triggerOf = (tree: RenderedNode) => findNodes(tree, (n) => n.type === "button")[0];
 const bodyOf = (tree: RenderedNode) => findNodes(tree, (n) => n.type === "div" && typeof n.props.id === "string")[0];
 
-describe("initial open state follows the status/detail rule", () => {
-  const rows = [
-    { name: "a status card starts open with no tone", kind: "status", tone: undefined, isOpen: true },
-    { name: "a status card starts open when ok", kind: "status", tone: "ok", isOpen: true },
-    { name: "a status card starts open when crit", kind: "status", tone: "crit", isOpen: true },
-    { name: "a detail fold starts collapsed with no tone", kind: "detail", tone: undefined, isOpen: false },
-    { name: "a detail fold starts collapsed when ok", kind: "detail", tone: "ok", isOpen: false },
-    { name: "a detail fold starts collapsed when info", kind: "detail", tone: "info", isOpen: false },
-    { name: "a detail fold starts open when it holds a warn item", kind: "detail", tone: "warn", isOpen: true },
-    { name: "a detail fold starts open when it holds a crit item", kind: "detail", tone: "crit", isOpen: true },
-  ];
+const openRows = [
+  { name: "a status card starts open with no tone", kind: "status", tone: undefined, isOpen: true },
+  { name: "a status card starts open when ok", kind: "status", tone: "ok", isOpen: true },
+  { name: "a status card starts open when crit", kind: "status", tone: "crit", isOpen: true },
+  { name: "a detail fold starts collapsed with no tone", kind: "detail", tone: undefined, isOpen: false },
+  { name: "a detail fold starts collapsed when ok", kind: "detail", tone: "ok", isOpen: false },
+  { name: "a detail fold starts collapsed when info", kind: "detail", tone: "info", isOpen: false },
+  { name: "a detail fold starts open when it holds a warn item", kind: "detail", tone: "warn", isOpen: true },
+  { name: "a detail fold starts open when it holds a crit item", kind: "detail", tone: "crit", isOpen: true },
+];
 
-  for (const row of rows) {
+const isCard = (n: RenderedNode) => String(n.props.className ?? "").split(/\s+/).includes("card");
+
+describe("initial open state follows the status/detail rule", () => {
+  for (const row of openRows) {
     test(row.name, () => {
       assert.equal((ui.getDisclosureOpen as (k: string, t?: string) => boolean)(row.kind, row.tone), row.isOpen);
       const tree = mountDisclosure()({ kind: row.kind, tone: row.tone, title: "Card" });
@@ -98,6 +100,24 @@ describe("initial open state follows the status/detail rule", () => {
       assert.equal(bodyOf(tree) !== undefined, row.isOpen, "the body is mounted only when open");
     });
   }
+});
+
+// a fold nested in a card body: the same rule, with no card box of its own in either state
+describe("an inline fold keeps the open rule and draws no card box", () => {
+  for (const row of openRows) {
+    test(row.name, () => {
+      const tree = mountDisclosure()({ kind: row.kind, tone: row.tone, title: "Daily breakdown", isInline: true });
+      assert.equal(triggerOf(tree).props["aria-expanded"], row.isOpen);
+      assert.equal(bodyOf(tree) !== undefined, row.isOpen, "the body is mounted only when open");
+      assert.deepEqual(findNodes(tree, isCard), [], "no .card box");
+    });
+  }
+
+  test("a collapsed inline fold opens itself when its content escalates to warn", () => {
+    const render = mountDisclosure();
+    assert.equal(triggerOf(render({ kind: "detail", tone: "ok", title: "By task type", isInline: true })).props["aria-expanded"], false);
+    assert.equal(triggerOf(render({ kind: "detail", tone: "warn", title: "By task type", isInline: true })).props["aria-expanded"], true);
+  });
 });
 
 test("the open trigger controls the mounted body and the collapsed trigger points nowhere", () => {

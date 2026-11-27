@@ -13,7 +13,7 @@
 #   spawn counter and manifest sink are redirected into the Bats tmpdir.
 #
 #   HOST INVARIANCE: no expectation here is a literal byte count. The assembled context carries no
-#   absolute path (the block leads use `~/`), and every size is derived from an emit of the same run.
+#   absolute path (block text uses `~/`), and every size is derived from an emit of the same run.
 #
 # BATS GATING NOTE: @test bodies run under errexit; a mid-body bare `[[ ]]` / `(( ))` is inert on
 #   bash 3.2.57 but GATES on CI's bash 5.3.9 — `[ ]` and plain commands gate on BOTH (measured,

@@ -2,12 +2,12 @@
 
 ``read_outcomes_since`` in ``hooks/_pg_learning_dualwrite.py`` is the single SQL
 chokepoint reading ``core.outcomes`` for BOTH learning consumers — every
-``daemon_cycle.py`` lookback (outcome signals / related outcomes / generation
-outcomes, all bounded by ``PG_OUTCOME_LOOKBACK_DAYS``) and the
-``learning-aggregator.py`` pattern aggregation funnel through it. The protected
-invariant: a row flagged ``poisoned_window = true`` (grader-gap mis-measurement
-window) never reaches pattern/posterior computation, on ANY call shape — the
-filter must live in the always-on WHERE clauses, not in a per-caller kwarg.
+``daemon_cycle.py`` lookback (the post-apply regression watch, the DWC-share
+watch) and the ``learning-aggregator.py`` pattern aggregation funnel through it.
+The protected invariant: a row flagged ``poisoned_window = true`` (grader-gap
+mis-measurement window) never reaches a pattern or rate computation, on ANY call
+shape — the filter must live in the always-on WHERE clauses, not in a per-caller
+kwarg.
 
 The live-PG class runs only on the ephemeral cluster ``live-pg-ephemeral.bats``
 builds (elsewhere it skips, never touching an install's live database) and
@@ -131,7 +131,7 @@ class TestLookbackSqlCarriesPoisonedFilter(unittest.TestCase):
         self.assertLess(sql.index(_POISONED_CLAUSE), sql.index("ORDER BY"))
 
     def test_when_called_agent_scoped_then_where_carries_poisoned_filter(self) -> None:
-        # The daemon_cycle posterior/related/generation path: agent + LIMIT + DESC.
+        # The agent-scoped shape: agent + LIMIT + DESC.
         pgdw.read_outcomes_since(0.0, agent="dev-python", limit=5, order="DESC")
         self.assertIn(_POISONED_CLAUSE, self._executed_sql())
 

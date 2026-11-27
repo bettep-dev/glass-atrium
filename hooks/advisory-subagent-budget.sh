@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # advisory-subagent-budget.sh — PreToolUse advisory on a SUBAGENT's own inner tool_use.
+# On a MAIN-session call it lists this session's running agents idle past STALL_IDLE_MIN (list_stalled_agents):
+# the per-agent counter below is rewritten on every subagent call, so its mtime is the last-activity stamp.
 #
 # Per-agent_id TOOL_USE counter; fires a STDERR advisory at ~70%/~80% of a TOOL_USE budget.
 # ADVISORY-FIRST — exits 0 by default. The block path is the no-progress brake (N consecutive
@@ -15,8 +17,8 @@
 #
 # UNIT HONESTY: maxTurns is a TURN cap; this hook counts TOOL_USES — applying "% of maxTurns" to a
 # tool_use count is a category error. So the threshold is an explicit TOOL_USE budget anchored to the
-# observed 40-52 tool_use truncation band (orchestrator-role.md Delegation-size discipline), NOT any
-# maxTurns. The SubagentStart meter speaks in TURNS; this one speaks in TOOL_USES.
+# observed 40-52 tool_use truncation band (skills/glass-atrium-ops-orchestrator-role.md
+# → Delegation-size discipline), NOT any maxTurns. The SubagentStart meter speaks in TURNS; this one speaks in TOOL_USES.
 #
 # PREMISE (validated, not assumed): a PreToolUse hook DOES fire on a subagent's own inner tool call
 # and the envelope carries agent_id (confirmed by enforce-delegation.sh + validate-secret-scan.sh).
@@ -35,7 +37,7 @@
 # tool_uses beyond (min 1 step; default 40 → 40,48,56,...). WHY durable: a maxTurns hard-kill fires
 # NO SubagentStop, so synthesis yields zero rows for that death mode; the overage row is written
 # BEFORE death, the self-improvement loop's only surviving signal. agent_type recovered from the
-# agent-<agent_id>.meta.json sidecar (same pattern as block-doc-routing-leak.sh). The write goes
+# agent-<agent_id>.meta.json sidecar. The write goes
 # through _pg-write.py: any DB/driver/jq error NEVER fails the hook. Cost spent only on a crossing.
 
 set -Eeuo pipefail
@@ -58,12 +60,12 @@ budget_dir="${SUBAGENT_TOOL_BUDGET_DIR:-${DEFAULT_BUDGET_DIR}}"
 readonly DEFAULT_OVERAGE_WRITER="${BASH_SOURCE%/*}/_pg-write.py"
 overage_writer="${SUBAGENT_OVERAGE_WRITER:-${DEFAULT_OVERAGE_WRITER}}"
 
-# shellcheck source=hook-utils.sh
+# shellcheck source-path=SCRIPTDIR source=hook-utils.sh
 source "${BASH_SOURCE%/*}/hook-utils.sh"
 
-# recover_agent_type — resolve agent_type from the agent-<agent_id>.meta.json sidecar (same pattern as
-# block-doc-routing-leak.sh). Echoes agentType on success, empty on ANY failure (null fallback,
-# accepted). Args: $1=transcript_path $2=session_id $3=agent_key.
+# recover_agent_type — resolve agent_type from the agent-<agent_id>.meta.json sidecar. Echoes
+# agentType on success, empty on ANY failure (null fallback, accepted).
+# Args: $1=transcript_path $2=session_id $3=agent_key.
 recover_agent_type() {
   local transcript_val="${1}" session_val="${2}" agent_key="${3}"
   # Need agent_key AND at least one resolution anchor.
@@ -159,8 +161,8 @@ print(hashlib.sha256((tool + "\x00" + canon).encode("utf-8", "replace")).hexdige
 ' 2>/dev/null || true
 }
 
-# TUNE: TOOL_USE budget — anchored to the 40-52 tool_use truncation band (orchestrator-role.md HARD
-# SECONDARY trigger). 40 = the band's lower edge, so the 80% advisory lands at 32, before the danger
+# TUNE: TOOL_USE budget — anchored to the 40-52 tool_use truncation band (skills/glass-atrium-ops-orchestrator-role.md
+# → Delegation-size discipline, HARD SECONDARY trigger). 40 = the band's lower edge, so the 80% advisory lands at 32, before the danger
 # zone. Env-overridable.
 readonly DEFAULT_TOOL_BUDGET=40
 tool_budget="${SUBAGENT_TOOL_BUDGET:-${DEFAULT_TOOL_BUDGET}}"
@@ -207,14 +209,64 @@ fi
 noprogress_disarmed=0
 [[ "${SUBAGENT_NOPROGRESS_DISARM:-}" == "1" ]] && noprogress_disarmed=1
 
+# Running agent idle past this → one stall line on the main session's next tool call. Twice the Bash
+# tool's 10-minute foreground cap, so a single long tool call never reads as a stall.
+readonly STALL_IDLE_MIN=20
+
+# list_stalled_agents — main-session branch: one stderr line per running agent of this session (live-child
+# marker + a transcript under the session's subagents dir) whose last tool call — its counter's mtime, or
+# the marker's own before the first call — is idle past STALL_IDLE_MIN and inside LIVE_CHILD_TTL_MIN.
+# Once per stall: a `.stall` stamp beside the counter, re-armed by the agent's next tool call.
+# Args: $1=transcript_path of the main session.
+list_stalled_agents() {
+  local subagents_dir="${1%.jsonl}/subagents" idle marker key activity stall
+  [[ -n "${1}" && -d "${subagents_dir}" ]] || return 0
+  # shellcheck disable=SC2312  # get_idle_files cannot fail: its find ends in || true
+  idle="$(get_idle_files "${LIVE_CHILD_DIR}")"$'\n'"$(get_idle_files "${budget_dir}")"
+  [[ "${idle}" == $'\n' ]] && return 0
+  for marker in "${LIVE_CHILD_DIR}"/*; do
+    key="${marker##*/}"
+    # shellcheck disable=SC2310  # a predicate — its status 1 is the skip branch
+    is_session_agent "${subagents_dir}" "${key}" || continue
+    activity="${budget_dir}/${key}"
+    [[ -f "${activity}" ]] || activity="${marker}"
+    [[ $'\n'"${idle}"$'\n' == *$'\n'"${activity}"$'\n'* ]] || continue
+    stall="${budget_dir}/${key}.stall"
+    [[ -f "${stall}" && ! "${activity}" -nt "${stall}" ]] && continue
+    : >"${stall}" 2>/dev/null || true
+    printf '[subagent-stall-advisory] %s\n' \
+      "agent ${key} is still running (no SubagentStop) but has made no tool call for over ${STALL_IDLE_MIN} min — it may be waiting on a background run that never woke it, or it ended without a stop event. Check its output, message it, or stop it. Non-blocking." >&2
+  done
+}
+
+# get_idle_files <dir> — files directly in <dir> last written between STALL_IDLE_MIN and LIVE_CHILD_TTL_MIN ago
+get_idle_files() {
+  find "${1}" -maxdepth 1 -type f -mmin "+${STALL_IDLE_MIN}" -mmin "-${LIVE_CHILD_TTL_MIN}" 2>/dev/null || true
+}
+
+# is_session_agent <subagents_dir> <key> — the agent's transcript sits under this session: the flat
+# Agent-tool / teammate layout, or a workflow run's.
+is_session_agent() {
+  local match
+  [[ -f "${1}/agent-${2}.jsonl" ]] && return 0
+  for match in "${1}/workflows/wf_"*"/agent-${2}.jsonl"; do
+    [[ -f "${match}" ]] && return 0
+  done
+  return 1
+}
+
 # 1. Read input. This hook has matcher "" (all tools) — every inner tool_use is one count.
 input="$(hook_read_input)"
 [[ "${input}" == "{}" ]] && exit 0
 
-# 2. agent_id gate — the counter key AND the subagent-context signal. Absent = main-session tool call
-#    (no maxTurns budget → not this hook's concern).
+# 2. agent_id gate — the counter key AND the subagent-context signal. Absent = main-session tool call:
+#    no budget to count, only the stall listing (read only when a live-child marker dir exists).
 agent_id="$(hook_get_field "${input}" "agent_id")"
-[[ -z "${agent_id}" ]] && exit 0
+if [[ -z "${agent_id}" ]]; then
+  # shellcheck disable=SC2312  # hook_get_field degrades to empty, never fails
+  [[ -d "${LIVE_CHILD_DIR}" ]] && list_stalled_agents "$(hook_get_field "${input}" "transcript_path")"
+  exit 0
+fi
 
 # 3. SECURITY (LLM01): agent_id is external payload → allowlist-transform to a path-safe single
 #    segment (delete every byte outside [A-Za-z0-9_-]) before path interpolation, blocking traversal.
@@ -303,7 +355,7 @@ fi
 # 6. Threshold comparison. Fire ONCE at each crossing (equality test → not repeated every call).
 if ((new_count == crit_threshold)); then
   printf '[subagent-tool-budget-advisory] %s\n' \
-    "TOOL_USE budget advisory: this subagent has made ${new_count} tool calls, crossing 80% of the ${tool_budget}-tool_use budget (anchored to the observed 40-52 tool_use truncation band, orchestrator-role.md). NOTE: this is a TOOL_USE count, NOT a maxTurns/% — distinct units. Consider checkpointing to memory/progress-{task}.md and emitting a terminal [COMPLETION] (result: needs_context) with a resume point before truncation. Non-blocking — the tool call proceeds." >&2
+    "TOOL_USE budget advisory: this subagent has made ${new_count} tool calls, crossing 80% of the ${tool_budget}-tool_use budget (anchored to the observed 40-52 tool_use truncation band, skills/glass-atrium-ops-orchestrator-role.md → Delegation-size discipline). NOTE: this is a TOOL_USE count, NOT a maxTurns/% — distinct units. Consider checkpointing to memory/progress-{task}.md and emitting a terminal [COMPLETION] (result: needs_context) with a resume point before truncation. Non-blocking — the tool call proceeds." >&2
 elif ((new_count == warn_threshold)); then
   printf '[subagent-tool-budget-advisory] %s\n' \
     "TOOL_USE budget advisory: this subagent has made ${new_count} tool calls, crossing 70% of the ${tool_budget}-tool_use budget. NOTE: TOOL_USE count, NOT maxTurns/%. Plan to wrap up: finish the current work-unit, checkpoint remaining work to memory/progress-{task}.md. Non-blocking — the tool call proceeds." >&2
@@ -329,6 +381,7 @@ if ((is_crossing == 1)); then
   # transcript_path + session_id are read lazily HERE — needed only for sidecar recovery on a crossing.
   # Single-pass extraction of both (one python3, not two) — kept inside the crossing branch so the
   # common no-crossing path still pays zero interpreter cold-starts for them.
+  # shellcheck disable=SC2310  # a failed read degrades both fields to empty
   {
     IFS= read -r -d '' transcript_path
     IFS= read -r -d '' session_id

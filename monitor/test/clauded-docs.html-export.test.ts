@@ -1,7 +1,7 @@
 // Integration tests for GET /api/clauded-docs/:id/html-export — server-side
 // self-contained offline HTML export via Playwright headless Chromium.
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/clauded-docs.html-export.test.ts
+// Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/clauded-docs.html-export.test.ts
 //
 // Coverage (single endpoint):
 //   - PRE-ONLY mermaid happy path (the DOMINANT real shape): <pre class=mermaid>
@@ -28,11 +28,13 @@
 //     boundary. resetBrowserForTests in after(). Run `npx playwright install
 //     chromium` first.
 
-import test, { after, before } from "node:test";
+import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -43,7 +45,14 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerClaudedDocsRoutes } from "../src/server/routes/clauded-docs.js";
-import { registerBrowserShutdownHook, resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
+import { acquireBrowser, registerBrowserShutdownHook, resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js";
+import {
+  RENDER_LINE,
+  RenderLineError,
+  getRenderLineLength,
+  renderSelfContainedHtml,
+  runExclusiveRender,
+} from "../src/server/clauded-docs/html-export.js";
 import { resetDocsRootCache } from "../src/server/clauded-docs/storage.js";
 import { getMermaidThemeValue } from "./lib/mermaid-config-source.js";
 
@@ -319,6 +328,188 @@ test("GET /:id/html-export: ETag round-trip — second request with If-None-Matc
   assert.strictEqual(second.headers["etag"], etag, "304 echoes the ETag");
 });
 
+describe("every answer of the single export carries the sandbox policy", () => {
+  const rows: { name: string; getRequest: () => Promise<{ url: string; headers?: Record<string, string> }>; status: number }[] = [
+    { name: "the exported page", getRequest: async () => ({ url: `/api/clauded-docs/${(await seedPlainDoc("csp-ok")).id}/html-export` }), status: 200 },
+    {
+      name: "the not-modified answer",
+      getRequest: async () => {
+        const url = `/api/clauded-docs/${(await seedPlainDoc("csp-304")).id}/html-export`;
+        const first = await app.inject({ method: "GET", url });
+        return { url, headers: { "if-none-match": String(first.headers["etag"]) } };
+      },
+      status: 304,
+    },
+    { name: "an unknown document", getRequest: async () => ({ url: "/api/clauded-docs/999999999/html-export" }), status: 404 },
+    { name: "an id that does not parse", getRequest: async () => ({ url: "/api/clauded-docs/0/html-export" }), status: 400 },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const request = await row.getRequest();
+      const res = await app.inject({ method: "GET", ...request });
+      assert.deepEqual([res.statusCode, res.headers["content-security-policy"]], [row.status, "sandbox; frame-ancestors 'self'"]);
+    });
+  }
+});
+
+test("GET /:id/html-export: a stored title's CR, LF, quotes and backslash never reach the saved name, the rest kept in filename*", async () => {
+  const { id } = await postHtmlDoc(`${SUITE_MARKER}-"인용" \\ \r\nnext-${randomUUID()}`, makePreOnlyMermaidBody("quoted", MERMAID_V11_SRC));
+  const disposition = String((await app.inject({ method: "GET", url: `/api/clauded-docs/${id}/html-export` })).headers["content-disposition"]);
+  const asciiName = /^attachment; filename="([^"]*)"; filename\*=UTF-8''([^\s";\\]+)$/.exec(disposition);
+  assert.ok(asciiName !== null, `one quoted ASCII name, one encoded name: ${disposition}`);
+  const saved = decodeURIComponent(asciiName[2] ?? "");
+  assert.deepEqual([/[\r\n"\\]/.test(`${asciiName[1]}${saved}`), saved.includes("인용"), saved.endsWith(".html")], [false, true, true]);
+});
+
+test("export renders run one at a time across callers, in call order, and a failed render frees the slot", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const finished: string[] = [];
+  const render = (name: string, fails = false) => async () => {
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    inFlight -= 1;
+    finished.push(name);
+    if (fails) throw new Error(`${name} failed`);
+    return name;
+  };
+  const results = await Promise.allSettled([
+    runExclusiveRender(render("first")),
+    runExclusiveRender(render("second", true)),
+    runExclusiveRender(render("third")),
+  ]);
+  assert.strictEqual(maxInFlight, 1, "never two renders at once");
+  assert.deepStrictEqual(finished, ["first", "second", "third"]);
+  assert.deepStrictEqual(results.map((result) => result.status), ["fulfilled", "rejected", "fulfilled"]);
+});
+
+/** Takes `count` places in the render line with renders that wait on one gate; @returns the gate's opener, which awaits them. */
+function holdRenderLine(count: number): () => Promise<void> {
+  let open = (): void => undefined;
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  const held = Array.from({ length: count }, () => runExclusiveRender(() => gate));
+  return async () => {
+    open();
+    await Promise.all(held);
+  };
+}
+
+/** Resolves once the render line holds `length` places; rejects after two seconds. */
+async function waitForRenderLineLength(length: number): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (getRenderLineLength() !== length) {
+    if (Date.now() > deadline) throw new Error(`render line stayed at ${getRenderLineLength()}, expected ${length}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+// a broken line deadlocks behind its own held renders → a bounded wait turns that into a failure, not a hang
+const LINE_TEST_OPTIONS = { timeout: 30_000 };
+
+const isLineFull = (error: unknown): boolean => error instanceof RenderLineError && error.reason === "full";
+
+test("the render line refuses a render above its bound and takes renders again once places free", LINE_TEST_OPTIONS, async () => {
+  const release = holdRenderLine(RENDER_LINE.MAX_LENGTH);
+  const refused = runExclusiveRender(async () => "over the bound");
+  await assert.rejects(refused, isLineFull);
+  await release();
+  assert.strictEqual(await runExclusiveRender(async () => "after"), "after");
+});
+
+test("a queued render whose caller has gone is dropped from the line and never runs", LINE_TEST_OPTIONS, async () => {
+  const release = holdRenderLine(1);
+  const caller = new AbortController();
+  let hasRun = false;
+  const queued = runExclusiveRender(async () => {
+    hasRun = true;
+  }, caller.signal);
+  caller.abort();
+  await assert.rejects(queued, (error) => error instanceof RenderLineError && error.reason === "caller_gone");
+  assert.strictEqual(getRenderLineLength(), 1, "the dropped render gave its place back at once");
+  await release();
+  assert.strictEqual(hasRun, false);
+});
+
+test("both Chromium paths of renderSelfContainedHtml wait in the render line, so a full line refuses each", LINE_TEST_OPTIONS, async () => {
+  const release = holdRenderLine(RENDER_LINE.MAX_LENGTH);
+  try {
+    const settled = await Promise.allSettled([
+      renderSelfContainedHtml(makePreOnlyMermaidBody("line-full-html", MERMAID_V11_SRC), "html"),
+      renderSelfContainedHtml(`# Flow\n\n\`\`\`mermaid\n${MERMAID_V11_SRC}\n\`\`\`\n`, "md"),
+    ]);
+    assert.deepStrictEqual(settled.map((entry) => entry.status === "rejected" && isLineFull(entry.reason)), [true, true]);
+  } finally {
+    await release();
+  }
+});
+
+test("both export routes answer 503 export_busy with a retry hint while the render line is full", LINE_TEST_OPTIONS, async () => {
+  const { id } = await postHtmlDoc(makeTitle("line-full-route"), makePreOnlyMermaidBody("line-full-route", MERMAID_V11_SRC));
+  const requests = [
+    { name: "single export", method: "GET", url: `/api/clauded-docs/${id}/html-export`, payload: undefined },
+    { name: "multi export", method: "POST", url: "/api/clauded-docs/html-export", payload: { ids: [id] } },
+  ] as const;
+  const release = holdRenderLine(RENDER_LINE.MAX_LENGTH);
+  try {
+    for (const request of requests) {
+      const res = await app.inject({ method: request.method, url: request.url, payload: request.payload });
+      assert.deepStrictEqual([res.statusCode, res.json(), res.headers["retry-after"]], [503, { error: "export_busy" }, "5"], request.name);
+    }
+  } finally {
+    await release();
+  }
+});
+
+test("a single export whose caller disconnects while it waits drops its render", LINE_TEST_OPTIONS, async () => {
+  const { id } = await postHtmlDoc(makeTitle("caller-gone"), makePreOnlyMermaidBody("caller-gone", MERMAID_V11_SRC));
+  await app.listen({ port: 0, host: "127.0.0.1" });
+  const { port } = app.server.address() as AddressInfo;
+  const release = holdRenderLine(1);
+  try {
+    const request = http.get({ host: "127.0.0.1", port, path: `/api/clauded-docs/${id}/html-export` });
+    // the destroyed request's own "socket hang up" is the expected end of this caller
+    const closed = new Promise((resolve) => request.on("error", () => undefined).on("close", resolve));
+    await waitForRenderLineLength(2);
+    request.destroy();
+    await closed;
+    await waitForRenderLineLength(1);
+  } finally {
+    await release();
+  }
+});
+
+test("concurrent exports through the html and the diagram-md render paths hold at most one Chromium render at a time", async () => {
+  // the pooled browser every render uses → an open context marks a render in flight
+  const browser = await acquireBrowser();
+  const newContext = browser.newContext.bind(browser);
+  let inFlight = 0;
+  let maxInFlight = 0;
+  browser.newContext = async (options) => {
+    const context = await newContext(options);
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    const close = context.close.bind(context);
+    context.close = async (closeOptions) => {
+      inFlight -= 1;
+      return close(closeOptions);
+    };
+    return context;
+  };
+  try {
+    await Promise.all([
+      renderSelfContainedHtml(makePreOnlyMermaidBody("line-html-a", MERMAID_V11_SRC), "html"),
+      renderSelfContainedHtml(`# Flow\n\n\`\`\`mermaid\n${MERMAID_V11_SRC}\n\`\`\`\n`, "md"),
+      renderSelfContainedHtml(makePreOnlyMermaidBody("line-html-b", MERMAID_V11_SRC), "html"),
+    ]);
+  } finally {
+    browser.newContext = newContext;
+  }
+  assert.strictEqual(maxInFlight, 1);
+});
+
 test("GET /:id/html-export: Korean title — attachment Content-Disposition dual-param", async () => {
   const koreanLabel = "한글제목-계획";
   const title = `${SUITE_MARKER}-${koreanLabel}-${randomUUID()}`;
@@ -329,6 +520,8 @@ test("GET /:id/html-export: Korean title — attachment Content-Disposition dual
   const disposition = res.headers["content-disposition"] as string;
   assert.ok(typeof disposition === "string", "Content-Disposition present");
   assert.ok(disposition.startsWith("attachment; filename="), `attachment disposition, got: ${disposition}`);
+  assert.strictEqual(res.headers["x-content-type-options"], "nosniff", "the download is never sniffed into a page");
+  assert.strictEqual(res.headers["content-security-policy"], "sandbox; frame-ancestors 'self'", "rendered as a page anyway, the body runs sandboxed like every other document body");
   for (let i = 0; i < disposition.length; i += 1) {
     assert.ok(disposition.charCodeAt(i) <= 0x7f, `non-ASCII at ${i}: ${disposition}`);
   }

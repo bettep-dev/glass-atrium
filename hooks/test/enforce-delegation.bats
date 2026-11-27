@@ -1,10 +1,10 @@
 #!/usr/bin/env bats
 # enforce-delegation.bats — Bats suite for the PreToolUse(Write|Edit) delegation
-#   gate. Pins the block-ALL-orchestrator-direct-writes contract (path-independent;
-#   basename + */memory/* session-state exempt), with focus on the FIX-MEM tightening: a "memory/" segment nested
-#   directly under a protected harness dir (agents/, rules/, hooks/, skills/,
-#   autoagent/, monitor/, scripts/) MUST stay BLOCKED, while a legitimate
-#   session-state memory root still PASSES.
+#   gate: an orchestrator write passes unless it targets a sensitive file. A subagent, an
+#   allowed basename and a */memory/*
+#   session-state path pass first; a "memory/" nested directly under a protected dir name
+#   (agents/, rules/, hooks/, skills/, autoagent/, monitor/, scripts/) gets no session-state
+#   exemption, so the later checks decide it.
 #
 # Decision channel = exit code only (PreToolUse): exit 0 PASS / exit 2 BLOCK.
 # 격리: agent_id 부재 → 메인 세션(오케스트레이터)로 평가. stdin 으로 합성 JSON 주입.
@@ -16,6 +16,10 @@ HOOK_SH="${HOOKS_DIR}/enforce-delegation.sh"
 setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-delegation.sh not found: ${HOOK_SH}"
   source "${BATS_TEST_DIRNAME}/lib/no-python3.bash"
+  # A fixed HOME keeps the /Users/x/... rows below independent of the runner's home.
+  export HOME="/Users/x"
+  # Every test sandboxes HOME, so the hook's logs/data land on a per-test root, never the run-wide one.
+  export GA_DATA_ROOT="${BATS_TEST_TMPDIR}/data-root"
 }
 
 # Drive the hook as the orchestrator (no agent_id) with a synthetic Write input.
@@ -24,55 +28,6 @@ write_as_orchestrator() {
   run bash -c '
     printf "%s" "{\"tool_input\":{\"file_path\":\"$1\"}}" | bash "$2"
   ' _ "${1}" "${HOOK_SH}"
-}
-
-# BLOCKED: protected harness dir with a nested memory/ segment (FIX-MEM)
-
-@test "agents/memory/x.md → BLOCKED (agent prompt surface, not session-state)" {
-  write_as_orchestrator "/Users/x/.claude/agents/memory/x.md"
-  [[ "${status}" -ne 0 ]]
-}
-
-@test "rules/memory/x.md → BLOCKED (rule SoT surface)" {
-  write_as_orchestrator "/Users/x/.claude/rules/memory/x.md"
-  [[ "${status}" -ne 0 ]]
-}
-
-@test "hooks/memory/x.sh → BLOCKED (hook surface)" {
-  write_as_orchestrator "/Users/x/.claude/hooks/memory/x.sh"
-  [[ "${status}" -ne 0 ]]
-}
-
-@test "skills/memory/x.md → BLOCKED (skill surface)" {
-  write_as_orchestrator "/Users/x/.claude/skills/memory/x.md"
-  [[ "${status}" -ne 0 ]]
-}
-
-@test "autoagent/memory/x.py → BLOCKED (self-improvement core surface)" {
-  write_as_orchestrator "/Users/x/.claude/autoagent/memory/x.py"
-  [[ "${status}" -ne 0 ]]
-}
-
-@test "monitor/memory/x.ts → BLOCKED (monitor surface)" {
-  write_as_orchestrator "/Users/x/.claude/monitor/memory/x.ts"
-  [[ "${status}" -ne 0 ]]
-}
-
-@test "scripts/memory/x.sh → BLOCKED (scripts surface)" {
-  write_as_orchestrator "/Users/x/.claude/scripts/memory/x.sh"
-  [[ "${status}" -ne 0 ]]
-}
-
-# BLOCKED: traversal cannot spoof a session-state memory root
-
-@test "agents/memory/../x.md traversal → BLOCKED (normalizes to agents/x.md)" {
-  write_as_orchestrator "/Users/x/.claude/agents/memory/../scope-dev.md"
-  [[ "${status}" -ne 0 ]]
-}
-
-@test "memory/../hooks/x.sh traversal → BLOCKED (segment cannot be forged via ..)" {
-  write_as_orchestrator "/Users/x/.claude/memory/../hooks/enforce-delegation.sh"
-  [[ "${status}" -ne 0 ]]
 }
 
 # PASS: legitimate session-state memory roots stay allowed
@@ -92,13 +47,6 @@ write_as_orchestrator() {
   [[ "${status}" -eq 0 ]]
 }
 
-# BLOCKED: a plain harness-config write (no memory segment) — regression guard
-
-@test "rules/scope-dev.md → BLOCKED (plain harness config, no memory exception)" {
-  write_as_orchestrator "/Users/x/.claude/rules/scope-dev.md"
-  [[ "${status}" -ne 0 ]]
-}
-
 # PASS: allowed basenames + subagent context (orthogonal guards intact)
 
 @test "CLAUDE.md basename → PASS regardless of harness dir" {
@@ -113,17 +61,16 @@ write_as_orchestrator() {
   [[ "${status}" -eq 0 ]]
 }
 
-# H-3: python3-absent fail-closed (extraction degrades to EMPTY)
-# Without python3, hook_get_tool_input returns empty → the legacy
-# `[[ -z FILE_PATH ]] && exit 0` would ALLOW an orchestrator harness write. The
-# fix blocks on non-trivial input but must NOT over-block genuinely-empty input.
+# python3-absent fail-closed (extraction degrades to EMPTY)
+# Without python3, hook_get_tool_input returns empty → an empty-path allow would pass an
+# orchestrator sensitive-file write unjudged. Non-empty input blocks; genuinely-empty input passes.
 
 # Shared fixture: lib/no-python3.bash (sourced in setup). Args: $1 = raw JSON stdin.
 run_with_no_python3() { run_hook_with_no_python3 "${HOOK_SH}" "${1}"; }
 
-@test "python3 absent + orchestrator harness write → BLOCKED (H-3 fail-closed)" {
-  run_with_no_python3 '{"tool_input":{"file_path":"/Users/x/.claude/rules/scope-dev.md"}}'
-  [[ "${status}" -ne 0 ]]
+@test "python3 absent + a non-empty orchestrator write blocks before any path is judged" {
+  run_with_no_python3 '{"tool_input":{"file_path":"/Users/x/project/.env"}}'
+  [[ "${status}" -eq 2 && "${output}" == *"DEL-002"* ]] || { echo "exit ${status}: ${output}"; return 1; }
 }
 
 @test "python3 absent + empty stdin → PASS (no over-block of empty input)" {
@@ -146,7 +93,7 @@ run_with_no_python3() { run_hook_with_no_python3 "${HOOK_SH}" "${1}"; }
 # blocks non-empty input at exit 2 upstream, so a drift envelope never reaches the probe.
 
 # Drive the hook with a RAW JSON envelope (renamed keys, non-object, malformed …), merging
-# stderr into $output so the emit_error JSON (DEL-003 / DEL-001) is assertable. Multi-assertion
+# stderr into $output so the emit_error JSON (DEL-003 / DEL-004) is assertable. Multi-assertion
 # rows gate via `|| return 1` per line so a mid-body failure fails the test (a bare mid-body
 # `[[ ]]` is not aborted by errexit under bash 3.2 on macOS, though bash 5.3 on CI does abort —
 # measured, bats 1.13.0 on both legs). Args: $1 = raw JSON stdin.
@@ -191,8 +138,171 @@ run_raw_envelope() {
   [[ "${output}" != *"DEL-003"* ]] || return 1
 }
 
-@test "T4 AC3 well-formed blocked path → exit 2 with DEL-001 (drift path did not cannibalize the block)" {
-  run_raw_envelope '{"tool_input":{"file_path":"/Users/x/.claude/rules/scope-dev.md"}}'
+@test "a well-formed sensitive path still blocks beside the drift branch" {
+  run_raw_envelope '{"tool_input":{"file_path":"/Users/x/project/.env"}}'
   [[ "${status}" -eq 2 ]] || return 1
-  [[ "${output}" == *"DEL-001"* ]] || return 1
+  [[ "${output}" == *"DEL-004"* ]] || return 1
+}
+
+# Orchestrator direct work: every write passes except a sensitive target.
+
+setup_work() {
+  WORK="$(mktemp -d)"
+  mkdir -p "${WORK}/src"
+  : >"${WORK}/src/existing.sh"
+  : >"${WORK}/notes.md"
+}
+
+teardown() {
+  if ga_guard_path "${WORK:-}"; then rm -rf -- "${WORK:?}"; fi
+}
+
+# shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
+source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
+
+# Orchestrator write with stderr merged, so the emitted error code is assertable. Args: $1=file_path.
+write_capturing() {
+  run bash -c '
+    printf "%s" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$1\"}}" | bash "$2" 2>&1
+  ' _ "${1}" "${HOOK_SH}"
+}
+
+@test "an orchestrator write that is not sensitive passes with no record, a new document included" {
+  setup_work
+  local rows=(
+    "existing code file|${WORK}/src/existing.sh"
+    "new markdown document|${WORK}/report.md"
+    "new html document, upper-case extension|${WORK}/plan.HTML"
+    "new document in a new dir|${WORK}/docs-new/adr.md"
+  )
+  local row name path
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name path <<<"${row}"
+    write_capturing "${path}"
+    [[ "${status}" -eq 0 && -z "${output}" ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "an orchestrator edit to an existing markdown document passes" {
+  setup_work
+  write_capturing "${WORK}/notes.md"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "an orchestrator write creating a new code file passes" {
+  setup_work
+  write_capturing "${WORK}/src/new-helper.sh"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "a subagent write to a sensitive path passes" {
+  setup_work
+  run bash -c '
+    printf "%s" "{\"agent_id\":\"a1\",\"tool_input\":{\"file_path\":\"$1\"}}" | bash "$2" 2>&1
+  ' _ "${WORK}/.env" "${HOOK_SH}"
+  [[ "${status}" -eq 0 ]] || { echo "${output}"; return 1; }
+}
+
+@test "a symlink to a sensitive file or into a sensitive dir stays blocked by its physical path" {
+  setup_work
+  mkdir -p "${WORK}/home/.ssh"
+  : >"${WORK}/home/.ssh/config"
+  : >"${WORK}/.env"
+  ln -s "${WORK}/home/.ssh" "${WORK}/dirlink"
+  ln -s "${WORK}/home/.ssh/config" "${WORK}/filelink.txt"
+  ln -s "${WORK}/.env" "${WORK}/src/settings.sh"
+  local rows=(
+    "directory symlink into a sensitive dir|${WORK}/dirlink/config"
+    "file symlink into a sensitive dir|${WORK}/filelink.txt"
+    "file symlink to a dotenv file|${WORK}/src/settings.sh"
+  )
+  local row name path
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name path <<<"${row}"
+    write_capturing "${path}"
+    [[ "${status}" -eq 2 && "${output}" == *"DEL-004"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "sensitive files stay blocked for the orchestrator" {
+  setup_work
+  local rows=(
+    "dotenv|${WORK}/.env"
+    "dotenv variant|${WORK}/.env.local"
+    "envrc|${WORK}/.envrc"
+    "credentials file|${WORK}/credentials.json"
+    "secrets file|${WORK}/secrets.yaml"
+    "ssh private key|${WORK}/id_ed25519"
+    "pem key|${WORK}/server.pem"
+    "key file|${WORK}/tls.key"
+    "ssh dir|/Users/x/.ssh/config"
+    "aws dir|/Users/x/.aws/config"
+  )
+  local row name path
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name path <<<"${row}"
+    write_capturing "${path}"
+    [[ "${status}" -eq 2 && "${output}" == *"DEL-004"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "a symlink chain to a sensitive path stays blocked at every hop, an unresolvable loop included" {
+  setup_work
+  local home="${WORK}/home"
+  mkdir -p "${home}/.ssh"
+  : >"${home}/.ssh/config"
+  ln -s "${home}/.ssh/config" "${WORK}/hop2"
+  ln -s hop2 "${WORK}/hop1"
+  ln -s "${home}/.ssh" "${WORK}/dirhop2"
+  ln -s dirhop2 "${WORK}/dirhop1"
+  ln -s "${home}/.aws" "${WORK}/danglehop2"
+  ln -s danglehop2 "${WORK}/danglehop1"
+  ln -s loopb "${WORK}/loopa"
+  ln -s loopa "${WORK}/loopb"
+  local rows=(
+    "two file hops|${WORK}/hop1"
+    "two directory hops|${WORK}/dirhop1/known_hosts"
+    "dangling directory link chain|${WORK}/danglehop1/config"
+    "link loop|${WORK}/loopa"
+  )
+  local row name path
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name path <<<"${row}"
+    write_capturing "${path}"
+    [[ "${status}" -eq 2 && "${output}" == *"DEL-004"* ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+  done
+}
+
+@test "a relative path cannot be judged against the sensitive-file rule and blocks (fail closed)" {
+  setup_work
+  write_capturing "src/existing.sh"
+  [[ "${status}" -eq 2 && "${output}" == *"DEL-004"* && "${output}" == *"relative path"* ]] \
+    || { echo "exit ${status}: ${output}"; return 1; }
+}
+
+@test "a memory/ nested under a protected dir name gets no session-state exemption, so the sensitive-file check decides it" {
+  setup_work
+  local rows=(
+    "plain memory/ keeps the exemption|0|${WORK}/proj/memory/.env"
+    "agents/memory|2|${WORK}/proj/agents/memory/.env"
+    "rules/memory|2|${WORK}/proj/rules/memory/.env"
+    "hooks/memory|2|${WORK}/proj/hooks/memory/.env"
+    "skills/memory|2|${WORK}/proj/skills/memory/.env"
+    "autoagent/memory|2|${WORK}/proj/autoagent/memory/.env"
+    "monitor/memory|2|${WORK}/proj/monitor/memory/.env"
+    "scripts/memory|2|${WORK}/proj/scripts/memory/.env"
+  )
+  local row name want path
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name want path <<<"${row}"
+    write_capturing "${path}"
+    [[ "${status}" -eq "${want}" ]] || { echo "${name}: exit ${status}: ${output}"; return 1; }
+    [[ "${want}" -eq 0 || "${output}" == *"DEL-004"* ]] || { echo "${name}: ${output}"; return 1; }
+  done
+}
+
+@test "a .. traversal cannot forge a session-state memory/ segment" {
+  setup_work
+  write_capturing "${WORK}/proj/memory/../hooks/.env"
+  [[ "${status}" -eq 2 && "${output}" == *"DEL-004"* ]] || { echo "exit ${status}: ${output}"; return 1; }
 }

@@ -15,7 +15,7 @@
 //
 // DB: real Postgres. Skips gracefully when unreachable.
 //
-// Runner: npx tsx --test test/improvement.parked-loop.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.parked-loop.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
@@ -31,6 +31,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerImprovementRoutes } from "../src/server/routes/improvement.js";
+import { lockTableWrites, unlockTableWrites } from "./lib/table-write-lock.js";
 
 const SUITE_MARKER = `impr-parked-${randomUUID().slice(0, 8)}`;
 const AGENT_A = `${SUITE_MARKER}-a`;
@@ -88,6 +89,7 @@ before(async () => {
   await app.ready();
 
   try {
+    await lockTableWrites("learning-log");
     await seedLearningLog();
     dbReady = true;
   } catch (error) {
@@ -111,6 +113,7 @@ after(async () => {
       console.error("[impr-parked cleanup] DB scrub failed:", error);
     }
   }
+  await unlockTableWrites("learning-log");
   await disconnectPrisma();
   delete process.env.AGENT_REGISTRY_PATH;
   resetAgentRegistryCache();

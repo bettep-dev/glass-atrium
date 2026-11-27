@@ -4,6 +4,7 @@
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import "dotenv/config";
 
@@ -16,8 +17,10 @@ import Fastify, {
 
 import { Prisma } from "../src/generated/prisma/client.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
-import { ROUTE_RESOURCE, registerAuditLogHook } from "../src/server/middleware/audit-log.js";
+import { buildApp } from "../src/server/app.js";
+import { ROUTE_RESOURCE, registerAuditLogHook, setAuditTarget } from "../src/server/middleware/audit-log.js";
 import { registerRoutes } from "../src/server/routes/index.js";
+import { lockQueueRows, unlockQueueRows } from "./lib/queue-rows-lock.js";
 
 // Unique marker isolates this suite's rows in payload for scrub + assertion.
 const SUITE_MARKER = `audit-test-${randomUUID()}`;
@@ -108,6 +111,8 @@ async function countAuditRows(actionKind: string, targetId: number | null = null
 }
 
 before(async () => {
+  // one test commits a queue item → held for the count test in queue.session-api.route.test.ts
+  await lockQueueRows();
   app = buildAppWithCoveredRoutes();
   await app.ready();
 });
@@ -131,6 +136,7 @@ after(async () => {
   } catch (error) {
     console.error("[audit-test cleanup] DB scrub failed:", error);
   }
+  await unlockQueueRows();
   await disconnectPrisma();
 });
 
@@ -292,6 +298,70 @@ test("audit INSERT failure does NOT propagate to the handler (response still suc
   }
 });
 
+// An awaited-intent route's row exists before its handler runs → a file write never goes unrecorded
+const INTENT_ROUTE = "/api/model-config/agents";
+
+async function buildIntentApp(handlerRuns: { count: number }): Promise<FastifyInstance> {
+  const instance = Fastify({ logger: false });
+  registerAuditLogHook(instance);
+  instance.put(INTENT_ROUTE, async (request, reply) => {
+    handlerRuns.count += 1;
+    const open = await getPrisma().$queryRaw<{ count: bigint }[]>`
+      SELECT COUNT(*)::bigint AS count FROM monitor.audit_log
+      WHERE action_kind = 'model-config.agents' AND result_code = 'error' AND payload->>'route' = ${INTENT_ROUTE}
+        AND event_ts >= NOW() - INTERVAL '2 minutes'
+    `;
+    setAuditTarget(request, { marker: SUITE_MARKER, openIntentRows: Number(open[0].count) });
+    return reply.code(200).send({ ok: true });
+  });
+  await instance.ready();
+  return instance;
+}
+
+test("an awaited-intent route writes its row before the handler and closes that same row with the result and target", async () => {
+  const intentApp = await buildIntentApp({ count: 0 });
+  try {
+    const res = await intentApp.inject({ method: "PUT", url: INTENT_ROUTE, payload: {} });
+    assert.strictEqual(res.statusCode, 200);
+    type Row = { result_code: string; payload: { status_code?: number; change?: { openIntentRows?: number } } };
+    let rows: Row[] = [];
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      rows = await getPrisma().$queryRaw<Row[]>`
+        SELECT result_code::text AS result_code, payload FROM monitor.audit_log
+        WHERE payload->'change'->>'marker' = ${SUITE_MARKER} AND event_ts >= NOW() - INTERVAL '2 minutes'
+      `;
+      if (rows[0]?.result_code === "success") break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.strictEqual(rows.length, 1, "one row per request: the intent row is closed, never joined by a second");
+    assert.ok((rows[0].payload.change?.openIntentRows ?? 0) >= 1, "the handler saw its own open intent row");
+    assert.strictEqual(rows[0].result_code, "success");
+    assert.strictEqual(rows[0].payload.status_code, 200);
+  } finally {
+    await getPrisma().$executeRaw`DELETE FROM monitor.audit_log WHERE payload->>'route' = ${INTENT_ROUTE} AND event_ts >= NOW() - INTERVAL '10 minutes'`;
+    await intentApp.close();
+  }
+});
+
+test("an awaited-intent route whose row cannot be written answers 503 and its handler never runs", async () => {
+  const handlerRuns = { count: 0 };
+  const intentApp = await buildIntentApp(handlerRuns);
+  const prisma = getPrisma();
+  const originalQueryRaw = prisma.$queryRaw.bind(prisma);
+  (prisma as { $queryRaw: unknown }).$queryRaw = (() => Promise.reject(new Error("forced intent insert failure"))) as unknown as typeof prisma.$queryRaw;
+  try {
+    const res = await intentApp.inject({ method: "PUT", url: INTENT_ROUTE, payload: {} });
+    assert.strictEqual(res.statusCode, 503);
+    assert.deepStrictEqual(res.json(), { error: "audit_unavailable" });
+    assert.strictEqual(handlerRuns.count, 0, "no row, no write");
+  } finally {
+    (prisma as { $queryRaw: unknown }).$queryRaw = originalQueryRaw;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await prisma.$executeRaw`DELETE FROM monitor.audit_log WHERE payload->>'route' = ${INTENT_ROUTE} AND event_ts >= NOW() - INTERVAL '10 minutes'`;
+    await intentApp.close();
+  }
+});
+
 // Coverage-drift guard — ROUTE_RESOURCE 가 등록된 모든 변이 라우트의 superset 유지.
 // A09 orphan-class 회귀 방지 — map 등록을 빠뜨린 새 변이 라우트는 silently un-audited 가 됨.
 
@@ -308,12 +378,30 @@ test("audit INSERT failure does NOT propagate to the handler (response still suc
 //   '/api/telemetry/activation'            — append-only skill/agent activation ingest, one row per
 //                                            spawn; same volume argument, and the telemetry table is
 //                                            its own immutable record.
+//   '/api/queue/sessions/register'         — owner-queue session-side routes: high-volume machine calls
+//   '/api/queue/sessions/deregister'         (SessionStart / SessionEnd hooks, the queue CLI), already
+//   '/api/queue/items'                       recorded in the queue session, item and delivery rows; the
+//   '/api/queue/pending'                     fixed monitor-web actor would mislabel a session as the
+//   '/api/queue/items/:id/ack'               owner. `pending` claims items, so it stays a POST and
+//   '/api/queue/items/:id/withdraw'          keeps the request gate's mutation check.
 const NON_AUDITED_MUTATIONS: ReadonlySet<string> = new Set([
   "/api/clauded-docs/html-export",
   "/api/clauded-docs/search",
   "/api/outcomes/:id/close",
   "/api/outcomes/close-by-cid",
   "/api/telemetry/activation",
+  "/api/queue/sessions/register",
+  "/api/queue/sessions/deregister",
+  "/api/queue/items",
+  "/api/queue/pending",
+  "/api/queue/items/:id/ack",
+  "/api/queue/items/:id/withdraw",
+  // the harness listener's count read, every 5 s per idle session: it changes no row, only the in-memory waiting fact
+  "/api/queue/pending/count",
+  // the relay recipients read: a POST only to carry the session id in a body, it writes no row
+  "/api/queue/peers",
+  // an upload decides nothing on an item; the send or reply that claims it is audited
+  "/api/queue/owner/images",
 ]);
 
 const MUTATING_METHOD_SET: ReadonlySet<string> = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -378,5 +466,73 @@ test("coverage-drift guard: ROUTE_RESOURCE is a superset of all registered mutat
       registered.has(auditedKey),
       `ROUTE_RESOURCE key '${auditedKey}' no longer matches any registered mutating route (stale)`,
     );
+  }
+});
+
+// The rotation keeps relay records by their resource label → a relay route audited under another label would be archived away
+test("each relay route is audited under the resource the archive rotation keeps in audit_log", () => {
+  const rotation = readFileSync(new URL("../../scripts/_pg_archive_rotate.py", import.meta.url), "utf8");
+  const kept = /^RELAY_RESOURCE = "([^"]+)"$/m.exec(rotation)?.[1];
+  assert.ok(kept !== undefined, "the rotation declares RELAY_RESOURCE");
+  for (const route of ["/api/queue/relay", "/api/queue/owner/items/:id/redact"]) {
+    assert.equal(ROUTE_RESOURCE.get(route), kept, route);
+  }
+});
+
+// Production assembly: the root audit hook, added after registerRoutes, still reaches the queue's
+// encapsulated owner routes, and one owner answer writes exactly one row (no source-order pin).
+test("assembly: one owner answer through the production buildApp writes exactly one audit row", async () => {
+  const prisma = getPrisma();
+  const sessionId = randomUUID();
+  await prisma.queueSession.create({
+    data: {
+      sessionId,
+      isConfigDirSet: false,
+      profileLabel: "default",
+      cwd: "/Users/owner/Desktop/git/glass-atrium",
+      processStartTime: "Mon Nov  9 08:01:12 2026",
+      state: "live",
+      lastSeenAt: new Date(),
+      pid: 812_345,
+    },
+  });
+  const item = await prisma.queueItem.create({
+    data: {
+      kind: "decision",
+      sessionId,
+      title: "Pick a merge order",
+      body: "S2a first or S2b first?",
+      isFreeTextAllowed: false,
+      options: [
+        { code: "R1", label: "S2a first", pros: "", cons: "" },
+        { code: "R2", label: "S2b first", pros: "", cons: "" },
+      ],
+      recommendedCode: "R1",
+    },
+  });
+  const assembly = await buildApp();
+  const host = "127.0.0.1:16145";
+  try {
+    const answer = await assembly.inject({
+      method: "POST",
+      url: `/api/queue/owner/items/${item.id}/answer`,
+      headers: { host, "sec-fetch-site": "same-origin" },
+      payload: { code: "R2" },
+    });
+    assert.strictEqual(answer.statusCode, 200, answer.body);
+    const row = await findAuditRow("queue-item.answer", Number(item.id));
+    assert.ok(row !== null, "the answer wrote an audit row");
+    assert.strictEqual(row.result_code, "success");
+    assert.strictEqual(await countAuditRows("queue-item.answer", Number(item.id)), 1);
+  } finally {
+    await assembly.close();
+    await prisma.$executeRaw`
+      DELETE FROM monitor.audit_log
+      WHERE actor = 'monitor-web'
+        AND target_table = 'queue-item' AND target_id = ${item.id}
+        AND event_ts >= NOW() - INTERVAL '10 minutes'
+    `;
+    await prisma.queueItem.delete({ where: { id: item.id } });
+    await prisma.queueSession.delete({ where: { sessionId } });
   }
 });

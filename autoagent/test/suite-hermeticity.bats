@@ -70,8 +70,8 @@ setup() {
   local rc=0
   # GA_DATA_ROOT is unset deliberately, matching the hooks twin: ga_paths.get_base_root
   # returns Path(GA_DATA_ROOT) whenever it is set and never consults HOME, so an ambient
-  # value would silently void the redirect below. daemon_cycle and project_key resolve
-  # their roots through that seam at IMPORT time, ahead of any per-test patch — a module
+  # value would silently void the redirect below. daemon_cycle resolves its roots
+  # through that seam at IMPORT time, ahead of any per-test patch — a module
   # that forgot to sandbox itself would then write outside ${home}, where the find cannot
   # see it, and this probe would read green on a real escape.
   #

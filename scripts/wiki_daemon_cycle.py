@@ -58,6 +58,9 @@ CLAUDE_BIN = os.environ.get("WIKI_DAEMON_CLAUDE_BIN", "claude")
 # Raw-processing cap (per cycle) — 0 = unlimited (process all unprocessed raws).
 # Overridable via WIKI_DAEMON_RAW_LIMIT env (same convention as WIKI_DAEMON_CLAUDE_BIN).
 DEFAULT_RAW_LIMIT = int(os.environ.get("WIKI_DAEMON_RAW_LIMIT", "0") or "0")
+# Batch skip record written by wiki-daily-compile.sh (SKIP_RECORD) — a listed raw with no note is
+# out of the backlog; test_wiki_source_raw.py binds the two paths.
+SKIP_RECORD_RELPATH = "index/compile-skips.tsv"
 HAIKU_TIMEOUT_SEC = 90
 # Cost guard — per-CALL `--max-budget-usd` ceiling (not a daily token estimate).
 # Budget ceiling + model id are read from the daemon-config.json SoT (shared loader
@@ -399,6 +402,15 @@ def _collect_note_source_raws(notes_dir: Path) -> set[str]:
     return raws
 
 
+def _collect_skipped_raws(wiki_root: Path) -> set[str]:
+    """Raw basenames in the skip record (first tab field per line); absent record → empty set."""
+    try:
+        text = (wiki_root / SKIP_RECORD_RELPATH).read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return set()
+    return {first for line in text.splitlines() if (first := line.split("\t", 1)[0])}
+
+
 def _iter_raw_md(raw_dir: Path):
     """Yield each ``raw/*.md`` file (non-hidden), the single SoT for the raw
     enumeration shared by the collision scan and the candidate loop.
@@ -451,6 +463,9 @@ def detect_unprocessed_raw(
        raw's non-empty ``source_url`` appears in some note's source_url set AND
        is NOT in the collision set.
 
+    A raw matching none of them but listed in the batch skip record
+    (``SKIP_RECORD_RELPATH``) is skipped, not returned.
+
     Collision-set guard (source_url path only): a source_url shared across MORE
     THAN ONE raw is unsafe — raw-alpha's compiled (slug-renamed) note carries
     the shared url, falsely marking raw-beta (same url, own note absent) as
@@ -478,6 +493,7 @@ def detect_unprocessed_raw(
     # source_urls shared across >1 raw — the source_url fast-path is disabled
     # for these (basename-only), preventing one raw's note from masking another.
     collision_source_urls = _collect_collision_source_urls(raw_dir)
+    skipped_raws = _collect_skipped_raws(wiki_root)
     if collision_source_urls:
         for url in sorted(collision_source_urls):
             sys.stderr.write(
@@ -511,6 +527,9 @@ def detect_unprocessed_raw(
             and raw_url in note_source_urls
             and raw_url not in collision_source_urls
         ):
+            continue
+        # Declined by a batch run (skip record) — out of the backlog until its line is deleted.
+        if f"{slug}.md" in skipped_raws:
             continue
         try:
             st = entry.stat()

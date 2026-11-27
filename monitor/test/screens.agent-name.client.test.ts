@@ -35,6 +35,11 @@ const UI_SCALARS: Record<string, unknown> = {
   formatKstDateTime: (iso: string) => iso,
   outcomeShareTone: () => null,
   OUTCOME_BREAKAGE_CRIT_SHARE: 0.05,
+  // Table rows contract: each body's rows are a node or `(view) => rows` → a wide view renders them
+  Table: ({ bodies, children }: { bodies?: { rows: unknown }[]; children?: unknown }) => ({
+    __element: true, type: "ui-atom", props: { atom: "Table", children: (bodies ?? [{ rows: children }])
+      .map((body) => (typeof body.rows === "function" ? body.rows({ isStacked: false, columnCount: 0 }) : body.rows)) },
+  }),
 };
 
 // every other UI member → a transparent host element tagged with its atom name
@@ -77,15 +82,16 @@ const NAME_SITES: Array<[string, Record<string, unknown>, string, Record<string,
   }],
   ["Agents latency bars", agentsMod, "LatencyBars", { agents: [{ agent_id: FULL, agent_name: FULL, p50_ms: 1, p95_ms: 2, p99_ms: 3 }] }],
   ["Agents success matrix", agentsMod, "SuccessRateMatrixRow", { agent: FULL, cells: {} }],
+  ["Agents off-target list", agentsMod, "SuccessRateOffTargetRow", { agent: FULL, pairs: [] }],
   ["Agents failing pairs", agentsMod, "TopNFailingAgentsTable", {
     pairs: [{ agent: FULL, task_type: "feature", failed: 3, rateDenominator: 10 }], failureByAgent: new Map(), days: 30,
   }],
   ["Task results budget-kill list", outcomesMod, "AttributionBudgetKillListO", { rows: [{ agent: FULL, count: 2 }] }],
-  ["Task results failure table", outcomesMod, "AgentFailureBodyO", {
-    state: { status: "ready", data: { agentStack: [{ agent: FULL, byResult: { fail: 2 }, total: 4 }] } }, onRetry: () => {}, stickyStyle: {},
+  ["Task results failure row", outcomesMod, "AgentFailureRowO", {
+    row: { agent: FULL, failed: 2, blocked: 0, openCaveats: null, total: 4, rate: 0.5, isLowSample: true }, view: { isStacked: false, columnCount: 6 },
   }],
-  ["Task results run events", outcomesMod, "LoopEventsBody", {
-    state: { status: "ready", data: { total_events: 1, events: [{ agent: FULL, event_ts: "2026-01-01T00:00:00Z" }] } }, onRetry: () => {},
+  ["Task results run event row", outcomesMod, "LoopEventRowO", {
+    event: { agent: FULL, event_ts: "2026-01-01T00:00:00Z" }, view: { isStacked: false, columnCount: 4 },
   }],
   ["Task results record row", outcomesMod, "ResultTableRow", {
     row: { agent: FULL, task_type: "feature", result: "done", record_ts: "2026-01-01T00:00:00Z" }, onRowClick: () => {}, closure: null,

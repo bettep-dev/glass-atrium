@@ -1,5 +1,5 @@
 // /api/clauded-docs/* 라우트 핸들러 통합 테스트.
-// Runner: npx tsx --test test/clauded-docs.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/clauded-docs.route.test.ts
 // SUITE_MARKER 태그 title 로 격리 → per-test try/finally + after() DB-scrub/FS-removal safety net.
 
 import test, { after, before } from "node:test";
@@ -1550,4 +1550,51 @@ test("GET /api/clauded-docs?doc_status: any unknown token rejects the whole requ
       { ...body, allowed: [...body.allowed].sort() }, { ...expected, allowed: [...expected.allowed].sort() }, query,
     );
   }
+});
+
+// expected_hash compare-and-set before any body work + group create order
+
+async function createDocOrFail(label: string, extra: Record<string, unknown> = {}): Promise<{ id: number; content_hash: string }> {
+  const title = makeTitle(label);
+  const created = await postCreate(app, { title, author: "tester", html_body: makeHtmlBody(title), ...extra });
+  assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+  return created.body as { id: number; content_hash: string };
+}
+
+async function getFolderId(id: number): Promise<number | null> {
+  const res = await app.inject({ method: "GET", url: `/api/clauded-docs/${id}` });
+  assert.strictEqual(res.statusCode, 200, res.body);
+  return (res.json() as { folder_id: number | null }).folder_id;
+}
+
+test("PUT /api/clauded-docs/:id: a stale expected_hash answers 409 hash_conflict before the body is validated", async () => {
+  const doc = await createDocOrFail("put-stale-invalid");
+  const res = await app.inject({
+    method: "PUT",
+    url: `/api/clauded-docs/${doc.id}`,
+    payload: { html_body: "<p>no doctype no title</p>", expected_hash: "0".repeat(64) },
+  });
+  assert.deepStrictEqual([res.statusCode, (res.json() as { error: unknown }).error], [409, "hash_conflict"]);
+});
+
+test("POST /api/clauded-docs/group: a request naming a missing id answers 404 and regroups none of the ids that exist", async () => {
+  const [first, second] = [await createDocOrFail("group-missing-a"), await createDocOrFail("group-missing-b")];
+  const missingId = 2_000_000_000;
+  const res = await app.inject({ method: "POST", url: "/api/clauded-docs/group", payload: { member_ids: [first.id, second.id, missingId] } });
+  assert.deepStrictEqual(
+    [res.statusCode, res.json(), await getFolderId(first.id), await getFolderId(second.id)],
+    [404, { error: "members_not_found", missing_ids: [missingId] }, null, null],
+  );
+});
+
+test("POST /api/clauded-docs/group: a member pulled out of a two-member group leaves the other one ungrouped", async () => {
+  const [pulled, left, outsider] = [await createDocOrFail("group-pull-a"), await createDocOrFail("group-pull-b"), await createDocOrFail("group-pull-c")];
+  const first = await app.inject({ method: "POST", url: "/api/clauded-docs/group", payload: { member_ids: [pulled.id, left.id] } });
+  assert.strictEqual(first.statusCode, 200, first.body);
+  const res = await app.inject({ method: "POST", url: "/api/clauded-docs/group", payload: { member_ids: [pulled.id, outsider.id] } });
+  assert.strictEqual(res.statusCode, 200, res.body);
+  assert.deepStrictEqual(
+    [await getFolderId(left.id), await getFolderId(pulled.id), await getFolderId(outsider.id)],
+    [null, outsider.id, outsider.id],
+  );
 });

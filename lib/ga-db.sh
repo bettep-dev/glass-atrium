@@ -170,11 +170,12 @@ run_db_setup() {
   _rearm_unadjudicated_backfill
 }
 
-# Re-arm marker the daemon cycle head reads (same reports-dir precedence as scripts/update.sh →
-# update_reports_dir): a DB kept across a reinstall may hold rows the backfill has not relabelled.
+# Re-arm marker the daemon cycle head reads, in the shared reports dir: a DB kept across a reinstall may hold
+# rows the backfill has not relabelled.
 # No DB read here, so every install takes the same path; a write failure never changes the setup rc.
 _rearm_unadjudicated_backfill() {
-  local reports="${AUTOAGENT_REPORTS_DIR:-${GA_DATA_ROOT:-${HOME}/.glass-atrium}/data/daemon-reports}"
+  local reports
+  reports="$(apply_lock_get_reports_dir)"
   if ! { mkdir -p -- "${reports}" && : >"${reports}/.unadjudicated-backfill-pending"; }; then
     log "warn unadjudicated-backfill re-arm marker not written under ${reports} — setup continues; the next update or '${0##*/} db-setup' re-arms it"
   fi

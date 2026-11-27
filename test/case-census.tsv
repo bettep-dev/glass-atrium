@@ -1,6 +1,6 @@
 # Suite census — one row per test root per occasion. Append-only; never rewrite a row.
 # Columns: iso8601_utc	short_sha	root	bats	python	ts
-# Occasion: the pre-merge live-deploy gate (orchestrator-role.md -> Document-Driven Workflow step 6),
+# Occasion: the pre-merge live-deploy gate (skills/glass-atrium-ops-orchestrator-role.md -> Document-Driven Workflow step 6),
 #   at the point the combined tree is deployed and run-bats-parallel.sh is run before the PR opens.
 # Five roots, not four: run-bats-parallel.sh recurses only the first four and monitor/test is absent
 #   from the live install, so a census keyed to the runner reproduces the blind spot it exists to watch.

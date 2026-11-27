@@ -8,7 +8,7 @@
 // captured (RETURNING id) and scrubbed in after(). Skips gracefully when the DB
 // is unreachable; the 400 validation tests need no DB.
 //
-// Runner: npx tsx --test test/improvement.correction-signals.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.correction-signals.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";

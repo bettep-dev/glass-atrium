@@ -58,8 +58,13 @@ function getHeads(sandbox: ScreenSandbox, node: unknown, out: RecordedElement[] 
     return out;
   }
   if (!isElement(node)) return out;
-  if (node.type === sandbox.window.UI.CardHead) out.push(node);
-  else getHeads(sandbox, node.props.children, out);
+  // a Card element carries its head as its own title / sub / info props
+  const isCardWithHead = node.type === sandbox.window.UI.Card && node.props.title !== undefined;
+  if (node.type === sandbox.window.UI.CardHead || isCardWithHead) out.push(node);
+  // a screen-local component (an empty card form) renders to the Card that holds the head
+  const isScreenLocal = typeof node.type === "function" && Object.values(sandbox).includes(node.type);
+  if (isScreenLocal) return getHeads(sandbox, (node.type as Card)(node.props), out);
+  if (node.type !== sandbox.window.UI.CardHead) getHeads(sandbox, node.props.children, out);
   return out;
 }
 

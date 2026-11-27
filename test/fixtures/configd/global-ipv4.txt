@@ -1,0 +1,5 @@
+<dictionary> {
+  PrimaryInterface : en1
+  PrimaryService : 6F1C2B0A-3D4E-4F50-8A61-72B3C4D5E6F7
+  Router : 192.168.45.1
+}

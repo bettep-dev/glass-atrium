@@ -1,45 +1,40 @@
-/* Design tokens — light + dark, RGB triplets for tailwind alpha */
+/* Design tokens — one dark theme, RGB triplets for tailwind alpha */
 :root {
-  --surface: 250 250 249;
-  --elev:    255 255 255;
-  --sunken:  245 245 244;
-  --line:    231 229 228;
-  --ink:      28  25  23;
-  --dim:      87  83  78;
-  --faint:   112 106 101;
-  --accent:   37  99 235;
-  --crit:    216  33  34;
-  --warn:    210 113   0;
-  --ok:        5 150 105;
+  color-scheme: dark;
+  --surface:  12  10   9;
+  --elev:     28  25  23;
+  --sunken:   24  20  17;
+  --line:     41  37  36;
+  --ink:     250 250 249;
+  --dim:     214 211 209;
+  --faint:   160 154 150;
+  --accent:   96 165 250;
+  --crit:    248 113 113;
+  --warn:    251 191  36;
+  --ok:       52 211 153;
   /* --accent와 hue 분리 (Cyan) — 의미 충돌 해소 */
-  --info:      8 145 178;
-  /* focus ring — theme-owned, not the tweak-driven --accent → ≥3:1 on surface/elev/sunken whatever accent is picked */
-  --focus-ring:       37  99 235;
+  --info:     34 211 238;
+  /* focus ring — a fixed colour, not the tweak-driven --accent → ≥3:1 on surface/elev/sunken whatever accent is picked */
+  --focus-ring:       96 165 250;
   --focus-ring-width:  2px;
   --focus-ring-offset: 2px;
   /* Tier 2 categorical — severity 토큰의 분류용 사용 금지 */
-  --cat-1:   124  58 237;
-  --cat-2:    13 148 136;
-  --cat-3:    37  99 235;
-  --cat-4:   219  39 119;
+  --cat-1:   167 139 250;
+  --cat-2:    45 212 191;
+  --cat-3:    96 165 250;
+  --cat-4:   244 114 182;
+  /* chart data colour — a series mark that carries a quantity, never a severity; the --faint value held as its own token (≥3:1 on elev/surface/sunken) */
+  --data:    160 154 150;
 
   /* ── Tier 2 — Elevation (신규 · additive, §3.2) ─────────────────── */
-  --elev-2: 252 252 251;          /* kind A primitive: 다크 전용 raised-2 fill (라이트는 elev 255 천장이라 미사용) */
-  --overlay-surface: 255 255 255; /* kind A primitive: 모달/팝오버 불투명 면 (= elev, 의미 분리) */
-
-  /* ── Tier 2 — Glass / material (신규, §3.2) ─────────────────────── */
-  --glass-border:  255 255 255;   /* kind A: 유리 엣지 하이라이트 (alpha 는 사용처) */
+  --elev-2: 36 32 30;             /* kind A primitive: raised-2 fill — elev(28 25 23) 위 한 휘도 step ↑ */
+  --overlay-surface: 28 25 23;    /* kind A primitive: 모달/팝오버 불투명 면 (= elev, 의미 분리) */
 
   /* ── Tier 2 — Shadow / depth (신규 합성 그림자, kind B box-shadow) ─ */
-  --shadow-raised:   0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
-  --shadow-raised-2: 0 2px 6px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05); /* 라이트 raised-2: elev fill + 강한 그림자 (인버전 회피) */
-  --shadow-overlay:  0 10px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
-
-  /* ── Badge form (신규 · additive) ─ kind B length: 전 배지 shell 공용 radius (form 통일) */
-  --radius-badge: 6px;
+  --shadow-raised-2: 0 3px 10px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25); /* raised-2 보조 (주채널은 휘도 step) */
+  --shadow-overlay:  0 10px 40px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
 
   /* type steps — the only scale source, whole px, 13px meta floor */
-  --fs-kpi:     32px;
   --fs-display: 24px;
   --fs-stat:    20px;
   --fs-title:   16px;
@@ -54,77 +49,104 @@
   --radius-tile:     8px;
   --radius-card:    12px;
 
+  /* spacing ladder — 4px base, the only spacing steps; JSX spells them as the Tailwind steps 0.5/1/1.5/2/3/4/6/8.
+     An offset derived from these by calc() is on the ladder; a literal for the same value is not. */
+  --space-0_5: 2px;  /* stacked title → sub-line inside one cell or tile */
+  --space-1:   4px;  /* icon ↔ label at meta size · pill gap · control-cell padding-block · title → subtitle floor */
+  --space-1_5: 6px;  /* icon ↔ label at control/body size · control padding-block */
+  --space-2:   8px;  /* between controls · list items · small-control and pill padding-inline · cell padding-block */
+  --space-3:  12px;  /* .btn padding-inline · card-head column gap · interior cell padding-inline · sub-blocks */
+  --space-4:  16px;  /* card/tile padding · card ↔ card gap · page header → content · edge cell padding-inline */
+  --space-6:  24px;  /* page gutter · section ↔ section · overlay padding-inline */
+  --space-8:  32px;  /* break before a titled section group */
+
+  /* role gaps — screens name the role (Tailwind role keys in index.html), never a ladder step; one value each */
+  --gap-page:          var(--space-6); /* <main> padding, all four sides; 16 at 640px or narrower */
+  --gap-header:        var(--space-4); /* page header → first content row */
+  --gap-section:       var(--space-4); /* between card rows · between cards in a row */
+  --gap-block:         var(--space-4); /* between sub-blocks inside one card body */
+  --gap-group-above:   var(--space-8); /* break above a titled page-level group heading */
+  --gap-group-below:   var(--space-3); /* group heading → its first row */
+  --gap-label:         var(--space-2); /* sub-block or field label → its content */
+  --gap-label-inline:  var(--space-1); /* inline label → value on one line */
+  --gap-stack:         var(--space-1); /* stacked label → value, one fact */
+  --gap-list:          var(--space-2); /* stacked fact list items · button wrap */
+  --gap-control:       var(--space-2); /* controls inside one group */
+  --gap-control-group: var(--space-4); /* between control groups */
+  --gap-chart-cell:    var(--space-0_5); /* between cells of a heat grid or a swatch strip, nothing else */
+
   /* minimum hit height for every interactive atom */
   --ctl-min-h: 32px;
+  --ctl-checkbox-size: 16px; /* the Checkbox box; its label hit area overhangs it */
+  /* the 40 tier — a pane's composer box and its buttons only; every other control stays 32 */
+  --ctl-h-lg: 40px;
+  /* its line box, as --lh-ctl: 8px padding-block and 1px borders around it land a large button, and the composer text in its box, on 40 */
+  --lh-ctl-lg: calc(var(--ctl-h-lg) - 2 * var(--space-2) - 2px);
+  /* control line box — what is left of the 32px control after its 6px padding-block and 1px borders,
+     so every bordered control (.btn, .field) lands on exactly --ctl-min-h; a borderless .seg button rises to it by min-height */
+  --lh-ctl: calc(var(--ctl-min-h) - 2 * var(--space-1_5) - 2px);
 
   /* card anatomy — one-line header · inner padding · single-line list/table row */
   --card-head-h: 48px;
-  --card-pad:    16px;
-  --row-h:       40px;
+  --card-pad:    var(--space-4); /* the card's inner padding, one ladder step */
+  /* row heights are min-heights in three steps: default · two-line (also a control cell with a wrapped line) · compact nested (never holds a control) */
+  --row-h:         40px;
+  --row-h-2:       56px;
+  --row-h-compact: 32px;
+  /* one line box per row for 13–15px text — .tbl derives its cell block padding from it and the 40 row */
+  --lh-row: 20px;
+  /* reading measure — a ch length resolves against the text that uses it: 66ch of 15px on the sheet, of 14px in a compact bubble */
+  --measure-prose: 66ch;
 
   /* one filled selected state — pressed toggles, active segments, checked items */
-  --selected-fill:  28  25  23;
-  --selected-ink:  250 250 249;
+  --selected-fill: 214 211 209;
+  --selected-ink:   12  10   9;
   /* empty stage pip — ≥3:1 on surface/elev/sunken */
-  --pip-empty:     138 132 127;
+  --pip-empty:     120 113 108;
+
+  /* surface elevation semantic aliases */
+  --surface-raised-2: var(--elev-2);          /* 휘도 step 으로 떠오름 (36 > 28) */
+  --surface-overlay:  var(--overlay-surface);
+  /* resting edge of a toggle with a filled selected state and of the field family — ≥3:1 on surface/elev/sunken/elev-2 (WCAG 1.4.11), one step under the --faint hover edge */
+  --control-edge:     var(--pip-empty);
+  /* the three tints — an existing colour at a fixed alpha, text on them always ink */
+  --tint-select: rgb(var(--ink) / 0.08);  /* here, or mine: a selected or scoped row, a picked option, a ticked rail row */
+  --tint-fill:   rgb(var(--ink) / 0.10);  /* a filled shell: the tag badge, the owner's order bubble */
+  --tint-warn:   rgb(var(--warn) / 0.16); /* did not arrive or cannot be reached — the amber badge, always with ⚠ and a word */
+  /* row-state ladder — opened · checked · both; ceiling 0.066 → the empty stage pip stays ≥3:1 on the fill */
+  --tint-row-1: rgb(var(--ink) / 0.02);
+  --tint-row-2: rgb(var(--ink) / 0.055);
+  --tint-row-3: rgb(var(--ink) / 0.066);
+  /* hour-grid heat ramp — ink at four steps: step 1 ≥3:1 on elev, each step ≥1.4:1 over the one below */
+  --heat-1: rgb(var(--ink) / 0.36);
+  --heat-2: rgb(var(--ink) / 0.50);
+  --heat-3: rgb(var(--ink) / 0.65);
+  --heat-4: rgb(var(--ink) / 0.80);
+
+  /* document canvas — the ground a stored document is written for, cooler than the monitor's own neutrals */
+  --doc-canvas:   9   9  11;  /* the document body, its full-screen container and its scroll wrap */
+  --doc-side:    13  13  16;  /* the meta side panel */
+  --doc-code:    24  24  27;  /* a rendered code block */
+  --doc-line:    39  39  42;  /* hairline between two near-equal grounds, never the only cue; the resting scrollbar thumb */
+  --doc-ink:    228 228 231;  /* code-block text — ≥4.5:1 on --doc-code */
 
   /* ── Z-index stacking SoT — 3-tier 단일 출처 (각 tier 실제 소비) ──────────
-     overlay(100) = drawer/fullscreen 오버레이 + backdrop (.detail-overlay·.modal-backdrop)
+     overlay(100) = drawer/fullscreen 오버레이 + backdrop (.detail-overlay)
      confirm(150) = drawer/fullscreen 위로 재차 스택되는 confirm-variant 다이얼로그
                     (.detail-overlay.detail-confirm) — overlay 위 레이어 확보
-     toast(200)   = 최상위 알림 (.doc-toast) — 모든 오버레이 위
-     theme 무관 — z 순서는 단일 스택 컨텍스트 정렬이라 다크 override 불필요. */
+     toast(200)   = 최상위 알림 (.doc-toast) — 모든 오버레이 위 */
   --z-overlay: 100;
   --z-confirm: 150;
   --z-toast:   200;
 }
-/* surface elevation semantic aliases — var() resolves where declared, so every themed scope (a nested dark chrome too) re-declares them against its own primitives */
-:root, [data-theme] {
-  --surface-raised-2: var(--elev);            /* 라이트=elev 순백 유지(떠오름은 shadow/ring); 다크는 아래 elev-2 override */
-  --surface-overlay:  var(--overlay-surface);
-}
-[data-theme="dark"] {
-  --surface:  12  10   9;
-  --elev:     28  25  23;
-  --sunken:   24  20  17;
-  --line:     41  37  36;
-  --ink:     250 250 249;
-  --dim:     214 211 209;
-  --faint:   160 154 150;
-  --crit:    248 113 113;
-  --warn:    251 191  36;
-  --ok:       52 211 153;
-  /* --accent와 hue 분리 (Cyan) — 의미 충돌 해소 */
-  --info:     34 211 238;
-  --focus-ring:   96 165 250;
-  --selected-fill: 214 211 209;
-  --selected-ink:   12  10   9;
-  --pip-empty:     120 113 108;
-  /* Tier 2 categorical — severity 토큰의 분류용 사용 금지 */
-  --cat-1:   167 139 250;
-  --cat-2:    45 212 191;
-  --cat-3:    96 165 250;
-  --cat-4:   244 114 182;
-
-  /* ── Tier 2 dark overrides (신규 · additive, §3.2) ─────────────── */
-  --elev-2: 36 32 30;             /* 다크: elev(28 25 23) 위 한 휘도 step ↑ */
-  --overlay-surface: 28 25 23;    /* 다크: 불투명 모달 면 */
-
-  --surface-raised-2: var(--elev-2); /* 다크 raised-2: 휘도 step 으로 떠오름 (36 > 28) */
-
-  --glass-border:  255 255 255;   /* 다크: 화이트 엣지 (낮은 alpha 로 가시화) */
-
-  --shadow-raised:   0 1px 4px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
-  --shadow-raised-2: 0 3px 10px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.25); /* 다크 raised-2 보조 (주채널은 휘도 step) */
-  --shadow-overlay:  0 10px 40px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
-}
-/* dark accent default on the root only — a nested dark scope inherits the user's accent tweak instead of resetting it */
-:root[data-theme="dark"] {
-  --accent:   96 165 250;
+/* narrow viewport → the page gutter drops one ladder step */
+@media (max-width: 640px) {
+  :root { --gap-page: var(--space-4); }
 }
 html, body { margin: 0; padding: 0; }
 body {
   font-family: 'Pretendard Variable', Pretendard, ui-sans-serif, system-ui, sans-serif;
+  font-size: var(--fs-body);
   font-feature-settings: 'tnum' 1, 'cv11' 1;
   -webkit-font-smoothing: antialiased;
 }
@@ -135,15 +157,11 @@ body {
 *::-webkit-scrollbar-thumb { background: rgb(var(--line)); border-radius: 6px; border: 2px solid rgb(var(--surface)); }
 *::-webkit-scrollbar-thumb:hover { background: rgb(var(--faint)); }
 
-/* Reusable atoms (used across screens) */
-.live-dot { animation: liveBlink 1.6s infinite; }
-@keyframes liveBlink { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
-
 /* Code block */
 .code-block {
   font-family: 'JetBrains Mono', monospace; font-size: var(--fs-meta);
   background: rgb(var(--sunken)); border: 1px solid rgb(var(--line));
-  border-radius: 6px; padding: 10px 12px;
+  border-radius: 6px; padding: var(--space-2) var(--space-3);
   white-space: pre-wrap; word-break: break-all;
   color: rgb(var(--ink));
 }

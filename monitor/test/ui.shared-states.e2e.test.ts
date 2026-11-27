@@ -1,4 +1,4 @@
-// Shared interaction states base.css draws, read in a real browser: the focus ring and the open disclosure chevron.
+// Shared interaction state base.css draws, read in a real browser: the focus ring.
 // Runner: npx tsx --test test/ui.shared-states.e2e.test.ts — needs an installed chromium; no network, no app server.
 import test, { after, before, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -17,12 +17,11 @@ const ui = await loadScreenModule(resolve(HERE, "../public/src/ui.jsx"));
 const putCardFocus = ui.putCardFocus as (id: string) => void;
 
 // the probe resolves the ring tokens exactly as the shared rule should, so the focused element is compared against it
-const STATES_PAGE = `<!doctype html><html data-theme="light"><body style="margin: 0; padding: 24px;">
-  <button type="button" id="retry">Retry</button>
+const STATES_PAGE = `<!doctype html><html><body style="margin: 0; padding: 24px;">
+  <button type="button" id="retry" onclick="putCardFocus('card')">Retry</button>
   <section id="card">card</section>
   <section id="plain" tabindex="-1">plain card</section>
   <span id="probe" style="outline: var(--focus-ring-width) solid rgb(var(--focus-ring)); outline-offset: var(--focus-ring-offset);"></span>
-  <details id="files"><summary>3 files<svg class="chevron" width="12" height="12" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg></summary><div>list</div></details>
 </body></html>`;
 
 interface RingReading { style: string; width: string; color: string; offset: string; boxShadow: string }
@@ -77,29 +76,22 @@ describe("the shared focus ring in a real browser", () => {
     assert.equal((await readRing("#plain")).style, "none");
   });
 
-  test("a card focus handoff after a mouse press draws the same ring until the card blurs", async () => {
+  test("a card focus handoff from a mouse press on Retry draws no ring", async () => {
     await pressRetryWithMouse();
-    await page.evaluate(() => (window as unknown as { putCardFocus: (id: string) => void }).putCardFocus("card"));
+
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "card");
+    assert.equal((await readRing("#card")).style, "none");
+  });
+
+  test("a card focus handoff from Tab + Enter on Retry draws the shared ring", async () => {
+    // #plain and the handed card sit outside the tab order → Shift+Tab from #plain lands on Retry
+    await page.focus("#plain");
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Enter");
     const { boxShadow, ...ring } = await readRing("#card");
 
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "card");
     assert.deepEqual(ring, await readProbeRing());
     assert.equal(boxShadow, "none");
-
-    await page.click("#retry");
-    assert.equal((await readRing("#card")).style, "none", "the handoff ring leaves with the focus");
-  });
-});
-
-describe("the shared disclosure chevron in a real browser", () => {
-  test("the chevron turns over only while its disclosure is open", async () => {
-    const readTransform = () => page.$eval("#files .chevron", (el) => getComputedStyle(el).transform);
-    const closed = await readTransform();
-    await page.$eval("#files", (el) => { (el as HTMLDetailsElement).open = true; });
-    const opened = await readTransform();
-
-    assert.equal(closed, "none");
-    // rotate(180deg) → matrix(-1, 0, 0, -1, 0, 0), up to float noise
-    const [a, b, c, d] = opened.replace(/^matrix\(|\)$/g, "").split(",").map(Number);
-    assert.ok(Math.abs(a + 1) < 1e-6 && Math.abs(d + 1) < 1e-6 && Math.abs(b) < 1e-6 && Math.abs(c) < 1e-6, `open transform ${opened}`);
   });
 });

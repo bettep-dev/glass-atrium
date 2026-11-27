@@ -34,11 +34,13 @@ import { resetBrowserForTests } from "../src/server/clauded-docs/browser-pool.js
 // 뷰어가 initialize 에 넘기는 설정 — 공유 SoT 파일을 그대로 평가해 걷어옴(사본 금지).
 // index.html 이 이 전역을 넘긴다는 배선 자체는 mermaid-config.contract.test.ts 소유.
 import { evaluateMermaidConfig } from "./lib/mermaid-config-source.js";
+import { getRoleKeyCss } from "./lib/role-keys.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MONITOR_ROOT = resolve(HERE, "..");
 const VENDOR_ELK_PATH = resolve(MONITOR_ROOT, "public/assets/vendor/mermaid-layout-elk-0.2.3.min.js");
 const VIEWER_SCREEN_PATH = resolve(MONITOR_ROOT, "public/src/screens/clauded-docs.jsx");
+const TOKENS_PATH = resolve(MONITOR_ROOT, "public/styles/tokens.css");
 const MAP_SCREEN_PATH = resolve(MONITOR_ROOT, "public/src/screens/architecture.jsx");
 const DECLARATION_PATH = resolve(MONITOR_ROOT, "src/server/clauded-docs/diagram-types.json");
 
@@ -177,7 +179,12 @@ function getViewerDocBodyCss(): string {
   const open = jsx.indexOf("<style>{`");
   const close = jsx.indexOf("`}</style>", open);
   assert.ok(open !== -1 && close !== -1, "clauded-docs.jsx 의 인라인 <style> 블록을 찾지 못함");
-  return jsx.slice(open + "<style>{`".length, close);
+  // the block and the role keys spell spacing with the tokens.css :root block, which the app always loads
+  const [rootTokens] = readFileSync(TOKENS_PATH, "utf8").match(/:root\s*\{[^}]*\}/) ?? [];
+  assert.ok(rootTokens, "tokens.css 의 :root 토큰 블록을 찾지 못함");
+  // the reading column centres on mx-auto and the wrap pads on p-page, utilities the app loads from its CDN and Tailwind config
+  const utilities = ".mx-auto{margin-left:auto;margin-right:auto}" + getRoleKeyCss();
+  return rootTokens + utilities + jsx.slice(open + "<style>{`".length, close);
 }
 
 const TYPE_NODES = FIXTURE_TYPES.map(
@@ -241,8 +248,8 @@ function buildHarnessDocument(css: string, body: string, headExtra = ""): string
 function buildViewerHarness(css: string, nodes: string = TYPE_NODES): string {
   return buildHarnessDocument(
     css,
-    '<div class="detail-fullscreen"><div class="doc-fs-body-wrap">' +
-      '<div class="doc-fs-body-inner"><div class="doc-body-isolation">' +
+    '<div class="detail-fullscreen"><div class="doc-fs-body-wrap p-page">' +
+      '<div class="doc-fs-body-inner mx-auto"><div class="doc-body-isolation">' +
       nodes +
       "</div></div></div></div>",
   );
@@ -262,7 +269,7 @@ function buildFullscreenHarness(css: string, nodes: string): string {
     css,
     '<div class="detail-fullscreen"><div class="doc-fs-container"><div class="doc-fs-body">' +
       '<div class="doc-fs-split">' +
-      '<div class="doc-fs-body-wrap"><div class="doc-fs-body-inner"><div class="doc-body-isolation">' +
+      '<div class="doc-fs-body-wrap p-page"><div class="doc-fs-body-inner mx-auto"><div class="doc-body-isolation">' +
       nodes +
       "</div></div></div>" +
       '<aside class="doc-fs-meta-side"></aside>' +
@@ -524,7 +531,8 @@ const DOC_COLUMN_CSS = "width:min(90%,1280px);margin-inline:auto";
 // 뷰어 .doc-fs-body-wrap 과 같은 기준 상자 — 내보내기에는 메타 레일이 없어 body 가 그 자리를
 // 맡음(html-export.ts 가 body 를 질의 컨테이너로 선언). 프리셋 폭이 기준 상자에서 나오므로,
 // 두 경로의 기준 상자 내용 폭이 같을 때에만 같은 프리셋이 같은 px 로 떨어짐.
-const DOC_CONTAINER_CSS = "padding:24px clamp(32px,4vw,72px) 32px";
+// the viewer wrap pads on p-page → --gap-page, 24 at this viewport (above the 640 step)
+const DOC_CONTAINER_CSS = "padding:24px";
 
 // 나열 순서가 곧 폭의 오름차순임(본문폭 < 넓게 < 전폭).
 const SIZE_PRESETS = ["doc-diagram-body", "doc-diagram-wide", "doc-diagram-full"] as const;

@@ -1,0 +1,13 @@
+{
+  "package": "tailwindcss",
+  "version": "3.4.17",
+  "source_url": "https://cdn.tailwindcss.com/3.4.17",
+  "resolved_from": "https://cdn.tailwindcss.com",
+  "global_name": "tailwind",
+  "bundle_file": "tailwindcss-play-cdn-3.4.17.min.js",
+  "bundle_sha256": "176e894661aa9cdc9a5cba6c720044cbbf7b8bd80d1c9a142a7c24b1b6c50d15",
+  "bundle_bytes": 407279,
+  "license": "MIT",
+  "fetched_on": "2026-11-10",
+  "note": "Play CDN runtime, vendored rather than SRI-pinned on its URL: cdn.tailwindcss.com is a Vercel function response with a 4-hour max-age and no registry artifact behind it, so an upstream rebuild would fail an SRI check and leave the shell unstyled. The unversioned URL the shell loaded before resolved by 302 to source_url; two fetches returned the same bytes. Upgrade = fetch a new versioned URL, update bundle_file, bundle_sha256 and bundle_bytes here and the script tag and CSP in index.html."
+}

@@ -53,19 +53,25 @@ farm_target_home() {
 # manifest path ever lives under (never-touch set + data/wiki/logs) and cut at
 # the FIRST hit. Stdout-verdict (always exits 0) so strict-mode callers use it
 # in $( ) freely — mirrors ga-core.sh is_never_touch / is_symlink_excluded.
+# Either root form is a hit: the farm writes physical targets (launcher pwd -P)
+# while install.sh passes a logical GA_DIR → physical-form match; a tree moved
+# behind a symlink keeps logical-form links → still a consented deployment, and
+# its refresh failure stays loud instead of becoming a silent skip.
 farm_has_ga_links() {
-  local home="$1" ga_root="$2" hit=""
+  local home="$1" ga_root="$2" physical_root hit=""
+  physical_root="$(cd -- "${ga_root}" >/dev/null 2>&1 && pwd -P)" || physical_root="${ga_root}"
   if [[ -d "${home}" ]]; then
     # 2>/dev/null hides expected permission noise only — the verdict still
     # branches on the result (not a swallowed precondition). `head -n 1` bounds
     # the scan at the first hit (portable — no reliance on find -quit); the
     # `|| true` absorbs head's benign early-close SIGPIPE under pipefail.
-    hit="$(find "${home}" \
+    # -H: descend a symlinked target home itself (a dotfile-managed ~/.claude), never a link below it
+    hit="$(find -H "${home}" \
       \( -path "${home}/projects" -o -path "${home}/todos" \
       -o -path "${home}/shell-snapshots" -o -path "${home}/ide" \
       -o -path "${home}/data" -o -path "${home}/wiki" \
       -o -path "${home}/logs" \) -prune \
-      -o -type l -lname "${ga_root}/*" -print 2>/dev/null | head -n 1 || true)"
+      -o -type l \( -lname "${ga_root}/*" -o -lname "${physical_root}/*" \) -print 2>/dev/null | head -n 1 || true)"
   fi
   if [[ -n "${hit}" ]]; then printf 'yes\n'; else printf 'no\n'; fi
 }

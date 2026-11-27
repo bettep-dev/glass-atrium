@@ -1,7 +1,7 @@
 # Tier knobs (daemon-config.json *_effort / *_max_output_tokens) at the two daemon
 # `claude -p` call sites, plus the _main gate that refuses to spend a call on a
-# rejected knob. The worker call site is covered through the gap arbiter in
-# test_gap_arbiter.ConfigSourceTest.
+# rejected knob, and the rows each regenerate writer selects. The worker call site
+# is covered through the gap arbiter in test_gap_arbiter.ConfigSourceTest.
 #
 # Run: python3 -m unittest autoagent.test.test_daemon_tier_knobs
 
@@ -10,11 +10,13 @@ from __future__ import annotations
 import io
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import closing, redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -26,8 +28,10 @@ if str(_HOOKS_DIR) not in sys.path:
 if str(_AUTOAGENT_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOAGENT_DIR))
 _TEST_DIR = Path(__file__).resolve().parent
-if str(_TEST_DIR) not in sys.path:
-    sys.path.insert(0, str(_TEST_DIR))
+_STUB_DIR = _REPO_ROOT / "scripts" / "test"
+for _anchor in (_TEST_DIR, _STUB_DIR):
+    if str(_anchor) not in sys.path:
+        sys.path.insert(0, str(_anchor))
 
 try:
     import daemon_cycle as dc
@@ -38,7 +42,12 @@ except Exception as exc:  # noqa: BLE001 — import failure -> skip, not error
     dc = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
 
-from _pg_seal import seal_pg_reach  # noqa: E402 — test dir anchored above
+import _pg_stub_backend as stub  # noqa: E402 — stub dir anchored above
+from _pg_seal import (  # noqa: E402 — test dir anchored above
+    create_live_trial,
+    create_trial_ledger_table,
+    seal_pg_reach,
+)
 
 
 _STUB = """#!/bin/sh
@@ -284,7 +293,10 @@ def _cycle_report(failure_classes: tuple[str, ...], cycle_status: str) -> dc.Cyc
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")
 class MainAuthOutageExitTest(unittest.TestCase):
-    """A credential outage exits its own code, over a co-occurring regression, with a CRIT line and one loop event."""
+    """A credential outage exits its own code, over a co-occurring regression, with a CRIT line and one loop event.
+
+    A quota or budget cap stays exit 0 with one stderr WARN naming its class, outage or not.
+    """
 
     def setUp(self) -> None:
         patcher = mock.patch.object(dc, "HAS_PAUSE_LIB", False)
@@ -325,20 +337,31 @@ class MainAuthOutageExitTest(unittest.TestCase):
 
     def test_an_auth_failure_alone_decides_the_outage_code_whatever_else_holds(self) -> None:
         auth, quality, quota = dc.FAILURE_CLASS_AUTH, dc.FAILURE_CLASS_QUALITY, dc.FAILURE_CLASS_QUOTA
+        budget = dc.FAILURE_CLASS_BUDGET
+        # (row, failure classes, cycle status, exit code, spend-cap class the WARN names | None)
         rows = (
-            ("auth failure alone", (auth,), "ok", dc.ExitCode.AUTH_OUTAGE),
-            ("auth failure beside a regression", (quality, auth), "regression", dc.ExitCode.AUTH_OUTAGE),
-            ("auth failure beside a quota cap", (quota, auth), "ok", dc.ExitCode.AUTH_OUTAGE),
-            ("regression without an auth failure", (quality,), "regression", dc.ExitCode.CYCLE_REGRESSION),
-            ("quota cap without an auth failure", (quota,), "ok", 0),
+            ("auth failure alone", (auth,), "ok", dc.ExitCode.AUTH_OUTAGE, None),
+            ("auth failure beside a regression", (quality, auth), "regression", dc.ExitCode.AUTH_OUTAGE, None),
+            # the outage code wins, yet the cap stays loud: the CRIT line never names it
+            ("auth failure beside a quota cap", (quota, auth), "ok", dc.ExitCode.AUTH_OUTAGE, quota),
+            ("regression without an auth failure", (quality,), "regression", dc.ExitCode.CYCLE_REGRESSION, None),
+            ("quota cap without an auth failure", (quota,), "ok", 0, quota),
+            ("budget cap without an auth failure", (budget,), "ok", 0, budget),
         )
-        for name, failure_classes, cycle_status, expected_rc in rows:
+        for name, failure_classes, cycle_status, expected_rc, cap_class in rows:
             with self.subTest(name):
                 report = _cycle_report(failure_classes, cycle_status)
                 rc, stderr = self._run_main([], report)
                 is_outage = expected_rc == dc.ExitCode.AUTH_OUTAGE
                 self.assertEqual(rc, expected_rc, stderr)
                 self.assertEqual("CRIT: auth outage" in stderr, is_outage, stderr)
+                cap_lines = [line for line in stderr.splitlines() if "WARN: spend cap" in line]
+                self.assertEqual(
+                    cap_lines,
+                    [] if cap_class is None else [f"[daemon-cycle] WARN: spend cap — {cap_class} on 1 patch; "
+                                                  "those patterns generated nothing this cycle"],
+                    stderr,
+                )
                 self.assertEqual(
                     self._get_outage_events(),
                     [
@@ -363,6 +386,124 @@ class MainAuthOutageExitTest(unittest.TestCase):
                 self.assertEqual(rc, dc.ExitCode.AUTH_OUTAGE, stderr)
                 self.assertIn("CRIT: auth outage", stderr)
                 self.assertEqual(self.envelopes, [])
+
+
+_DIFF = SimpleNamespace(
+    STORED="--- a/probe.md\n+++ b/probe.md\n@@ -1 +1,2 @@\n probe\n+stored rule\n",
+    REDERIVED="--- a/probe.md\n+++ b/probe.md\n@@ -2 +2,2 @@\n probe\n+stored rule\n",
+)
+# (row label, live trial on the row: None | "open" | "decided")
+_REGEN_ROWS: tuple[tuple[str, str | None], ...] = (
+    ("open trial", "open"),
+    ("no trial", None),
+    ("decided trial", "decided"),
+)
+
+
+@unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
+class _RegenStoreFixture(unittest.TestCase):
+    """Stale pending rows on the stdlib stand-in, one per trial state; re-derivation stubbed."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.db = Path(tmp.name) / "proposals.sqlite"
+        self.target = Path(tmp.name) / "glass-atrium-dev-python.md"
+        stub.create_proposals_table(self.db)
+        create_trial_ledger_table(self.db)
+        self.ids: dict[str, int] = {}
+        with closing(sqlite3.connect(self.db)) as db:
+            for proposal_id, (label, _) in enumerate(_REGEN_ROWS, start=1):
+                db.execute(
+                    "INSERT INTO autoagent_proposals (id, cycle_date, pattern_label,"
+                    " target_agent, target_file, approval_tier, status, proposed_diff)"
+                    " VALUES (?, '2026-10-10', ?, 'glass-atrium-dev-python', ?, 'auto',"
+                    " 'pending', ?)",
+                    (proposal_id, label, str(self.target), _DIFF.STORED),
+                )
+                self.ids[label] = proposal_id
+            db.commit()
+        for label, trial in _REGEN_ROWS:
+            if trial is not None:
+                create_live_trial(
+                    self.db, self.ids[label], "glass-atrium-dev-python", is_decided=trial == "decided"
+                )
+        self.pg_reach = seal_pg_reach(self)
+        # after the seal: the connection is the stand-in, re-derivation a fixed fresh diff
+        for name, value in (
+            ("HAS_PG_LOOP_WRITE", True),
+            ("_pg_connect", lambda: stub.create_connection(self.db)),
+            ("_proposal_diff_is_stale", lambda *_args: True),
+            ("_rederive_diff_against_file", lambda *_args: _DIFF.REDERIVED),
+            ("_gate_validated_diff", lambda diff, *_args: diff),
+        ):
+            patcher = mock.patch.object(dc, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(
+            dc, "TRIAL_LEDGER", stub.get_trial_ledger(), create=not hasattr(dc, "TRIAL_LEDGER")
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _get_diff(self, label: str) -> str:
+        with closing(sqlite3.connect(self.db)) as db:
+            (diff,) = db.execute(
+                "SELECT proposed_diff FROM autoagent_proposals WHERE id = ?", (self.ids[label],)
+            ).fetchone()
+        return diff
+
+
+class StaleSweepTrialTest(_RegenStoreFixture):
+    """The sweep keeps a held trial's diff as trialled and takes the row back once its trial no
+    longer holds it."""
+
+    def test_the_sweep_skips_exactly_the_rows_a_held_trial_names(self) -> None:
+        with redirect_stderr(io.StringIO()):
+            results = dc.regenerate_stale_proposals(agents_dir=self.target.parent)
+        self.assertEqual(self.pg_reach, [])
+        actions = {row["id"]: row["action"] for row in results}
+        for label, expected_action, expected_diff in (
+            ("open trial", "skipped-in-trial", _DIFF.STORED),
+            ("no trial", "regenerated", _DIFF.REDERIVED),
+            ("decided trial", "regenerated", _DIFF.REDERIVED),
+        ):
+            with self.subTest(row=label):
+                self.assertEqual(actions[self.ids[label]], expected_action)
+                self.assertEqual(self._get_diff(label), expected_diff)
+
+
+class SingleRegenTrialTest(_RegenStoreFixture):
+    """The single-id path refuses a held trial's id on its named action and writes nothing."""
+
+    def test_the_single_path_refuses_exactly_a_held_trial_id(self) -> None:
+        for label, expected_action, expected_diff in (
+            ("open trial", "in_trial", _DIFF.STORED),
+            ("decided trial", "regenerated", _DIFF.REDERIVED),
+        ):
+            with self.subTest(row=label):
+                classified: list[int] = []
+
+                def _classify(*, proposal_id: int, **_kwargs: object) -> object:
+                    classified.append(proposal_id)
+                    return dc.SingleRegenResult(
+                        proposal_id=proposal_id,
+                        action="regenerated",
+                        preverify_passed=True,
+                        preverify_axes=None,
+                        reason="fixture pass",
+                        new_diff=_DIFF.REDERIVED,
+                    )
+
+                with (
+                    mock.patch.object(dc, "_classify_single_regen", _classify),
+                    redirect_stderr(io.StringIO()),
+                ):
+                    result = dc.regenerate_single_proposal(self.ids[label])
+                self.assertEqual(self.pg_reach, [])
+                self.assertEqual(result.action, expected_action)
+                self.assertEqual(self._get_diff(label), expected_diff)
+                self.assertEqual(classified, [] if label == "open trial" else [self.ids[label]])
 
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"module import failed: {_IMPORT_ERROR}")

@@ -7,10 +7,19 @@
 # §26 OAuth token-leak check (tmux list-sessions + show-environment -g, launchctl getenv) and
 # the monitor liveness GET; names and counts only, value never shown. Doctor's metered
 # `claude -p` self-test runs a sandbox stub through GA_AUTH_CLAUDE_BIN, never the real CLI.
+# STEP 1-5 run the launcher of a stub GA root (test/lib/remote-run-stub.bash → make_remote_stub_root): its
+# lib/ga-remote.sh also sources the shared ga_remote_run shadow, so no remote-access row reads this machine's listener,
+# Wi-Fi or launchd, and the result is the same whatever its remote access state.
+# STEP 9 alone is a fresh install: the manifest's tree under a temp HOME, its questions answered at a pty, every
+# machine-reaching tool a record-only stub — the deps preflight, monitor build, health gate and launchd load stay out.
+# assertion-tally harness idiom: ok/no always return 0, so `assert && ok || no` is an exact if-then-else (SC2015,
+# SC2310); substitutions inside evidence strings are display-only (SC2312); '\${HOME}' is a literal search (SC2016)
+# shellcheck disable=SC2015,SC2016,SC2310,SC2312
 set -uo pipefail
 
 # Repo root = parent of this script's test/ dir (portable: no hardcoded $HOME path).
-GA="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# Physical form: the launcher resolves GA_ROOT with pwd -P, and the -lname counts below match that form.
+GA="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 # Single entry point — install/uninstall both dispatch through `glass-atrium
 # <subcommand>` (the in-process engine passthrough), so the same binary drives
 # every exec site below; the `install` / `uninstall` subcommand token selects
@@ -19,7 +28,6 @@ GA="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # bundle, no .git, then hands off to `glass-atrium install`, the engine this
 # test drives directly). uninstall.sh IS retired; `glass-atrium uninstall` now
 # owns its former path.
-GA_BIN="${GA}/glass-atrium"
 RENDER_ENV="${GA}/scripts/render-monitor-env.sh"
 REAL_CLAUDE="${HOME}/.claude"
 REAL_CONFIG="${GA}/config.toml"
@@ -27,6 +35,8 @@ REAL_CONFIG="${GA}/config.toml"
 source "${GA}/scripts/lib/path-guard.sh"
 # shellcheck source-path=SCRIPTDIR source=../scripts/lib/tracked-paths.sh
 source "${GA}/scripts/lib/tracked-paths.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/remote-run-stub.bash
+source "${GA}/test/lib/remote-run-stub.bash"
 
 PASS=0
 FAIL=0
@@ -46,6 +56,93 @@ untracked_listed_count() {
   LC_ALL=C comm -23 \
     <(jq -r '.files[]' "${root}/manifest.json" | LC_ALL=C sort) \
     <(ga_get_tracked_paths "${root}") | wc -l | tr -d ' '
+}
+
+# create_claude_stub — a `claude` stand-in at $1 that appends each call's argv as one line to $2 and answers OK;
+# `mcp add|remove --scope user <name> [-- <command> <arg>]` edits the file the host's command edits
+# (<CLAUDE_CONFIG_DIR or HOME>/.claude.json) with the keys it leaves on every stdio server: type, command, args, env
+create_claude_stub() {
+  cat >"$1" <<SH
+#!/bin/bash
+printf '%s\n' "\$*" >>'$2'
+if [[ "\$1" == mcp ]]; then
+  file="\${CLAUDE_CONFIG_DIR:-\${HOME}}/.claude.json"
+  [[ -f "\${file}" ]] || printf '{}\n' >"\${file}"
+  case "\$2" in
+    add) jq --arg n "\$5" --arg c "\$7" --arg a "\$8" '.mcpServers[\$n] = {type: "stdio", command: \$c, args: [\$a], env: {}}' "\${file}" >"\${file}.t" ;;
+    *) jq --arg n "\$5" 'del(.mcpServers[\$n])' "\${file}" >"\${file}.t" ;;
+  esac
+  mv "\${file}.t" "\${file}"
+fi
+echo OK
+SH
+  chmod +x "$1"
+}
+
+# create_record_stubs — in dir $1, a record-only stand-in for each tool a fresh install or uninstall can reach the
+# machine with (launchd, tmux, process lookup and signal, postgres, the monitor's HTTP, keychain): argv to $2, rc 1
+# = not loaded · no owner · refused, so no live job, session, pid, database or port is reached
+create_record_stubs() {
+  local tool
+  for tool in launchctl tmux lsof pgrep pkill psql dropdb createdb pg_isready curl security osascript open; do
+    printf '#!/bin/bash\nprintf "%%s %%s\\n" %s "$*" >>"%s"\nexit 1\n' "${tool}" "$2" >"$1/${tool}"
+    chmod +x "$1/${tool}"
+  done
+}
+
+# put_install_tree <repo root> <dest> — the manifest's files[] plus manifest.json, modes kept: the release bundle's
+# members, laid out as install.sh extracts them at ~/.glass-atrium
+put_install_tree() {
+  mkdir -p "$2"
+  { jq -r '.files[]' "$1/manifest.json" && printf 'manifest.json\n'; } >"${SANDBOX}/fresh-members.txt"
+  (cd -- "$1" && tar -cf - -T "${SANDBOX}/fresh-members.txt") | tar -xpf - -C "$2"
+}
+
+# the pty behind run_fresh: stdin, stdout and stderr all a terminal, so the install asks its [y/N] questions; the
+# answers are typed before any prompt (a terminal holds typed lines), the transcript is copied out, rc = the child's
+PTY_DRIVER="$(
+  cat <<'PY'
+import os, pty, sys
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[2], sys.argv[2:])
+os.write(fd, sys.argv[1].encode())
+while True:
+    try:
+        chunk = os.read(fd, 65536)
+    except OSError:
+        break
+    if not chunk:
+        break
+    sys.stdout.buffer.write(chunk.replace(b"\r\n", b"\n"))
+sys.exit(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))
+PY
+)"
+
+# run_fresh <answers> <launcher args…> — the fresh tree's launcher at a pty, env scrubbed to HOME = the fresh home,
+# the record stubs first on PATH, the DB bootstrap gated off and the postgres socket dir in the sandbox
+run_fresh() {
+  local answers="$1"
+  shift
+  python3 -c "${PTY_DRIVER}" "${answers}" env -i HOME="${FRESH_HOME}" PATH="${FRESH_STUBS}:${PATH}" \
+    USER="${USER}" LOGNAME="${LOGNAME:-${USER}}" TMPDIR="${TMPDIR:-/tmp}" TERM=dumb LANG=en_US.UTF-8 \
+    GA_SKIP_DB_SETUP=1 GA_PG_SOCKET="${SANDBOX}/fresh-pg" GA_AUTH_CLAUDE_BIN="${FRESH_STUBS}/claude" \
+    DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}/empty-reports" "${FRESH_HOME}/.glass-atrium/glass-atrium" "$@"
+}
+
+# get_preview_entry <log> <profile file> → the "<name>\t<entry JSON>" the install's preview printed for that file
+get_preview_entry() {
+  sed -n "s|^.*${2}: mcpServers\.\([^ ]*\) = \({.*}\) (add;.*$|\1	\2|p" "$1" | head -1
+}
+
+# get_mcp_allow_lines <settings.json> → its mcp__ allow lines, sorted
+get_mcp_allow_lines() {
+  jq -r '.permissions.allow[]? | select(startswith("mcp__"))' "$1" 2>/dev/null | LC_ALL=C sort
+}
+
+# is_stub_reached — 0 iff the stub argv log $1 records a `claude -p` call
+is_stub_reached() {
+  grep -q '^-p ' "$1" 2>/dev/null
 }
 
 # --- safety guard snapshot ----------------------------------------------------
@@ -88,12 +185,7 @@ export DOCTOR_AUTH_REPORTS_DIR="${SANDBOX}/empty-reports"
 # metered-call seam — the stub logs each argv line so STEP 1 can prove the self-test ran it
 CLAUDE_STUB_CALLS="${SANDBOX}/claude-stub.calls"
 mkdir -p "${SANDBOX}/bin"
-cat >"${SANDBOX}/bin/claude" <<SH
-#!/bin/bash
-printf '%s\n' "\$*" >>'${CLAUDE_STUB_CALLS}'
-echo OK
-SH
-chmod +x "${SANDBOX}/bin/claude"
+create_claude_stub "${SANDBOX}/bin/claude" "${CLAUDE_STUB_CALLS}"
 export GA_AUTH_CLAUDE_BIN="${SANDBOX}/bin/claude"
 # shellcheck disable=SC2329 # run by the EXIT trap; 0.11 misses a trap reached through the final exit
 delete_sandbox() {
@@ -102,6 +194,16 @@ delete_sandbox() {
 trap delete_sandbox EXIT
 
 printf 'SANDBOX=%s\n' "${SANDBOX}"
+
+# the stub GA root STEP 1-5 drive (header); physical, as the launcher resolves GA_ROOT and the -lname counts match it
+STUB_GA="$(cd -P -- "${SANDBOX}" && pwd)/ga-stub-root"
+# monitor/ a real dir of links, so the install's env render writes its .env here, never into the checkout's monitor/
+mkdir -p "${STUB_GA}/monitor"
+for entry in "${GA}"/monitor/* "${GA}"/monitor/.[!.]*; do
+  [[ ! -e "${entry}" || "${entry##*/}" == .env ]] || ln -s "${entry}" "${STUB_GA}/monitor/${entry##*/}"
+done
+make_remote_stub_root "${STUB_GA}" "${GA}"
+GA_BIN="${STUB_GA}/glass-atrium"
 
 # tree-matched manifest: hermetic defense — drive install/uninstall against a
 # manifest filtered to files that exist on THIS tree (via GA_MANIFEST, the
@@ -171,17 +273,20 @@ hdr "STEP 1 — doctor preflight (sandbox)"
 DOCTOR_RC=$?
 tail -3 "${SANDBOX}/doctor1.log"
 [[ "${DOCTOR_RC}" -eq 0 ]] && ok "doctor exits 0 (PASS or PASS-with-warnings)" || no "doctor rc=${DOCTOR_RC}"
-if grep -q '^-p ' "${CLAUDE_STUB_CALLS}" 2>/dev/null; then
+if is_stub_reached "${CLAUDE_STUB_CALLS}"; then
   ok "doctor's metered 'claude -p' self-test ran the sandbox stub, not the real CLI"
 else
-  no "doctor's 'claude -p' self-test never reached the sandbox stub (GA_AUTH_CLAUDE_BIN unrouted)"
+  no "doctor's 'claude -p' self-test never reached the sandbox stub (GA_AUTH_CLAUDE_BIN unrouted, or scripts/lib/claude-auth-env.sh absent so the self-test skipped)"
 fi
 
 # =============================================================================
 hdr "STEP 2 — install run #1 (config render + symlink farm + wire_hooks)"
 "${GA_BIN}" install >"${SANDBOX}/install1.log" 2>&1
 INSTALL_RC=$?
-[[ "${INSTALL_RC}" -eq 0 ]] && ok "install rc=0" || { no "install rc=${INSTALL_RC}"; tail -20 "${SANDBOX}/install1.log"; }
+[[ "${INSTALL_RC}" -eq 0 ]] && ok "install rc=0" || {
+  no "install rc=${INSTALL_RC}"
+  tail -20 "${SANDBOX}/install1.log"
+}
 # DB bootstrap gating honored — the hermetic opt-out (GA_SKIP_DB_SETUP) must be
 # acknowledged in the log, proving setup_database ran its gate and never reached
 # the machine-global PostgreSQL path.
@@ -207,7 +312,8 @@ PLIST_COUNT="$(find "${GA_PLIST_OUT}" -name 'com.glass-atrium.*.plist' 2>/dev/nu
 hdr "STEP 2 / AC2 — config.toml render"
 if [[ -f "${CONFIG_OUT}" ]]; then
   ok "config.toml rendered at ${CONFIG_OUT}"
-  UNEXP="$(grep -c '\${HOME}' "${CONFIG_OUT}" || true)"; [[ -z "${UNEXP}" ]] && UNEXP=0
+  UNEXP="$(grep -c '\${HOME}' "${CONFIG_OUT}" || true)"
+  [[ -z "${UNEXP}" ]] && UNEXP=0
   [[ "${UNEXP}" -eq 0 ]] && ok "zero unexpanded \${HOME} in rendered config" || no "${UNEXP} unexpanded \${HOME} remain"
   if grep -qF "${HOME}/.glass-atrium/monitor/data/documents" "${CONFIG_OUT}"; then
     ok "real \$HOME substituted (monitor_docs_html_root = ${HOME}/.glass-atrium/...)"
@@ -240,7 +346,7 @@ FARM_EXPECT="$(
   done < <(jq -r '.files[]' "${SBX_MANIFEST}")
   printf '%s\n' "$((expect - 1))"
 )"
-GA_LINKS="$(find "${TARGET}" -type l -lname "${GA}/*" 2>/dev/null | wc -l | tr -d ' ')"
+GA_LINKS="$(find "${TARGET}" -type l -lname "${STUB_GA}/*" 2>/dev/null | wc -l | tr -d ' ')"
 printf '  GA-pointing symlinks: %s (sandbox manifest=%s, engine-derived farmed subset minus 1 collision=%s)\n' \
   "${GA_LINKS}" "${SBX_MANIFEST_COUNT}" "${FARM_EXPECT}"
 [[ "${FARM_EXPECT}" =~ ^[0-9]+$ ]] || no "farm expectation derivation failed (got '${FARM_EXPECT}')"
@@ -309,8 +415,10 @@ hdr "STEP 4 — install run #2 (AC7 idempotency)"
 INSTALL2_RC=$?
 [[ "${INSTALL2_RC}" -eq 0 ]] && ok "second install rc=0" || no "second install rc=${INSTALL2_RC}"
 # no NEW symlinks: every manifest entry logs "skip (already correct)" except the collision
-SKIPS="$(grep -c 'skip (already correct)' "${SANDBOX}/install2.log" || true)"; [[ -z "${SKIPS}" ]] && SKIPS=0
-NEWLINKS="$(grep -c '^linked: ' "${SANDBOX}/install2.log" || true)"; [[ -z "${NEWLINKS}" ]] && NEWLINKS=0
+SKIPS="$(grep -c 'skip (already correct)' "${SANDBOX}/install2.log" || true)"
+[[ -z "${SKIPS}" ]] && SKIPS=0
+NEWLINKS="$(grep -c '^linked: ' "${SANDBOX}/install2.log" || true)"
+[[ -z "${NEWLINKS}" ]] && NEWLINKS=0
 printf '  run#2: %s skip-already-correct, %s new links\n' "${SKIPS}" "${NEWLINKS}"
 [[ "${NEWLINKS}" -eq 0 ]] && ok "idempotent: zero new symlinks on re-run" || no "${NEWLINKS} new symlinks on re-run"
 grep -q 'already wired' "${SANDBOX}/install2.log" && ok "idempotent: hooks already wired (no dup)" || no "hooks re-wired on second run"
@@ -364,6 +472,89 @@ printf '  SKIP: hermetic full-uninstall coverage — test/oss-e2e-bootstrap.sh (
 printf '        un-wire unit coverage — test/unwire-hooks.bats.\n'
 
 # =============================================================================
+hdr "STEP 9 — fresh install into a temp HOME (questions at a pty, machine-reaching tools stubbed)"
+FRESH_HOME="${SANDBOX}/fresh-home"
+FRESH_GA="${FRESH_HOME}/.glass-atrium"
+FRESH_STUBS="${SANDBOX}/fresh-stubs"
+FRESH_CALLS="${SANDBOX}/fresh-stub.calls"
+FRESH_CLAUDE_CALLS="${SANDBOX}/fresh-claude.calls"
+FRESH_PROFILE="${FRESH_HOME}/.claude.json"
+FRESH_SETTINGS="${FRESH_HOME}/.claude/settings.json"
+QUEUE_ASK='Make the queue MCP writes listed above? [y/N]: '
+REMOTE_ASK='Open the monitor to your own registered devices on a trusted Wi-Fi (HTTPS, local CA)? [y/N]: '
+# the home a first `claude` run leaves: ~/.claude present and empty — doctor's target-home row needs it
+mkdir -p "${FRESH_STUBS}" "${FRESH_HOME}/.claude" "${FRESH_HOME}/.Trash" "${SANDBOX}/fresh-pg"
+put_install_tree "${GA}" "${FRESH_GA}"
+# lib/ga-remote.sh reaches its system tools by absolute path, past the PATH stubs → the shared ga_remote_run shadow:
+# this Mac's own monitor listener, Wi-Fi and launchd never decide or receive anything from the fresh install
+mv -- "${FRESH_GA}/lib/ga-remote.sh" "${FRESH_GA}/lib/ga-remote.real.sh"
+printf 'source %q && source %q\n' "${FRESH_GA}/lib/ga-remote.real.sh" "${GA}/test/lib/remote-run-stub.bash" \
+  >"${FRESH_GA}/lib/ga-remote.sh"
+create_record_stubs "${FRESH_STUBS}" "${FRESH_CALLS}"
+create_claude_stub "${FRESH_STUBS}/claude" "${FRESH_CLAUDE_CALLS}"
+
+# install #1: Enter at both questions (remote access, then the queue MCP writes) — the default No
+run_fresh $'\n\n' install >"${SANDBOX}/fresh-install1.log" 2>&1
+FRESH_RC=$?
+[[ "${FRESH_RC}" -eq 0 ]] && ok "fresh install rc=0" || {
+  no "fresh install rc=${FRESH_RC}"
+  grep -E '^ *(FAIL|warn) *:|FATAL' "${SANDBOX}/fresh-install1.log"
+}
+[[ -f "${FRESH_HOME}/.claude/data/update/baseline-manifest.json" ]] \
+  && ok "install ran to its last step (base@install baseline captured in the fresh home)" \
+  || no "no base@install baseline in the fresh home — the install stopped before its last step"
+NODE_BIN="$(sed -n 's/^node_bin = "\(.*\)"$/\1/p' "${FRESH_GA}/config.toml")"
+[[ -x "${NODE_BIN}" && "${NODE_BIN}" != */Cellar/* ]] \
+  && ok "config.toml node_bin is an executable, version-free path (${NODE_BIN})" \
+  || no "config.toml node_bin '${NODE_BIN}' is not an executable version-free path"
+ENV_MODE="$(stat -f '%Lp' "${FRESH_GA}/monitor/.env" 2>/dev/null || echo MISSING)"
+[[ "${ENV_MODE}" == 600 ]] && ok "monitor/.env exists owner-only (600)" || no "monitor/.env mode ${ENV_MODE}, not 600"
+grep -q '^ATRIUM_TIMEZONE=' "${FRESH_GA}/monitor/.env" 2>/dev/null && grep -q '^ATRIUM_SCHEDULE_' "${FRESH_GA}/monitor/.env" \
+  && ok "monitor/.env carries the timezone and schedule keys" \
+  || no "monitor/.env lacks ATRIUM_TIMEZONE or ATRIUM_SCHEDULE_* keys"
+[[ ! -e "${FRESH_PROFILE}" && -z "$(get_mcp_allow_lines "${FRESH_SETTINGS}")" ]] && ! grep -q '^mcp ' "${FRESH_CLAUDE_CALLS}" \
+  && ok "the default No writes nothing (no profile entry, no allow line, no claude mcp call)" \
+  || no "the default No still wrote a queue MCP entry or allow line"
+
+# install #2: Enter at the remote question, y at the queue MCP question
+run_fresh $'\ny\n' install >"${SANDBOX}/fresh-install2.log" 2>&1
+FRESH_RC=$?
+[[ "${FRESH_RC}" -eq 0 ]] && ok "fresh re-install rc=0" || {
+  no "fresh re-install rc=${FRESH_RC}"
+  grep -E '^ *(FAIL|warn) *:|FATAL' "${SANDBOX}/fresh-install2.log"
+}
+PREVIEW="$(get_preview_entry "${SANDBOX}/fresh-install2.log" "${FRESH_PROFILE}")"
+QUEUE_NAME="${PREVIEW%%$'\t'*}"
+PREVIEW_LINES="$(sed -n "s|^.*${FRESH_SETTINGS}: permissions\.allow + ||p" "${SANDBOX}/fresh-install2.log" | LC_ALL=C sort)"
+[[ -n "${PREVIEW}" && "$(jq -Sc --arg n "${QUEUE_NAME}" '.mcpServers[$n]' "${FRESH_PROFILE}" 2>/dev/null)" == "$(jq -Sc . <<<"${PREVIEW#*$'\t'}")" ]] \
+  && ok "y writes the profile entry the preview showed (${QUEUE_NAME})" \
+  || no "the profile entry differs from the preview ('${PREVIEW}')"
+[[ -n "${PREVIEW_LINES}" && "$(get_mcp_allow_lines "${FRESH_SETTINGS}")" == "${PREVIEW_LINES}" ]] \
+  && ok "y writes exactly the allow lines the preview listed" || no "the allow lines differ from the preview"
+FRESH_BACKUP="$(sed -n 's|^.*(allow lines, add; backup: \(.*\))$|\1|p' "${SANDBOX}/fresh-install2.log")"
+[[ -n "${FRESH_BACKUP}" && -f "${FRESH_BACKUP}" ]] \
+  && ok "the settings backup the preview announced exists" || no "no settings backup at '${FRESH_BACKUP}'"
+
+# uninstall --yes: y at the queue MCP removal question
+run_fresh $'y\n' uninstall --yes >"${SANDBOX}/fresh-uninstall.log" 2>&1
+FRESH_RC=$?
+[[ "${FRESH_RC}" -eq 0 ]] && ok "fresh uninstall rc=0" || {
+  no "fresh uninstall rc=${FRESH_RC}"
+  grep -E '^ *(FAIL|warn) *:|FATAL' "${SANDBOX}/fresh-uninstall.log"
+}
+[[ "$(jq -c --arg n "${QUEUE_NAME}" '.mcpServers[$n]' "${FRESH_PROFILE}" 2>/dev/null)" == null && -z "$(get_mcp_allow_lines "${FRESH_SETTINGS}")" ]] \
+  && ok "uninstall with y removes the profile entry and the allow lines" \
+  || no "the queue MCP entry or allow lines survive the uninstall"
+# each question once per transcript, so every typed answer reached the question it was typed for
+for row in "fresh-install1:${REMOTE_ASK}" "fresh-install1:${QUEUE_ASK}" "fresh-install2:${REMOTE_ASK}" \
+  "fresh-install2:${QUEUE_ASK}" "fresh-uninstall:${QUEUE_ASK}"; do
+  ASKED="$(grep -oF "${row#*:}" "${SANDBOX}/${row%%:*}.log" | wc -l | tr -d ' ')"
+  [[ "${ASKED}" -eq 1 ]] && ok "${row%%:*} asks '${row#*:}' once" || no "${row%%:*} asks '${row#*:}' ${ASKED} times"
+done
+printf '  stubbed (never run for real): %s\n' "$(cut -d' ' -f1 "${FRESH_CALLS}" | LC_ALL=C sort | uniq -c | tr -s ' \n' ' ')"
+printf '  claude stub calls: %s\n' "$(cut -d' ' -f1-2 "${FRESH_CLAUDE_CALLS}" | LC_ALL=C sort | uniq -c | tr -s ' \n' ' ')"
+
+# =============================================================================
 hdr "STEP 8 — SAFETY GUARD: real ~/.claude + real config.toml UNTOUCHED"
 REAL_SETTINGS_HASH_AFTER="$(shasum "${REAL_CLAUDE}/settings.json" 2>/dev/null | awk '{print $1}' || echo MISSING)"
 [[ "${REAL_SETTINGS_HASH_AFTER}" == "${REAL_SETTINGS_HASH_BEFORE}" ]] \
@@ -375,7 +566,7 @@ REAL_SETTINGS_HASH_AFTER="$(shasum "${REAL_CLAUDE}/settings.json" 2>/dev/null | 
 LEAKS=0
 for d in agents autoagent hooks rules scoped scripts skills; do
   [[ -d "${REAL_CLAUDE}/${d}" ]] || continue
-  N_NEW="$(find "${REAL_CLAUDE}/${d}" -type l -lname "${GA}/*" -newer "${START_MARKER}" 2>/dev/null | wc -l | tr -d ' ')"
+  N_NEW="$(find "${REAL_CLAUDE}/${d}" -type l \( -lname "${GA}/*" -o -lname "${STUB_GA}/*" \) -newer "${START_MARKER}" 2>/dev/null | wc -l | tr -d ' ')"
   LEAKS=$((LEAKS + N_NEW))
 done
 TOP_NEW="$(find "${REAL_CLAUDE}" -maxdepth 1 \( -name '*.ga-backup.*' -o -name '*.ga-tmp.*' -o -name '*.ga-wire.*' \) -newer "${START_MARKER}" 2>/dev/null | wc -l | tr -d ' ')"

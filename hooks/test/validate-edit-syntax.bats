@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 # validate-edit-syntax.sh — edit-time syntax gate coverage.
 #
-# Proves the PreToolUse(Write|Edit) parse-only check: an invalid-syntax write WARNS by default and blocks
-# (exit 2) only under the burn-in flag SYNTAX_GATE_BLOCK=1; valid syntax and templates always pass; an Edit
-# is checked against the reconstructed post-edit file, never the fragment.
+# Proves the PreToolUse(Write|Edit) parse-only check: an invalid-syntax write WARNS and never blocks;
+# valid syntax, templates and unlisted extensions pass silently; an Edit is checked against the
+# reconstructed post-edit file, never the fragment.
 #
 # Run via: bats hooks/test/validate-edit-syntax.bats
 # Requires: bats, bash 3.2+, python3, jq (input assembly); node checks skip when node is absent.
@@ -46,28 +46,16 @@ run_hook() {
   [[ "${output}" == *"SYNTAX advisory"* ]]
 }
 
-@test "invalid shell Write blocks (exit 2) when burn-in is armed" {
+@test "SYNTAX_GATE_BLOCK=1 arms no block: an invalid write still only advises" {
   run_hook "$(write_input "${SANDBOX}/x.sh" 'if true')" SYNTAX_GATE_BLOCK=1
-  [[ "${status}" -eq 2 ]]
-  [[ "${output}" == *"Invalid sh syntax"* ]]
-}
-
-@test "an armed block carries the checker's diagnostic in its suggestion" {
-  run_hook "$(write_input "${SANDBOX}/x.sh" 'if true')" SYNTAX_GATE_BLOCK=1
-  [[ "${status}" -eq 2 ]] || {
-    echo "${output}"
-    return 1
-  }
-  local suggestion
-  suggestion="$(grep -F '"SYNTAX-001"' <<<"${output}" | jq -r '.suggestion')"
-  [[ "${suggestion}" == *"(checker: "*"syntax error"* ]] || {
-    echo "suggestion lacks the checker diagnostic: ${suggestion}"
+  [[ "${status}" -eq 0 && "${output}" == *"SYNTAX advisory"* && "${output}" != *"SYNTAX-001"* ]] || {
+    echo "status ${status}: ${output}"
     return 1
   }
 }
 
 @test "valid shell Write passes clean (exit 0, no advisory)" {
-  run_hook "$(write_input "${SANDBOX}/x.sh" 'echo hello')" SYNTAX_GATE_BLOCK=1
+  run_hook "$(write_input "${SANDBOX}/x.sh" 'echo hello')"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" != *"SYNTAX advisory"* ]]
 }
@@ -88,12 +76,6 @@ run_hook() {
   [[ "${output}" == *"line 1"* ]]
 }
 
-@test "invalid python Write blocks when armed" {
-  run_hook "$(write_input "${SANDBOX}/x.py" 'def f(:')" SYNTAX_GATE_BLOCK=1
-  [[ "${status}" -eq 2 ]]
-  [[ "${output}" == *"Invalid py syntax"* ]]
-}
-
 @test "invalid javascript Write advises" {
   command -v node >/dev/null 2>&1 || skip "node required"
   run_hook "$(write_input "${SANDBOX}/x.js" 'const x =')"
@@ -101,75 +83,74 @@ run_hook() {
   [[ "${output}" == *"SYNTAX advisory"* ]]
 }
 
-@test "a valid ESM .mjs Write passes clean (extension preserved for module mode, armed)" {
+@test "a valid ESM .mjs Write passes clean (extension preserved for module mode)" {
   command -v node >/dev/null 2>&1 || skip "node required"
   # Regression: an extensionless temp made node --check parse ESM as CJS, false-failing import/export;
   # the src.${ext} temp keeps module mode, so this valid ESM write must not advise or block.
   run_hook "$(write_input "${SANDBOX}/x.mjs" 'import { basename } from "node:path";
-export const name = basename("/a/b");')" SYNTAX_GATE_BLOCK=1
+export const name = basename("/a/b");')"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" != *"SYNTAX advisory"* ]]
 }
 
-@test "a templates/ path is exempt even with invalid syntax (armed)" {
-  run_hook "$(write_input "${SANDBOX}/templates/gen.sh" 'if true')" SYNTAX_GATE_BLOCK=1
+@test "a templates/ path is exempt even with invalid syntax" {
+  run_hook "$(write_input "${SANDBOX}/templates/gen.sh" 'if true')"
   [[ "${status}" -eq 0 ]]
   [[ "${output}" != *"SYNTAX advisory"* ]]
 }
 
-@test "a template-suffixed basename is exempt (armed)" {
-  run_hook "$(write_input "${SANDBOX}/config.template.sh" 'if true')" SYNTAX_GATE_BLOCK=1
-  [[ "${status}" -eq 0 ]]
+@test "a template-suffixed basename is exempt" {
+  run_hook "$(write_input "${SANDBOX}/config.template.sh" 'if true')"
+  [[ "${status}" -eq 0 && "${output}" != *"SYNTAX advisory"* ]]
 }
 
-@test "an unlisted extension is not gated (armed)" {
-  run_hook "$(write_input "${SANDBOX}/notes.md" 'if true')" SYNTAX_GATE_BLOCK=1
-  [[ "${status}" -eq 0 ]]
+@test "an unlisted extension is not gated" {
+  run_hook "$(write_input "${SANDBOX}/notes.md" 'if true')"
+  [[ "${status}" -eq 0 && "${output}" != *"SYNTAX advisory"* ]]
 }
 
 @test "an Edit is checked against the reconstructed file, not the fragment" {
   printf 'echo hello\n' >"${SANDBOX}/good.sh"
   # The fragment "if true" alone is invalid; reconstructed it replaces the whole body.
-  run_hook "$(edit_input "${SANDBOX}/good.sh" 'echo hello' 'if true')" SYNTAX_GATE_BLOCK=1
-  [[ "${status}" -eq 2 ]]
-  [[ "${output}" == *"Invalid sh syntax"* ]]
+  run_hook "$(edit_input "${SANDBOX}/good.sh" 'echo hello' 'if true')"
+  [[ "${status}" -eq 0 && "${output}" == *"SYNTAX advisory"* ]]
 }
 
 @test "an Edit keeping valid syntax passes clean" {
   printf 'echo hello\n' >"${SANDBOX}/good.sh"
-  run_hook "$(edit_input "${SANDBOX}/good.sh" 'echo hello' 'echo goodbye')" SYNTAX_GATE_BLOCK=1
-  [[ "${status}" -eq 0 ]]
+  run_hook "$(edit_input "${SANDBOX}/good.sh" 'echo hello' 'echo goodbye')"
+  [[ "${status}" -eq 0 && "${output}" != *"SYNTAX advisory"* ]]
 }
 
 @test "an Edit whose old_string is absent is un-reconstructable and passes" {
   printf 'echo hello\n' >"${SANDBOX}/good.sh"
-  run_hook "$(edit_input "${SANDBOX}/good.sh" 'NOT_PRESENT' 'if true')" SYNTAX_GATE_BLOCK=1
-  [[ "${status}" -eq 0 ]]
+  run_hook "$(edit_input "${SANDBOX}/good.sh" 'NOT_PRESENT' 'if true')"
+  [[ "${status}" -eq 0 && "${output}" != *"SYNTAX advisory"* ]]
 }
 
 @test "an Edit on an absent file cannot be reconstructed and passes" {
-  run_hook "$(edit_input "${SANDBOX}/missing.sh" 'echo hello' 'if true')" SYNTAX_GATE_BLOCK=1
-  [[ "${status}" -eq 0 ]]
+  run_hook "$(edit_input "${SANDBOX}/missing.sh" 'echo hello' 'if true')"
+  [[ "${status}" -eq 0 && "${output}" != *"SYNTAX advisory"* ]]
 }
 
-@test "the kill switch disables the gate even on an invalid armed write" {
-  run_hook "$(write_input "${SANDBOX}/x.sh" 'if true')" SYNTAX_GATE_BLOCK=1 SYNTAX_GATE_OFF=1
-  [[ "${status}" -eq 0 ]]
+@test "the kill switch silences the advisory on an invalid write" {
+  run_hook "$(write_input "${SANDBOX}/x.sh" 'if true')" SYNTAX_GATE_OFF=1
+  [[ "${status}" -eq 0 && "${output}" != *"SYNTAX advisory"* ]]
 }
 
 @test "a non-Write/Edit tool is ignored" {
-  run_hook '{"tool_name":"Bash","tool_input":{"command":"if true"}}' SYNTAX_GATE_BLOCK=1
-  [[ "${status}" -eq 0 ]]
+  run_hook '{"tool_name":"Bash","tool_input":{"command":"if true"}}'
+  [[ "${status}" -eq 0 && "${output}" != *"SYNTAX advisory"* ]]
 }
 
 @test "a missing file_path passes" {
-  run_hook '{"tool_name":"Write","tool_input":{}}' SYNTAX_GATE_BLOCK=1
-  [[ "${status}" -eq 0 ]]
+  run_hook '{"tool_name":"Write","tool_input":{}}'
+  [[ "${status}" -eq 0 && "${output}" != *"SYNTAX advisory"* ]]
 }
 
 # macOS mktemp -d ignores TMPDIR → a recording mktemp stub observes the work dir instead.
-@test "the work dir never outlives the run, on the pass or the block verdict" {
-  local -a rows=('pass|echo hello|0' 'block|if true|2')
+@test "the work dir never outlives the run, on the pass or the advisory verdict" {
+  local -a rows=('pass|echo hello|0' 'advisory|if true|0')
   local stub_dir="${SANDBOX}/stub-bin" made_log="${SANDBOX}/mktemp-made.log" row name content want made
   mkdir -p "${stub_dir}"
   printf '#!/usr/bin/env bash\nmade="$(%q "$@")" || exit\nprintf "%%s\\n" "${made}" >>%q\nprintf "%%s\\n" "${made}"\n' \
@@ -178,7 +159,7 @@ export const name = basename("/a/b");')" SYNTAX_GATE_BLOCK=1
   for row in "${rows[@]}"; do
     IFS='|' read -r name content want <<<"${row}"
     : >"${made_log}"
-    run_hook "$(write_input "${SANDBOX}/x.sh" "${content}")" SYNTAX_GATE_BLOCK=1 PATH="${stub_dir}:${PATH}"
+    run_hook "$(write_input "${SANDBOX}/x.sh" "${content}")" PATH="${stub_dir}:${PATH}"
     [[ "${status}" -eq "${want}" ]] || {
       echo "${name}: exit ${status}, want ${want}"
       return 1

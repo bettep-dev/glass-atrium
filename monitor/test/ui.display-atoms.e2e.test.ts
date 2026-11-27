@@ -1,0 +1,640 @@
+// Display atoms measured in a real browser: the page header's line box and its gap to the content, the two empty states, a card's bars on one inline column per side, the current-page look, the stat row's hairlines, the badge chip, the drawer fact row and the inline fold.
+// Runner: npx tsx --test test/ui.display-atoms.e2e.test.ts — needs an installed chromium; no network, no app server.
+import test, { after, before, describe } from "node:test";
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import React from "react";
+import type { Browser, Page } from "playwright";
+import { chromium } from "playwright";
+
+import { loadScreenModule } from "./lib/render-screen.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+// react-dom ships no types and @types/react-dom is not installed → the one call used here, typed by hand
+const { renderToStaticMarkup } = createRequire(import.meta.url)("react-dom/server") as { renderToStaticMarkup: (element: React.ReactElement) => string };
+const STYLES = resolve(HERE, "..", "public", "styles");
+
+const ui = await loadScreenModule(resolve(HERE, "../public/src/ui.jsx"), { React });
+const UI = ui.UI as Record<string, React.FC<Record<string, unknown>>>;
+const h = React.createElement;
+const noop = () => {};
+
+const CARD_PAD_PX = 16;
+const card = renderToStaticMarkup(h(UI.Card, {
+  title: "Runs",
+  right: h(UI.QuietButton, { id: "head-end" }, "Export"),
+  bar: h(UI.FilterBar, { label: "Run filters", isApplied: true, onReset: noop }, h(UI.BarSearch, { label: "Search runs", value: "", onChange: noop })),
+  foot: h(UI.Pagination, { page: 1, pageSize: 20, total: 1284, onPageChange: noop }),
+}, h("div", { id: "body-text" }, "rows")));
+const statRow = renderToStaticMarkup(h(UI.StatRow, { stats: [
+  { label: "Spend", value: "$41.20", context: "last 7 days" },
+  { label: "Runs", value: "1,284", href: "#/runs" },
+  { label: "Median run", value: "38", unit: "s" },
+] }));
+// the Record attribution band at a width where its longest label wraps and only some stats carry a context line
+const statWrap = renderToStaticMarkup(h(UI.StatRow, { stats: [
+  { label: "Recorded properly", value: "90.7%", context: "1,812 of 1,998" },
+  { label: "Untraceable", value: "1.3%" },
+  { label: "Synthesized", value: "3.6%", context: "72 of 1,998" },
+  { label: "Missing", value: "4.4%" },
+] }));
+// a firing stat beside another, one a drill-down link → the tone glyph sits in either value's line
+const toneStats = renderToStaticMarkup(h(UI.StatRow, { stats: [
+  { label: "Spend today", value: h(React.Fragment, null, h(UI.ToneGlyph, { tone: "warn", label: "Running hot" }), "$1,790") },
+  { label: "Agents", value: h(React.Fragment, null, h(UI.ToneGlyph, { tone: "crit" }), "2 of 7 down"), href: "#/agents" },
+] }));
+// the Agents status row: a plain label beside labels that carry their counting rule's ⓘ trigger
+const getInfoLabel = (label: string) => h(React.Fragment, null, h("span", null, label), h(UI.CardInfo, { label: `How ${label} is counted` }, "rule"));
+const infoStats = renderToStaticMarkup(h(UI.StatRow, { stats: [
+  { label: "Unsafe to route", value: "0" },
+  { label: getInfoLabel("Failed"), value: "3" },
+  { label: getInfoLabel("Over tool-use cap"), value: "1" },
+] }));
+const badges = renderToStaticMarkup(h("div", null,
+  h(UI.Badge, { role: "metadata" }, "html"),
+  h(UI.Badge, { role: "count" }, "1,284"),
+  h("button", { type: "button", className: "btn", id: "control" }, "Save"),
+));
+// the three fills in their word and count shapes; 128 is a count past the 99 cap
+const fills = renderToStaticMarkup(h("div", null,
+  h(UI.Badge, { fill: "solid" }, "New"),
+  h(UI.Badge, { fill: "tag" }, "Decision"),
+  h(UI.Badge, { fill: "warn" }, "Not received"),
+  h(UI.Badge, { fill: "solid", role: "count" }, 7),
+  h(UI.Badge, { fill: "tag", role: "count" }, 128),
+));
+// a band inside a card body: the label row above a group of rows, its count a tag count badge
+const band = renderToStaticMarkup(h("div", { className: "card", style: { width: 480 } },
+  h("div", { className: "queue-band", id: "band" }, h("span", { id: "band-label" }, "Decisions"), h(UI.Badge, { fill: "tag", role: "count" }, 5)),
+  h("div", { id: "band-row", style: { padding: "12px 16px" } }, "row")));
+// a lead column of glyph slots: a toned row beside a held row with no tone
+const glyphSlots = renderToStaticMarkup(h("div", null,
+  h("div", { className: "fs-body" }, h(UI.ToneGlyph, { tone: "warn" }), "Hooks"),
+  h("div", { className: "fs-body" }, h(UI.ToneGlyph, { tone: null }), h("span", { id: "slot-empty-name" }, "Export via Chromium"))));
+// the held panel's line under a sub-line: a bare alert whose Retry is the inline text action
+const bareAlert = renderToStaticMarkup(h(UI.AlertCard, { tone: "neutral", surface: "bare", title: "Couldn't refresh.",
+  actions: h(UI.RetryButton, { isInline: true, onRetry: noop }) }));
+const fact = renderToStaticMarkup(h(UI.DetailField, { label: "File path", value: "hooks/track-outcome-with-a-very-long-name-that-has-to-wrap.sh", mono: true }));
+// the architecture drawer Description: a prose value long enough to wrap in a 360 drawer
+const stackedFact = renderToStaticMarkup(h(UI.DetailField, { label: "Description", value: "Runs every hook the harness fires on each tool call and session event, then records the outcome", isStacked: true }));
+const getHeader = (id: string, title: string) => renderToStaticMarkup(h("div", { id }, h(UI.PageHeader, {
+  title,
+  sub: "retired sub-line",
+  back: h(UI.Link, { href: "#/agents" }, "Agents"),
+  status: h(UI.Badge, { role: "status", tone: "warn" }, "Draft"),
+  freshness: h("span", { className: "fs-meta" }, "read 2m ago"),
+  refresh: h(UI.RefreshButton, { onRefresh: noop }),
+  primary: h("button", { type: "button", className: "btn" }, "Save"),
+}), h("p", { className: "head-next" }, "content")));
+const empties = renderToStaticMarkup(h("div", null,
+  h(UI.EmptyState, { message: "No runs yet", hint: "the wiki compiles nightly at 04:30" }),
+  h(UI.EmptyState, { kind: "no-results", hint: "Widen the date range" }),
+));
+// an empty line in a padded card body and in a flush one
+const cardEmpties = renderToStaticMarkup(h("div", { style: { width: 600 } },
+  h(UI.Card, { title: "Lifecycle events", className: "empty-padded" }, h(UI.EmptyState, { message: "No lifecycle events in 7 days" })),
+  h(UI.Card, { title: "Pairs", isFlush: true, className: "empty-flush" }, h(UI.EmptyState, { message: "No pair at or below 95%." }))));
+// a failed region in a padded card body with a stat row after it, as the Cost Spend card draws it
+const regionCard = renderToStaticMarkup(h("div", { style: { width: 720 } }, h(UI.Card, { title: "Spend" },
+  h(UI.RegionUnavailable, { source: "spend", error: "HTTP 500 Internal Server Error", onRetry: noop }),
+  h("div", { id: "region-next" }, "stats"))));
+// a stat card's ⓘ body: two notes, the first long enough to wrap
+const statNotes = renderToStaticMarkup(h(UI.StatNotes, { stats: [
+  { label: "Failed", info: "Runs that ended in fail or blocked over the window, counted once per run however many retries it took." },
+  { label: "Over tool-use cap", info: "Runs past the cap." },
+] }));
+// a group-header row of a house table, as TableCell kind="group-header" writes it
+const groupTable = `<table class="tbl" id="group-table"><tbody><tr><th scope="colgroup" colspan="2" role="heading" aria-level="2" class="tbl-cell tbl-cell--group-header">Draft</th></tr><tr><td>a</td><td>b</td></tr></tbody></table>`;
+// a fold nested in a card body (the Reporting health "Daily breakdown"), open so its body paints
+const inlineFold = renderToStaticMarkup(h("div", { style: { width: 600 } }, h(UI.Card, { title: "Reporting health" },
+  h(UI.Disclosure, { kind: "status", title: "Daily breakdown", isInline: true, className: "inline-fold" }, h("div", { id: "inline-fold-body" }, "rows")))));
+// the System map legend marks as the screen writes them: a ring key and the count key, on meta-size text
+const legendSwatches = `<span id="swatch-ring" class="arch-legend-swatch arch-legend-swatch-warn">!</span>` +
+  `<span id="swatch-count" class="arch-legend-swatch arch-legend-swatch-count">!!×N</span>`;
+// the app's preflight sizes boxes border-box and zeroes heading margins → the fixture does too
+const PAGE = `<!doctype html><html><head><style>*, ::before, ::after { box-sizing: border-box; } h1, h2, p { margin: 0; }</style></head>
+<body style="margin: 0;"><div style="padding: 24px;">${getHeader("head-wide", "Models & budgets")}</div><div style="padding: 24px; width: 420px;">${getHeader("head-narrow", "Models & budgets")}</div><div style="padding: 24px; width: 900px;">${card}</div><div id="stats" style="padding: 24px; width: 900px;">${statRow}</div><div id="stat-wrap" style="padding: 24px; width: 520px;">${statWrap}</div><div id="tone-stats" style="padding: 24px; width: 900px;">${toneStats}</div><div id="info-stats" style="padding: 24px; width: 900px;">${infoStats}</div><div id="badges" style="padding: 24px;">${badges}</div><div id="fills" style="padding: 24px; background: rgb(var(--elev));">${fills}</div><div style="padding: 24px;">${band}</div><div id="drawer" style="padding: 24px; width: 360px;">${fact}</div><div id="drawer-stacked" style="padding: 24px; width: 360px;">${stackedFact}</div><div id="empties" style="width: 600px;">${empties}</div><div id="card-empties" style="padding: 24px;">${cardEmpties}</div><div id="region-card" style="padding: 24px;">${regionCard}</div><div id="stat-notes" style="padding: 24px; width: 360px;">${statNotes}</div><div style="padding: 24px; width: 480px;">${groupTable}</div><div id="inline-fold" style="padding: 24px;">${inlineFold}</div><div id="glyph-slots" style="padding: 24px;">${glyphSlots}</div><div id="bare-alert" class="fs-body" style="padding: 24px; width: 480px;">${bareAlert}</div><div id="legend-swatches" style="padding: 24px; font-size: var(--fs-meta);">${legendSwatches}</div><span id="sunken" style="background: rgb(var(--sunken)); color: rgb(var(--ink));"></span><span id="ink-on-surface" style="background: rgb(var(--ink)); color: rgb(var(--surface));"></span><span id="tints" style="background: var(--tint-fill); color: var(--tint-warn);"></span></body></html>`;
+
+let browser: Browser;
+let page: Page;
+
+before(async () => {
+  browser = await chromium.launch();
+  page = await browser.newPage();
+  await page.setContent(PAGE);
+  await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+  await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+});
+
+after(async () => {
+  await browser?.close();
+});
+
+const boxOf = (selector: string) => page.$eval(selector, (el) => el.getBoundingClientRect().toJSON() as DOMRect);
+
+describe("a card's head, bar and foot share one inline column per side", () => {
+  for (const width of [1440, 1024]) {
+    test(`at ${width}px the first and last control of each bar sit on the card's inset`, async () => {
+      await page.setViewportSize({ width, height: 900 });
+      const frame = await boxOf(".card");
+      const start = frame.left + 1 + CARD_PAD_PX;
+      const end = frame.right - 1 - CARD_PAD_PX;
+      const starts = { title: await boxOf(".card-title"), search: await boxOf(".bar-search"), range: await boxOf(".pagination-range"), body: await boxOf("#body-text") };
+      const ends = { head: await boxOf("#head-end"), reset: await boxOf(".filter-bar-reset"), next: await boxOf('[aria-label="Next page"]') };
+
+      for (const [name, box] of Object.entries(starts)) assert.ok(Math.abs(box.left - start) < 1, `${name} starts at ${box.left - frame.left}px`);
+      for (const [name, box] of Object.entries(ends)) assert.ok(Math.abs(box.right - end) < 1, `${name} ends ${frame.right - box.right}px from the edge`);
+    });
+  }
+});
+
+describe("the current page", () => {
+  test("is a sunken square at the control height, ink at 500, with no border", async () => {
+    const look = await page.$eval(".pagination-current", (el) => {
+      const style = getComputedStyle(el);
+      const box = el.getBoundingClientRect();
+      return { background: style.backgroundColor, color: style.color, weight: style.fontWeight, border: style.borderTopWidth, height: box.height, isSquare: box.width >= box.height };
+    });
+    const expected = await page.$eval("#sunken", (el) => ({ background: getComputedStyle(el).backgroundColor, color: getComputedStyle(el).color }));
+    const next = await boxOf('[aria-label="Next page"]');
+
+    assert.deepEqual({ background: look.background, color: look.color, weight: look.weight, border: look.border }, { ...expected, weight: "500", border: "0px" });
+    assert.ok(look.isSquare && Math.abs(look.height - next.height) < 1, `current ${look.height}px vs Next ${next.height}px`);
+  });
+});
+
+describe("a tone glyph slot", () => {
+  test("a row with no tone keeps the glyph's box, so its name starts where the toned row's glyph ends", async () => {
+    const empty = await boxOf("#slot-empty-name");
+    const boxes = await page.$$eval("#glyph-slots .tone-glyph", (els) => els.map((el) => el.getBoundingClientRect().toJSON() as DOMRect));
+
+    assert.deepEqual([boxes[1].width, boxes[1].height], [boxes[0].width, boxes[0].height], "the empty slot is the glyph's size");
+    assert.equal(empty.left, boxes[0].right, `name at ${empty.left}, glyph ends at ${boxes[0].right}`);
+  });
+});
+
+describe("a bare alert with an inline Retry", () => {
+  test("draws no shell, fill or radius and keeps glyph, title and Retry on one line, Retry at the row end", async () => {
+    const look = await page.$eval("#bare-alert .alert-card", (el) => {
+      const style = getComputedStyle(el);
+      return { background: style.backgroundColor, border: style.borderTopWidth, radius: style.borderTopLeftRadius };
+    });
+    const card = await boxOf("#bare-alert .alert-card");
+    const title = await boxOf("#bare-alert .alert-card-title");
+    const glyph = await boxOf("#bare-alert .alert-card-glyph svg");
+    const retry = await boxOf("#bare-alert button");
+    const retryBorder = await page.$eval("#bare-alert button", (el) => getComputedStyle(el).borderTopWidth);
+    const middle = (box: DOMRect) => box.top + box.height / 2;
+
+    assert.deepEqual(look, { background: "rgba(0, 0, 0, 0)", border: "0px", radius: "0px" });
+    assert.equal(retryBorder, "0px", "no button box");
+    assert.equal(retry.height, 24, "the 24 hit area");
+    assert.ok(Math.abs(middle(retry) - middle(title)) < 1 && Math.abs(middle(glyph) - middle(title)) < 1, `title ${middle(title)} · glyph ${middle(glyph)} · Retry ${middle(retry)}`);
+    assert.equal(retry.right, card.right, "Retry at the row end");
+    assert.equal(card.height, 24, "one line, as tall as its Retry");
+  });
+});
+
+describe("the stat row", () => {
+  const getStats = () => page.$$eval("#stats .stat", (els) => els.map((el) => {
+    const style = getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    return { left: box.left, top: box.top, start: style.borderLeftWidth, above: style.borderTopWidth, background: style.backgroundColor, shadow: style.boxShadow };
+  }));
+  const rows = [
+    { name: "1024px lays the stats on one line, a hairline before every stat but the first", width: 1024, edge: "start" as const },
+    { name: "640px stacks them in one column, a hairline above every stat but the first", width: 640, edge: "above" as const },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      await page.setViewportSize({ width: row.width, height: 900 });
+      const stats = await getStats();
+      const axis = row.edge === "start" ? "top" : "left";
+
+      assert.ok(stats.every((stat) => Math.abs(stat[axis] - stats[0][axis]) < 1), `${axis}s ${stats.map((stat) => stat[axis]).join(", ")}`);
+      assert.deepEqual(stats.map((stat) => stat[row.edge]), ["0px", "1px", "1px"]);
+      assert.ok(stats.every((stat) => stat.background === "rgba(0, 0, 0, 0)" && stat.shadow === "none"), "no stat draws a tile");
+    });
+  }
+
+  test("a label that wraps keeps every value of its row on one line, the label shown whole", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const stats = await page.$$eval("#stat-wrap .stat", (els) => els.map((el) => {
+      const [label, value] = [el.querySelector(".stat-label"), el.querySelector(".stat-value")];
+      // the text's own height, not the label box's → the box may grow to the row's tallest label
+      const text = document.createRange();
+      if (label) text.selectNodeContents(label);
+      return { textHeight: text.getBoundingClientRect().height, isLabelClipped: !label || label.scrollWidth > label.clientWidth, valueTop: value?.getBoundingClientRect().top ?? Number.NaN };
+    }));
+
+    assert.ok(stats[0].textHeight > stats[1].textHeight + 1, `the long label wraps: ${stats.map((stat) => stat.textHeight).join(", ")}px`);
+    assert.ok(stats.every((stat) => !stat.isLabelClipped), "no label is clipped");
+    assert.ok(stats.every((stat) => Math.abs(stat.valueTop - stats[0].valueTop) < 1), `value tops ${stats.map((stat) => stat.valueTop).join(", ")}`);
+  });
+
+  test("a firing stat's tone glyph centres on its value's line, a linked value included", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const offsets = await page.$$eval("#tone-stats .stat-value", (els) => els.map((el) => {
+      const glyph = el.querySelector("svg")?.getBoundingClientRect();
+      const line = el.getBoundingClientRect();
+      return glyph ? glyph.top + glyph.height / 2 - (line.top + line.height / 2) : Number.NaN;
+    }));
+
+    assert.equal(offsets.length, 2);
+    for (const offset of offsets) assert.ok(Math.abs(offset) < 0.5, `glyph centre ${offset}px off the value line centre`);
+  });
+
+  test("a label holding an ⓘ stays one text line: every label's text and every value share one top", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const stats = await page.$$eval("#info-stats .stat", (els) => els.map((el) => {
+      const [label, value] = [el.querySelector(".stat-label"), el.querySelector(".stat-value")];
+      const text = document.createRange();
+      const node = label && document.createTreeWalker(label, NodeFilter.SHOW_TEXT).nextNode();
+      if (node) text.selectNodeContents(node);
+      return { textTop: node ? text.getBoundingClientRect().top : Number.NaN, valueTop: value?.getBoundingClientRect().top ?? Number.NaN };
+    }));
+
+    assert.equal(stats.length, 3);
+    for (const key of ["textTop", "valueTop"] as const) {
+      assert.ok(stats.every((stat) => Math.abs(stat[key] - stats[0][key]) < 1), `${key}s ${stats.map((stat) => stat[key]).join(", ")}`);
+    }
+  });
+
+  test("the ⓘ in a label keeps a 24 target", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const reach = await page.$eval("#info-stats .stat-label button", (button) => {
+      button.scrollIntoView({ block: "center" }); // elementFromPoint reads the viewport only
+      const box = button.getBoundingClientRect();
+      const [x, y] = [box.left + box.width / 2, box.top + box.height / 2];
+      return [y - 11.5, y + 11.5].map((edge) => button.contains(document.elementFromPoint(x, edge)));
+    });
+    assert.deepEqual(reach, [true, true], "a point 11.5 above and below the centre still hits the trigger");
+  });
+});
+
+describe("the page header", () => {
+  // no named helper inside the evaluated function — the test transform wraps named functions in a `__name` call the page lacks
+  const getLine = async (id: string) => {
+    const { boxes, controls, text } = await page.$eval(`#${id}`, (root) => {
+      const head = root.querySelector(".page-head")!;
+      const parts = [head, head.querySelector(".page-head-lead")!, head.querySelector("h1")!, head.querySelector(".page-head-cluster")!];
+      const lead = [...parts[1].children];
+      const right = [...head.querySelectorAll(".page-head-group > *, .page-head-cluster > .btn")];
+      return {
+        boxes: parts.map((el) => el.getBoundingClientRect().toJSON() as DOMRect),
+        controls: [...lead, ...right].map((el) => el.getBoundingClientRect().toJSON() as DOMRect),
+        text: head.textContent ?? "",
+      };
+    });
+    const [head, lead, title, cluster] = boxes;
+    return { head, lead, title, cluster, controls, text };
+  };
+
+  for (const width of [1440, 1024]) {
+    test(`at ${width}px back link, h1, status and the right group share the title's one line box`, async () => {
+      await page.setViewportSize({ width, height: 900 });
+      const line = await getLine("head-wide");
+      const center = line.title.top + line.title.height / 2;
+
+      assert.ok(line.controls.length >= 5, `${line.controls.length} controls measured`);
+      for (const box of line.controls) assert.ok(Math.abs(box.top + box.height / 2 - center) < 1, `a control centers ${box.top + box.height / 2 - center}px off the title line`);
+      assert.ok(Math.abs(line.head.height - line.title.height) < 1, `header ${line.head.height}px for a ${line.title.height}px title line`);
+      assert.doesNotMatch(line.text, /retired sub-line/, "nothing follows the h1 below it");
+    });
+  }
+
+  test("a right group that cannot fit lands on a second line, right-aligned", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const line = await getLine("head-narrow");
+    const ends = line.controls.slice(-1)[0];
+
+    assert.ok(line.cluster.top >= line.lead.bottom - 1, `cluster top ${line.cluster.top} vs lead bottom ${line.lead.bottom}`);
+    assert.ok(Math.abs(line.cluster.right - line.head.right) < 1 && Math.abs(ends.right - line.head.right) < 1, `cluster ends ${line.head.right - line.cluster.right}px, last control ${line.head.right - ends.right}px from the edge`);
+  });
+});
+
+describe("the content below a page header", () => {
+  for (const id of ["head-wide", "head-narrow"]) {
+    test(`starts 16px under the header: ${id}`, async () => {
+      await page.setViewportSize({ width: 1024, height: 900 });
+      const head = await boxOf(`#${id} .page-head`);
+      const next = await boxOf(`#${id} .head-next`);
+      assert.equal(next.top - head.bottom, 16);
+    });
+  }
+});
+
+describe("an empty state", () => {
+  test("first use and no results both read a 14 ink message over a 13 dim hint, left-aligned, with no border or fill", async () => {
+    const looks = await page.$$eval("#empties > div > *", (states) => states.map((state) => {
+      const [message, hint] = [...state.children].map((el) => getComputedStyle(el));
+      const box = getComputedStyle(state);
+      return {
+        message: { size: message.fontSize, color: message.color },
+        hint: { size: hint.fontSize, color: hint.color },
+        box: { align: box.textAlign, border: box.borderTopWidth, background: box.backgroundColor },
+      };
+    }));
+    const tone = await page.evaluate(() => Object.fromEntries(["ink", "dim"].map((name) => {
+      const probe = document.createElement("span");
+      probe.style.color = `rgb(var(--${name}))`;
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return [name, color];
+    })));
+
+    assert.equal(looks.length, 2);
+    for (const look of looks) assert.deepEqual(look, {
+      message: { size: "14px", color: tone.ink },
+      hint: { size: "13px", color: tone.dim },
+      box: { align: "left", border: "0px", background: "rgba(0, 0, 0, 0)" },
+    });
+  });
+});
+
+describe("an empty line inside a card", () => {
+  test("starts on the card title's column in a padded body and in a flush body", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    for (const host of [".empty-padded", ".empty-flush"]) {
+      const [title, message] = await Promise.all([boxOf(`${host} .card-title`), boxOf(`${host} .placeholder > div`)]);
+      assert.ok(Math.abs(message.left - title.left) <= 1, `${host}: message at ${message.left}, title at ${title.left}`);
+    }
+  });
+});
+
+describe("a failed region inside a card", () => {
+  test("is an alarm row on the card columns: glyph on the title's column, Retry ending on the right inset, one hairline before what follows", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const [frame, title, glyph, retry] = await Promise.all([boxOf("#region-card .card"), boxOf("#region-card .card-title"),
+      boxOf("#region-card .alarm-row-glyph"), boxOf("#region-card .alarm-row-actions button")]);
+    const rule = await page.$eval("#region-card .region-unavailable", (el) => getComputedStyle(el).borderBottomWidth);
+    assert.ok(Math.abs(glyph.left - title.left) <= 1, `glyph at ${glyph.left}, title at ${title.left}`);
+    assert.ok(Math.abs(retry.right - (frame.right - 1 - CARD_PAD_PX)) <= 1, `Retry ends ${frame.right - retry.right}px from the edge`);
+    assert.equal(rule, "1px");
+  });
+});
+
+describe("stat notes", () => {
+  test("keep the list gap between entries, a wrapped note included", async () => {
+    const boxes = await page.$$eval("#stat-notes p", (notes) => notes.map((note) => note.getBoundingClientRect().toJSON() as DOMRect));
+    assert.equal(boxes.length, 2);
+    assert.ok(boxes[0].height > 20, "the first note wraps");
+    assert.equal(boxes[1].top - boxes[0].bottom, 8);
+  });
+});
+
+describe("a table group-header cell", () => {
+  test("is a 600 heading with 12 above and 4 below", async () => {
+    const face = await page.$eval("#group-table .tbl-cell--group-header", (el) => {
+      const style = getComputedStyle(el);
+      return { weight: style.fontWeight, top: style.paddingTop, bottom: style.paddingBottom };
+    });
+    assert.deepEqual(face, { weight: "600", top: "12px", bottom: "4px" });
+  });
+});
+
+describe("a badge", () => {
+  test("is a 20px sunken chip with a 4px corner and no edge, never as tall as a control", async () => {
+    const looks = await page.$$eval("#badges .pill", (els) => els.map((el) => {
+      const style = getComputedStyle(el);
+      return { height: el.getBoundingClientRect().height, radius: style.borderTopLeftRadius, border: style.borderTopWidth, background: style.backgroundColor };
+    }));
+    const sunken = await page.$eval("#sunken", (el) => getComputedStyle(el).backgroundColor);
+    const control = await boxOf("#control");
+
+    assert.equal(looks.length, 2);
+    for (const look of looks) assert.deepEqual(look, { height: 20, radius: "4px", border: "0px", background: sunken });
+    assert.ok(control.height > looks[0].height, `control ${control.height}px vs badge ${looks[0].height}px`);
+  });
+
+  test("a count reads in the sans face with tabular digits", async () => {
+    const face = await page.$eval(".pill--count", (el) => ({ family: getComputedStyle(el).fontFamily, numeric: getComputedStyle(el).fontVariantNumeric }));
+    assert.ok(!/mono/i.test(face.family), face.family);
+    assert.equal(face.numeric, "tabular-nums");
+  });
+});
+
+describe("a filled badge", () => {
+  const readFills = () => page.$$eval("#fills .pill", (els) => els.map((el) => {
+    const style = getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    return { text: el.textContent ?? "", height: box.height, width: box.width, size: style.fontSize, weight: style.fontWeight, border: style.borderTopWidth,
+      radius: style.borderTopLeftRadius, background: style.backgroundColor, color: style.color, numeric: style.fontVariantNumeric, padding: style.paddingInlineStart };
+  }));
+
+  test("every fill, word or count, is a 20px chip in 13/600 with no edge", async () => {
+    const looks = await readFills();
+    assert.equal(looks.length, 5);
+    for (const look of looks) assert.deepEqual([look.height, look.size, look.weight, look.border], [20, "13px", "600", "0px"], look.text);
+  });
+
+  test("solid is an ink shell with surface text; tag and warn are tinted shells with ink text", async () => {
+    const [solid, tag, warn] = await readFills();
+    const inverse = await page.$eval("#ink-on-surface", (el) => ({ background: getComputedStyle(el).backgroundColor, color: getComputedStyle(el).color }));
+    const tints = await page.$eval("#tints", (el) => ({ fill: getComputedStyle(el).backgroundColor, warn: getComputedStyle(el).color }));
+    const ink = await page.$eval("#sunken", (el) => getComputedStyle(el).color);
+    assert.deepEqual([solid.background, solid.color], [inverse.background, inverse.color]);
+    assert.deepEqual([tag.background, tag.color], [tints.fill, ink]);
+    assert.deepEqual([warn.background, warn.color], [tints.warn, ink]);
+  });
+
+  test("the amber badge leads with the warn glyph, in the badge's own ink", async () => {
+    const lead = await page.$eval("#fills .pill--warn", (el) => {
+      const glyph = el.firstElementChild as HTMLElement;
+      return { text: el.textContent, glyphColor: getComputedStyle(glyph).color, isHidden: glyph.getAttribute("aria-hidden"), color: getComputedStyle(el).color };
+    });
+    assert.equal(lead.text, "⚠ Not received");
+    assert.deepEqual([lead.glyphColor, lead.isHidden], [lead.color, "true"]);
+  });
+
+  test("a count is a round chip at least 20 wide on 6px insets, tabular digits, capped at 99+", async () => {
+    const [, , , small, large] = await readFills();
+    for (const look of [small, large]) {
+      assert.deepEqual([look.radius, look.padding, look.numeric], ["999px", "6px", "tabular-nums"], look.text);
+      assert.ok(look.width >= 20, `${look.text} is ${look.width}px wide`);
+    }
+    assert.deepEqual([small.text, large.text], ["7", "99+"]);
+  });
+});
+
+describe("a band", () => {
+  test("is a 32px row on the page ground, hairlines above and below, its 13/600 dim label on the card's inset and the count 6px after it", async () => {
+    const look = await page.$eval("#band", (el) => {
+      const style = getComputedStyle(el);
+      return { height: el.getBoundingClientRect().height, background: style.backgroundColor, top: `${style.borderTopWidth} ${style.borderTopColor}`,
+        bottom: `${style.borderBottomWidth} ${style.borderBottomColor}`, type: [style.fontSize, style.fontWeight, style.color] };
+    });
+    const ground = await page.$eval("body", (el) => {
+      const probe = el.appendChild(document.createElement("span"));
+      probe.style.cssText = "background: rgb(var(--surface)); color: rgb(var(--dim)); border-color: rgb(var(--line));";
+      const style = getComputedStyle(probe);
+      return { surface: style.backgroundColor, dim: style.color, line: style.borderTopColor };
+    });
+    const [card, label, count] = await Promise.all([boxOf(".card:has(#band)"), boxOf("#band-label"), boxOf("#band .pill")]);
+    assert.deepEqual(look, { height: 32, background: ground.surface, top: `1px ${ground.line}`, bottom: `1px ${ground.line}`, type: ["13px", "600", ground.dim] });
+    assert.equal(label.left - card.left, CARD_PAD_PX + 1);
+    assert.equal(count.left - label.right, 6);
+  });
+});
+
+describe("a drawer fact", () => {
+  test("is one 32px row: dim 13/500 label left, long machine value wrapping on the right inside the drawer", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const row = await boxOf("#drawer .detail-fact");
+    const label = await boxOf("#drawer dt");
+    const value = await boxOf("#drawer dd");
+    const labelLook = await page.$eval("#drawer dt", (el) => {
+      const style = getComputedStyle(el);
+      return { size: style.fontSize, weight: style.fontWeight, transform: style.textTransform, isMono: /mono/i.test(style.fontFamily), color: style.color };
+    });
+    const valueAlign = await page.$eval("#drawer dd", (el) => getComputedStyle(el).textAlign);
+    const scrolls = await page.$eval("#drawer .detail-fact", (el) => el.scrollWidth > el.clientWidth);
+    const dim = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "rgb(var(--dim))";
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    });
+    const read = { row, label, value, valueAlign, scrolls };
+
+    assert.deepEqual(labelLook, { size: "13px", weight: "500", transform: "none", isMono: false, color: dim });
+    assert.ok(read.row.height >= 32, `row ${read.row.height}px`);
+    assert.ok(read.label.left < read.value.left && Math.abs(read.value.right - read.row.right) < 1, "label left, value on the row's end");
+    assert.equal(read.valueAlign, "right");
+    assert.equal(read.scrolls, false, "the long value wraps instead of scrolling");
+  });
+
+  test("stacked: the label sits 4 above its value, both on the row's start edge, and a wrapped value stays flush-left", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const read = await page.$eval("#drawer-stacked .detail-fact", (row) => {
+      const [label, value] = [row.querySelector("dt")!, row.querySelector("dd")!];
+      const range = document.createRange();
+      range.selectNodeContents(value);
+      const lineLefts = [...range.getClientRects()].map((r) => Math.round(r.left));
+      const [rowBox, labelBox, valueBox] = [row, label, value].map((el) => el.getBoundingClientRect());
+      return {
+        gap: Math.round(valueBox.top - labelBox.bottom),
+        starts: [Math.round(labelBox.left - rowBox.left), Math.round(valueBox.left - rowBox.left)],
+        isWrapped: lineLefts.length > 1,
+        flushLeft: new Set(lineLefts).size === 1 && lineLefts[0] === Math.round(rowBox.left),
+      };
+    });
+
+    assert.deepEqual(read, { gap: 4, starts: [0, 0], isWrapped: true, flushLeft: true });
+  });
+});
+
+describe("an inline fold", () => {
+  test("draws no box of its own: its trigger and body start on the card body's inset", async () => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const look = await page.$eval("#inline-fold .inline-fold", (el) => {
+      const style = getComputedStyle(el);
+      return { border: style.borderTopWidth, background: style.backgroundColor, shadow: style.boxShadow };
+    });
+    const [card, trigger, body] = await Promise.all([boxOf("#inline-fold .card"), boxOf("#inline-fold .inline-fold .disclosure"), boxOf("#inline-fold-body")]);
+    assert.deepEqual(look, { border: "0px", background: "rgba(0, 0, 0, 0)", shadow: "none" });
+    assert.equal(trigger.left - card.left, CARD_PAD_PX + 1);
+    assert.equal(body.left - card.left, CARD_PAD_PX + 1);
+  });
+});
+
+// a ring key is a 20-wide box one meta line tall inside its 2px tone ring; the count key fits its mark at a 4 inline pad
+describe("a map-legend swatch", () => {
+  test("a ring key is 20 × (meta + both borders) in its tone, and the count key widens to its mark", async () => {
+    // inline maps, no named helpers — the runner's __name wrapper is undefined in the page
+    const read = await page.$eval("#legend-swatches", (host) => {
+      const root = getComputedStyle(document.documentElement);
+      const [warn, crit] = ["--warn", "--crit"].map((name) => `rgb(${root.getPropertyValue(name).trim().split(/\s+/).join(", ")})`);
+      const [ring, count] = ["#swatch-ring", "#swatch-count"].map((id) => {
+        const el = host.querySelector(id)!;
+        const style = getComputedStyle(el);
+        const box = el.getBoundingClientRect();
+        return { width: box.width, height: box.height, border: style.borderTopWidth, edge: style.borderTopColor, pad: style.paddingLeft };
+      });
+      return { ring, count, warn, crit };
+    });
+
+    assert.deepEqual({ ...read.ring, edge: read.ring.edge === read.warn }, { width: 20, height: 17, border: "2px", edge: true, pad: "0px" });
+    assert.deepEqual({ height: read.count.height, border: read.count.border, edge: read.count.edge === read.crit, pad: read.count.pad },
+      { height: 17, border: "2px", edge: true, pad: "4px" });
+    assert.ok(read.count.width > 20, `the count key fits its mark (${read.count.width}px)`);
+  });
+});
+
+// the card head's type steps come from TypeScaleStyle and the atom's utilities from the app's vendored Tailwind runtime → its own page, so the other fixtures keep their faces
+describe("a head status in a card head", () => {
+  const head = renderToStaticMarkup(h("div", null, h(UI.TypeScaleStyle), h("div", { style: { width: 720 } },
+    h(UI.Card, { title: "No completion record", sub: h(UI.HeadStatus, { tone: "warn" }, h("span", { id: "head-words" }, "1,115 unfinished")) }, "rows")),
+    // a verdict beside a name on a baseline-aligned row line (System parts)
+    h("div", { className: "flex items-baseline gap-list fs-body leading-row", style: { width: 720 } },
+      h("span", { id: "row-name" }, "autoagent"),
+      h(UI.HeadStatus, { tone: "warn" }, h("span", { id: "row-words" }, "Needs attention")))));
+  let headPage: Page;
+
+  before(async () => {
+    headPage = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+    await headPage.setContent(`<!doctype html><html><head></head><body style="margin: 0;"><div id="head" style="padding: 24px;"></div></body></html>`);
+    await headPage.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await headPage.addStyleTag({ path: resolve(STYLES, "base.css") });
+    await headPage.addScriptTag({ path: resolve(HERE, "..", "public", "assets", "vendor", "tailwindcss-play-cdn-3.4.17.min.js") });
+    // the runtime styles markup added after it starts; a hidden probe tells when it has
+    await headPage.$eval("#head", (host, markup) => { host.innerHTML = `${markup}<span id="tw-probe" class="hidden"></span>`; }, head);
+    await headPage.waitForFunction(() => getComputedStyle(document.getElementById("tw-probe")!).display === "none");
+  });
+
+  test("sets its words on the card title's baseline", async () => {
+    // a zero-height inline-block's bottom edge sits on the baseline of the line it joins
+    const baselines = await headPage.$$eval(".card-title, #head-words", (els) => els.map((el) => {
+      const probe = document.createElement("span");
+      probe.style.cssText = "display: inline-block; width: 0; height: 0;";
+      el.append(probe);
+      return probe.getBoundingClientRect().bottom;
+    }));
+    assert.ok(Math.abs(baselines[0] - baselines[1]) <= 1, `title baseline ${baselines[0]}, status words ${baselines[1]}`);
+  });
+
+  test("sets its words on the baseline of a baseline-aligned row it joins", async () => {
+    const baselines = await headPage.$$eval("#row-name, #row-words", (els) => els.map((el) => {
+      const probe = document.createElement("span");
+      probe.style.cssText = "display: inline-block; width: 0; height: 0;";
+      el.append(probe);
+      return probe.getBoundingClientRect().bottom;
+    }));
+    assert.ok(Math.abs(baselines[0] - baselines[1]) <= 1, `name baseline ${baselines[0]}, status words ${baselines[1]}`);
+  });
+});
+
+// the bars' tracks are Tailwind utilities → their own page runs the app's vendored Tailwind runtime, which styles markup added after it starts
+describe("bars on one stat row", () => {
+  const bars = renderToStaticMarkup(h(UI.StatRow, { stats: [
+    { label: "Reported rate", value: "91.3%", context: h(UI.BulletBar, { value: 0.913, target: 0.8, zones: [{ upTo: 0.8, tone: "crit" }, { upTo: 1, tone: "ok" }], ariaLabel: "Reported rate 91%" }) },
+    { label: "Finished", value: "29.0%", context: h(UI.Bar, { value: 0.29, ariaLabel: "finished 29 of started 100" }) },
+  ] }));
+  let barPage: Page;
+
+  before(async () => {
+    barPage = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+    await barPage.setContent(`<!doctype html><html><head></head><body style="margin: 0;"><div id="bars" style="padding: 24px; width: 900px;"></div></body></html>`);
+    await barPage.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+    await barPage.addStyleTag({ path: resolve(STYLES, "base.css") });
+    await barPage.addScriptTag({ path: resolve(HERE, "..", "public", "assets", "vendor", "tailwindcss-play-cdn-3.4.17.min.js") });
+    await barPage.$eval("#bars", (host, markup) => { host.innerHTML = markup; }, bars);
+    await barPage.waitForFunction(() => [...document.querySelectorAll('.stat-context > [role="img"] > div')].every((track) => track.getBoundingClientRect().height > 0));
+  });
+
+  test("share one centre line under their values", async () => {
+    const centres = await barPage.$$eval('.stat-context > [role="img"] > div', (tracks) => tracks.map((track) => {
+      const box = track.getBoundingClientRect();
+      return box.top + box.height / 2;
+    }));
+
+    assert.equal(centres.length, 2);
+    assert.ok(Math.abs(centres[0] - centres[1]) < 0.5, `track centres ${centres.join(", ")}`);
+  });
+});

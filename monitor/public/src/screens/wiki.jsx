@@ -1,4 +1,4 @@
-// 위키 화면 — wiki.* + core.daemon_runs PG 소스 (파일시스템 비결합). 판정 줄 + 알람 레인 + 타일 밴드 + 열린 상태 행 + 상세 디스클로저.
+// 위키 화면 — wiki.* + core.daemon_runs PG 소스 (파일시스템 비결합). 알람 레인 + 타일 밴드 + 열린 상태 행 + 상세 디스클로저.
 const {
 	useState: useStateW,
 	useEffect: useEffectW,
@@ -10,10 +10,10 @@ const {
 const WIKI_CYCLE_DAYS = 30;
 
 // 실행 표 기간 allowlist — server allowlist 와 정합 (routes/health.ts).
-const WIKI_REPORT_DAYS_OPTIONS = [
-	{ value: 7, label: "7d" },
-	{ value: 30, label: "30d" },
-	{ value: 90, label: "90d" },
+const WIKI_REPORT_DAYS_CHOICES = [
+	{ key: 7, label: "7d" },
+	{ key: 30, label: "30d" },
+	{ key: 90, label: "90d" },
 ];
 
 // 희소 데이터 공용 임계 — 비0 포인트가 이 값 미만이면 넓은 빈 차트 대신 compact stat 으로 대체 (A4 통일).
@@ -23,7 +23,6 @@ const SPARSE_MIN_NONZERO = 4;
 function ScreenWiki() {
 	const {
 		PageHeader,
-		PageVerdict,
 		TypeScaleStyle,
 		FreshnessStamp,
 		RefreshButton,
@@ -56,10 +55,6 @@ function ScreenWiki() {
 	const isBusy = getRegionSummary(waveStates).isBusy;
 	const hasRead = settledAt != null || waveStates.some((st) => st.data != null);
 	const outage = readWikiOutageW(waveSections);
-	const verdict = useMemoW(
-		() => buildWikiVerdictW(summaryState, indexState, backlogState, cyclesState),
-		[summaryState, indexState, backlogState, cyclesState],
-	);
 
 	// Parallel reads — each region keeps its last payload until its own answer lands.
 	useEffectW(() => {
@@ -91,35 +86,23 @@ function ScreenWiki() {
 			<style>{`
         /* 상태 막대 셀 — status mix 비율 바 (0폭 셀도 보더 유지하지 않도록 min-w 0). */
         .w-mix-cell { min-width: 0; }
-        /* per-run 보고 표 — 읽기 전용 RECORD(상세 드로어 없음) → .tbl 기본 pointer 커서/hover 무력화 (가짜 인터랙션 암시 방지). */
-        .w-report-tbl tbody tr { cursor: default; }
-        .w-report-tbl tbody tr:hover { background: transparent; }
-        /* summary is a flex row, which drops the native marker → the screen draws its own chevron. */
-        .w-disclosure > summary { list-style: none; }
-        .w-disclosure > summary::-webkit-details-marker { display: none; }
-        .w-disclosure[open] > summary .w-chevron { transform: rotate(90deg); }
+        /* fold summary = one full-width disclosure row (label left, count at the far end) → block flex over the atom's inline-flex */
+        .w-disclosure > summary { display: flex; }
         /* base.css tints only status tones → a parked (neutral) glyph recedes locally. */
         .alarm-row[data-tone="neutral"] .alarm-row-glyph { color: rgb(var(--dim)); }
-        /* Name, bar and count stay within reading distance on a wide panel. */
-        .w-type-list { max-width: 40rem; }
-        .w-type-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5rem 2.5rem; align-items: center; gap: 0.75rem; height: var(--row-h); }
-        .w-type-track { display: block; height: 6px; border-radius: 9999px; background: rgb(var(--line)); }
-        .w-type-fill { display: block; height: 100%; border-radius: inherit; background: rgb(var(--dim)); }
       `}</style>
 
 			<div className="flex-shrink-0">
 				<PageHeader
 					title="Wiki"
-					right={
-						<>
-							<FreshnessStamp at={settledAt} regions={waveStates} />
-							<RefreshButton
-								isBusy={isBusy}
-								hasRead={hasRead}
-								onRefresh={triggerRefresh}
-								label="Refresh wiki"
-							/>
-						</>
+					freshness={<FreshnessStamp at={settledAt} regions={waveStates} />}
+					refresh={
+						<RefreshButton
+							isBusy={isBusy}
+							hasRead={hasRead}
+							onRefresh={triggerRefresh}
+							label="Refresh wiki"
+						/>
 					}
 				/>
 			</div>
@@ -129,24 +112,16 @@ function ScreenWiki() {
 				{describeWikiWaveW(waveSections)}
 			</div>
 
-			<div className="flex flex-col gap-4">
+			<div className="flex flex-col gap-section">
 				{outage && (
 					<PageErrorBanner
 						sources={outage.sources}
 						error={outage.error}
 						onRetry={triggerRefresh}
 						isBusy={isBusy}
-						focusTargetId="wiki-verdict"
+						focusTargetId={WIKI_REGION_IDS.tiles}
 					/>
 				)}
-				<PageVerdict
-					id="wiki-verdict"
-					tone={verdict.tone}
-					chips={verdict.chips}
-					freshness={{ at: settledAt, regions: waveStates }}
-				>
-					{verdict.text}
-				</PageVerdict>
 				{/* Above the fold — what needs a hand, then the health band. */}
 				<WikiAlarmLane
 					summaryState={summaryState}
@@ -158,7 +133,6 @@ function ScreenWiki() {
 					summaryState={summaryState}
 					indexState={indexState}
 					backlogState={backlogState}
-					cyclesState={cyclesState}
 					at={settledAt}
 					shared={outage}
 					onRetry={triggerRefresh}
@@ -244,16 +218,16 @@ const PROPOSAL_PARKED_RUNS = 7;
 // Same threshold on the dated source — the cycle is daily, so a run and a day match.
 const PROPOSAL_PARKED_DAYS = PROPOSAL_PARKED_RUNS;
 
-// Element id of the merge-proposals fold — the verdict chip's target.
+// Element id of the merge-proposals fold — the backlog failure's Retry target.
 const MERGE_PROPOSALS_ID = "wiki-merge-proposals";
 
-// Wave section names — the banner lists them, and a region is covered when its feeder is among them.
+// Wave section names = the regions' visible titles — the banner lists them, and a region is covered when its feeder is among them.
 const WIKI_FEEDERS = Object.freeze({
-	summary: "summary",
-	runHistory: "run history",
-	notesByType: "notes by type",
-	backlog: "maintenance backlog",
-	runTable: "per-run table",
+	summary: "Health",
+	runHistory: "Run history",
+	notesByType: "Notes by type",
+	backlog: "Merge proposals",
+	runTable: "Runs",
 });
 
 // Region card ids — a covered region's slot names its card, so the banner's Retry lands there on recovery.
@@ -264,78 +238,12 @@ const WIKI_REGION_IDS = Object.freeze({
 	runTable: "wiki-run-table",
 });
 
-// One sentence over the lane's checks; a parked proposal informs but never raises the tone.
-// An unread summary adds no sentence — PageVerdict's shared not-read note speaks for it.
-function buildWikiVerdictW(summaryState, indexState, backlogState, cyclesState) {
-	if (summaryState.status !== "ready") {
-		const isFailed = window.UI.getRegionView(summaryState) === "error";
-		const text = isFailed ? "The daily cycle summary could not be read." : null;
-		return { tone: "neutral", text, chips: [] };
-	}
-
-	const summary = summaryState.data || {};
-	const lane = buildAlarmLaneModel(summaryState, indexState, backlogState, cyclesState);
-	const proposals = lane.alarms.filter((alarm) => alarm.proposal);
-	const compiled = buildCompiledTileW(summaryState, backlogState, cyclesState);
-	const tones = [
-		wikiStatusToneW(summary.last_status),
-		compiled.tone,
-		...lane.alarms.map((alarm) => alarm.tone),
-	];
-	const parts = [
-		summary.last_cycle_started_at
-			? `last run ${window.UI.formatRelativeTime(summary.last_cycle_started_at)}`
-			: "no run recorded",
-		typeof summary.latest_compiled_count === "number"
-			? `${formatCountW(summary.latest_compiled_count)} compiled`
-			: null,
-		describeProposalBacklogW(proposals),
-		describeLaneGapW(lane),
-	];
-
-	return {
-		tone: getVerdictToneW(tones, lane),
-		text: parts.filter(Boolean).join(" · "),
-		chips:
-			proposals.length > 0
-				? [{ key: "proposals", label: "Open proposals", targetId: MERGE_PROPOSALS_ID }]
-				: [],
-	};
-}
-
-// A known warn/crit stands; the all-clear waits until every lane feeder has answered.
-function getVerdictToneW(tones, lane) {
-	const worst = window.UI.getWorstTone(tones);
-	if (worst && worst !== "ok") return worst;
-
-	const complete = !lane.pending && lane.unchecked.length === 0;
-	return complete ? "ok" : "neutral";
-}
-
-function describeLaneGapW(lane) {
-	if (lane.unchecked.length > 0) return `couldn't check ${lane.unchecked.join(", ")}`;
-	return lane.pending ? "still checking" : null;
-}
-
-// Rows arrive parked-last and oldest-last, so the final row carries the oldest age.
-function describeProposalBacklogW(proposals) {
-	if (proposals.length === 0) return null;
-
-	const count = proposals.length;
-	const parked = proposals.filter((p) => p.parked).length;
-	const noun = count === 1 ? "merge" : "merges";
-	const state =
-		parked === count ? "parked" : parked === 0 ? "waiting" : `waiting (${parked} parked)`;
-	const oldest = proposals[count - 1].ageLabel;
-	return `${count} ${noun} ${state}${oldest ? `, oldest ${oldest}` : ""}`;
-}
-
 // Alarm lane — domain facts awaiting a decision, in decision order: dirty index →
 // missed daily cycle → proposals awaiting approval (parked ones last). A failed payload
 // renders its banner at the group it feeds, never a lane row.
 
 function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) {
-	const { Icon, TONE_ICON } = window.UI;
+	const { AlarmRow } = window.UI;
 
 	const model = useMemoW(
 		() =>
@@ -348,7 +256,7 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 		[summaryState, indexState, backlogState, cyclesState],
 	);
 
-	// Proposals ride the page verdict; the lane keeps what needs a hand now.
+	// Proposals live in their own fold, whose head carries count and tone; the lane keeps what needs a hand now.
 	const rows = model.alarms.filter((alarm) => !alarm.proposal);
 
 	// Empty lane and unloaded lane must not look alike — silence only once every feeder answered.
@@ -361,31 +269,22 @@ function WikiAlarmLane({ summaryState, indexState, backlogState, cyclesState }) 
 	}
 
 	return (
-		<ul
-			className="rounded-md border border-line m-0 p-0 list-none"
-			aria-label="Wiki alarms"
-		>
+		<div role="region" aria-label="Wiki alarms" className="card">
 			{rows.map((alarm) => (
-				<li key={alarm.key} className="alarm-row" data-tone={alarm.tone}>
-					<span className="alarm-row-glyph" aria-hidden="true">
-						<Icon name={TONE_ICON[alarm.tone]} size={14} />
-					</span>
-					<span className="min-w-0">
-						<span className="fs-body text-ink font-medium block break-words">
-							{alarm.label}
-						</span>
-						<span className="fs-meta text-faint block leading-tight">
-							{alarm.detail}
-						</span>
-					</span>
-				</li>
+				<AlarmRow
+					key={alarm.key}
+					tone={alarm.tone}
+					title={alarm.label}
+					detail={alarm.detail}
+				/>
 			))}
 			{model.unchecked.length > 0 && (
-				<li className="fs-meta text-faint px-4 py-2">
-					{`Couldn't read ${model.unchecked.join(", ")} — alarms from ${model.unchecked.length === 1 ? "it" : "them"} are not shown.`}
-				</li>
+				<AlarmRow
+					tone="neutral"
+					title={`Alarms hidden: ${model.unchecked.join(", ")} unread.`}
+				/>
 			)}
-		</ul>
+		</div>
 	);
 }
 
@@ -415,7 +314,7 @@ function buildAlarmLaneModel(
 			key: "cycle-overdue",
 			tone: "crit",
 			label: "The daily cycle has not run",
-			detail: `Last run ${summary.last_run_date || "unknown"} · ${hours}h ago — inspect launchd.`,
+			detail: `Last run ${describeRunDayW(summary.last_run_date)} · ${window.UI.formatRelativeTime(summary.last_cycle_started_at)} — inspect launchd.`,
 		});
 	}
 
@@ -475,11 +374,6 @@ function buildProposalAlarmsW(backlog, proposals, cyclesState) {
 				: describeProposalAgeW(runs, parked, checking),
 			parked,
 			age: typeof age === "number" ? age : 0,
-			ageLabel: wait
-				? `${wait.days} d`
-				: typeof runs === "number"
-					? `${runs} ${runs === 1 ? "run" : "runs"}`
-					: null,
 			proposal,
 		};
 	});
@@ -565,37 +459,41 @@ function describeSnapshotAgeW(runDate) {
 	return stale ? `Figures as of ${runDate}, cycle overdue` : null;
 }
 
-// Four-tile band — last run · compiled last cycle · search index · library totals.
-// Steady state carries no tint (the last-run sub still names the outcome); only an actionable state tints.
+// One stat row — last run · compiled last cycle · search index · library totals.
+// Steady state carries no tint (the last-run context still names the outcome); only an actionable state marks its value.
 
-function WikiTileBand({ summaryState, indexState, backlogState, cyclesState, at, shared, onRetry }) {
+function WikiTileBand({ summaryState, indexState, backlogState, at, shared, onRetry }) {
+	const { Card, StatRow, StatNotes } = window.UI;
 	const tiles = useMemoW(
-		() => buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at),
-		[summaryState, indexState, backlogState, cyclesState, at],
+		() => buildTileBandModel(summaryState, indexState, backlogState, at),
+		[summaryState, indexState, backlogState, at],
 	);
 	const failures = readTileBandFailuresW(summaryState, indexState);
 	// a feeder the banner does not cover keeps its own sentence and Retry
 	const uncovered = failures.filter((f) => !shared?.sources?.includes(f.feeder));
 	const shown = uncovered.length > 0 ? uncovered : failures;
+	const details = tiles.filter((tile) => tile.info);
 
 	return (
-		<div id={WIKI_REGION_IDS.tiles} className="flex flex-col gap-2">
-			{shown.length > 0 && (
-				<WikiRegionFailureW
-					feeders={shown.map((f) => f.feeder)}
-					source={`the ${shown.map((f) => f.label).join(" and ")}`}
-					error={shown[0].state.error}
-					isBusy={shown.some((f) => f.state.busy)}
-					shared={shared}
-					focusTargetId={WIKI_REGION_IDS.tiles}
-					onRetry={onRetry}
-				/>
-			)}
-			<div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-				{tiles.map((tile) => (
-					<WikiTile key={tile.key} tile={tile} />
-				))}
-			</div>
+		<div id={WIKI_REGION_IDS.tiles}>
+			<Card title="Health" info={<StatNotes stats={details} />} infoLabel="How these figures are read">
+				<window.UI.Stack gap="block">
+					{shown.length > 0 && (
+						<WikiRegionFailureW
+							feeders={shown.map((f) => f.feeder)}
+							source={`the ${shown.map((f) => f.label).join(" and ")}`}
+							error={shown[0].state.error}
+							isBusy={shown.some((f) => f.state.busy)}
+							shared={shared}
+							focusTargetId={WIKI_REGION_IDS.tiles}
+							onRetry={onRetry}
+						/>
+					)}
+					<div aria-busy={tiles.some((tile) => tile.state === "loading") ? "true" : undefined}>
+						<StatRow stats={tiles.map(buildStatW)} />
+					</div>
+				</window.UI.Stack>
+			</Card>
 		</div>
 	);
 }
@@ -608,81 +506,52 @@ function readTileBandFailuresW(summaryState, indexState) {
 	].filter((f) => window.UI.getRegionView(f.state) === "error");
 }
 
-// Report surface → neutral chrome; a warn/crit tile carries its tone on a glyph beside the
-// figure, leaving tinted containers to the alarm lane (39578 §C/§D).
-// detail past the 40-char caption cap opens from an ⓘ beside the label
-function WikiTile({ tile }) {
-	const { Icon, TONE_ICON, CardInfo } = window.UI;
-	const alarmed = tile.tone === "warn" || tile.tone === "crit";
-	const labelId = `wiki-tile-${tile.key}-label`;
+// tile model → one StatRow stat; an empty read leaves the slot to the row's None, a Not loaded stat states its cause, the long form in its title
+function buildStatW(tile) {
+	const { key, label } = tile;
+	if (tile.state === "loading") return { key, label, isLoading: true };
+	if (tile.state === "empty") return { key, label, value: null };
+	if (tile.state !== "ready") {
+		const context = tile.state === "error" ? window.UI.getReadFailureCause(tile.error) : tile.sub ?? null;
+		return { key, label, value: <window.UI.AbsentValue kind="not-loaded" title={tile.cause} />, context };
+	}
+	const context = tile.sub ? <span title={tile.hint || tile.sub}>{tile.sub}</span> : null;
+	return { key, label, value: <WikiStatValueW tile={tile} />, context };
+}
 
+// Report surface → neutral chrome; a warn/crit stat carries its tone on a glyph beside the
+// figure, leaving tinted containers to the alarm lane.
+function WikiStatValueW({ tile }) {
+	const { TONE_GLYPH } = window.UI;
+	if (tile.tone !== "warn" && tile.tone !== "crit") return tile.value;
 	return (
-		<div className="rounded-md border border-line bg-sunken p-2.5 min-w-0">
-			<div className="flex items-center gap-1">
-				<span
-					id={labelId}
-					className="fs-meta text-faint leading-tight break-words min-w-0"
-					title={tile.label}
-				>
-					{tile.label}
-				</span>
-				{tile.info && (
-					<CardInfo label={`How ${tile.label} is counted`} describedBy={labelId}>
-						{tile.info}
-					</CardInfo>
-				)}
-			</div>
-			<div
-				className={`${tile.isWord ? "" : "font-mono "}fs-stat font-semibold mt-0.5 flex items-center gap-1.5 ${tile.state === "ready" ? "" : "text-faint"}`}
-				aria-busy={tile.state === "loading" ? "true" : undefined}
-			>
-				{alarmed && (
-					<span className={`text-${tile.tone} flex-shrink-0`} aria-hidden="true" title={tile.toneLabel}>
-						<Icon name={TONE_ICON[tile.tone]} size={13} />
-					</span>
-				)}
-				{alarmed && tile.toneLabel && <span className="sr-only">{`${tile.toneLabel}:`}</span>}
-				{tile.value}
-			</div>
-			{tile.sub && (
-				<div
-					className="fs-meta text-faint mt-1 leading-tight break-words"
-					title={tile.hint || tile.sub}
-				>
-					{tile.sub}
-				</div>
-			)}
-		</div>
+		<>
+			<span className={`text-${tile.tone}`} aria-hidden="true" title={tile.toneLabel}>{`${TONE_GLYPH[tile.tone]} `}</span>
+			{tile.toneLabel && <span className="sr-only">{`${tile.toneLabel}:`}</span>}
+			{tile.value}
+		</>
 	);
 }
 
-function buildTileBandModel(summaryState, indexState, backlogState, cyclesState, at) {
+function buildTileBandModel(summaryState, indexState, backlogState, at) {
 	return [
 		buildLastRunTileW(summaryState, at),
-		buildCompiledTileW(summaryState, backlogState, cyclesState),
+		buildCompiledTileW(summaryState, backlogState),
 		buildIndexTileW(indexState),
 		buildLibraryTileW(indexState, summaryState, backlogState),
 	];
 }
 
-// Shared non-ready tile shapes — loading, error and unavailable stay distinguishable and
-// none of them renders as a number (a zero nobody loaded is the failure mode).
-// Loading and errored tiles carry no sub text: the "…" value and the band's single banner speak for them.
-function tilePlaceholderW(key, label, state) {
-	const SUB = {
-		loading: null,
-		error: null,
-		unavailable: "Not reported yet",
-		empty: "Nothing recorded",
-	};
-	return {
-		key,
-		label,
-		state,
-		value: state === "loading" ? "…" : "—",
-		sub: SUB[state],
-		tone: "neutral",
-	};
+// Non-ready tile shapes carry no value, so a zero nobody loaded never renders; the cause rides the absent word's title.
+const TILE_CAUSES_W = { error: "The read failed", unavailable: "Not reported yet" };
+
+function tilePlaceholderW(key, label, state, error = null) {
+	return { key, label, state, cause: TILE_CAUSES_W[state], error, tone: "neutral" };
+}
+
+// a source that never reported is no fetch failure → its own words, not the read-failure cause
+function unreportedTileW(key, label, source) {
+	return { ...tilePlaceholderW(key, label, "unavailable"), sub: `${source} not reported` };
 }
 
 function tileFetchStateW(state) {
@@ -694,7 +563,7 @@ function tileFetchStateW(state) {
 function buildLastRunTileW(state, at) {
 	const label = "Last run";
 	const pending = tileFetchStateW(state);
-	if (pending) return tilePlaceholderW("last-run", label, pending);
+	if (pending) return tilePlaceholderW("last-run", label, pending, state.error);
 
 	const d = state.data || {};
 	if (!d.last_cycle_started_at) {
@@ -711,12 +580,8 @@ function buildLastRunTileW(state, at) {
 		label,
 		state: "ready",
 		value: window.UI.formatRelativeTime(d.last_cycle_started_at),
-		// "21h ago" in the mono stat face → its space reads as a double gap
-		isWord: true,
-		sub: overdue
-			? `${outcome.label} · cycle ${d.last_run_date}`
-			: `${outcome.label}${describeP95W(d.cycle_p95_ms)}`,
-		hint: `Cycle ${d.last_run_date}`,
+		sub: outcome.label,
+		hint: d.last_run_date ? `Cycle ${d.last_run_date}` : undefined,
 		tone,
 	};
 }
@@ -735,42 +600,34 @@ function getLastRunOutcomeW(state, at, overdue) {
 function describeP95W(ms) {
 	return typeof ms === "number" ? ` · p95 ${window.UI.formatDuration(ms, "ms")}` : "";
 }
+// Day form MM-DD (spec §2.1); an unrecorded date reads unknown, never "undefined"
+function describeRunDayW(date) {
+	return date ? window.UI.formatKstDay(date) : "unknown";
+}
 
-// A zero names its cause: idle (nothing waiting) stays quiet, stalled (originals waiting) tints.
-function buildCompiledTileW(
-	state,
-	backlogState = UNKNOWN_REGION_W,
-	cyclesState = UNKNOWN_REGION_W,
-) {
+// A zero names its cause: idle (nothing waiting) stays quiet, stalled (originals waiting) tints; the waiting count is Library notes' fact.
+function buildCompiledTileW(state, backlogState = UNKNOWN_REGION_W) {
 	const label = "Compiled last cycle";
 	const pending = tileFetchStateW(state);
-	if (pending) return tilePlaceholderW("compiled", label, pending);
+	if (pending) return tilePlaceholderW("compiled", label, pending, state.error);
 
 	const count = state.data?.latest_compiled_count;
 	if (typeof count !== "number") {
-		return tilePlaceholderW("compiled", label, "unavailable");
+		return unreportedTileW("compiled", label, "Cycle");
 	}
 
 	const waiting =
 		backlogState.status === "ready" ? backlogState.data?.backlog?.true_backlog : undefined;
 	const isStalled = count === 0 && typeof waiting === "number" && waiting > 0;
 	const cause =
-		count !== 0 || typeof waiting !== "number"
-			? null
-			: isStalled
-				? `Stalled · ${formatCountW(waiting)} waiting`
-				: "Nothing waiting";
-	// same span as Run history → the two totals read alike
-	const trend = buildThroughputModel(cyclesState);
-	const windowTotal =
-		trend.rows.length > 0 ? `${formatCountW(trend.total)} in ${trend.spanDays} d` : null;
+		count !== 0 || typeof waiting !== "number" ? null : isStalled ? "Stalled" : "Idle";
 
 	return {
 		key: "compiled",
 		label,
 		state: "ready",
 		value: formatCountW(count),
-		sub: [cause, windowTotal].filter(Boolean).join(" · ") || null,
+		sub: cause,
 		info: isStalled
 			? `${formatCountW(waiting)} saved originals are waiting and the last cycle compiled none.`
 			: undefined,
@@ -789,21 +646,17 @@ function sumCompiledW(cyclesState) {
 function buildIndexTileW(state) {
 	const label = "Search index";
 	const pending = tileFetchStateW(state);
-	if (pending) return tilePlaceholderW("index", label, pending);
+	if (pending) return tilePlaceholderW("index", label, pending, state.error);
 
 	const d = state.data || {};
 	// The server states row presence outright; the timestamp inference covers a payload predating it.
 	const flagMissing =
 		d.has_dirty_flag === false ||
 		(d.has_dirty_flag == null && d.dirty !== true && d.last_dirty_ms == null);
-	// No row yet → say what is unknown rather than show a bare dash.
 	if (flagMissing) {
 		return {
-			...tilePlaceholderW("index", label, "unavailable"),
-			value: "Not reported",
-			sub: "Freshness not reported",
-			hint: "No dirty flag on record — the compiler has not written one, so cleanliness is unknown",
-			isWord: true,
+			...unreportedTileW("index", label, "Index"),
+			cause: "No dirty flag on record — the compiler has not written one, so cleanliness is unknown",
 		};
 	}
 	if (d.dirty === true) {
@@ -812,7 +665,6 @@ function buildIndexTileW(state) {
 			label,
 			state: "ready",
 			value: "Dirty",
-			isWord: true,
 			sub:
 				typeof d.last_dirty_ms === "number"
 					? `Since ${window.UI.formatRelativeTime(new Date(d.last_dirty_ms).toISOString())}`
@@ -826,23 +678,30 @@ function buildIndexTileW(state) {
 		label,
 		state: "ready",
 		value: "Clean",
-		isWord: true,
-		sub: "Master index current",
 		tone: "neutral",
 	};
 }
 
+// the counting note rides every form of the tile → the Health ⓘ never leaves with the data
 function buildLibraryTileW(indexState, summaryState, backlogState) {
+	const tile = buildLibraryFiguresTileW(indexState, summaryState, backlogState);
+	return { ...tile, info: [LIBRARY_COUNTING_NOTE_W, tile.info].filter(Boolean).join(" ") };
+}
+
+function buildLibraryFiguresTileW(indexState, summaryState, backlogState) {
 	const label = "Library notes";
 	const pending = tileFetchStateW(indexState) || tileFetchStateW(summaryState);
-	if (pending) return tilePlaceholderW("library", label, pending);
+	if (pending) {
+		const failed = [indexState, summaryState].find((state) => tileFetchStateW(state) === "error");
+		return tilePlaceholderW("library", label, pending, failed?.error);
+	}
 
 	const total =
 		typeof indexState.data?.notes_total === "number"
 			? indexState.data.notes_total
 			: summaryState.data?.notes_total;
 	if (typeof total !== "number") {
-		return tilePlaceholderW("library", label, "unavailable");
+		return unreportedTileW("library", label, "Index");
 	}
 
 	const payload =
@@ -850,17 +709,16 @@ function buildLibraryTileW(indexState, summaryState, backlogState) {
 	const tile = { key: "library", label, state: "ready", value: formatCountW(total), tone: "neutral" };
 	if (!payload) return { ...tile, sub: "Backlog not reported" };
 
-	const sub = `${describeOriginalsW(payload.true_backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}`;
+	const figures = `${describeOriginalsW(payload.true_backlog)} · ${describeBrokenLinksW(payload.deadlink_dryrun)}`;
 	const age = describeSnapshotAgeW(payload.run_date);
-	const info = [LIBRARY_COUNTING_NOTE_W, age && `${age}.`].filter(Boolean).join(" ");
-	if (!age) return { ...tile, sub, info };
+	if (!age) return { ...tile, sub: figures };
 
-	// the caption stays at the 40-char cap → the warn glyph marks the snapshot, its date rides info + tooltip
+	// a stale snapshot's context names the warn glyph's cause; the figures ride the tooltip
 	return {
 		...tile,
-		sub,
-		hint: `${sub} · ${age}`,
-		info,
+		sub: payload.run_date ? `Stale snapshot ${window.UI.formatKstDay(payload.run_date)}` : figures,
+		hint: `${figures} · ${age}`,
+		info: `${age}.`,
 		tone: "warn",
 		toneLabel: payload.run_date ? "Stale snapshot" : "Undated snapshot",
 	};
@@ -890,72 +748,72 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 	);
 
 	return (
-		<div className="flex flex-col gap-2">
-			{model.state === "error" ? (
-				<WikiRegionFailureW
-					feeders={[WIKI_FEEDERS.backlog]}
-					source="the maintenance backlog"
-					error={backlogState.error}
-					isBusy={backlogState.busy}
-					shared={shared}
-					focusTargetId={MERGE_PROPOSALS_ID}
-					onRetry={onRetry}
-				/>
-			) : null}
-
-			{/* Always present, so the verdict's proposals chip and the page layout never lose it. */}
+		<div className="flex flex-col gap-section">
+			{/* Always present, so the backlog failure's Retry target and the page layout never lose it. */}
 			<WikiDisclosureW
 				id={MERGE_PROPOSALS_ID}
 				label="Merge proposals"
 				count={describeProposalCountW(model)}
 				tone={model.proposalTone}
+				bodyClassName="flex flex-col"
 			>
 				{model.state === "loading" ? (
-					<LoadingPlaceholder label="merge proposals" />
+					// the fold body is flush for the table → the loading line takes the card inset itself
+					<div className="px-card-pad pb-card-pad">
+						<LoadingPlaceholder label="merge proposals" />
+					</div>
 				) : model.state === "error" ? (
-					<EmptyStateW message="The maintenance backlog could not be read — see above." />
+					// flush body → the failure block takes the card inset itself, as the Runs fold does
+					<div className="px-card-pad pb-card-pad">
+						<WikiRegionFailureW
+							feeders={[WIKI_FEEDERS.backlog]}
+							source="merge proposals"
+							error={backlogState.error}
+							isBusy={backlogState.busy}
+							shared={shared}
+							focusTargetId={MERGE_PROPOSALS_ID}
+							onRetry={onRetry}
+						/>
+					</div>
 				) : !model.proposals || model.proposals.length === 0 ? (
-					<EmptyStateW
-						message={
-							model.proposals
-								? "No merge proposals waiting."
-								: "The last cycle did not report merge proposals."
-						}
-					/>
+					// flush body → the empty line's host takes the card column, as the loading line's does
+					<div className="px-card-pad">
+						<window.UI.EmptyState
+							message={
+								model.proposals
+									? "No merge proposals waiting."
+									: "The last cycle did not report merge proposals."
+							}
+						/>
+					</div>
 				) : (
-					<div className="flex flex-col gap-2">
-						{model.isDryRun && (
+					<window.UI.Stack gap="label">
+						<window.UI.Stack gap="label" className="px-card-pad">
+							{model.isDryRun && (
+								<div className="fs-meta text-dim leading-tight">
+									Dry run — nothing merges until you approve it.
+								</div>
+							)}
 							<div className="fs-meta text-dim leading-tight">
-								Dry run — nothing merges until you approve it.
+								{/* suggested_action is this same instruction on every row (scripts/wiki_dedup.py) → stated once here */}
+								Each proposal merges the absorbed notes into the kept note, then deletes them; links to them need updating.
 							</div>
-						)}
-						<div className="fs-meta text-dim leading-tight">
-							Each proposal merges the notes after the arrow into the note before it.
-						</div>
-						<ul className="flex flex-col gap-2 m-0 p-0 list-none">
-							{model.proposals.map((proposal, i) => (
-								<MergeSuggestionItem
-									key={proposal.cluster_hash || i}
-									proposal={proposal}
-								/>
-							))}
-						</ul>
+						</window.UI.Stack>
+						<WikiProposalsTable proposals={model.proposals} />
 						{model.residueLine && (
-							<div className="fs-meta text-faint leading-tight">
+							<div className="px-card-pad pb-card-pad fs-meta text-faint leading-tight">
 								{model.residueLine}
 							</div>
 						)}
-					</div>
+					</window.UI.Stack>
 				)}
 			</WikiDisclosureW>
 
 			{/* Dead-link lists appear only once the fixer has something to report. */}
 			{model.deadLinks && model.deadLinks.length > 0 && (
-				<BacklogExplorer
-					label="Broken links"
-					count={model.deadLinks.length}
-					payload={model.deadLinks}
-				/>
+				<WikiDisclosureW label="Broken links" count={model.deadLinks.length} bodyClassName="flex flex-col">
+					<WikiBrokenLinksTable links={model.deadLinks} />
+				</WikiDisclosureW>
 			)}
 			{model.linkFixes && model.linkFixes.length > 0 && (
 				<BacklogExplorer
@@ -968,10 +826,16 @@ function WikiMaintenanceSection({ backlogState, cyclesState, shared, onRetry }) 
 	);
 }
 
+// Waiting pairs lead, since they open the fold; a list nobody read is Not loaded, never None.
 function describeProposalCountW(model) {
 	if (model.state === "loading") return "Loading…";
-	if (model.state === "error") return "Unavailable";
-	return model.proposals ? formatCountW(model.proposals.length) : "Not reported";
+	if (!model.proposalRows) return "Not loaded";
+	if (model.proposalRows.length === 0) return "None";
+	const parked = model.proposalRows.filter((row) => row.parked).length;
+	const waiting = model.proposalRows.length - parked;
+	return [waiting > 0 && `${formatCountW(waiting)} waiting`, parked > 0 && `${formatCountW(parked)} parked`]
+		.filter(Boolean)
+		.join(" · ");
 }
 
 const UNKNOWN_REGION_W = { status: "idle", data: null, error: null };
@@ -1001,6 +865,7 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_REGION_W) {
 	return {
 		state: "ready",
 		proposals,
+		proposalRows,
 		isDryRun: Boolean(proposals?.some(isDryRunProposalW)),
 		// A waiting pair → warn, so the fold holding it opens itself; parked pairs stay neutral.
 		proposalTone: proposalRows && window.UI.getWorstTone(proposalRows.map((row) => row.tone)),
@@ -1008,7 +873,7 @@ function buildMaintenanceModel(backlogState, cyclesState = UNKNOWN_REGION_W) {
 		linkFixes,
 		residueLine:
 			typeof notVerified === "number" && notVerified > 0
-				? `${formatCountW(notVerified)} candidate pairs went unverified this cycle (cost guard) — the proposal count is a floor.`
+				? `${formatCountW(notVerified)} pairs unverified (cost guard); the count is a floor.`
 				: null,
 	};
 }
@@ -1024,7 +889,7 @@ function WikiStatusRow({ cyclesState, summaryState, indexState, shared, onRetry 
 	const { SplitRow } = window.UI;
 
 	return (
-		<SplitRow ratio="2:1" layout="equal">
+		<SplitRow ratio="2:1" layout="content">
 			<WikiRunHistorySection
 				cyclesState={cyclesState}
 				summaryState={summaryState}
@@ -1064,25 +929,40 @@ function WikiRunHistorySection({ cyclesState, summaryState, shared, onRetry }) {
 						onRetry={onRetry}
 					/>
 				) : model.rows.length === 0 ? (
-					<EmptyStateW
-						message={`No wiki compile runs in the last ${WIKI_CYCLE_DAYS} days.`}
-					/>
+					<window.UI.EmptyState {...describeRunHistoryEmptyW(summaryState)} />
 				) : (
-					<div className="flex flex-col gap-2">
-						{/* The window is a fetch bound, not what is drawn → name the days the bars cover. */}
+					<window.UI.Stack gap="block">
 						<SparseTrendW
-							label={`Notes per day · ${model.spanDays} ${model.spanDays === 1 ? "day" : "days"}`}
+							label="Notes per day"
 							series={model.compiledSeries}
 							dates={model.compiledDates}
-							stat={`${formatCountW(model.total)} notes in ${model.spanDays} d · ${model.activeDays} active days`}
+							stat={describeNotesStatW(model)}
 						/>
 						{/* A near-uniform mix carries no information — only a mixed run set earns the bar. */}
 						{!model.isMixUniform && <WikiStatusMixW mix={model.mix} />}
-					</div>
+					</window.UI.Stack>
 				)}
 			</window.UI.Card>
 		</div>
 	);
+}
+
+// The window and its run count are the card head's facts → the stat line names notes and days only.
+function describeNotesStatW(model) {
+	const notes = `${formatCountW(model.total)} ${model.total === 1 ? "note" : "notes"}`;
+	return `${notes} · ${model.activeDays} active ${model.activeDays === 1 ? "day" : "days"}`;
+}
+
+// Never-run and quiet-window are different facts → the summary's last run tells them apart.
+function describeRunHistoryEmptyW(summaryState) {
+	const summary = summaryState.status === "ready" ? summaryState.data : null;
+	if (summary && !summary.last_cycle_started_at) {
+		return { message: "No runs yet", hint: "History fills after the first daily wiki cycle." };
+	}
+	return {
+		message: `No runs in the last ${WIKI_CYCLE_DAYS} days`,
+		hint: summary?.last_run_date ? `Last run ${describeRunDayW(summary.last_run_date)}` : null,
+	};
 }
 
 // Per-run record — a detail fold whose summary line states the run streak without a click.
@@ -1092,59 +972,46 @@ function WikiRunTableSection({ reportState, days, onChangeDays, shared, onRetry 
 	return (
 		<WikiDisclosureW
 			id={WIKI_REGION_IDS.runTable}
-			label="Per-run table"
+			label="Runs"
 			count={describeRunTableW(reportState, days)}
-			bodyClassName="px-3 pb-3 flex flex-col gap-2"
+			bodyClassName="flex flex-col"
 		>
-			<div className="flex items-center gap-2 flex-wrap">
-				<span className="fs-meta text-faint leading-tight">
-					{`The window drives the table only — the trend keeps a fixed ${WIKI_CYCLE_DAYS}-day window.`}
-				</span>
+			{/* flush body → the table's edge cells carry the card-pad column once (spec §1 O4); controls ride the card bar */}
+			<window.UI.Cluster gap="control" className="card-bar">
+				<span className="fs-meta text-faint leading-tight">{`Sets this table only; the trend keeps ${WIKI_CYCLE_DAYS}d.`}</span>
 				<CardInfo label="How a change is counted" describedBy={`${WIKI_REGION_IDS.runTable}-title`}>
 					A change is a run whose status or backlog differs from the run before.
 				</CardInfo>
-				<div
-					className="seg ml-auto"
-					role="group"
-					aria-label="Run table time range"
-				>
-					{WIKI_REPORT_DAYS_OPTIONS.map((p) => (
-						<button
-							key={p.value}
-							type="button"
-							className={days === p.value ? "active" : ""}
-							aria-pressed={days === p.value}
-							onClick={() => onChangeDays(p.value)}
-						>
-							{p.label}
-						</button>
-					))}
-				</div>
-			</div>
-			<WikiReportsBody state={reportState} days={days} shared={shared} onRetry={onRetry} />
+				<window.UI.Segmented
+					label="Run table time range"
+					options={WIKI_REPORT_DAYS_CHOICES}
+					value={days}
+					onChange={onChangeDays}
+					className="ml-auto"
+				/>
+			</window.UI.Cluster>
+			<WikiReportsBody state={reportState} shared={shared} onRetry={onRetry} />
 		</WikiDisclosureW>
 	);
 }
 
-// header meta ≤ 32 chars → "27 runs · all healthy" or "30 runs · 12 changes"; the body ⓘ defines a change.
+// header meta ≤ 32 chars → "30 · all healthy" or "30 · 12 changes"; the body ⓘ defines a change.
 function describeRunTableW(state, days) {
 	if (window.UI.getRegionView(state) === "loading") return "Loading…";
-	if (window.UI.getRegionView(state) === "error") return "Unavailable";
+	if (window.UI.getRegionView(state) === "error") return "Not loaded";
 
 	const reports = state.data?.reports || [];
-	if (reports.length === 0) return `No runs in ${days} d`;
+	if (reports.length === 0) return `No runs in ${days}d`;
 
 	const groups = groupConstantRunsW(sortRunsNewestFirstW(reports));
 	if (groups.length > 1) {
 		const changes = groups.length - 1;
-		return `${reports.length} runs · ${changes} ${changes === 1 ? "change" : "changes"}`;
+		return `${reports.length} · ${changes} ${changes === 1 ? "change" : "changes"}`;
 	}
 
 	const [only] = groups;
 	const status = wikiStatusLabelW(only.newest.status).toLowerCase();
-	return only.count === 1
-		? `1 ${status} run on ${only.newest.run_date}`
-		: `${only.count} runs · all ${status}`;
+	return only.count === 1 ? `1 · ${status}` : `${only.count} · all ${status}`;
 }
 
 // The server returns runs ascending by run_date.
@@ -1155,15 +1022,14 @@ function sortRunsNewestFirstW(reports) {
 }
 
 // The server's p95 shares the cycles window, so it rides the same summary line.
+// No runs or a failed read → the body states it, so the head stays silent.
 function describeRunHistoryW(cyclesState, model, summaryState) {
-	if (window.UI.getRegionView(cyclesState) === "loading") return null;
-	if (window.UI.getRegionView(cyclesState) === "error") return "Unavailable";
-	if (model.rows.length === 0) return "No runs in range";
+	if (window.UI.getRegionView(cyclesState) !== "ready" || model.rows.length === 0) return null;
 
 	const p95 =
 		summaryState.status === "ready" ? summaryState.data?.cycle_p95_ms : null;
 	const runs = model.rows.length === 1 ? "run" : "runs";
-	return `${model.rows.length} ${runs} in ${model.spanDays} d${describeP95W(p95)}`;
+	return `${model.rows.length} ${runs} in ${model.spanDays}d${describeP95W(p95)}`;
 }
 
 /**
@@ -1176,7 +1042,7 @@ function WikiDisclosureW({
 	label,
 	count,
 	tone,
-	bodyClassName = "px-3 pb-3",
+	bodyClassName = "px-card-pad pb-card-pad",
 	children,
 }) {
 	const isAlerting = window.UI.getDisclosureOpen("detail", tone);
@@ -1187,22 +1053,24 @@ function WikiDisclosureW({
 		if (isAlerting) setAlerted(true);
 	}, [isAlerting]);
 
+	// The fold is itself the card (spec §6) → its body holds content directly, never a second box.
+	// Hand-built shell: UI.Disclosure has no id anchor or count slot, which Retry focus and the h2 describedBy need.
 	return (
-		<details
-			id={id}
-			open={hasAlerted || undefined}
-			onFocus={id ? openOnOwnFocusW : undefined}
-			className="w-disclosure rounded-md border border-line bg-sunken"
-		>
-			<summary className="cursor-pointer select-none px-3 py-2 flex items-center gap-2 flex-wrap">
-				<span className="w-chevron inline-block fs-meta text-faint" aria-hidden="true">
-					▶
-				</span>
-				<h2 id={id ? `${id}-title` : undefined} className="m-0 fs-body text-ink font-medium">{label}</h2>
-				<span className="ml-auto fs-meta text-dim">{count}</span>
-			</summary>
-			<div className={bodyClassName}>{children}</div>
-		</details>
+		<div className="card">
+			<details
+				id={id}
+				open={hasAlerted || undefined}
+				onFocus={id ? openOnOwnFocusW : undefined}
+				className="w-disclosure"
+			>
+				<summary className="group disclosure select-none px-card-pad flex-wrap">
+					<window.UI.DisclosureChevron />
+					<h2 id={id ? `${id}-title` : undefined} className="fs-body text-ink font-medium">{label}</h2>
+					<span className="ml-auto fs-meta text-dim">{count}</span>
+				</summary>
+				<div className={bodyClassName}>{children}</div>
+			</details>
+		</div>
 	);
 }
 
@@ -1211,29 +1079,25 @@ function openOnOwnFocusW(event) {
 	if (event.target === event.currentTarget) event.currentTarget.open = true;
 }
 
-// Status-row peers share one slot → their feet pin to one edge of the stretched row.
+// Status-row peers take one card slot size; the content layout lets each end at its rows.
 const STATUS_CARD_SIZE_W = "S";
 
-// Notes by type — the library's composition, open as a compact list.
+// Notes by type — the library's composition as a caption-only table; the card ends at its rows.
 function WikiNotesByTypeSection({ state, shared, onRetry }) {
 	const { LoadingPlaceholder } = window.UI;
+	const view = window.UI.getRegionView(state);
 	const rows =
 		state.status === "ready" && Array.isArray(state.data?.by_type)
 			? buildNoteTypeRowsW(state.data.by_type)
 			: [];
-	const coverage = describeNoteCoverageW(rows);
+	const hasTable = view !== "loading" && view !== "error" && rows.length > 0;
 
 	return (
 		<div id={WIKI_REGION_IDS.notesByType} className="min-w-0">
-			<window.UI.Card
-				size={STATUS_CARD_SIZE_W}
-				title="Notes by type"
-				sub={describeNotesByTypeW(state)}
-				foot={coverage && <span className="truncate">{coverage}</span>}
-			>
-				{window.UI.getRegionView(state) === "loading" ? (
+			<window.UI.Card size={STATUS_CARD_SIZE_W} title="Notes by type" isFlush={hasTable}>
+				{view === "loading" ? (
 					<LoadingPlaceholder label="note types" />
-				) : window.UI.getRegionView(state) === "error" ? (
+				) : view === "error" ? (
 					<WikiRegionFailureW
 						feeders={[WIKI_FEEDERS.notesByType]}
 						source="notes by type"
@@ -1243,65 +1107,48 @@ function WikiNotesByTypeSection({ state, shared, onRetry }) {
 						focusTargetId={WIKI_REGION_IDS.notesByType}
 						onRetry={onRetry}
 					/>
-				) : rows.length === 0 ? (
-					<EmptyStateW message="No notes indexed yet." />
+				) : hasTable ? (
+					<WikiNoteTypesTable rows={rows} />
 				) : (
-					<ul className="w-type-list flex flex-col m-0 p-0 list-none">
-						{rows.map((t) => (
-							<li key={t.type} className="w-type-row fs-meta" title={t.type}>
-								<span className="text-dim truncate">{t.label}</span>
-								<span className="w-type-track" aria-hidden="true">
-									<span className="w-type-fill" style={{ width: `${t.share}%` }} />
-								</span>
-								<span className="font-mono text-ink text-right">{formatCountW(t.count)}</span>
-								<span className="font-mono text-faint text-right">{`${t.pct}%`}</span>
-							</li>
-						))}
-					</ul>
+					<window.UI.EmptyState message="No notes indexed yet." />
 				)}
 			</window.UI.Card>
 		</div>
 	);
 }
 
+// flush card body → the table's edge cells hold the card-pad column once
+function WikiNoteTypesTable({ rows }) {
+	const { Table, TableRow, TableCell } = window.UI;
+
+	return (
+		<Table caption="Notes by type, one row per type">
+			{(view) => rows.map((t) => (
+				<TableRow key={t.type} view={view} title={t.type}>
+					<TableCell view={view} kind="row-header">{t.label}</TableCell>
+					<TableCell view={view} isNumeric>{formatCountW(t.count)}</TableCell>
+				</TableRow>
+			))}
+		</Table>
+	);
+}
+
 // Internal note_type → reader label; an unlisted type keeps its name after "Other".
 const NOTE_TYPE_LABELS = { raw: "Saved originals", "source-summary": "Summary notes" };
 
-// Bar length = share of the largest type; pct = share of all notes.
 function buildNoteTypeRowsW(rows) {
-	const counts = rows.map((t) => Number(t.count) || 0);
-	const max = Math.max(0, ...counts);
-	const total = counts.reduce((sum, n) => sum + n, 0);
-	return rows.map((t, i) => ({
+	return rows.map((t) => ({
 		type: t.note_type,
 		label: NOTE_TYPE_LABELS[t.note_type] || `Other · ${t.note_type}`,
-		count: counts[i],
-		share: max > 0 ? Math.round((counts[i] / max) * 100) : 0,
-		pct: total > 0 ? Math.round((counts[i] / total) * 100) : 0,
+		count: Number(t.count) || 0,
 	}));
-}
-
-// Summaries against the originals they cover; either type missing → no line.
-function describeNoteCoverageW(rows) {
-	const countOf = (type) => rows.find((t) => t.type === type)?.count;
-	const summaries = countOf("source-summary");
-	const originals = countOf("raw");
-	if (typeof summaries !== "number" || typeof originals !== "number") return null;
-	return `${formatCountW(summaries)} summary notes for ${formatCountW(originals)} saved originals`;
-}
-
-function describeNotesByTypeW(state) {
-	if (window.UI.getRegionView(state) === "loading") return null;
-	if (window.UI.getRegionView(state) === "error") return "Unavailable";
-	const rows = Array.isArray(state.data?.by_type) ? state.data.by_type : [];
-	return `${rows.length} types`;
 }
 
 // 백로그 stale 임계(일) — wiki 데몬 사이클이 일일 → run_date 가 1일 초과 경과면 stale.
 // CYCLE_FRESH_OK_HOURS(24h)와 정합하되 run_date 는 날짜 단위라 일 카운트로 비교.
 const BACKLOG_STALE_DAYS = 1;
 const LIBRARY_COUNTING_NOTE_W =
-	"Waiting counts saved originals not yet compiled into notes; broken links come from the last dead-link dry run.";
+	"Waiting: originals not yet compiled. Broken links: last dry run.";
 
 // 'YYYY-MM-DD'(UTC) run_date → 오늘(UTC) 대비 경과일. 비정상/null → null (stale 분기 보류).
 // 데몬 run_date 가 UTC date 기준이므로 today 도 UTC 로 맞춰 비교 (outcomes.isoDayKeyO 패턴 미러).
@@ -1326,7 +1173,7 @@ function WikiStatusMixW({ mix }) {
 	return (
 		<>
 			<div
-				className="flex w-full h-2.5 rounded-full overflow-hidden bg-sunken"
+				className="flex w-full h-2.5 rounded-sm overflow-hidden bg-sunken"
 				role="img"
 				aria-label={`Run status mix: healthy ${mix.ok}%, warning ${mix.partial}%, down ${mix.error}%, usage limit ${mix.quota}%`}
 			>
@@ -1347,9 +1194,9 @@ function WikiStatusMixW({ mix }) {
 					style={{ width: `${mix.quota}%`, background: "rgb(var(--faint))" }}
 				/>
 			</div>
-			<div className="flex flex-wrap gap-x-3 gap-y-1 fs-meta text-faint mt-1.5">
+			<window.UI.Cluster gap="control" className="fs-meta text-faint mt-label">
 				{["ok", "partial", "error", "quota"].map((k) => (
-					<span key={k} className="inline-flex items-center gap-1">
+					<span key={k} className="inline-flex items-center gap-label-inline">
 						{/* tone shape per status (faint usage limit has none → neutral dot) — the key reads without colour */}
 						<Icon
 							name={TONE_ICON[STATUS_CHIP_META[k].tone] ?? "circle"}
@@ -1359,7 +1206,7 @@ function WikiStatusMixW({ mix }) {
 						{STATUS_CHIP_META[k].label} {mix[k]}%
 					</span>
 				))}
-			</div>
+			</window.UI.Cluster>
 		</>
 	);
 }
@@ -1479,89 +1326,122 @@ function computeStatusMix(rows) {
 	};
 }
 
-// payload JSON dump(<pre>) 원형 표시 — dead-link · link-fix 목록 전용.
+// payload JSON dump(<pre>) 원형 표시 — link-fix 목록 전용.
 function BacklogExplorer({ label, count, payload }) {
 	return (
 		<WikiDisclosureW label={label} count={count}>
-			<pre className="fs-meta font-mono text-dim whitespace-pre-wrap break-words m-0 max-h-64 overflow-y-auto">
-				{stringifyPayloadW(payload)}
+			<pre className="fs-meta text-dim whitespace-pre-wrap max-h-64 overflow-y-auto">
+				<window.UI.MachineString>{stringifyPayloadW(payload)}</window.UI.MachineString>
 			</pre>
 		</WikiDisclosureW>
 	);
 }
 
-function MergeSuggestionItem({ proposal }) {
-	const { Icon } = window.UI;
+const WIKI_PROPOSAL_COLUMNS = [
+	{ key: "target", label: "Kept note" },
+	{ key: "sources", label: "Absorbs" },
+	{ key: "similarity", label: "Similarity", isNumeric: true },
+	{ key: "reason", label: "Reason" },
+];
 
-	const target = proposal.target_slug || "—";
-	const sources = Array.isArray(proposal.source_slugs)
-		? proposal.source_slugs.join(", ")
-		: "—";
-	const similarity =
-		typeof proposal.similarity_score === "number"
-			? `${Math.round(proposal.similarity_score * 100)}% similar`
-			: null;
-	const action = readProposalActionW(proposal);
+// One row per proposal on the fold's flush body; the column heads say which note absorbs which.
+function WikiProposalsTable({ proposals }) {
+	const { Table } = window.UI;
 
 	return (
-		<li className="rounded border border-line bg-card px-2.5 py-1.5">
-			<div className="flex items-baseline gap-2 flex-wrap fs-meta font-mono">
-				<span className="text-ink font-medium break-words min-w-0">{target}</span>
-				<span className="inline-flex items-center text-faint">
-					<Icon name="arrow-left" size={12} />
-					{/* the arrow glyph is aria-hidden → direction needs a text equivalent per row */}
-					<span className="sr-only">{" absorbs "}</span>
-				</span>
-				<span className="text-dim break-words min-w-0">{sources}</span>
-				{similarity && <span className="ml-auto text-dim">{similarity}</span>}
-			</div>
-			{action && (
-				<div className="fs-meta text-faint mt-1 leading-tight break-words whitespace-pre-wrap">
-					{action}
-				</div>
-			)}
-		</li>
+		<Table caption="Merge proposals, one row per kept note" columns={WIKI_PROPOSAL_COLUMNS}>
+			{(view) => proposals.map((proposal, i) => (
+				<MergeSuggestionItem key={proposal.cluster_hash || i} proposal={proposal} view={view} />
+			))}
+		</Table>
 	);
 }
 
-// The cleaner tags every action DRY-RUN → the list states it once, each row keeps its own action.
-const DRY_RUN_TAIL_W = /\s*DRY-RUN\b[\s\S]*$/;
+function MergeSuggestionItem({ proposal, view }) {
+	const { TableRow, TableCell } = window.UI;
+	const sources = Array.isArray(proposal.source_slugs) ? proposal.source_slugs.join(", ") : "";
+	const similarity =
+		typeof proposal.similarity_score === "number" ? `${Math.round(proposal.similarity_score * 100)}%` : null;
 
-// "Merge notes/a.md into notes/b.md." restates the row's target ← sources → the list explains the arrow once.
-const MERGE_RESTATEMENT_W = /^Merge\s+\S.*\s+into\s+\S+$/i;
-
-function readProposalActionW(proposal) {
-	const action = (proposal.suggested_action || proposal.llm_verdict || "").replace(DRY_RUN_TAIL_W, "").trim();
-	return MERGE_RESTATEMENT_W.test(action) ? "" : action;
+	return (
+		<TableRow view={view}>
+			<TableCell view={view} kind="row-header">
+				<WikiMachineCellW value={proposal.target_slug} />
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Absorbs">
+				<WikiMachineCellW value={sources} />
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Similarity" isNumeric>
+				{similarity ?? <window.UI.AbsentValue kind="none" />}
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Reason" className="break-words whitespace-pre-wrap">
+				{proposal.llm_rationale?.trim() || <window.UI.AbsentValue kind="none" />}
+			</TableCell>
+		</TableRow>
+	);
 }
+
+const WIKI_BROKEN_LINK_COLUMNS = [
+	{ key: "source", label: "Source" },
+	{ key: "target", label: "Target" },
+];
+
+// records from scripts/wiki_deadlinks.py → DeadlinkRecord: the note holding the link, and the slug it points at
+function WikiBrokenLinksTable({ links }) {
+	const { Table, TableRow, TableCell } = window.UI;
+
+	return (
+		<Table caption="Broken links, one row per link" columns={WIKI_BROKEN_LINK_COLUMNS}>
+			{(view) => links.map((link, i) => (
+				<TableRow key={i} view={view}>
+					<TableCell view={view} kind="row-header">
+						<WikiMachineCellW value={link?.source_slug} />
+					</TableCell>
+					<TableCell view={view} textRole="meta" label="Target">
+						<WikiMachineCellW value={link?.link_target} />
+					</TableCell>
+				</TableRow>
+			))}
+		</Table>
+	);
+}
+
+// a slug or path cell: a non-empty string reads in machine type, anything else as the shared None
+function WikiMachineCellW({ value }) {
+	const { AbsentValue, MachineString } = window.UI;
+	return typeof value === "string" && value ? <MachineString>{value}</MachineString> : <AbsentValue kind="none" />;
+}
+
+// The cleaner tags every action DRY-RUN → the list states it once above the table.
+const DRY_RUN_TAIL_W = /\s*DRY-RUN\b[\s\S]*$/;
 
 function isDryRunProposalW(proposal) {
 	return DRY_RUN_TAIL_W.test(proposal.suggested_action || "");
 }
 
-function WikiReportsBody({ state, days, shared, onRetry }) {
+function WikiReportsBody({ state, shared, onRetry }) {
 	if (window.UI.getRegionView(state) === "loading") {
 		return <WikiReportsTable reports={[]} isLoading />;
 	}
 	if (window.UI.getRegionView(state) === "error") {
+		// the fold body is flush for the table → the failure block takes the card inset itself
 		return (
-			<WikiRegionFailureW
-				feeders={[WIKI_FEEDERS.runTable]}
-				source="the run table"
-				error={state.error}
-				isBusy={state.busy}
-				shared={shared}
-				focusTargetId={WIKI_REGION_IDS.runTable}
-				onRetry={onRetry}
-			/>
+			<div className="px-card-pad pb-card-pad">
+				<WikiRegionFailureW
+					feeders={[WIKI_FEEDERS.runTable]}
+					source="runs"
+					error={state.error}
+					isBusy={state.busy}
+					shared={shared}
+					focusTargetId={WIKI_REGION_IDS.runTable}
+					onRetry={onRetry}
+				/>
+			</div>
 		);
 	}
 	const reports = state.data?.reports || [];
-	if (reports.length === 0) {
-		return (
-			<EmptyStateW message={`No wiki compile runs in the last ${days} days.`} />
-		);
-	}
+	// the fold count already says no runs in the window
+	if (reports.length === 0) return null;
 
 	const sortedDesc = sortRunsNewestFirstW(reports);
 
@@ -1583,7 +1463,7 @@ function WikiReportsBody({ state, days, shared, onRetry }) {
 	return (
 		<div>
 			{/* per-run 보고는 동질 카드 N개 → 슬롭 card-grid 가 아니라 RECORD 표(.tbl)로 노출 (S1/S6).
-          최신 우선 · 수치 셀 .num · 시각 relative-time · 상태 DAEMON_STATUS_TONE · 상태 톤은 배지만 담당. */}
+          최신 우선 · 수치 셀 .num · 시작 HH:mm · 상태 DAEMON_STATUS_TONE · 상태 톤은 날짜 뒤 톤 글리프 + 상태어가 담당. */}
 			<WikiReportsTable reports={sortedDesc} />
 		</div>
 	);
@@ -1591,67 +1471,59 @@ function WikiReportsBody({ state, days, shared, onRetry }) {
 
 const WIKI_REPORT_COLUMNS = [
 	{ key: "run_date", label: "Run date" },
-	{ key: "status", label: "Status" },
+	{ key: "started", label: "Started" },
 	{ key: "deadlinks", label: "Broken links", isNumeric: true },
 	{ key: "dedup", label: "Duplicates", isNumeric: true },
-	{ key: "started", label: "Started" },
 ];
+// the run date takes the slack; fixed layout → no column moves with what a run's cells hold
+const WIKI_REPORT_WIDTHS_W = Object.freeze([undefined, "6rem", "8rem", "8rem"]);
+const WIKI_REPORT_TABLE_CLASS_W = "table-fixed";
 
-// Rows flow in page scroll; the wrapper only scrolls sideways on a narrow pane.
+// Rows flow in page scroll; the Table wrapper clips, so a narrow pane never scrolls the run table sideways.
 function WikiReportsTable({ reports, isLoading = false }) {
-	const { Badge, Table, SkeletonRows } = window.UI;
+	const { Table, SkeletonRows } = window.UI;
 
 	return (
-		<div className="overflow-x-auto rounded-md border border-line">
-			<Table
-				caption="Wiki compile runs, newest first, one row per run"
-				columns={WIKI_REPORT_COLUMNS}
-				className="w-report-tbl"
-			>
-				{isLoading ? (
-					<SkeletonRows rows={5} columns={WIKI_REPORT_COLUMNS.length} rowHeight={36} />
-				) : (
-					reports.map((report) => (
-						<WikiReportRow key={report.run_date} report={report} Badge={Badge} />
-					))
-				)}
-			</Table>
-		</div>
+		<Table
+			caption="Wiki compile runs, newest first, one row per run"
+			columns={WIKI_REPORT_COLUMNS}
+			widths={WIKI_REPORT_WIDTHS_W}
+			className={WIKI_REPORT_TABLE_CLASS_W}
+		>
+			{isLoading
+				? <SkeletonRows rows={5} columns={WIKI_REPORT_COLUMNS.length} rowHeight={36} />
+				: (view) => reports.map((report) => <WikiReportRow key={report.run_date} report={report} view={view} />)}
+		</Table>
 	);
 }
 
-// The status badge carries the tone; the row takes no stripe.
-function WikiReportRow({ report, Badge }) {
+// a healthy run shows its date alone (the fold count says all healthy); any other states its glyph + word after the date
+function WikiReportRow({ report, view }) {
+	const { AbsentValue, TableRow, TableCell, TONE_GLYPH } = window.UI;
 	const tone = wikiStatusToneW(report.status);
 
 	return (
-		<tr>
-			<td>
-				<span className="font-mono text-ink font-medium">
-					{report.run_date}
-				</span>
-			</td>
-			<td>
-				<Badge role="status" tone={tone} icon>
-					{wikiStatusLabelW(report.status)}
-				</Badge>
-			</td>
-			{/* DEAD/DEDUP = 누적 백로그 스냅샷 (run time 컬럼은 항상 0 duration → 제거, A2). */}
-			<td className="num text-dim">{report.deadlinks_count ?? "—"}</td>
-			<td className="num text-dim">{report.dedup_count ?? "—"}</td>
-			<td
-				className="text-faint"
-				title={
-					report.started_at
-						? window.UI.formatKstFull(report.started_at)
-						: undefined
-				}
-			>
-				{report.started_at
-					? window.UI.formatRelativeTime(report.started_at)
-					: "—"}
-			</td>
-		</tr>
+		<TableRow view={view}>
+			<TableCell view={view} kind="row-header" className="tabular-nums">
+				{describeRunDayW(report.run_date)}
+				{tone !== "ok" && (
+					<>
+						{" "}
+						<span className={tone === "neutral" ? "text-dim" : `text-${tone}`} aria-hidden="true">{`${TONE_GLYPH[tone]} `}</span>
+						{wikiStatusLabelW(report.status)}
+					</>
+				)}
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Started" className="tabular-nums" title={report.started_at ? window.UI.formatKstFull(report.started_at) : undefined}>
+				{report.started_at ? window.UI.formatKstTime(report.started_at) : <AbsentValue kind="none" />}
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Broken links" isNumeric>
+				{report.deadlinks_count ?? <AbsentValue kind="none" />}
+			</TableCell>
+			<TableCell view={view} textRole="meta" label="Duplicates" isNumeric>
+				{report.dedup_count ?? <AbsentValue kind="none" />}
+			</TableCell>
+		</TableRow>
 	);
 }
 
@@ -1678,42 +1550,35 @@ function isSameRunW(a, b) {
 	);
 }
 
-// Shared chrome (wiki-scoped — health.jsx 패턴 미러).
-
-function EmptyStateW({ message }) {
-	const { EmptyState } = window.UI;
-	return <EmptyState message={message} className="m-3" />;
-}
-
 // 희소 추세(비0 포인트 < SPARSE_MIN_NONZERO) 공용 렌더 — 넓은 트랙 외톨이 막대가 "차트 깨짐"으로 읽히는 문제 회피.
 //   sparse → TrendChart 대신 한 줄 안내 · 헤드라인 수치(합계·활성일·피크)는 항상 차트 위.
 //   충분히 채워진 시리즈(비0 ≥ SPARSE_MIN_NONZERO) → 패널 폭 TrendChart(막대별 날짜·값 readout).
 function SparseTrendW({ label, series, dates, stat }) {
-	const { TrendChart } = window.UI;
+	const { TrendChart, formatKstDay } = window.UI;
 	const sparse = series.filter((v) => v > 0).length < SPARSE_MIN_NONZERO;
-	const headline = [stat, describePeakW(series, dates)].filter(Boolean).join(" · ");
+	const days = dates.map((date) => (date ? formatKstDay(date) : ""));
+	const headline = [stat, describePeakW(series, days)].filter(Boolean).join(" · ");
 
 	return (
-		<div>
-			<div className="fs-body text-ink mb-1">{headline}</div>
-			<div className="card-sub mb-1.5">{label}</div>
+		<window.UI.Stack gap="label">
+			<window.UI.Stack gap="stack">
+				<div className="fs-body text-ink">{headline}</div>
+				<div className="card-sub">{label}</div>
+			</window.UI.Stack>
 			{sparse ? (
-				<div className="rounded-md border border-line bg-sunken px-3 py-2.5 fs-meta text-faint">
-					Too few active days to draw a trend.
-				</div>
+				<window.UI.EmptyState message="Too few active days to draw a trend." />
 			) : (
 				<TrendChart
 					label={label}
 					kind="bars"
-					tone="info"
-					points={series.map((value, i) => ({ label: dates[i] || "", value }))}
+					points={series.map((value, i) => ({ label: days[i] ?? "", value }))}
 					formatValue={formatCountW}
 					yScale
 					maxTicks={getEvenTickCapW(series.length)}
 					h={112}
 				/>
 			)}
-		</div>
+		</window.UI.Stack>
 	);
 }
 

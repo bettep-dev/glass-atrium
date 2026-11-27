@@ -1,13 +1,12 @@
 # Type Design — Detailed Rules
 
-Companion reference for `glass-atrium-dev-patterns/SKILL.md`. Load when designing types, interfaces, discriminated unions, or DTO/Entity boundaries.
-
 ## Type Design [DEV]
 
-**any/dynamic/Object forbidden** — nullable → express in function name and type.
-
-- Used 2+ times or has 3+ properties → extract into a separate type
-- Nested generics **2 levels max**
+- **any/dynamic/Object forbidden**
+  - Scope: each one used as a type, written or inferred, in a language that has it.
+    - Inferred: a value the checker types that way with no annotation, such as an un-annotated parameter or an untyped `JSON.parse` result.
+  - Why: such a type switches checking off for every value it types, and the gap spreads to each caller.
+- Nullable → express in function name and type
 
 ## Discriminated Union
 
@@ -17,33 +16,19 @@ Companion reference for `glass-atrium-dev-patterns/SKILL.md`. Load when designin
 ## Branded Types
 
 - Pattern: `type UserId = number & { __brand: 'UserId' }`
-- **Semantic distinction** of identical base types (UserId vs ProductId). Zero runtime cost
-
-## Narrowing Guard Selection
-
-| Guard | Target | Use Case |
-|-------|--------|----------|
-| `typeof` | primitive | `string`/`number`/`boolean` |
-| `instanceof` | class | Class instances |
-| `in` | object shape | Property existence check |
-| `is` (type predicate) | custom | Complex type guard functions |
-| `asserts` | assertion | Guards that throw exceptions |
+- Distinguishes identical base types (UserId vs ProductId) at zero runtime cost
 
 ## Generic Constraints
 
-| Pattern | Purpose |
-|---------|---------|
-| `K extends keyof T` | Type-safe key access |
-| `T extends object` | Exclude primitives |
-| Over-constraining | Forbidden — reduces reusability |
+- Over-constraining forbidden — reduces reusability
 
 ## DTO vs Entity
 
 | Aspect | DTO | Entity |
 |--------|-----|--------|
-| **Location** | HTTP boundary | Business logic |
-| **Validation** | class-validator | Invariants |
-| **Exposure** | External allowed | Direct HTTP exposure forbidden |
+| Location | HTTP boundary | Business logic |
+| Validation | Per stack (`rules/glass-atrium/core-security.md` → **All external input MUST be validated**); class-validator on NestJS | Invariants |
+| Exposure | External allowed | Direct HTTP exposure forbidden |
 
 ## Readonly Comparison
 

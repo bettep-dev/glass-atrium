@@ -512,6 +512,9 @@ export type ClaudedDocsErrorBody =
       requested: number;
       manifest: HtmlExportManifestEntry[];
     }
+  // the Chromium render line (html-export.ts → RENDER_LINE) full, or the caller gone while its render waited
+  | { error: "export_busy" }
+  | { error: "caller_gone" }
   | { error: "invalid_param"; param: string; allowed?: ReadonlyArray<string | number> }
   | { error: "invalid_body"; reason: string }
   | { error: "not_found"; id: number }

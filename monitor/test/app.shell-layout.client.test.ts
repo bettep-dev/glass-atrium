@@ -5,13 +5,13 @@
 //
 // Runner: npx tsx --test test/app.shell-layout.client.test.ts
 
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
-  createReactStub,
   collectText,
+  createStatefulReact,
   findNodes,
   loadScreenModule,
   renderScreen,
@@ -30,62 +30,6 @@ interface FakeElement {
   setAttribute: (name: string, value: string) => void;
   focus: () => void;
   querySelector: (selector: string) => FakeElement | null;
-}
-
-type Effect = () => unknown;
-type Deps = unknown[] | undefined;
-
-// Hook slots keyed by call order, reset per render — mirrors React's persistence contract.
-function createStatefulReact() {
-  const base = createReactStub();
-  const slots: unknown[] = [];
-  let cursor = 0;
-  let pending: Effect[] = [];
-  const claim = (init: () => unknown): number => {
-    const index = cursor++;
-    if (!(index in slots)) slots[index] = init();
-    return index;
-  };
-
-  // createReactStub is typed as a loose record; its createElement is the variadic factory
-  const createElement = base.createElement as (type: unknown, props: unknown, ...children: unknown[]) => unknown;
-  const react = {
-    ...base,
-    createElement,
-    useState: (initial: unknown) => {
-      const index = claim(() => (typeof initial === "function" ? (initial as () => unknown)() : initial));
-      const setter = (next: unknown) => {
-        slots[index] = typeof next === "function" ? (next as (p: unknown) => unknown)(slots[index]) : next;
-      };
-      return [slots[index], setter];
-    },
-    useRef: (initial: unknown) => slots[claim(() => ({ current: initial }))],
-    // memoized by deps like React → a stable callback keeps its effect from re-running every render
-    useCallback: (fn: unknown, deps: Deps) => {
-      const index = claim(() => ({ fn, deps }));
-      const memo = slots[index] as { fn: unknown; deps: Deps };
-      const changed = !deps || !memo.deps || deps.some((dep, i) => dep !== memo.deps?.[i]);
-      if (changed) slots[index] = { fn, deps };
-      return (slots[index] as { fn: unknown }).fn;
-    },
-    useEffect: (effect: Effect, deps: Deps) => {
-      const index = claim(() => undefined);
-      const prev = slots[index] as Deps;
-      const changed = !deps || !prev || deps.some((dep, i) => dep !== prev[i]);
-      if (!changed) return;
-      slots[index] = deps;
-      pending.push(effect);
-    },
-  };
-  const flushEffects = () => {
-    const run = pending;
-    pending = [];
-    for (const effect of run) effect();
-  };
-  const resetCursor = () => {
-    cursor = 0;
-  };
-  return { react, flushEffects, resetCursor };
 }
 
 function fakeElement(tag: string, heading: FakeElement | null, focusLog: FakeElement[]): FakeElement {
@@ -112,12 +56,13 @@ type ScreenFactory = (react: StatefulReact, ui: Record<string, unknown>) => Reco
 const readyOnceAnswered = (stores: Record<string, { status: string }>) =>
   Object.values(stores).some((store) => store.status === "loading")
     ? { status: "loading" }
-    : { status: "ready", downNames: [], daemonsDown: 0, failCount1h: 0 };
+    : { status: "ready", downNames: [], failCount1h: 0 };
 
-async function mountShell({ fetch = () => new Promise(() => undefined), createRoot = () => ({ render: () => undefined }), screens }: {
+async function mountShell({ fetch = () => new Promise(() => undefined), createRoot = () => ({ render: () => undefined }), screens, foldHarness }: {
   fetch?: (url: string) => Promise<unknown>;
   createRoot?: () => { render: (node: unknown) => void };
   screens?: ScreenFactory;
+  foldHarness?: (stores: Record<string, { status: string; error?: string | null }>) => unknown;
 } = {}) {
   const { react, flushEffects, resetCursor } = createStatefulReact();
   let displayTimezone = "Asia/Seoul";
@@ -144,10 +89,11 @@ async function mountShell({ fetch = () => new Promise(() => undefined), createRo
     removeEventListener: () => undefined,
     document: {
       getElementById: (id: string) => (id === "main-content" ? main : null),
+      querySelector: () => null,
       documentElement: { setAttribute: () => undefined, style: { setProperty: () => undefined } },
     },
-    useTweaks: () => [{ theme: "dark", density: "comfortable", accent: "#3b82f6" }, () => undefined],
-    HealthModel: { foldHarness: screens ? readyOnceAnswered : () => ({ status: "loading" }) },
+    useTweaks: () => [{ density: "comfortable", accent: "#3b82f6" }, () => undefined],
+    HealthModel: { foldHarness: foldHarness ?? (screens ? readyOnceAnswered : () => ({ status: "loading" })) },
     UI: {
       ...ui,
       Icon: () => null,
@@ -265,6 +211,21 @@ test("the shell mounts at once, without waiting for the health read", async () =
   assert.equal(mounted.length, 1, "one root render while /api/health is still pending");
 });
 
+// the queue has no sign-in → the shell reads only the count route, never an owner route
+test("the shell reads no owner queue route on mount", async () => {
+  const urls: string[] = [];
+  const { render } = await mountShell({
+    fetch: (url) => {
+      urls.push(url);
+      return new Promise(() => undefined);
+    },
+  });
+  render();
+
+  assert.ok(urls.includes("/api/queue/count"), urls.join(", "));
+  assert.deepEqual(urls.filter((url) => url.startsWith("/api/queue/owner")), []);
+});
+
 test("a timezone arriving on the health read re-keys the page, so every time string re-renders in it", async () => {
   const health = { ok: true, json: async () => ({ timezone: "America/New_York" }) };
   const { render } = await mountShell({
@@ -299,7 +260,6 @@ function createHarnessFetch({ isHealthy }: { isHealthy: boolean }) {
   return { fetch, settle, state };
 }
 
-const sidebarText = (tree: RenderedNode) => collectText(findNodes(tree, (n) => n.type === "aside")[0]);
 const clickNode = (node: RenderedNode) => (node.props.onClick as (e: unknown) => void)({});
 
 test("a Refresh off the Dashboard starts one harness read, and concurrent requests join it", async () => {
@@ -330,31 +290,132 @@ test("a Refresh off the Dashboard starts one harness read, and concurrent reques
   await dashboardRead;
 });
 
-test("a Retry that recovers the page and the harness clears Status unknown on that action", async () => {
+// Harness fold stand-in: a part down while any store's latest read failed, no fault once every store answered.
+const downWhileUnread = (stores: Record<string, { status: string; error?: string | null }>) => ({
+  status: "ready",
+  downNames: Object.values(stores).some((store) => store.error != null) ? ["PostgreSQL"] : [],
+  failCount1h: 0,
+});
+
+// the rendered count shells, not the Badge elements that produce them
+const findNavBadges = (tree: RenderedNode) => findNodes(tree, (n) => ["pill", "nav-count"].every((name) => String(n.props.className ?? "").split(" ").includes(name)));
+
+test("a page Retry also re-reads the harness, so a recovered harness reaches the nav on that action", async () => {
   const harnessFetch = createHarnessFetch({ isHealthy: false });
-  const page: { at: string | null; failed: boolean } = { at: null, failed: true };
   const { render, navigateByHash } = await mountShell({
     fetch: harnessFetch.fetch,
+    foldHarness: downWhileUnread,
     screens: (react, ui) => ({
       ScreenCost: function ScreenCost() {
-        const onRetry = () => Object.assign(page, { at: new Date().toISOString(), failed: false });
-        return react.createElement("div", null,
-          react.createElement(ui.FreshnessStamp, { at: page.at, failed: page.failed }),
-          react.createElement(ui.RetryButton, { onRetry }));
+        return react.createElement(ui.RetryButton, { onRetry: () => undefined });
       },
     }),
   });
   render();
   await harnessFetch.settle();
   navigateByHash("#cost");
-  render();
-  const failedTree = render();
-  assert.match(sidebarText(failedTree), /STATUS UNKNOWN/, "an unread harness outranks the page's failed read");
-
+  const faulted = render();
+  const [retry] = findNodes(mainRegion(faulted), (n) => n.type === "button");
+  assert.equal(findNavBadges(faulted).length, 1, "precondition: the faulted harness shows on the nav");
+  const readsBefore = harnessFetch.state.kpiReads;
   harnessFetch.state.isHealthy = true;
-  clickNode(findNodes(mainRegion(failedTree), (n) => n.type === "button")[0]);
-  await harnessFetch.settle();
-  render();
 
-  assert.match(sidebarText(render()), /ALL SYSTEMS/);
+  clickNode(retry);
+  await harnessFetch.settle();
+
+  assert.equal(harnessFetch.state.kpiReads - readsBefore, 1, "the Retry starts one harness read");
+  assert.deepEqual(findNavBadges(render()), [], "the recovered harness clears the nav badge");
+});
+
+describe("the Queue nav item", () => {
+  // the slot's two facts, plain listed first → the worst-first order is what draws the warn count first
+  const QUEUE_COUNTS = {
+    awaiting: { badge: "128", source: "queue", title: "128 queue items awaiting you", description: "128 queue items awaiting you" },
+    deviations: { badge: "1", badgeTone: "warn", glyph: "⚠", source: "queue", title: "1 deviation open", description: "1 deviation open" },
+  };
+  // the queue slot from its own read, beside a toned Agents numeral on the same merged nav map
+  async function renderQueueCounts(): Promise<RenderedNode[]> {
+    const getQueueNavBadge = () => ({ queue: { badges: [QUEUE_COUNTS.awaiting, QUEUE_COUNTS.deviations] }, agents: { badge: "3", badgeTone: "crit" } });
+    const { render } = await mountShell({ screens: () => ({ QueueNav: { getQueueNavBadge } }) });
+    const [item] = findNodes(render(), (n) => n.type === "button" && n.props.title === "Queue");
+    assert.ok(item, "the nav renders Queue");
+    return findNodes(item, (n) => classOf(n).split(" ").includes("pill"));
+  }
+  const classOf = (n: RenderedNode) => String(n.props.className ?? "");
+
+  test("carries each count as the same tag round count atom as every other item, the awaiting count capped at 99+", async () => {
+    const counts = await renderQueueCounts();
+    assert.deepEqual(counts.map((n) => classOf(n).split(" ").sort()), counts.map(() => ["nav-count", "pill", "pill--num", "pill--tag"]));
+    assert.match(collectText(counts[1]), /^99\+/);
+  });
+
+  test("the deviation count leads with the warn glyph in its colour, the awaiting count draws none, and assistive tech hears each description", async () => {
+    const counts = await renderQueueCounts();
+    const glyphs = counts.map((count) => findNodes(count, (n) => n.props["aria-hidden"] === "true" && collectText(n) === "⚠ ").map((n) => classOf(n)));
+    const descriptions = counts.map((count) => collectText(findNodes(count, (n) => classOf(n) === "sr-only")[0]));
+    assert.deepEqual(glyphs, [["text-warn"], []]);
+    assert.deepEqual(descriptions, [`, ${QUEUE_COUNTS.deviations.description}`, `, ${QUEUE_COUNTS.awaiting.description}`]);
+  });
+});
+
+describe("the nav counts", () => {
+  const SLOT = {
+    warn: { badge: "4", badgeTone: "warn", glyph: "⚠", title: "4 failed", description: "4 failed" },
+    crit: { badge: "2", badgeTone: "crit", glyph: "✕", title: "2 down", description: "2 down" },
+    many: { badge: "140", badgeTone: "warn", glyph: "⚠", title: "140 failed", description: "140 failed" },
+  };
+  const getClasses = (n: RenderedNode) => String(n.props.className ?? "").split(" ");
+  async function renderAgentCounts(badges: unknown[]): Promise<RenderedNode[]> {
+    const getQueueNavBadge = () => ({ agents: { badges } });
+    const { render } = await mountShell({ screens: () => ({ QueueNav: { getQueueNavBadge } }) });
+    const [item] = findNodes(render(), (n) => n.type === "button" && n.props.title === "Agents");
+    return findNodes(item, (n) => getClasses(n).includes("pill"));
+  }
+
+  // spec 44084 §5: one atom → the shell is the same for every tone and position, the glyph takes its tone's colour
+  test("every nav count draws the tag round count shell, its glyph in its own tone, worst tone first", async () => {
+    const counts = await renderAgentCounts([SLOT.warn, SLOT.crit, SLOT.crit]);
+    const glyphClasses = counts.map((count) => findNodes(count, (n) => n.props["aria-hidden"] === "true" && /^[⚠✕] $/.test(collectText(n)))[0]?.props.className);
+    assert.deepEqual(counts.map((n) => [...getClasses(n)].sort()), counts.map(() => ["nav-count", "pill", "pill--num", "pill--tag"]));
+    assert.deepEqual(glyphClasses, ["text-crit", "text-crit", "text-warn"]);
+  });
+
+  test("a count above 99 reads 99+, and its title and assistive-tech description stay whole", async () => {
+    const [count] = await renderAgentCounts([SLOT.many]);
+    const [description] = findNodes(count, (n) => getClasses(n).includes("sr-only"));
+    assert.equal(count.props.title, SLOT.many.title);
+    assert.match(collectText(count), /^⚠\s+99\+/);
+    assert.equal(collectText(description), `, ${SLOT.many.description}`);
+  });
+});
+
+describe("the nav current item", () => {
+  test("only the current route's item is aria-current page, and it follows navigation", async () => {
+    const { render, navigateByHash } = await mountShell();
+    const getCurrent = () => findNodes(render(), (n) => n.type === "button" && n.props["aria-current"] !== undefined).map((n) => [n.props.title, n.props["aria-current"]]);
+    const onDashboard = getCurrent();
+    navigateByHash("#cost");
+
+    assert.deepEqual([onDashboard, getCurrent()], [[["Dashboard", "page"]], [["Cost & usage", "page"]]]);
+  });
+});
+
+describe("the nav icons", () => {
+  // owner decision, spec 44084 §12.2a; Task results keeps target
+  test("each destination draws the owner-approved icon", async () => {
+    const drawn: Record<string, string> = {};
+    const { render } = await mountShell({
+      screens: (react, ui) => ({
+        UI: { ...ui, Icon: ({ name }: { name: string }) => react.createElement("svg", { "data-icon": name }) },
+      }),
+    });
+    for (const item of findNodes(render(), (n) => n.type === "button" && /\bnav-item\b/.test(String(n.props.className ?? "")))) {
+      const [icon] = findNodes(item, (n) => n.type === "svg");
+      drawn[String(item.props.title)] = String(icon?.props["data-icon"]);
+    }
+    assert.deepEqual(
+      { learning: drawn.Learning, wiki: drawn.Wiki, map: drawn["System map"], results: drawn["Task results"] },
+      { learning: "repeat", wiki: "book-open", map: "network", results: "target" },
+    );
+  });
 });

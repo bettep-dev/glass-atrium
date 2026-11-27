@@ -1,18 +1,22 @@
-// Model-config API (spec doc 36166): GET/PUT /api/model-config — per-domain model
-// assignment + per-call budget hard caps. DB (monitor.model_config) = UI SoT;
-// daemon-config.json is the write-through-rendered consumer view; agent frontmatter is the
-// harness-consumed surface for dev/research pins.
+// Model-config API (spec doc 36166): GET/PUT /api/model-config — the daemon model, per-call budget caps and tier knobs.
+// DB (monitor.model_config) = UI SoT; daemon-config.json is the write-through-rendered consumer view.
+// PUT /api/model-config/agents writes agent pins: each agent file's own model line is the one SoT, no DB row.
 
 import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { z } from "zod";
 
-import { loadAgentRegistry } from "../agents/registry.js";
+import { type AgentFileList, type AgentFileParts, getAgentFileParts, listAgentFiles, loadAgentRegistry } from "../agents/registry.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
-import type { AuditChangeCarrier } from "../middleware/audit-log.js";
+import { type AuditChangeCarrier, setAuditTarget } from "../middleware/audit-log.js";
+import { getMonitorPort } from "../monitor-port.js";
+import { type PageOriginCarrier, buildPageOriginHook, getPageOrigins } from "../queue/request-gate.js";
+import { type WindowLimit, WindowLimiter, buildWindowLimitHook } from "../remote/limits.js";
 import {
   BUDGET_DOMAINS,
   DROPPED_DAEMON_CONFIG_KEYS,
@@ -20,12 +24,14 @@ import {
   MODEL_DOMAINS,
   RENAMED_DAEMON_CONFIG_KEYS,
   TIER_DOMAINS,
+  getModelIdPrefix,
   getTierFileValue,
   isPricingKnown,
   loadKnownModelIds,
   normalizeModelId,
   resolveDesiredWithLegacy,
   resolveRenamedKeyCarry,
+  validateAgentPinValue,
   validateBudgetValue,
   validateModelValue,
   validateTierValue,
@@ -36,15 +42,16 @@ import {
   type TierFileValue,
 } from "../model-config-consts.js";
 import type {
+  AgentPinPutBody,
+  AgentPinPutResponse,
+  AgentPinResult,
   BudgetDomainStatus,
   DaemonConfigSyncState,
-  DomainFileModel,
   DomainStatus,
   ModelConfigErrorBody,
   ModelConfigGetResponse,
   ModelConfigPutBody,
   ModelConfigPutResponse,
-  SurfaceFileResult,
   SurfaceResult,
   TierDomainStatus,
 } from "../types/model-config.js";
@@ -53,16 +60,13 @@ import type {
 // middleware/audit-log.ts AUDIT_ACTOR).
 const UPDATED_BY = "monitor-web";
 
-const RESEARCH_AGENT_FILE = "glass-atrium-intel-researcher.md";
-const META_AGENT_FILE = "glass-atrium-meta-agent.md";
-const WIKI_AGENT_FILE = "glass-atrium-wiki-curator.md";
-// Fixed two-file domains — a registry phase cannot select these pairs (reporter and planner differ).
-const PAIR_AGENT_FILES = {
-  "frontmatter-review": ["glass-atrium-qa-code-reviewer.md", "glass-atrium-qa-debugger.md"],
-  "frontmatter-docs": ["glass-atrium-intel-planner.md", "glass-atrium-intel-reporter.md"],
-} as const;
-type PairSurface = keyof typeof PAIR_AGENT_FILES;
-const DEV_AGENT_FILE_PATTERN = /^glass-atrium-dev-[a-z0-9-]+\.md$/;
+// Page-only pin writes, bounded per route (LLM10) → a scripted loop cannot churn the agents folder
+export const AGENT_PIN_WRITE_LIMIT: WindowLimit = { limit: 60, windowMs: 60_000 };
+
+const AGENT_PIN_ROUTE = "/api/model-config/agents";
+
+// A new agent file takes the usual mode; an existing one keeps its own across the rename
+const NEW_FILE_MODE = 0o644;
 
 // Display label for an absent per-daemon REPL key — the bootstrap exec carries no model
 // flag, so the tmux session inherits the settings.json model (D3).
@@ -119,6 +123,16 @@ export function getApplyLockPath(): string {
 export async function registerModelConfigRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/model-config", handleGet);
   app.put("/api/model-config", handlePut);
+  app.put(
+    AGENT_PIN_ROUTE,
+    { onRequest: [(request, reply) => agentPinWrite.limitHook(request, reply), buildPageOriginHook(getPageOrigins(getMonitorPort()))] },
+    (request, reply) => handlePutAgents(request, reply, agentPinWrite.apply),
+  );
+}
+
+/** Test seam → a fresh rate window and no apply in flight. */
+export function resetAgentPinWriteState(): void {
+  agentPinWrite = buildAgentPinWriteState();
 }
 
 // GET
@@ -151,30 +165,10 @@ async function buildGetResponse(): Promise<ModelConfigGetResponse> {
   );
   const desired = resolution.desired;
 
-  const [daemonConfig, devFiles, researchModel, metaModel, wikiModel, reviewFiles, docsFiles, knownModelIds] =
-    await Promise.all([
-      readDaemonConfig(),
-      readDevAgentModels(),
-      readFrontmatterModel(path.join(getAgentsDir(), RESEARCH_AGENT_FILE), undefined),
-      readFrontmatterModel(path.join(getAgentsDir(), META_AGENT_FILE), undefined),
-      readFrontmatterModel(path.join(getAgentsDir(), WIKI_AGENT_FILE), undefined),
-      readPairAgentModels("frontmatter-review"),
-      readPairAgentModels("frontmatter-docs"),
-      loadKnownModelIds(),
-    ]);
-  const surfaces: ActualSurfaces = {
-    daemonConfig,
-    devFiles,
-    researchModel,
-    metaModel,
-    wikiModel,
-    reviewFiles,
-    docsFiles,
-    knownModelIds,
-  };
+  const [daemonConfig, knownModelIds, agentList] = await Promise.all([readDaemonConfig(), loadKnownModelIds(), readAgentModels()]);
 
   const domains: DomainStatus[] = MODEL_DOMAINS.map((def) =>
-    buildDomainStatus(def, desired.get(def.key) ?? null, surfaces),
+    buildDomainStatus(def, desired.get(def.key) ?? null, daemonConfig, knownModelIds),
   );
 
   const budgets: BudgetDomainStatus[] = BUDGET_DOMAINS.map((def) =>
@@ -192,7 +186,37 @@ async function buildGetResponse(): Promise<ModelConfigGetResponse> {
     budgets,
     tiers,
     daemon_config_sync: computeDaemonConfigSync(resolution, daemonConfig),
+    agents: agentList.agents,
+    unreadable: agentList.unreadable,
   };
+}
+
+/**
+ * The agents folder as the Models screen lists it; the registry only sets the `registered` mark.
+ * A model value with no id-shaped lead moves its file to `unreadable`.
+ */
+async function readAgentModels(): Promise<Pick<ModelConfigGetResponse, "agents" | "unreadable">> {
+  const [list, registry] = await Promise.all([listAgentFiles(getAgentsDir()), loadAgentRegistry()]);
+  const read: Pick<ModelConfigGetResponse, "agents" | "unreadable"> = { agents: [], unreadable: [...list.unreadable] };
+  for (const agent of list.agents) {
+    const pin = getAgentPin(agent.frontmatter);
+    if (pin === undefined) {
+      read.unreadable.push({ file: agent.file, reason: "Model line is not a model id" });
+    } else {
+      read.agents.push({ name: agent.name, file: agent.file, role: agent.role, pin, registered: registry.has(agent.name) });
+    }
+  }
+  read.unreadable.sort((a, b) => (a.file < b.file ? -1 : 1));
+  return read;
+}
+
+// null → no model line (no pin) · undefined → a model value with no id-shaped lead
+function getAgentPin(frontmatter: Record<string, unknown>): string | null | undefined {
+  if (!Object.hasOwn(frontmatter, "model")) {
+    return null;
+  }
+  const model = frontmatter.model;
+  return typeof model === "string" ? (getModelIdPrefix(model) ?? undefined) : undefined;
 }
 
 /**
@@ -241,89 +265,29 @@ function buildBudgetStatus(
   };
 }
 
-// One read-once snapshot per GET — every file-derived input rides here, never as a
-// loose positional arg.
-interface ActualSurfaces {
-  daemonConfig: Record<string, unknown> | null;
-  devFiles: DomainFileModel[];
-  researchModel: string | null | undefined; // undefined = unparseable/unreadable
-  metaModel: string | null | undefined;
-  wikiModel: string | null | undefined;
-  reviewFiles: AgentFileRead<undefined>[]; // model undefined = listed file unreadable
-  docsFiles: AgentFileRead<undefined>[];
-  knownModelIds: ReadonlySet<string>;
-}
-
 function buildDomainStatus(
   def: ModelDomainDef,
   desired: string | null,
-  surfaces: ActualSurfaces,
+  daemonConfig: Record<string, unknown> | null,
+  knownModelIds: ReadonlySet<string>,
 ): DomainStatus {
-  let actual: string | null;
-  let files: DomainFileModel[] | undefined;
-
-  switch (def.surface) {
-    case "frontmatter-dev":
-      files = surfaces.devFiles;
-      actual = getPerFileActual(files);
-      break;
-    case "frontmatter-review":
-    case "frontmatter-docs": {
-      const reads = def.surface === "frontmatter-review" ? surfaces.reviewFiles : surfaces.docsFiles;
-      actual = getPerFileActual(reads);
-      files = reads.map(({ file, model }) => ({ file, model: model ?? null }));
-      break;
-    }
-    case "frontmatter-research":
-      actual = surfaces.researchModel === undefined ? null : (surfaces.researchModel ?? INHERIT_VALUE);
-      break;
-    case "frontmatter-meta":
-      actual = surfaces.metaModel === undefined ? null : (surfaces.metaModel ?? INHERIT_VALUE);
-      break;
-    case "frontmatter-wiki":
-      actual = surfaces.wikiModel === undefined ? null : (surfaces.wikiModel ?? INHERIT_VALUE);
-      break;
-    case "daemon-config": {
-      const raw = surfaces.daemonConfig?.[def.daemonConfigKey ?? ""];
-      actual = typeof raw === "string" ? raw : INHERIT_SETTINGS_LABEL;
-      break;
-    }
-  }
-
-  const status: DomainStatus = {
+  const raw = daemonConfig?.[def.daemonConfigKey];
+  const actual = typeof raw === "string" ? raw : INHERIT_SETTINGS_LABEL;
+  return {
     domain: def.key,
     desired,
     actual,
     drift: computeDrift(desired, actual),
     apply_mode: def.applyMode,
     editable: def.editable,
-    pricing_known: isPricingKnown(desired, surfaces.knownModelIds),
+    pricing_known: isPricingKnown(desired, knownModelIds),
   };
-  if (files !== undefined) {
-    status.files = files;
-  }
-  return status;
-}
-
-// One shared state across every file, else 'mixed'; no files or any unreadable file → unknown.
-function getPerFileActual(files: readonly AgentFileRead<null | undefined>[]): string | null {
-  if (files.some((f) => f.model === undefined)) {
-    return null;
-  }
-  const states = new Set(files.map((f) => f.model ?? INHERIT_VALUE));
-  if (states.size === 0) {
-    return null;
-  }
-  return states.size === 1 ? [...states][0] : "mixed";
 }
 
 function computeDrift(desired: string | null, actual: string | null): boolean {
   // Unknown side → no drift claim (never alarm on unreadable surface).
   if (desired === null || actual === null) {
     return false;
-  }
-  if (actual === "mixed") {
-    return true;
   }
   const actualEffective = actual === INHERIT_SETTINGS_LABEL ? INHERIT_VALUE : actual;
   return normalizeModelId(desired) !== normalizeModelId(actualEffective);
@@ -357,9 +321,6 @@ export function computeDaemonConfigSync(
   }
   const desired = resolution.desired;
   for (const def of MODEL_DOMAINS) {
-    if (def.daemonConfigKey === null) {
-      continue;
-    }
     const want = desired.get(def.key);
     if (want === undefined) {
       continue;
@@ -430,18 +391,6 @@ async function handlePut(
     const currentRows = await prisma.modelConfig.findMany();
     const current = new Map<string, string>(currentRows.map((r) => [r.configKey, r.configValue]));
 
-    // daemon-apply stash-window guard (D4 amended): the real lock is the filesystem dir
-    // ~/.glass-atrium/data/daemon-reports/.apply-lock — fail-open when absent.
-    const touchesFrontmatter = MODEL_DOMAINS.some(
-      (d) => d.surface.startsWith("frontmatter-") && modelChanges.has(d.key),
-    );
-    if (touchesFrontmatter && (await pathExists(getApplyLockPath()))) {
-      return reply.code(409).send({
-        error: "daemon_apply_in_progress",
-        reason: "daemon-apply lock present (.apply-lock) — retry after the apply cycle finishes",
-      } satisfies ModelConfigErrorBody);
-    }
-
     // single DB transaction over the changed rows
     const upserts = new Map<string, string>([...modelChanges, ...budgetChanges, ...tierChanges]);
     const changes: Record<string, { old: string | null; new: string }> = {};
@@ -473,35 +422,8 @@ async function handlePut(
     for (const [key, value] of upserts) {
       merged.set(key, value);
     }
-    const surfaces: SurfaceResult[] = [];
-    const touchesDaemonConfig =
-      [...upserts.keys()].some(
-        (k) =>
-          BUDGET_DOMAINS.some((d) => d.key === k) ||
-          TIER_DOMAINS.some((d) => d.key === k) ||
-          MODEL_DOMAINS.some((d) => d.key === k && d.daemonConfigKey !== null),
-      );
-    if (touchesDaemonConfig) {
-      surfaces.push(await renderDaemonConfig(merged));
-    }
-    if (modelChanges.has("model.dev")) {
-      surfaces.push(await renderDevFrontmatter(modelChanges.get("model.dev") as string));
-    }
-    if (modelChanges.has("model.research")) {
-      surfaces.push(await renderResearchFrontmatter(modelChanges.get("model.research") as string));
-    }
-    if (modelChanges.has("model.meta")) {
-      surfaces.push(await renderMetaFrontmatter(modelChanges.get("model.meta") as string));
-    }
-    if (modelChanges.has("model.wiki")) {
-      surfaces.push(await renderWikiFrontmatter(modelChanges.get("model.wiki") as string));
-    }
-    if (modelChanges.has("model.review")) {
-      surfaces.push(await renderPairFrontmatter("frontmatter-review", modelChanges.get("model.review") as string));
-    }
-    if (modelChanges.has("model.docs")) {
-      surfaces.push(await renderPairFrontmatter("frontmatter-docs", modelChanges.get("model.docs") as string));
-    }
+    // every PUT key renders into daemon-config.json; no agent file is written here
+    const surfaces: SurfaceResult[] = upserts.size > 0 ? [await renderDaemonConfig(merged)] : [];
 
     const getShape = await buildGetResponse();
     const responseBody: ModelConfigPutResponse = { ...getShape, surfaces };
@@ -519,196 +441,261 @@ async function handlePut(
   }
 }
 
-// surface readers
+// PUT agents — per-agent pins
 
-/** null = missing or unparseable (GET degrades to 'file-missing' / drift-safe nulls). */
-async function readDaemonConfig(): Promise<Record<string, unknown> | null> {
+interface ApplyState {
+  isInFlight: boolean;
+}
+
+interface AgentPinWriteState {
+  apply: ApplyState;
+  limitHook: ReturnType<typeof buildWindowLimitHook>;
+}
+
+// Module scope, not per registration → the loopback and remote listeners share one apply in flight and one rate window (LLM10)
+let agentPinWrite = buildAgentPinWriteState();
+
+function buildAgentPinWriteState(): AgentPinWriteState {
+  return { apply: { isInFlight: false }, limitHook: buildWindowLimitHook(new WindowLimiter(AGENT_PIN_WRITE_LIMIT)) };
+}
+
+// Exactly a name list with the pins the page showed, and one model → no key can steer a write elsewhere (C3)
+const agentPinBodySchema = z
+  .object({
+    model: z.string().min(1).max(128),
+    agents: z
+      .array(z.object({ name: z.string().min(1).max(128), expected_pin: z.string().max(128).nullable() }).strict())
+      .min(1)
+      .refine((agents) => new Set(agents.map((agent) => agent.name)).size === agents.length, "must not name an agent twice"),
+  })
+  .strict();
+
+async function handlePutAgents(request: FastifyRequest, reply: FastifyReply, apply: ApplyState): Promise<unknown> {
+  const parsed = agentPinBodySchema.safeParse(request.body);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return reply.code(400).send(invalidBody(issue?.path.join(".") || "body", issue?.message ?? "invalid body"));
+  }
+  if (apply.isInFlight) {
+    return reply.code(409).send(refusal("apply_in_progress", "another agent model apply is running — retry when it ends"));
+  }
+  apply.isInFlight = true;
   try {
-    const raw = await fs.readFile(getDaemonConfigPath(), "utf8");
-    const parsed: unknown = JSON.parse(raw);
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return null;
-    }
-    return parsed as Record<string, unknown>;
-  } catch {
+    return await applyAgentPins(request, reply, parsed.data);
+  } finally {
+    apply.isInFlight = false;
+  }
+}
+
+/** Each check refuses the whole request before any file is opened; then one result per named agent. */
+async function applyAgentPins(request: FastifyRequest, reply: FastifyReply, body: AgentPinPutBody): Promise<unknown> {
+  const modelRefusal = await getModelRefusal(body.model);
+  if (modelRefusal !== null) {
+    return reply.code(modelRefusal.error === "invalid_body" ? 400 : 503).send(modelRefusal);
+  }
+  const list = await getAgentFileListOrNull(request);
+  if (list === null) {
+    return reply.code(503).send(refusal("agent_list_unavailable", "the agents folder could not be listed — nothing was written"));
+  }
+  if (body.agents.length > list.agents.length + list.unreadable.length) {
+    return reply.code(400).send(invalidBody("agents", "must not name more agents than the agents folder holds"));
+  }
+  if (await pathExists(getApplyLockPath())) {
+    return reply.code(409).send(refusal("daemon_apply_in_progress", "daemon-apply lock present (.apply-lock) — retry after the apply cycle finishes"));
+  }
+  return putAgentPins(request, body, list);
+}
+
+// C4: an empty roster vouches for nothing → refused, never fail-open
+async function getModelRefusal(model: string): Promise<ModelConfigErrorBody | null> {
+  const knownModelIds = await loadKnownModelIds();
+  if (knownModelIds.size === 0) {
+    return refusal("model_roster_unavailable", "the pricing roster is unreadable — no model can be checked");
+  }
+  const reason = validateAgentPinValue(model, knownModelIds);
+  return reason === null ? null : invalidBody("model", reason);
+}
+
+async function putAgentPins(request: FastifyRequest, body: AgentPinPutBody, list: AgentFileList): Promise<AgentPinPutResponse> {
+  const realDir = await fs.realpath(getAgentsDir());
+  const pinNew = body.model === INHERIT_VALUE ? null : body.model;
+  const results: AgentPinResult[] = [];
+  const audited: Array<{ name: string; old: string | null; new: string | null; status: AgentPinResult["status"] }> = [];
+  for (const entry of body.agents) {
+    const write = await putAgentPin(list, { realDir, name: entry.name, expectedPin: entry.expected_pin }, body.model);
+    results.push(write.result);
+    audited.push({ name: entry.name, old: write.old, new: pinNew, status: write.result.status });
+  }
+  setAuditTarget(request, { signal: (request as FastifyRequest & PageOriginCarrier).pageOriginSignal ?? null, agents: audited });
+  request.log.info({ route: AGENT_PIN_ROUTE, statuses: results.map((result) => result.status) }, "agent model apply complete");
+  return { results, ...(await readAgentModels()) };
+}
+
+async function getAgentFileListOrNull(request: FastifyRequest): Promise<AgentFileList | null> {
+  try {
+    return await listAgentFiles(getAgentsDir());
+  } catch (error) {
+    request.log.warn({ err: error, route: AGENT_PIN_ROUTE }, "agent model apply refused: agents folder not listed");
     return null;
   }
 }
 
-async function listDevAgentFiles(): Promise<string[]> {
-  let onDisk: string[];
-  try {
-    const entries = await fs.readdir(getAgentsDir());
-    onDisk = entries.filter((name) => DEV_AGENT_FILE_PATTERN.test(name)).sort();
-  } catch {
-    return [];
+function refusal(error: "apply_in_progress" | "model_roster_unavailable" | "agent_list_unavailable" | "daemon_apply_in_progress", reason: string): ModelConfigErrorBody {
+  return { error, reason };
+}
+
+// agent model line writer
+
+/** One write target: a name from the request, matched against the server's own list, and the pin the page showed. */
+interface AgentPinTarget {
+  realDir: string;
+  name: string;
+  expectedPin: string | null;
+}
+
+/** A result plus the pin read from the file before the write; null when no file was read. */
+interface AgentPinWrite {
+  result: AgentPinResult;
+  old: string | null;
+}
+
+// The request name selects a listed entry; only the listed base name reaches a path (C1)
+async function putAgentPin(list: AgentFileList, target: AgentPinTarget, desired: string): Promise<AgentPinWrite> {
+  const agent = list.agents.find((listed) => listed.name === target.name);
+  if (agent !== undefined) {
+    return writeFrontmatterModel(path.join(getAgentsDir(), agent.file), target, desired);
   }
-  // Intersect the on-disk glass-atrium-dev-*.md set with the canonical registry's
-  // glass-atrium-dev-* keys so a
-  // de-registered/archived glass-atrium-dev-*.md file no longer surfaces in the model table (nor
-  // receives a frontmatter write). Fail-open: an empty/corrupt registry (size 0)
-  // skips the intersection and returns the full on-disk set — mirrors the SQL gates'
-  // fail-open contract so a registry read failure never blanks the dev table.
-  const registry = await loadAgentRegistry();
-  if (registry.size === 0) {
-    return onDisk;
-  }
-  const registeredDevKeys = new Set(
-    [...registry.keys()].filter((key) => key.startsWith("glass-atrium-dev-")),
-  );
-  return onDisk.filter((name) => registeredDevKeys.has(name.replace(/\.md$/, "")));
-}
-
-async function readDevAgentModels(): Promise<DomainFileModel[]> {
-  return readAgentFileModels(await listDevAgentFiles(), null);
-}
-
-function readPairAgentModels(surface: PairSurface): Promise<AgentFileRead<undefined>[]> {
-  return readAgentFileModels(PAIR_AGENT_FILES[surface], undefined);
-}
-
-interface AgentFileRead<T extends null | undefined> {
-  file: string;
-  model: string | null | T;
-}
-
-// Unreadable file → the caller's `missing` sentinel.
-function readAgentFileModels<T extends null | undefined>(
-  names: readonly string[],
-  missing: T,
-): Promise<AgentFileRead<T>[]> {
-  return Promise.all(
-    names.map(async (name) => ({
-      file: name,
-      model: await readFrontmatterModel(path.join(getAgentsDir(), name), missing),
-    })),
-  );
+  const unreadable = list.unreadable.find((listed) => listed.file === `${target.name}.md`);
+  return unreadable === undefined
+    ? { result: { name: target.name, status: "gone" }, old: null }
+    : { result: { name: target.name, status: "refused", reason: unreadable.reason }, old: null };
 }
 
 /**
- * Read one agent file's `model:` frontmatter value; `missing` is the caller-chosen
- * sentinel for an unreadable file or absent `---` block. The single-file surfaces and the
- * fixed review/docs lists pass `undefined` to keep an unreadable file distinct from a
- * present-but-model-less block (extractModelLine's null → INHERIT), so it reads as unknown;
- * only the dev discovered-list surface passes `null`, conflating both.
+ * Set or remove ONLY the `model:` line of one agent file; 'inherit' removes it.
+ * - The realpath must sit directly in the agents folder; the file must hold at most one model line and the pin the page showed.
+ * - The new text must read back through the list's own reader with only the model changed, and the file is re-read just before the rename.
+ * - A file already holding the value is never rewritten.
  */
-async function readFrontmatterModel<T extends null | undefined>(
-  filePath: string,
-  missing: T,
-): Promise<string | null | T> {
+async function writeFrontmatterModel(linkPath: string, target: AgentPinTarget, desired: string): Promise<AgentPinWrite> {
+  const source = await readAgentPinSource(linkPath, target);
+  if ("result" in source) {
+    return source;
+  }
+  const done = (status: AgentPinResult["status"], reason?: string): AgentPinWrite => ({
+    result: reason === undefined ? { name: target.name, status } : { name: target.name, status, reason },
+    old: source.pin,
+  });
+  if (source.pin !== target.expectedPin) {
+    return done("changed_since_load");
+  }
+  const newText = getTextWithModel(source.text, desired);
+  if (newText === source.text) {
+    return done("unchanged");
+  }
+  const readBackRefusal = getReadBackRefusal(source.read, newText, desired);
+  if (readBackRefusal !== null) {
+    return done("refused", readBackRefusal);
+  }
+  const status = await putAgentText(source, newText);
+  return status === "refused" ? done(status, "The file could not be written") : done(status);
+}
+
+async function putAgentText(source: AgentPinSource, newText: string): Promise<"applied" | "changed_since_load" | "refused"> {
   try {
-    const text = await fs.readFile(filePath, "utf8");
-    const fm = locateFrontmatter(text);
-    if (fm === null) {
-      return missing;
-    }
-    return extractModelLine(text.slice(fm.start, fm.end));
-  } catch {
-    return missing;
+    await atomicWrite(source.resolved, newText, source.text);
+    return "applied";
+  } catch (error) {
+    return error instanceof FileChangedError ? "changed_since_load" : "refused";
   }
 }
 
-// frontmatter writer
+interface AgentPinSource {
+  resolved: string;
+  text: string;
+  read: AgentFileParts;
+  pin: string | null;
+}
 
-async function renderDevFrontmatter(desired: string): Promise<SurfaceResult> {
-  const names = await listDevAgentFiles();
-  if (names.length === 0) {
-    return { surface: "frontmatter-dev", status: "failed", reason: "no dev-*.md agent files found" };
+/** The writer and the list disagree on an odd frontmatter → the new text is judged as the list will read it (A08). */
+function getReadBackRefusal(old: AgentFileParts, newText: string, desired: string): string | null {
+  const read = getAgentFileParts(newText);
+  if (read === null) {
+    return "The written file would not read back as an agent file";
   }
-  const files = await writeAgentFileModels(names, desired);
-  return { surface: "frontmatter-dev", status: aggregateFileStatus(files), files };
-}
-
-async function renderResearchFrontmatter(desired: string): Promise<SurfaceResult> {
-  const result = await writeFrontmatterModel(path.join(getAgentsDir(), RESEARCH_AGENT_FILE), desired);
-  return { surface: "frontmatter-research", status: result.status, reason: result.reason, files: [result] };
-}
-
-async function renderMetaFrontmatter(desired: string): Promise<SurfaceResult> {
-  const result = await writeFrontmatterModel(path.join(getAgentsDir(), META_AGENT_FILE), desired);
-  return { surface: "frontmatter-meta", status: result.status, reason: result.reason, files: [result] };
-}
-
-async function renderWikiFrontmatter(desired: string): Promise<SurfaceResult> {
-  const result = await writeFrontmatterModel(path.join(getAgentsDir(), WIKI_AGENT_FILE), desired);
-  return { surface: "frontmatter-wiki", status: result.status, reason: result.reason, files: [result] };
-}
-
-async function renderPairFrontmatter(surface: PairSurface, desired: string): Promise<SurfaceResult> {
-  const files = await writeAgentFileModels(PAIR_AGENT_FILES[surface], desired);
-  return { surface, status: aggregateFileStatus(files), files };
-}
-
-async function writeAgentFileModels(names: readonly string[], desired: string): Promise<SurfaceFileResult[]> {
-  const files: SurfaceFileResult[] = [];
-  for (const name of names) {
-    files.push(await writeFrontmatterModel(path.join(getAgentsDir(), name), desired));
+  if (read.body !== old.body) {
+    return "The write would change the body";
   }
-  return files;
+  if (read.fields.model !== (desired === INHERIT_VALUE ? undefined : desired)) {
+    return "The written model would not read back as the chosen model";
+  }
+  return isDeepStrictEqual(getFieldsWithoutModel(read.fields), getFieldsWithoutModel(old.fields)) ? null : "The write would change another frontmatter key";
 }
 
-function aggregateFileStatus(files: SurfaceFileResult[]): "ok" | "skipped" | "failed" {
-  if (files.some((f) => f.status === "failed")) {
-    return "failed";
-  }
-  if (files.some((f) => f.status === "skipped")) {
-    return "skipped";
-  }
-  return "ok";
+function getFieldsWithoutModel(fields: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(fields).filter(([key]) => key !== "model"));
 }
 
-/**
- * Upsert ONLY the `model:` line in one agent file's frontmatter; 'inherit' removes it.
- * The target path is realpath-resolved BEFORE the temp+rename so a ~/.glass-atrium/agents
- * entry consumed in place resolves to the GA-tracked file — the write lands inside the
- * RESOLVED directory. Already-satisfied files are never
- * rewritten (alias values + bytes preserved). Unparseable frontmatter → skipped + surfaced.
- */
-async function writeFrontmatterModel(linkPath: string, desired: string): Promise<SurfaceFileResult> {
-  const file = path.basename(linkPath);
-  let resolved: string;
-  try {
-    resolved = await fs.realpath(linkPath);
-  } catch {
-    return { file, status: "failed", reason: "path not resolvable (missing file or dangling symlink)" };
+async function readAgentPinSource(linkPath: string, target: AgentPinTarget): Promise<AgentPinSource | AgentPinWrite> {
+  const refused = (reason: string): AgentPinWrite => ({ result: { name: target.name, status: "refused", reason }, old: null });
+  const read = await readContainedFile(linkPath, target.realDir);
+  if (read === "gone") {
+    return { result: { name: target.name, status: "gone" }, old: null };
   }
-  let text: string;
-  try {
-    text = await fs.readFile(resolved, "utf8");
-  } catch {
-    return { file, status: "failed", reason: "unreadable" };
+  if (read === "outside") {
+    return refused("File is outside the agents folder");
   }
+  const { resolved, text } = read;
   const fm = locateFrontmatter(text);
   if (fm === null) {
-    return { file, status: "skipped", reason: "unparseable frontmatter (missing --- delimiters)" };
+    return refused("No frontmatter block");
   }
-  const lines = text.slice(fm.start, fm.end).split("\n");
-  const idx = lines.findIndex((line) => /^model:/.test(line));
-
-  if (desired === INHERIT_VALUE) {
-    if (idx === -1) {
-      return { file, status: "ok" };
-    }
-    lines.splice(idx, 1);
-  } else {
-    const modelLine = `model: ${desired}`;
-    if (idx >= 0) {
-      if (lines[idx] === modelLine) {
-        return { file, status: "ok" };
-      }
-      lines[idx] = modelLine;
-    } else {
-      lines.push(modelLine);
-    }
+  if (getModelLineIndexes(text.slice(fm.start, fm.end).split("\n")).length > 1) {
+    return refused("More than one model line");
   }
+  const parts = getAgentFileParts(text);
+  if (parts === null) {
+    return refused("Frontmatter could not be parsed");
+  }
+  const pin = getAgentPin(parts.fields);
+  return pin === undefined ? refused("Model line is not a model id") : { resolved, text, read: parts, pin };
+}
 
-  const newText = text.slice(0, fm.start) + lines.join("\n") + text.slice(fm.end);
+// C1 at write time: the realpath is re-checked, so a link swapped in after the listing never leads out of the folder
+async function readContainedFile(linkPath: string, realDir: string): Promise<{ resolved: string; text: string } | "gone" | "outside"> {
   try {
-    await atomicWrite(resolved, newText);
+    const resolved = await fs.realpath(linkPath);
+    if (path.dirname(resolved) !== realDir) {
+      return "outside";
+    }
+    return { resolved, text: await fs.readFile(resolved, "utf8") };
   } catch {
-    return { file, status: "failed", reason: "write failed" };
+    return "gone";
   }
-  return { file, status: "ok" };
+}
+
+// Caller has checked the frontmatter block and at most one model line
+function getTextWithModel(text: string, desired: string): string {
+  const fm = locateFrontmatter(text) as { start: number; end: number };
+  const lines = text.slice(fm.start, fm.end).split("\n");
+  const idx = getModelLineIndexes(lines)[0] ?? -1;
+  if (desired === INHERIT_VALUE) {
+    if (idx >= 0) {
+      lines.splice(idx, 1);
+    }
+  } else if (idx >= 0) {
+    lines[idx] = `model: ${desired}`;
+  } else {
+    lines.push(`model: ${desired}`);
+  }
+  return text.slice(0, fm.start) + lines.join("\n") + text.slice(fm.end);
+}
+
+// Top-level key only — an indented `model:` belongs to a nested map
+const MODEL_LINE = /^model:/;
+
+function getModelLineIndexes(lines: readonly string[]): number[] {
+  return lines.flatMap((line, index) => (MODEL_LINE.test(line) ? [index] : []));
 }
 
 /**
@@ -726,9 +713,20 @@ function locateFrontmatter(text: string): { start: number; end: number } | null 
   return { start: 4, end: close };
 }
 
-function extractModelLine(block: string): string | null {
-  const match = /^model:[ \t]*(.+?)[ \t]*$/m.exec(block);
-  return match === null ? null : match[1];
+// surface readers
+
+/** null = missing or unparseable (GET degrades to 'file-missing' / drift-safe nulls). */
+async function readDaemonConfig(): Promise<Record<string, unknown> | null> {
+  try {
+    const raw = await fs.readFile(getDaemonConfigPath(), "utf8");
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 // daemon-config.json render engine
@@ -764,9 +762,6 @@ export async function renderDaemonConfig(desired: Map<string, string>): Promise<
 
   // Tier knobs share the model-domain render — 'inherit' deletes the key → no --effort / no output-cap env.
   for (const def of [...MODEL_DOMAINS, ...TIER_DOMAINS]) {
-    if (def.daemonConfigKey === null) {
-      continue;
-    }
     const want = desired.get(def.key);
     if (want === undefined) {
       continue;
@@ -826,16 +821,47 @@ export async function renderDaemonConfig(desired: Map<string, string>): Promise<
 
 // shared fs/format helpers
 
-/** Temp file + rename inside the target's own directory (atomic on the same volume). */
-async function atomicWrite(resolvedPath: string, content: string): Promise<void> {
-  const dir = path.dirname(resolvedPath);
-  const tmp = path.join(dir, `.${path.basename(resolvedPath)}.tmp-${process.pid}-${Date.now()}`);
-  await fs.writeFile(tmp, content, "utf8");
+/** Raised when the target's bytes moved between the read a write was computed from and the rename. */
+class FileChangedError extends Error {
+  constructor(resolvedPath: string) {
+    super(`file changed since it was read: ${path.basename(resolvedPath)}`);
+    this.name = "FileChangedError";
+  }
+}
+
+/**
+ * Temp file + rename inside the target's own directory (atomic on the same volume).
+ * - The temp file is created exclusively → a planted file or link at its name fails the write, never redirects it.
+ * - The target's mode carries over; a new file takes NEW_FILE_MODE.
+ * @param expected - the text the write was computed from → the target is re-read just before the rename
+ * @throws FileChangedError when the re-read differs from `expected`
+ */
+async function atomicWrite(resolvedPath: string, content: string, expected?: string): Promise<void> {
+  const tmp = path.join(path.dirname(resolvedPath), `.${path.basename(resolvedPath)}.tmp-${process.pid}-${Date.now()}`);
+  const mode = await getFileMode(resolvedPath);
+  const handle = await fs.open(tmp, "wx", mode);
   try {
+    try {
+      await handle.writeFile(content, "utf8");
+      await handle.chmod(mode);
+    } finally {
+      await handle.close();
+    }
+    if (expected !== undefined && (await fs.readFile(resolvedPath, "utf8")) !== expected) {
+      throw new FileChangedError(resolvedPath);
+    }
     await fs.rename(tmp, resolvedPath);
   } catch (error) {
-    await fs.rm(tmp, { force: true });
+    await fs.unlink(tmp).catch(() => undefined);
     throw error;
+  }
+}
+
+async function getFileMode(resolvedPath: string): Promise<number> {
+  try {
+    return (await fs.stat(resolvedPath)).mode & 0o777;
+  } catch {
+    return NEW_FILE_MODE;
   }
 }
 

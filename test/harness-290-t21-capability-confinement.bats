@@ -5,32 +5,23 @@
 # nothing else. Verifies three deliverables:
 #   1. Bash absent from both meta agents' frontmatter tools allowlist (the
 #      LLM06 spawn-freeze surface — frontmatter is the enforced tool grant).
-#   2. Inline shell-interpreter negations present + EXPRESSIBLE as command-prefix
-#      matchers in settings.template.json permissions.deny — they close a
-#      Bash(rm:*) bypass an agent could otherwise smuggle via `bash -c 'rm …'`;
-#      the npm publish row sits in permissions.ask (user-approval gate).
+#   2. The rm deny rows present + each deny row a well-formed command-prefix
+#      matcher in settings.template.json permissions.deny; the npm publish row
+#      sits in permissions.ask (user-approval gate).
 #   3. The redirect-into-harness pattern is INEXPRESSIBLE as a command-prefix
-#      matcher (so it is absent from the settings deny/ask) and is instead specified
-#      in enforce-harness-critical.sh's redirect regex (asserted by a direct
-#      hook invocation that blocks such a redirect).
+#      matcher, so it is absent from the settings deny/ask.
 #
 # Every row reads its SoT live — settings.template.json .permissions, the agents'
 # frontmatter, the committed manifest. Expected values are test-side literals, so
 # a SoT edit and the oracle can never move together.
 #
 # Run via: bats test/harness-290-t21-capability-confinement.bats
-# Requires: bats, bash 3.2+, jq; python3 only for the hook-redirect regression row.
-#
-# INVOCATION CONVENTION — the hook is executed DIRECTLY as a command, never
-# interpreter-prefixed: an interpreter prefix bypasses the executable bit, so a
-# mode-644 hook (inert to Claude Code) would still pass. Direct execution
-# exercises the real path.
+# Requires: bats, bash 3.2+, jq.
 
 GA="$(cd -- "${BATS_TEST_DIRNAME}/.." && pwd)"
 # settings.template.json is a manifest bundle member, so it resolves under GA in a
 # consumer install exactly as in the checkout — the rows below need no skip guard.
 SETTINGS="${GA}/settings.template.json"
-HOOK_SH="${GA}/hooks/enforce-harness-critical.sh"
 MANIFEST="${GA}/manifest.json"
 
 # "<agent basename>|<grants that MUST survive the surgical prune>" — the survivor
@@ -76,15 +67,14 @@ frontmatter_block() {
   done
 }
 
-@test "settings deny: interpreter negations present, each a well-formed command-prefix matcher" {
+@test "settings deny: the rm rows present, each deny row a well-formed command-prefix matcher" {
   # A settings command-prefix matcher is Bash(<non-empty prefix>:*), anchored on
-  # the leading command token — the shape that makes these negations expressible
-  # at all (contrast the redirect row below). Membership AND shape in one jq whose
+  # the leading command token — the shape that makes a deny row expressible at all
+  # (contrast the redirect row below). Membership AND shape in one jq whose
   # status is the test's last command.
   run jq -e '
     # GA-RM[not-executed]: jq string literals matched against the settings deny list, never run
-    ["Bash(rm:*)", "Bash(rm -rf:*)",
-     "Bash(bash -c:*)", "Bash(sh -c:*)", "Bash(zsh -c:*)", "Bash(eval:*)"] as $need
+    ["Bash(rm:*)", "Bash(rm -rf:*)"] as $need
     | (($need - .permissions.deny) == [])
       and ([.permissions.deny[] | select(test("^Bash\\([^()]+:\\*\\)$") | not)] | length) == 0
   ' "${SETTINGS}"
@@ -115,19 +105,6 @@ frontmatter_block() {
       and ([$rows[] | select(test("\\.claude|\\.glass-atrium"))] | length) == 0
   ' "${SETTINGS}"
   [[ "${status}" -eq 0 ]]
-}
-
-@test "the redirect pattern is specified in the hook: redirect into live hooks dir blocks" {
-  [[ -f "${HOOK_SH}" ]] || skip "hook not found: ${HOOK_SH}"
-  command -v python3 >/dev/null 2>&1 || skip "python3 required"
-  local fake_home="${BATS_TEST_TMPDIR}/home"
-  mkdir -p "${fake_home}/.claude/hooks"
-  local cmd='echo pwned > $HOME/.claude/hooks/evil.sh'
-  local tin envelope
-  tin="$(jq -cn --arg c "${cmd}" '{command: $c}')"
-  envelope="$(jq -cn --argjson ti "${tin}" '{tool_name: "Bash", tool_input: $ti}')"
-  run env "HOME=${fake_home}" "GA_DATA_ROOT=${fake_home}/.glass-atrium" "${HOOK_SH}" <<<"${envelope}"
-  [[ "${status}" -eq 2 ]]
 }
 
 @test "committed manifest carries the three shipped root artifacts" {

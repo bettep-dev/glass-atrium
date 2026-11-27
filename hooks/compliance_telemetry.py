@@ -81,7 +81,7 @@ WORKFLOW_GATE_LOG_FILE = Path(
 def _resolve_gate_log_file() -> Path:
     return _resolve("WORKFLOW_GATE_LOG_FILE", WORKFLOW_GATE_LOG_FILE)
 
-# A verdict whose value starts with this token is a TRIP (gate blocked / fired):
+# A verdict whose value starts with this token is a TRIP (the gate fired a warning):
 # block-norev / block-noverifydev / block-order / block-docroute / block-entry
 # (+ legacy bare 'block'). A pass-prefixed verdict (pass / pass-noscript) is
 # compliant.
@@ -149,10 +149,10 @@ def compute_compliance_rate(
       * ``total == 0`` (log absent / empty / unreadable) → ``compliance_rate``
         is ``None``, NOT 1.0. There is genuinely nothing to measure yet.
       * the OVERRIDE dimension has NO event source: no override event exists.
-        The verification-gate same-batch reviewer+DEV race now ends in a
-        VGATE-REVIEWER-001 block on orchestrator origin, and the durable
+        The verification-gate same-batch reviewer+DEV race ends in a
+        VGATE-REVIEWER-001 warning on orchestrator origin, and the durable
         verification-gate-fired.log that enforce-verification-gate.sh writes
-        records blocks only — so ``override_rate`` is ALWAYS ``None``
+        records tripped-check warnings only — so ``override_rate`` is ALWAYS ``None``
         (insufficient data), never 0.
 
     Returns a dict carrying the rate, the raw counts, and the override-None note.

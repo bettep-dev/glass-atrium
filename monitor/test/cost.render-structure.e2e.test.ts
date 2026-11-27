@@ -1,6 +1,6 @@
 // E2E chromium STRUCTURE harness for the cost screen (screens/cost.jsx): DOM-structure facts
-// only — tier order, the alarm lane's presence, one decision-tier chart root — over two render
-// contexts (calm · hot), since one context can only measure one side of the lane. Values behind
+// only — tier order, the alarm rows' presence, one decision-tier chart root — over two render
+// contexts (calm · hot), since one context can only measure one side of the alarm rows. Values behind
 // those structures are pinned in cost.client.unit.test.ts.
 //
 // Runner: npx tsx --test test/cost.render-structure.e2e.test.ts
@@ -18,14 +18,20 @@ import fastifyStatic from "@fastify/static";
 import type { Browser, Page } from "playwright";
 import { chromium } from "playwright";
 
+import { buildScreenSandbox } from "./client-sandbox.js";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_ROOT = resolve(HERE, "..", "public");
+const COST_SRC = resolve(PUBLIC_ROOT, "src", "screens", "cost.jsx");
 
-// The screen's own tier order, as the target composition states it: four KPI tiles, then the
+// The screen's own tier order, as the target composition states it: the Spend stat card, then the
 // three decision cards, then the three instrumentation status cards.
-const DECISION_CARD_TITLES = ["Cost over time", "Cost by model", "Most expensive sessions"];
+const DECISION_CARD_TITLES = ["Spend", "Cost over time", "Cost by model", "Most expensive sessions"];
 const DISCLOSURE_TITLES = ["Token volume", "Turn statistics", "Log integrity"];
-const KPI_TILE_COUNT = 4;
+const SPEND_STAT_COUNT = 4;
+// the Spend region's row — the instrumentation cards carry stat rows of their own
+const SPEND_STAT_ROW = "#cost-region-kpis .stat-row";
+const SPEND_STAT_SELECTOR = `${SPEND_STAT_ROW} .stat`;
 const LEDGER_MODELS = [
   "claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-fable-5",
   "claude-opus-4-8", "claude-haiku-4-5-20251001", "claude-sonnet-5-5", "unknown",
@@ -44,9 +50,13 @@ interface CostFixture {
   parseErrorRatio: number;
   // every cost payload route answers 503 → a cold shared outage, nothing ever loaded
   isOutage?: boolean;
+  // this one payload route answers 503, the rest load
+  failedPrefix?: string;
+  // every by-model row carries tokens but no priced cost → the share bar yields to its footnote
+  isLedgerUnpriced?: boolean;
 }
 
-// today = ratio x the 7-day daily normal; the burn rate extrapolates to the same ratio.
+// today = ratio x the 7-day average; the burn rate extrapolates to the same ratio.
 function getFixture(ratio: number, parseErrorRatio: number): CostFixture {
   const week7Cost = 70;
   const normalDaily = week7Cost / 7;
@@ -67,6 +77,19 @@ function getDayKey(index: number): string {
   return new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10);
 }
 
+// the cost-timeseries payload's points for a run of daily costs
+function getTrendRows(trendCosts: readonly number[]): Array<Record<string, number | string>> {
+  return trendCosts.map((cost, i) => ({
+    date: getDayKey(i),
+    cost_usd: cost,
+    session_count: 3,
+    input_tokens: 1000,
+    output_tokens: 500,
+    cache_read_tokens: 4000,
+    cache_creation_tokens: 800,
+  }));
+}
+
 interface RenderContext {
   app: FastifyInstance;
   browser: Browser;
@@ -80,21 +103,14 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     prefix: "/",
     index: ["index.html"],
   });
-  if (fixture.isOutage) {
+  const failedPrefixes = fixture.isOutage ? COST_PAYLOAD_PREFIXES : fixture.failedPrefix ? [fixture.failedPrefix] : [];
+  if (failedPrefixes.length > 0) {
     app.addHook("onRequest", async (request, reply) => {
-      if (COST_PAYLOAD_PREFIXES.some((prefix) => request.url.startsWith(prefix))) await reply.code(503).send({ error: "unavailable" });
+      if (failedPrefixes.some((prefix) => request.url.startsWith(prefix))) await reply.code(503).send({ error: "unavailable" });
     });
   }
 
-  const trendRows = fixture.trendCosts.map((cost, i) => ({
-    date: getDayKey(i),
-    cost_usd: cost,
-    session_count: 3,
-    input_tokens: 1000,
-    output_tokens: 500,
-    cache_read_tokens: 4000,
-    cache_creation_tokens: 800,
-  }));
+  const trendRows = getTrendRows(fixture.trendCosts);
 
   app.get("/api/cost/kpi", async () => fixture.kpi);
   app.get<{ Querystring: { prior_window?: string } }>("/api/dashboard/cost-timeseries", async (request) => ({
@@ -109,11 +125,11 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
       },
     } : {}),
   }));
-  // A month's real model spread: more models than the ledger's row budget, so it rolls up an Other foot.
+  // A month's real model spread: more models than the ledger's row budget, so it rolls up an Other row.
   app.get("/api/cost/by-model", async () => ({
     rows: LEDGER_MODELS.map((model, i) => ({
       model,
-      cost_usd: 80 - i * 8,
+      cost_usd: fixture.isLedgerUnpriced ? 0 : 80 - i * 8,
       session_count: 12,
       input_tokens: 10_000,
       output_tokens: 5000,
@@ -122,13 +138,13 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     })),
   }));
   app.get("/api/cost/cache-hit", async () => ({
-    // Alternating days reach a whole 100% → the y-axis carries its widest label.
-    rows: trendRows.map((r, i) => ({
-      event_date: r.date,
-      cache_hit_rate: i % 2 === 0 ? 1 : 0.9,
-      total_cache_read: r.cache_read_tokens,
-      total_input: r.input_tokens,
-    })),
+    // Alternating days reach a whole 100% → the y-axis carries its widest label; each rate is its own day's read share,
+    // so the pooled figure is the series' weighted mean.
+    rows: trendRows.map((r, i) => {
+      const read = 9000;
+      const input = i % 2 === 0 ? 0 : 1000;
+      return { event_date: r.date, cache_hit_rate: read / (read + input), total_cache_read: read, total_input: input };
+    }),
   }));
   app.get("/api/cost/session-distribution", async () => ({
     // A month holds hundreds of sessions → the table always shows its full top rows plus Other.
@@ -198,18 +214,14 @@ async function openRenderContext(fixture: CostFixture): Promise<RenderContext> {
     return { app, browser, page };
   }
 
-  // Render complete = the wave resolved: every tile has left its loading skeleton, so the
-  // lane has had its inputs and an absent lane is a verdict rather than a pending state.
-  await page.waitForSelector(".cost-screen .kpi", { timeout: 30_000 });
+  // Render complete = the wave resolved: the stat row has left its loading state, so the
+  // alarm rows have had their inputs and absent rows are a verdict rather than a pending state.
+  await page.waitForSelector(SPEND_STAT_SELECTOR, { timeout: 30_000 });
   await page.waitForFunction(
-    (expected: number) => {
-      const tiles = Array.from(document.querySelectorAll(".cost-screen .kpi"));
-      return (
-        tiles.length === expected &&
-        tiles.every((t) => t.getAttribute("aria-busy") !== "true")
-      );
-    },
-    KPI_TILE_COUNT,
+    ({ expected, selector }: { expected: number; selector: string }) =>
+      document.querySelectorAll(selector).length === expected
+      && document.querySelector('.cost-screen [aria-busy="true"] > .stat-row') === null,
+    { expected: SPEND_STAT_COUNT, selector: SPEND_STAT_SELECTOR },
     { timeout: 30_000 },
   );
 
@@ -271,20 +283,11 @@ describe("calm fixture — nothing is running hot", () => {
     const titles = await getCardTitles(ctx.page);
     assert.deepStrictEqual(titles, [...DECISION_CARD_TITLES, ...DISCLOSURE_TITLES]);
 
-    const kpiPrecedesFirstCard = await ctx.page.evaluate(() => {
-      const tiles = Array.from(document.querySelectorAll(".cost-screen .kpi"));
-      const firstCard = document.querySelector(".cost-screen .card-title");
-      if (tiles.length === 0 || firstCard === null) return false;
-      const last = tiles[tiles.length - 1] as Element;
-      return Boolean(
-        last.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING,
-      );
-    });
-    assert.equal(
-      kpiPrecedesFirstCard,
-      true,
-      "the four KPI tiles lead the screen — every card follows them",
+    const statCardTitle = await ctx.page.evaluate(
+      (selector) => (document.querySelector(selector)?.closest(".card")?.querySelector(".card-title")?.textContent || "").trim(),
+      SPEND_STAT_SELECTOR,
     );
+    assert.equal(statCardTitle, "Spend", "the four spend stats live in the leading Spend card");
   });
 
   test("the instrumentation tier is three status cards, all open", async () => {
@@ -305,29 +308,119 @@ describe("calm fixture — nothing is running hot", () => {
     );
   });
 
-  test("the alarm lane occupies no DOM when no trigger fires", async () => {
+  test("no alarm row renders and no band is reserved when no trigger fires", async () => {
     assert.equal(await countAlarmRows(ctx.page), 0);
-    const laneHeight = await ctx.page.evaluate(() => {
+    const gap = await ctx.page.evaluate(() => {
       const header = document.querySelector(".cost-screen .flex-shrink-0");
-      const verdict = document.querySelector(".cost-screen .page-verdict");
-      if (header === null || verdict === null) return -1;
-      return verdict.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
+      const firstCard = document.querySelector(".cost-screen .card");
+      if (header === null || firstCard === null) return -1;
+      return firstCard.getBoundingClientRect().top - header.getBoundingClientRect().bottom;
     });
     assert.ok(
-      laneHeight >= 0 && laneHeight < 24,
-      `a calm lane must cost no vertical band; measured ${laneHeight}px between header and verdict`,
+      gap >= 0 && gap < 24,
+      `a calm screen must reserve no alarm band; measured ${gap}px between header and first card`,
     );
   });
 
-  test("the ledger Total row carries no session count — per-model counts do not sum", async () => {
-    const totalCells = await ctx.page.evaluate(() =>
-      Array.from(document.querySelectorAll(".cost-screen .cost-tbl tfoot td")).map((td) =>
-        (td.textContent || "").trim(),
-      ),
+  test("every cost table sits flush in its card, its edge cells carrying the card padding, in the house table face", async () => {
+    const tables = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll(".cost-screen table.tbl")).map((table) => {
+        const card = table.closest(".card")!;
+        const cardBox = card.getBoundingClientRect();
+        const border = parseFloat(getComputedStyle(card).borderLeftWidth);
+        const tableBox = table.getBoundingClientRect();
+        const firstCell = table.querySelector("tbody td")!;
+        const lastCell = table.querySelector("tbody tr td:last-child")!;
+        const head = getComputedStyle(table.querySelector("thead th")!);
+        return {
+          caption: (table.querySelector("caption")?.textContent || "").trim().slice(0, 32),
+          inset: [Math.round(tableBox.left - cardBox.left - border), Math.round(cardBox.right - border - tableBox.right)],
+          edge: [getComputedStyle(firstCell).paddingLeft, getComputedStyle(lastCell).paddingRight],
+          headCase: head.textTransform,
+          // the section labels and the turn aggregates inset themselves to the card padding
+          contentInsets: Array.from(card.querySelectorAll(".section-label, dl"))
+            .filter((el) => el.closest("thead, .card-head") === null)
+            .map((el) => Math.round(el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft) - cardBox.left - border)),
+        };
+      }),
     );
-    assert.strictEqual(totalCells[0], "Total");
-    assert.deepStrictEqual(totalCells.slice(2), ["—", "—"]);
+    assert.equal(tables.length, 3, `the model ledger, the session list and the stop-reason table: ${JSON.stringify(tables)}`);
+    for (const table of tables) {
+      const label = JSON.stringify(table);
+      assert.deepEqual(table.inset, [0, 0], `flush, never nested in a padded body — ${label}`);
+      assert.deepEqual(table.edge, ["16px", "16px"], `edge cells line up with the card head — ${label}`);
+      assert.equal(table.headCase, "none", `headers keep sentence case — ${label}`);
+      assert.ok(table.contentInsets.every((x) => x === 16), `content beside the table keeps the card padding — ${label}`);
+    }
   });
+
+  test("the ledger Total row sums only the cost column, in that column's precision, and says why the counts are not summed", async () => {
+    const ledger = await ctx.page.evaluate(() => {
+      const table = Array.from(document.querySelectorAll(".cost-screen table.tbl"))
+        .find((t) => (t.querySelector("caption")?.textContent || "").startsWith("Cost by model"));
+      return {
+        foot: Array.from(table?.querySelectorAll("tfoot :is(th, td)") ?? []).map((cell) => (cell.textContent || "").trim()),
+        costs: Array.from(table?.querySelectorAll("tbody tr > td:nth-child(2)") ?? []).map((cell) => (cell.textContent || "").trim()),
+        lastRow: (table?.querySelector("tbody tr:last-child")?.textContent || "").trim(),
+        reasonAlign: getComputedStyle(table!.querySelector("tfoot :is(th, td):last-child")!).textAlign,
+      };
+    });
+    assert.strictEqual(ledger.foot[0], "Total");
+    assert.ok(ledger.costs.some((text) => /^\$\d{1,2}\.\d\d$/.test(text)), `a row under $100: ${ledger.costs.join(" | ")}`);
+    for (const text of [...ledger.costs, ledger.foot[1]]) assert.match(text, /\.\d\d$/, `one precision down the cost column: ${text}`);
+    assert.strictEqual(ledger.foot.length, 3, "the two count columns share one cell");
+    assert.strictEqual(ledger.foot[2], "Not summed", "the shared cell names the rule in two words; the reason rides its title");
+    assert.strictEqual(ledger.reasonAlign, "right", "the reason sits on the count columns' right edge, as their cells do");
+    assert.match(ledger.lastRow, /^Other · \d+ more models?/, "the rolled-up row closes the body, so Total sums every row above it");
+  });
+
+  for (const width of [1440, 1920]) {
+    test(`at ${width}px the Total row's reason takes no width from the ledger's columns`, async () => {
+      await ctx.page.setViewportSize({ width, height: 900 });
+      const widths = await ctx.page.evaluate(() => {
+        const table = Array.from(document.querySelectorAll(".cost-screen table.tbl"))
+          .find((t) => (t.querySelector("caption")?.textContent || "").startsWith("Cost by model"))!;
+        // no named helper inside evaluate → tsx would wrap it in an undefined __name call
+        const heads = Array.from(table.querySelectorAll("thead th"));
+        const reason = table.querySelector("tfoot :is(th, td):last-child")!;
+        const withReason = heads.map((th) => Math.round(th.getBoundingClientRect().width));
+        const text = reason.innerHTML;
+        reason.innerHTML = "";
+        const withoutReason = heads.map((th) => Math.round(th.getBoundingClientRect().width));
+        reason.innerHTML = text;
+        return { withReason, withoutReason };
+      });
+      assert.deepEqual(widths.withReason, widths.withoutReason, "the columns size from their cells, never from the foot sentence");
+    });
+  }
+
+  for (const width of [1440, 1024]) {
+    test(`at ${width}px the by-model head sticks to the viewport top after a page scroll`, async () => {
+      await ctx.page.setViewportSize({ width, height: 900 });
+      const SCROLL_INTO_TABLE_PX = 80;
+      const measured = await ctx.page.evaluate((scrollIntoPx) => {
+        const table = Array.from(document.querySelectorAll(".cost-screen table.tbl"))
+          .find((t) => (t.querySelector("caption")?.textContent || "").startsWith("Cost by model"));
+        const head = table?.querySelector("thead th") as HTMLElement | undefined;
+        if (!table || !head) return null;
+        window.scrollTo(0, 0);
+        const headStartPx = head.getBoundingClientRect().top;
+        const headHeightPx = head.getBoundingClientRect().height;
+        const tableHeightPx = table.getBoundingClientRect().height;
+        // the page must scroll past the head's start, and the table must outlast the scroll, or a non-sticky head passes too
+        const pageRoomPx = document.documentElement.scrollHeight - window.innerHeight - headStartPx;
+        const precondition = { canPageScroll: pageRoomPx > scrollIntoPx, isTableTaller: tableHeightPx - headHeightPx > scrollIntoPx };
+        window.scrollTo(0, headStartPx + scrollIntoPx);
+        const offsetPx = head.getBoundingClientRect().top;
+        window.scrollTo(0, 0);
+        return { precondition, offsetPx };
+      }, SCROLL_INTO_TABLE_PX);
+      await ctx.page.setViewportSize({ width: 1440, height: 900 });
+      assert.ok(measured, "the by-model ledger renders a column head");
+      assert.deepEqual(measured.precondition, { canPageScroll: true, isTableTaller: true });
+      assert.ok(Math.abs(measured.offsetPx) <= 1, `head ${measured.offsetPx}px off the viewport top`);
+    });
+  }
 
   test("the decision tier draws exactly one chart root", async () => {
     assert.equal(
@@ -345,32 +438,59 @@ describe("calm fixture — nothing is running hot", () => {
     assert.equal(strayRoots, 0, "every chart lives in a card");
   });
 
-  test("one verdict line precedes the tiles, and every tile carries its window tag", async () => {
-    const shape = await ctx.page.evaluate(() => {
-      const verdicts = document.querySelectorAll(".cost-screen .page-verdict");
-      const firstTile = document.querySelector(".cost-screen .kpi");
-      const tags = Array.from(document.querySelectorAll(".cost-screen .kpi")).map((tile) =>
-        Array.from(tile.querySelectorAll(".kpi-window")).map((t) => (t.textContent || "").trim()),
-      );
-      const leads = verdicts.length === 1 && firstTile !== null
-        && Boolean(verdicts[0]!.compareDocumentPosition(firstTile) & Node.DOCUMENT_POSITION_FOLLOWING);
-      return { count: verdicts.length, leads, tags };
-    });
-    assert.equal(shape.count, 1, "one spend verdict per page");
-    assert.equal(shape.leads, true, "the verdict reads before the tiles");
-    assert.equal(shape.tags.length, KPI_TILE_COUNT);
-    for (const tags of shape.tags) {
-      assert.equal(tags.length, 1, "each tile names its window exactly once");
-      assert.ok(tags[0]!.length > 0, "a window tag is never blank");
+  test("the normal range band's bottom edge sits on each banded day's lower bound", async () => {
+    const { computeAnomalyRows } = await buildScreenSandbox<{
+      computeAnomalyRows: (points: unknown[], window: number, sigma: number) => Array<{ lowerBand: number | null }>;
+    }>(COST_SRC);
+    // the screen's rolling window and σ (cost.jsx → ROLLING_WINDOW, ANOMALY_SIGMA)
+    const lowerBands = computeAnomalyRows(getTrendRows(CALM_TREND_COSTS), 7, 2)
+      .map((row) => row.lowerBand).filter((value): value is number => value !== null);
+    const toggle = ctx.page.getByRole("button", { name: "Normal range" });
+    await toggle.click();
+    try {
+      await ctx.page.waitForSelector("#cost-region-trend .recharts-area-area");
+      const drawn = await ctx.page.evaluate(() => {
+        const region = document.querySelector("#cost-region-trend")!;
+        const ticks = Array.from(region.querySelectorAll(".recharts-yAxis .recharts-cartesian-axis-tick-value")).map((tick) => ({
+          value: Number((tick.textContent || "").replace(/[$,]/g, "")),
+          y: Number(tick.getAttribute("y")),
+        }));
+        const paths = Array.from(region.querySelectorAll(".recharts-area-area")).map((path) => path.getAttribute("d") || "");
+        return { ticks, paths };
+      });
+      assert.equal(drawn.paths.length, 1, "one band area — no fill from $0 and no surface mask");
+      // the two lowest ticks set the scale — the top label is nudged inside the plot, off its value's y
+      const [low, high] = [drawn.ticks[0]!, drawn.ticks[1]!];
+      const toY = (value: number): number => low.y + ((value - low.value) * (high.y - low.y)) / (high.value - low.value);
+      const coords = (drawn.paths[0]!.match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/g) ?? []).map(Number);
+      const points = Array.from({ length: coords.length / 2 }, (_, i) => coords[i * 2 + 1]!);
+      // a range area runs its top edge forward, then its bottom edge back → the second half, reversed
+      const bottomEdge = points.slice(points.length / 2).reverse();
+      assert.equal(bottomEdge.length, lowerBands.length, "only a day with a lower bound draws band");
+      bottomEdge.forEach((y, i) => assert.ok(Math.abs(y - toY(lowerBands[i]!)) <= 1, `day ${i}: edge at ${y}, bound at ${toY(lowerBands[i]!)}`));
+    } finally {
+      await toggle.click();
     }
   });
 
-  test("the tiles compare with the prior window the screen opts into", async () => {
-    const feet = await ctx.page.evaluate(() =>
-      Array.from(document.querySelectorAll(".cost-screen .cost-foot")).map((el) => (el.textContent || "").trim()),
+  test("each ranged stat names its window in its label", async () => {
+    const labels = await ctx.page.evaluate((row) =>
+      Array.from(document.querySelectorAll(`${row} .stat-label`)).map((el) => (el.textContent || "").trim()),
+    SPEND_STAT_ROW);
+    assert.equal(labels.length, SPEND_STAT_COUNT);
+    assert.equal(
+      labels.filter((label) => /, \d+d$/.test(label) && !/, 7d$/.test(label)).length,
+      2,
+      `the cost and the cache-share stats follow the range: ${labels.join(" | ")}`,
     );
-    assert.ok(feet.some((text) => /cut at this time of day/.test(text)), "a measured delta line renders");
-    assert.ok(!feet.some((text) => /did not arrive/.test(text)), "no tile reads the prior window as missing");
+  });
+
+  test("the stats compare with the prior window the screen opts into", async () => {
+    const contexts = await ctx.page.evaluate((row) =>
+      Array.from(document.querySelectorAll(`${row} .stat-context`)).map((el) => (el.textContent || "").trim()),
+    SPEND_STAT_ROW);
+    assert.ok(contexts.some((text) => /on the previous \d+ days$|^Level with the previous \d+ days$/.test(text)), "a measured delta line renders");
+    assert.ok(!contexts.some((text) => /did not arrive/.test(text)), "no stat reads the prior window as missing");
   });
 
   test("each card pair splits from the narrowest width its content fits and stacks below it", async () => {
@@ -485,24 +605,6 @@ describe("calm fixture — nothing is running hot", () => {
     }
   });
 
-  test("the cache-hit line draws in the tone of the cache-read category it measures", async () => {
-    const tones = await ctx.page.evaluate((selector) => {
-      const title = Array.from(document.querySelectorAll(selector))
-        .find((t) => (t.textContent || "").trim() === "Token volume");
-      const card = title?.closest(".cost-inst");
-      const line = card?.querySelector(".recharts-line-curve");
-      // the share row's entry: swatch first, then its label text
-      const swatch = Array.from(card?.querySelectorAll('span > span[style*="background"]:first-child') ?? [])
-        .find((el) => (el.parentElement?.textContent || "").trim().startsWith("Cache read"));
-      return {
-        line: line ? getComputedStyle(line).stroke : "",
-        category: swatch ? getComputedStyle(swatch).backgroundColor : "",
-      };
-    }, CARD_TITLE_SELECTOR);
-    assert.ok(tones.line && tones.category, `both marks render (line ${tones.line} · swatch ${tones.category})`);
-    assert.equal(getToneKey(tones.line), getToneKey(tones.category));
-  });
-
   test("the hit-rate axis labels the 100% its clamped domain reaches", async () => {
     const labels = await ctx.page.evaluate(() =>
       Array.from(document.querySelectorAll("#cost-region-cache .recharts-yAxis .recharts-cartesian-axis-tick text"))
@@ -535,11 +637,11 @@ describe("calm fixture — nothing is running hot", () => {
   });
 });
 
-describe("hot fixture — today is running over the normal", () => {
+describe("hot fixture — today is over the 7-day average", () => {
   let ctx: RenderContext;
 
   before(async () => {
-    // 3x the daily normal clears the 1.25x cut; the parse-error ratio clears its own.
+    // 3x the 7-day average clears the 1.25x cut; the parse-error ratio clears its own.
     ctx = await openRenderContext(getFixture(3, 0.5));
   });
 
@@ -547,41 +649,57 @@ describe("hot fixture — today is running over the normal", () => {
     await closeRenderContext(ctx);
   });
 
-  test("the lane leads the screen with one row per fired trigger", async () => {
+  test("the alarm rows lead the Spend card under its head, one row per fired trigger", async () => {
     await ctx.page.waitForSelector('.cost-screen [role="alert"]', { timeout: 30_000 });
     assert.equal(
       await countAlarmRows(ctx.page),
       2,
-      "the hot row and the conditional parse-error row, and nothing else",
+      "the spend row and the conditional parse-error row, and nothing else",
     );
 
-    const lanePrecedesTiles = await ctx.page.evaluate(() => {
-      const lastAlert = Array.from(
-        document.querySelectorAll('.cost-screen [role="alert"]'),
-      ).pop();
-      const firstTile = document.querySelector(".cost-screen .kpi");
-      if (lastAlert === undefined || firstTile === null) return false;
-      return Boolean(
-        lastAlert.compareDocumentPosition(firstTile) & Node.DOCUMENT_POSITION_FOLLOWING,
-      );
-    });
-    assert.equal(lanePrecedesTiles, true, "the lane leads — the tiles follow it");
+    const placement = await ctx.page.evaluate((row) => {
+      const alerts = Array.from(document.querySelectorAll('.cost-screen [role="alert"]'));
+      const statRow = document.querySelector(row);
+      const card = statRow?.closest(".card");
+      const head = card?.querySelector(".card-head");
+      if (!card || !head || !statRow) return null;
+      return {
+        isInSpendCard: alerts.every((el) => el.closest(".card") === card),
+        isUnderHead: alerts.every((el) => Boolean(head.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)),
+        isAboveStats: alerts.every((el) => Boolean(el.compareDocumentPosition(statRow) & Node.DOCUMENT_POSITION_FOLLOWING)),
+      };
+    }, SPEND_STAT_ROW);
+    assert.deepStrictEqual(placement, { isInSpendCard: true, isUnderHead: true, isAboveStats: true });
   });
 
-  test("the log-integrity threshold line and the days over it draw in one tone", async () => {
+  // spec 44084 §3.2: a row with a detail line is 70 (8 + 6 + 20 + 4 + 18.2 + 6 + 8), the Dashboard row's geometry
+  test("each alarm row with a detail line stands at the shared alarm-row height", async () => {
+    const heights = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll('.cost-screen [role="alert"]')).map((el) => el.getBoundingClientRect().height),
+    );
+    assert.equal(heights.length, 2);
+    for (const height of heights) assert.ok(Math.abs(height - 70.2) <= 1, `row height ${height}`);
+  });
+
+  test("the log-integrity threshold is a faint reference line and only the day over it takes the crit tone", async () => {
     const tones = await ctx.page.evaluate((selector) => {
       const title = Array.from(document.querySelectorAll(selector))
         .find((t) => (t.textContent || "").trim() === "Log integrity");
       const card = title?.closest(".cost-inst");
       const line = card?.querySelector(".recharts-line-curve");
       const bar = card?.querySelector(".recharts-bar-rectangle path");
-      return { line: line ? getComputedStyle(line).stroke : "", bar: bar ? getComputedStyle(bar).fill : "" };
+      const root = getComputedStyle(document.documentElement);
+      return {
+        line: line ? getComputedStyle(line).stroke : "", bar: bar ? getComputedStyle(bar).fill : "",
+        faint: root.getPropertyValue("--faint").trim(), crit: root.getPropertyValue("--crit").trim(),
+      };
     }, CARD_TITLE_SELECTOR);
     assert.ok(tones.line && tones.bar, `both marks render (line ${tones.line} · bar ${tones.bar})`);
-    assert.equal(getToneKey(tones.line), getToneKey(tones.bar));
+    assert.equal(getToneKey(tones.line), getToneKey(tones.faint), "a reference line, never a series or severity colour");
+    assert.equal(getToneKey(tones.bar), getToneKey(tones.crit), "the day over the threshold is the one mark that takes a tone");
   });
 
-  test("a fired lane changes nothing about the tier order or the chart count", async () => {
+  test("firing alarm rows change nothing about the tier order or the chart count", async () => {
     assert.deepStrictEqual(await getCardTitles(ctx.page), [
       ...DECISION_CARD_TITLES,
       ...DISCLOSURE_TITLES,
@@ -620,5 +738,66 @@ describe("cold outage — every cost payload fails before any has loaded", () =>
     assert.ok(settled, `covered slots: ${counts.covered.join(", ")}`);
     assert.equal(counts.banners, 1);
     assert.equal(counts.retries, 1, "the banner's Retry is the only one");
+  });
+});
+
+describe("the KPI read fails alone — the Spend card speaks for it", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext({ ...getFixture(1, 0), failedPrefix: "/api/cost/kpi" });
+  });
+
+  after(async () => {
+    await closeRenderContext(ctx);
+  });
+
+  test("the failure is an alarm row on the card columns: glyph on the title's column, Retry on the right inset, a hairline before the stats", async () => {
+    const measured = await ctx.page.evaluate(() => {
+      const card = document.querySelector("#cost-region-kpis .card")!;
+      const [title, glyph, retry] = [".card-title", ".region-unavailable .alarm-row-glyph", ".region-unavailable .alarm-row-actions button"]
+        .map((selector) => card.querySelector(selector)!.getBoundingClientRect().toJSON() as DOMRect);
+      return {
+        frame: card.getBoundingClientRect().toJSON() as DOMRect, title: title!, glyph: glyph!, retry: retry!,
+        rule: getComputedStyle(card.querySelector(".region-unavailable")!).borderBottomWidth,
+        pad: parseFloat(getComputedStyle(card).getPropertyValue("--card-pad")),
+      };
+    });
+    assert.ok(Math.abs(measured.glyph.left - measured.title.left) <= 1, `glyph at ${measured.glyph.left}, title at ${measured.title.left}`);
+    assert.ok(Math.abs(measured.retry.right - (measured.frame.right - 1 - measured.pad)) <= 1,
+      `Retry ends ${measured.frame.right - measured.retry.right}px from the edge`);
+    assert.equal(measured.rule, "1px");
+  });
+});
+
+describe("unpriced ledger — the models carry tokens but no priced cost", () => {
+  let ctx: RenderContext;
+
+  before(async () => {
+    ctx = await openRenderContext({ ...getFixture(1, 0), isLedgerUnpriced: true });
+  });
+
+  after(async () => {
+    await closeRenderContext(ctx);
+  });
+
+  test("the category footnote stands in for the share bar and keeps the card padding beside the flush ledger", async () => {
+    await ctx.page.waitForSelector('.cost-screen .card [role="note"]', { timeout: 30_000 });
+    const notes = await ctx.page.evaluate(() =>
+      Array.from(document.querySelectorAll('.cost-screen .card [role="note"]')).flatMap((note) => {
+        const card = note.closest(".card");
+        if (card === null || card.querySelector("table.tbl") === null) return [];
+        const cardLeft = card.getBoundingClientRect().left + parseFloat(getComputedStyle(card).borderLeftWidth);
+        return [{
+          text: (note.textContent || "").trim(),
+          inset: Math.round(note.getBoundingClientRect().left + parseFloat(getComputedStyle(note).paddingLeft) - cardLeft),
+          hasShareBar: card.querySelector('[role="img"]') !== null,
+        }];
+      }),
+    );
+    assert.equal(notes.length, 1, `one footnote, in the model ledger card: ${JSON.stringify(notes)}`);
+    assert.match(notes[0]!.text, /^No priced token cost in this window/);
+    assert.equal(notes[0]!.hasShareBar, false, "the footnote replaces the share bar, never sits beside it");
+    assert.equal(notes[0]!.inset, 16, "the footnote insets to the card padding like the section labels");
   });
 });

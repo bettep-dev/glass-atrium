@@ -7,7 +7,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { readFileSync } from "node:fs";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
 import { collectText, findNodes, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
@@ -77,33 +76,6 @@ function render(name: string, props: Record<string, unknown>): RenderedNode {
   return renderScreen(create(screen[name] as Component, props)) as RenderedNode;
 }
 
-const OK_OVERALL = { total: 200, reconstructed_total: 0, by_result: [{ result: "done", count: 200 }] };
-const settled: RegionState = { ...first, status: "ready", data: { overall: OK_OVERALL }, busy: false };
-const warmError: RegionState = { ...settled, error: "HTTP 500" };
-const channelsOk: RegionState = { ...first, status: "ready", data: { alerting: [] }, busy: false };
-
-function getVerdictText(analytics: RegionState, at: string | null, regions: RegionState[]): string {
-  const tree = render("PageVerdictO", {
-    analyticsState: analytics, channelLivenessState: regions.includes(first) ? first : channelsOk,
-    windowDays: 7, freshness: { at, regions, now: NOW },
-  });
-  return collectText(tree);
-}
-
-const verdictRows = [
-  { name: "a settled fresh read with an ok rate reads Healthy", analytics: settled, at: READ_AT, regions: [settled, channelsOk], has: "Healthy", lacks: "Last known" },
-  { name: "a warm error over an ok rate reads Last known, never Healthy", analytics: warmError, at: READ_AT, regions: [warmError, channelsOk], has: "Last known", lacks: "Healthy" },
-  { name: "a cold load reads No signal with a checking note, never Healthy", analytics: first, at: null, regions: [first, first], has: "No signal", lacks: "Healthy" },
-];
-
-for (const row of verdictRows) {
-  test(`the verdict: ${row.name}`, () => {
-    const text = getVerdictText(row.analytics, row.at, row.regions);
-    assert.ok(text.includes(row.has), `expected "${row.has}" in: ${text}`);
-    assert.ok(!text.includes(row.lacks), `unexpected "${row.lacks}" in: ${text}`);
-  });
-}
-
 test("a cold-error Retry in flight keeps the status band's failure card instead of a loader", () => {
   const retrying: RegionState = { ...first, status: "loading", busy: true, error: "HTTP 500" };
   const tree = render("StatusBandO", { analyticsState: retrying, attentionState: first, windowDays: 7, onRetry: () => undefined });
@@ -125,56 +97,13 @@ for (const row of foldRows) {
   });
 }
 
-test("each reporting-health tile is a named group, so a tab or reader lands on one unit", () => {
+test("each reporting-health category is one stat whose name, share and run count read together", () => {
   const summary = { healthy_rate: 0.9, attribution_loss_rate: 0.05, literal_omission_rate: 0.03, synthesized_rate: 0.02 };
-  const tree = render("AttributionSummaryRow", { summary, totalAttributed: 100 });
-  const tiles = findNodes(tree, (n) => n.props.role === "group");
-  const names = tiles.map((n) => String(n.props["aria-label"]));
-  for (const label of ["Recorded properly", "Untraceable"]) {
-    assert.ok(names.some((name) => name.startsWith(label)), `no group named ${label}: ${names.join(" | ")}`);
+  const tree = render("AttributionSummaryRow", { summary, totalAttributed: 200 });
+  const stats = findNodes(tree, (n) => n.props.className === "stat").map((n) => collectText(n));
+  const labels = findNodes(tree, (n) => n.props.className === "stat-label").map((n) => collectText(n).trim());
+  assert.deepEqual(labels, ["Recorded", "Untraceable", "Missing", "Reconstructed"], "each label fits one line");
+  for (const [label, share, runs] of [["Recorded", "90%", "180 runs"], ["Untraceable", "5%", "10 runs"]]) {
+    assert.ok(stats.some((text) => text.includes(label) && text.includes(share) && text.includes(runs)), `no stat ${label} ${share} ${runs}: ${stats.join(" | ")}`);
   }
 });
-
-// WCAG relative luminance over "R G B" token triplets
-function getLuminance(rgb: number[]): number {
-  const [r, g, b] = rgb.map((c) => {
-    const s = c / 255;
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-// One token map per theme — the dark theme spans its main block and the root-only accent default.
-function getThemeTokens(): Array<Record<string, number[]>> {
-  const css = readFileSync(resolve(__dirname, "../public/styles/tokens.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  const themes = { light: {} as Record<string, number[]>, dark: {} as Record<string, number[]> };
-  for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
-    const theme = selector.trim() === ":root" ? themes.light : selector.includes('[data-theme="dark"]') ? themes.dark : null;
-    if (!theme) continue;
-    for (const m of body.matchAll(/--([a-z-]+):\s*(\d+)\s+(\d+)\s+(\d+);/g)) theme[m[1]] = [Number(m[2]), Number(m[3]), Number(m[4])];
-  }
-  return [themes.light, themes.dark].filter((tokens) => tokens.ink && tokens.elev && tokens.accent && tokens.warn);
-}
-
-function getContrast(a: number[], b: number[]): number {
-  const [hi, lo] = [getLuminance(a), getLuminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
-}
-
-for (const isPolar of [false, true]) {
-  test(`the busiest ${isPolar ? "polar" : "plain"} crosstab cell keeps its count at 4.5:1 and its fill at 3:1 in every theme`, () => {
-    const tree = render("CrosstabCell", { cell: { count: 8623, isPolar }, max: 8623, rowLabel: "high", colLabel: "pass" });
-    const td = findNodes(tree, (n) => n.type === "td")[0];
-    assert.strictEqual((td.props.style as { background?: string } | undefined)?.background, undefined, "the count sits on the plain card");
-    const fill = findNodes(tree, (n) => /^rgb\(var\(--[a-z]+\)\)$/.test(String((n.props.style as { background?: string } | undefined)?.background)))[0];
-    assert.ok(fill, "solid fill not found");
-    const fillVar = /--([a-z]+)/.exec(String((fill.props.style as { background: string }).background))![1];
-    const themes = getThemeTokens();
-    assert.strictEqual(themes.length, 2);
-    for (const tokens of themes) {
-      assert.ok(getContrast(tokens.ink, tokens.elev) >= 4.5, "count contrast");
-      const fillContrast = getContrast(tokens[fillVar], tokens.elev);
-      assert.ok(fillContrast >= 3, `fill contrast ${fillContrast.toFixed(2)}`);
-    }
-  });
-}

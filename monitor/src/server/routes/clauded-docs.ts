@@ -28,11 +28,15 @@ import { Prisma } from "../../generated/prisma/client.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import { errnoCode } from "../errno.js";
+import { setAuditTarget } from "../middleware/audit-log.js";
+import { BODY_LIMIT_BYTES } from "../request-guards.js";
+import { getAttachmentDisposition } from "../response-headers.js";
 import { parseIdParam, parseOffsetParam } from "../route-params.js";
 import { extractIndexableText } from "../clauded-docs/indexable-text.js";
 import {
   type ExportFormatToken,
   HtmlExportError,
+  RenderLineError,
   renderSelfContainedHtml,
 } from "../clauded-docs/html-export.js";
 import { sanitizeHtmlBody } from "../clauded-docs/sanitize.js";
@@ -413,7 +417,8 @@ export async function registerClaudedDocsRoutes(app: FastifyInstance): Promise<v
   app.post("/api/clauded-docs", handleCreate);
   app.get("/api/clauded-docs/:id/html-export", handleHtmlExportSingle);
   app.get("/api/clauded-docs/:id", handleGet);
-  app.put("/api/clauded-docs/:id", handleUpdate);
+  // every PUT carries the full body → the loopback limit on both listeners, never the remote mutation cap
+  app.put("/api/clauded-docs/:id", { bodyLimit: BODY_LIMIT_BYTES }, handleUpdate);
   app.delete("/api/clauded-docs/:id", handleDelete);
 }
 
@@ -1291,31 +1296,6 @@ async function getDocRowById(
   return row;
 }
 
-// RFC 5987 attr-char set — chars that DO NOT require percent-encoding inside an
-// ext-value. encodeURIComponent already escapes everything outside its own
-// unreserved set, but it leaves `!*'()` raw (RFC 3986 sub-delims that RFC 5987
-// excludes from attr-char) — escape those too so the ext-value stays strictly
-// token-safe per the grammar.
-const RFC5987_EXTRA_ESCAPE: ReadonlyMap<string, string> = new Map([
-  ["!", "%21"],
-  ["*", "%2A"],
-  ["'", "%27"],
-  ["(", "%28"],
-  [")", "%29"],
-]);
-
-/**
- * Percent-encodes `value` for an RFC 5987 ext-value (filename*). Output is
- * guaranteed ASCII — every byte > 0x7F is UTF-8 percent-encoded by
- * encodeURIComponent; the residual sub-delims are escaped via the map above.
- */
-function encodeRfc5987(value: string): string {
-  return encodeURIComponent(value).replace(
-    /[!*'()]/g,
-    (ch) => RFC5987_EXTRA_ESCAPE.get(ch) ?? ch,
-  );
-}
-
 // GET /api/clauded-docs/:id/html-export — single-doc offline self-contained HTML.
 // Renders the stored sanitized body via Playwright into an OFFLINE self-contained .html; a
 // non-HTML row gets a minimal dark shell wrap (no browser). Render contract → html-export.ts.
@@ -1339,6 +1319,8 @@ async function handleHtmlExportSingle(
   reply: FastifyReply,
 ): Promise<string | ClaudedDocsErrorBody> {
   const start = Date.now();
+  // first → every answer carries it, the not-modified and refusal answers included
+  applyHtmlBodyCspHeader(reply);
   const id = parseIdParam(request.params.id);
   if (id === null) {
     return reply.code(400).send({ error: "invalid_param", param: "id" });
@@ -1377,13 +1359,15 @@ async function handleHtmlExportSingle(
   const format = exportFormatFromPath(row.html_path);
   let rendered: string;
   try {
-    rendered = await renderSelfContainedHtml(storedBody, format);
+    rendered = await renderSelfContainedHtml(storedBody, format, getCallerSignal(reply));
   } catch (error) {
+    if (error instanceof RenderLineError) return failWithRenderLine(request, reply, error);
     return failWithHtmlExport(request, reply, id, error);
   }
 
   reply.header("Content-Type", "text/html; charset=utf-8");
   reply.header("Content-Disposition", buildHtmlExportContentDisposition(row));
+  reply.header("X-Content-Type-Options", "nosniff");
   reply.header("ETag", etag);
   reply.header("Cache-Control", "private, max-age=0, must-revalidate");
 
@@ -1436,6 +1420,7 @@ async function handleHtmlExportMulti(
     });
   }
   const ids = parsed.ids;
+  setAuditTarget(request, { ids });
 
   // Batch-fetch rows for the requested ids (same SELECT columns as handleGet/handleList).
   // DB unavailable → 503 (before zip stream starts, so a normal error envelope is possible).
@@ -1459,6 +1444,7 @@ async function handleHtmlExportMulti(
   // SEQUENTIAL render FIRST — no archive/headers yet, so the status code stays
   // free until we know whether ANY doc is includable. One BrowserContext at a
   // time, in input id order (no Promise.all).
+  const callerSignal = getCallerSignal(reply);
   const manifest: HtmlExportManifestEntry[] = [];
   const entries: Array<{ name: string; html: string }> = [];
   const usedNames = new Set<string>();
@@ -1481,8 +1467,10 @@ async function handleHtmlExportMulti(
     let rendered: string;
     try {
       // One BrowserContext per id (renderSelfContainedHtml creates/closes it internally).
-      rendered = await renderSelfContainedHtml(storedBody, format);
+      rendered = await renderSelfContainedHtml(storedBody, format, callerSignal);
     } catch (error) {
+      // the line refused or dropped this caller → the whole export ends, never a zip missing documents for that reason
+      if (error instanceof RenderLineError) return failWithRenderLine(request, reply, error);
       const stage = error instanceof HtmlExportError ? error.stage : "render";
       // Any render failure (incl. mermaid zero-<svg>) → skip + record in manifest (never abort the zip).
       // Keep the <stage> discriminator; drop the raw render/Playwright message — it can embed
@@ -1548,7 +1536,8 @@ async function handleHtmlExportMulti(
   // Set headers before finalize (headers cannot change after the stream's first byte).
   const zipName = `clauded-docs-${todayDateStamp()}.zip`;
   reply.header("Content-Type", "application/zip");
-  reply.header("Content-Disposition", `attachment; filename="${zipName}"`);
+  reply.header("Content-Disposition", getAttachmentDisposition(zipName));
+  reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Cache-Control", "private, max-age=0, must-revalidate");
   // Partial-export signal — client toasts warn when included < requested.
   reply.header("X-Included-Count", String(entries.length));
@@ -1592,6 +1581,28 @@ function failWithHtmlExport(
   );
   reply.code(503);
   return { error: "filesystem_unavailable", reason: prefixedFsReason(`html_export_${stage}`, error, "export failed") };
+}
+
+/** Aborted when the caller's connection closes before its reply is written → a render still waiting is dropped. */
+function getCallerSignal(reply: FastifyReply): AbortSignal {
+  const caller = new AbortController();
+  reply.raw.once("close", () => {
+    if (!reply.raw.writableFinished) caller.abort();
+  });
+  return caller.signal;
+}
+
+/** full → 503 export_busy with a retry hint · caller_gone → nobody reads the reply, so a debug line only. */
+function failWithRenderLine(request: FastifyRequest, reply: FastifyReply, error: RenderLineError): ClaudedDocsErrorBody {
+  const route = request.routeOptions.url ?? "";
+  if (error.reason === "caller_gone") {
+    request.log.debug({ route }, "html export dropped: caller gone while its render waited");
+    reply.code(503);
+    return { error: "caller_gone" };
+  }
+  request.log.warn({ route }, "html export refused: render line full");
+  reply.code(503).header("Retry-After", "5");
+  return { error: "export_busy" };
 }
 
 /** formatFromPath (DocFormatToken) → ExportFormatToken — safe since both unions share members. */
@@ -1644,7 +1655,7 @@ function buildHtmlExportContentDisposition(row: ClaudedDocDbRow): string {
     .replace(/^-+|-+$/g, "");
   const asciiBase = asciiSlug.length === 0 ? `doc-${docId}` : asciiSlug;
   const asciiName = `${asciiBase}.html`;
-  return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeRfc5987(utf8Name)}`;
+  return getAttachmentDisposition(utf8Name, asciiName);
 }
 
 /**
@@ -1701,6 +1712,7 @@ async function handleUpdate(
   const existingAudience: AudienceLiteral | null = normalizeAudience(existing.audience);
   // exposure bit — PUT body audience field wins; unset keeps existing row value (no re-classification).
   const targetAudience: AudienceLiteral | null = parsed.audience ?? existingAudience;
+  setAuditTarget(request, { id, changed: getChangedUpdateFields({ parsed, existing, targetAudience, requestFormat }) });
 
   // body-kind(format) routes directly — html → HTML primary · else → plain primary.
   const needPlain = requestFormat !== "html";
@@ -1742,8 +1754,25 @@ async function handleUpdate(
   return handleUpdateHtmlBody(request, reply, id, parsed, existing, targetAudience);
 }
 
+/** Which of the four page-settable row facts this PUT changes → the remote audit target. */
+function getChangedUpdateFields(input: {
+  parsed: UpdateClaudedDocBody;
+  existing: ClaudedDocDbRow;
+  targetAudience: AudienceLiteral | null;
+  requestFormat: DocFormatToken;
+}): string[] {
+  const { parsed, existing } = input;
+  const changes: [string, boolean][] = [
+    ["title", parsed.title !== undefined && parsed.title !== existing.title],
+    ["audience", input.targetAudience !== normalizeAudience(existing.audience)],
+    ["doc_status", parsed.doc_status !== undefined && parsed.doc_status !== existing.doc_status],
+    ["format", input.requestFormat !== formatFromPath(existing.html_path)],
+  ];
+  return changes.filter(([, isChanged]) => isChanged).map(([field]) => field);
+}
+
 /**
- * PUT HTML primary path: sanitize → structure validate → SHA256 → atomic write → DB update.
+ * PUT HTML primary path: hash compare → sanitize → structure validate → SHA256 → atomic write → DB update.
  *
  * If the existing row was plain (`.md` etc.), issue a new `.html` path + delete the old file.
  * Same format → in-place write.
@@ -1763,6 +1792,12 @@ async function handleUpdateHtmlBody(
     return reply.code(500).send({ error: "internal" });
   }
 
+  // Optimistic-lock check (HTTP If-Match-style) → a stale writer is refused before any body work.
+  if (existing.content_hash !== parsed.expected_hash) {
+    reply.code(409);
+    return { error: "hash_conflict", expected: parsed.expected_hash, actual: existing.content_hash };
+  }
+
   const sanitized = sanitizeUpdateBody(request, reply, htmlBody);
   if (sanitized === null) return reply as never;
 
@@ -1772,12 +1807,6 @@ async function handleUpdateHtmlBody(
 
   const conversion = convertForStorageOrReply(request, reply, sanitized);
   if (conversion === null) return reply as never;
-
-  // Optimistic-lock check (HTTP If-Match-style).
-  if (existing.content_hash !== parsed.expected_hash) {
-    reply.code(409);
-    return { error: "hash_conflict", expected: parsed.expected_hash, actual: existing.content_hash };
-  }
 
   // No-op short-circuit — same content + same audience. Even with unchanged body, a doc_status
   // diff must take the cascade path, so block the no-op skip (else sibling cascade is missed).
@@ -2061,6 +2090,8 @@ async function handleDelete(
     reply.code(404);
     return { error: "not_found", id };
   }
+  // from the deleted row itself → the trail names what is gone, never its body
+  setAuditTarget(request, { id, title: row.title, contentHash: row.content_hash });
 
   // Defensive — verify before unlinking so a corrupted row cannot trigger an
   // out-of-root unlink.
@@ -2728,7 +2759,7 @@ async function replyCascadeOnlyUpdate(
  * PUT hash-uniqueness probe. On duplicate hit OR DB failure, restores the
  * previous content and returns a fully-formed error body. "ok" = continue.
  */
-async function checkUpdateHashUniqueness(
+export async function checkUpdateHashUniqueness(
   request: FastifyRequest,
   reply: FastifyReply,
   prisma: ReturnType<typeof getPrisma>,
@@ -2750,6 +2781,7 @@ async function checkUpdateHashUniqueness(
     }
     return "ok";
   } catch (error) {
+    await restoreHtmlBody(request.log, restoreArgs);
     return failWithDb(request, reply, "/api/clauded-docs/:id (PUT)", error);
   }
 }
@@ -3603,37 +3635,28 @@ async function handleGroupCreate(
     return reply.code(400).send({ error: "invalid_body", reason: parsed });
   }
   const memberIds = parsed.member_ids;
+  setAuditTarget(request, { memberIds });
 
   const prisma = getPrisma();
-  // Root selection key: created_at DESC, id DESC (newest wins, id tie-break).
-  // The probe doubles as a DB-existence check — fewer RETURNING rows than
-  // member_ids means some ids are missing.
-  interface UpdatedRow {
-    id: bigint;
-  }
-  let updatedRows: UpdatedRow[];
-  let rootId: bigint | null = null;
+  const memberIdBigints = memberIds.map((id) => BigInt(id));
+  let members: GroupMemberRow[];
   try {
-    // ANY($1::bigint[]) — pass the id array as a single param (Prisma.sql safe).
-    const memberIdBigints = memberIds.map((id) => BigInt(id));
-    interface RootProbeRow {
-      id: bigint;
-    }
-    const rootProbe = await prisma.$queryRaw<RootProbeRow[]>`
-      SELECT id FROM monitor.documents
-      WHERE id = ANY(${memberIdBigints}::bigint[])
-      ORDER BY created_at DESC, id DESC
-      LIMIT 1
-    `;
-    if (rootProbe[0] === undefined) {
-      return reply.code(404).send({
-        error: "members_not_found",
-        missing_ids: memberIds,
-      });
-    }
-    rootId = rootProbe[0].id;
+    members = await findGroupMembers(prisma, memberIdBigints);
+  } catch (error) {
+    return failWithDb(request, reply, "/api/clauded-docs/group (POST probe)", error);
+  }
+  // every member checked before the write → a missing id regroups nothing
+  if (members.length !== memberIds.length) {
+    const foundIds = new Set(members.map((r) => bigintToNumber(r.id)));
+    return reply.code(404).send({ error: "members_not_found", missing_ids: memberIds.filter((id) => !foundIds.has(id)) });
+  }
+  // newest member is the root (created_at DESC, id DESC) → its folder_id self-refs
+  const rootId = members[0]!.id;
+  const sourceFolderIds = getSourceFolderIds(members, rootId);
 
-    updatedRows = await prisma.$queryRaw<UpdatedRow[]>`
+  let updatedRows: Array<{ id: bigint }>;
+  try {
+    updatedRows = await prisma.$queryRaw<Array<{ id: bigint }>>`
       UPDATE monitor.documents
       SET folder_id = ${rootId}
       WHERE id = ANY(${memberIdBigints}::bigint[])
@@ -3642,22 +3665,15 @@ async function handleGroupCreate(
   } catch (error) {
     return failWithDb(request, reply, "/api/clauded-docs/group (POST)", error);
   }
-
-  // Fewer matched rows than input → some ids do not exist (members_not_found).
-  if (updatedRows.length !== memberIds.length) {
-    const foundIds = new Set(updatedRows.map((r) => bigintToNumber(r.id)));
-    const missing = memberIds.filter((id) => !foundIds.has(id));
-    return reply.code(404).send({
-      error: "members_not_found",
-      missing_ids: missing,
-    });
-  }
+  // groups the members were pulled from → a lone member left behind is ungrouped
+  const autoUngroupedIds = await applyAutoUngroupForFolders(request, prisma, sourceFolderIds);
 
   request.log.info(
     {
       route: "/api/clauded-docs/group", method: "POST",
       folder_id: bigintToNumber(rootId),
       member_count: updatedRows.length,
+      auto_ungrouped_ids: autoUngroupedIds,
       durationMs: Date.now() - start,
     },
     "group created",
@@ -3668,6 +3684,26 @@ async function handleGroupCreate(
     member_count: updatedRows.length,
     affected_member_ids: memberIds,
   };
+}
+
+interface GroupMemberRow {
+  id: bigint;
+  folder_id: bigint | null;
+}
+
+/** The named documents that exist, newest first (created_at DESC, id DESC). */
+async function findGroupMembers(prisma: ReturnType<typeof getPrisma>, memberIds: bigint[]): Promise<GroupMemberRow[]> {
+  return prisma.$queryRaw<GroupMemberRow[]>`
+    SELECT id, folder_id FROM monitor.documents
+    WHERE id = ANY(${memberIds}::bigint[])
+    ORDER BY created_at DESC, id DESC
+  `;
+}
+
+/** Distinct prior groups of the members, the new root's own group excluded. */
+function getSourceFolderIds(members: GroupMemberRow[], rootId: bigint): number[] {
+  const folderIds = members.map((r) => r.folder_id).filter((fid): fid is bigint => fid !== null && fid !== rootId);
+  return Array.from(new Set(folderIds.map((fid) => bigintToNumber(fid))));
 }
 
 // POST /api/clauded-docs/ungroup
@@ -3685,6 +3721,7 @@ async function handleUngroup(
     return reply.code(400).send({ error: "invalid_body", reason: parsed });
   }
   const memberIds = parsed.member_ids;
+  setAuditTarget(request, { memberIds });
 
   const prisma = getPrisma();
   // Collect source folder_ids (the auto-ungroup trigger's check targets) and

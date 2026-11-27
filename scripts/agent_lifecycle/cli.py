@@ -21,9 +21,13 @@ surfaced it is removed — wrapper scripts branch on these):
     4  EXIT_HALT            gate / pre-flight / lock-held / body refusal — ZERO
                             writes (safe to retry once the cause clears)
     5  EXIT_TX_FAILED       a forward step failed, rolled back CLEANLY (no residue)
-    6  EXIT_ROLLBACK_FAILED rollback itself failed — recovery marker written;
-                            run `orphan-scan --mode reconcile` (do NOT assume
-                            orphan 0)
+    6  EXIT_ROLLBACK_FAILED rollback itself failed. add / extend / delete wrote a
+                            recovery marker: run `orphan-scan --mode reconcile`
+                            (do NOT assume orphan 0); if it lists no marker, use
+                            the written / cleaned / not_cleaned stderr lines.
+                            sync-inject / sync-gate-roster wrote no marker:
+                            compare each `.bak` named on stderr with its live
+                            file
 Code 3 is reserved (was the stubbed-handler exit).
 """
 
@@ -71,7 +75,8 @@ from .validation import ValidationError, read_gated_text, validate_name
 
 # Exit codes (named, like generate-manifest.sh): 0 ok · 2 usage · 4 validation/
 # safety/gate HALT · 5 transaction failed (rolled back cleanly) · 6 rollback
-# FAILED (recovery marker — reconcile). Code 3 is reserved (was the stub exit).
+# FAILED (recovery per command: module docstring). Code 3 is reserved (was the
+# stub exit).
 EXIT_OK = 0
 EXIT_USAGE = 2
 EXIT_HALT = 4
@@ -415,8 +420,11 @@ def build_parser() -> argparse.ArgumentParser:
             "exit codes (PRIMARY caller interface): "
             "0 ok · 2 usage · 4 gate/pre-flight/lock-held refusal (zero writes) · "
             "5 transaction failed, rolled back cleanly · "
-            "6 rollback FAILED, recovery marker written (run orphan-scan --mode "
-            "reconcile)."
+            "6 rollback FAILED: add/extend/delete wrote a recovery marker (run "
+            "orphan-scan --mode reconcile; if it lists none, use the "
+            "written/cleaned/not_cleaned stderr lines); "
+            "sync-inject/sync-gate-roster wrote none (compare each .bak named "
+            "on stderr with its live file)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

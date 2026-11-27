@@ -2,7 +2,7 @@
 // multi-document ZIP export. Each selected doc becomes a self-contained .html
 // entry inside the ZIP, plus a top-level _manifest.json.
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/clauded-docs.html-export-multi.test.ts
+// Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/clauded-docs.html-export-multi.test.ts
 //
 // Entry-name capture strategy (R2 append-spy — no unzip dep):
 //   Monkey-patch ZipArchive.prototype.append BEFORE each test that needs name
@@ -184,13 +184,13 @@ test("POST /html-export: valid ids → 200 application/zip + one .html entry per
       res.headers["content-type"]?.toString().startsWith("application/zip"),
       `content-type should be application/zip, got: ${res.headers["content-type"]}`,
     );
+    assert.strictEqual(res.headers["x-content-type-options"], "nosniff", "the zip is never sniffed into a page");
     const disposition = res.headers["content-disposition"] as string;
-    // 이 라우트가 스스로 짓는 헤더임 — 단건 라우트의 buildHtmlExportContentDisposition 은 여기를 지나지 않으므로
-    // filename 절을 여기서 재지 않으면 zip 파일 이름은 저장소 어디에서도 잠기지 않는다.
+    // 공유 빌더(getAttachmentDisposition)가 짓는 헤더 — zip 파일 이름은 이 단언 말고 저장소 어디에서도 잠기지 않음
     // 날짜는 실행일이라 리터럴로 못 박지 않고 이름 짜임새(prefix · YYYY-MM-DD · 확장자)로 잼.
     assert.match(
       disposition,
-      /^attachment; filename="clauded-docs-\d{4}-\d{2}-\d{2}\.zip"$/,
+      /^attachment; filename="(clauded-docs-\d{4}-\d{2}-\d{2}\.zip)"; filename\*=UTF-8''\1$/,
       `zip disposition must name the download file, got: ${String(disposition)}`,
     );
     // 전건 포함 → X-Included-Count == 요청 수 (클라이언트 부분실패 감지 계약).

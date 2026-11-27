@@ -1,7 +1,7 @@
 // Regression tests for GET /api/outcomes/attribution-daily (Outcome 분석 ·
-// AttributionHealthCard backing endpoint).
+// AttributionHealthBlock backing endpoint).
 //
-// Runner: node:test (built-in) via tsx — npx tsx --test test/outcomes.attribution-daily.route.test.ts
+// Runner: node:test (built-in) via tsx — MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/outcomes.attribution-daily.route.test.ts
 //
 // Why this suite exists: the route was committed (BE ae5c8d0) but the running
 // monitor served a stale dist → the literal /attribution-daily fell through to
@@ -44,7 +44,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
-import { acquireOutcomesWriteLock, releaseOutcomesWriteLock } from "./lib/outcomes-write-mutex.js";
+import { lockTableWrites, unlockTableWrites } from "./lib/table-write-lock.js";
 import {
   buildDevScopeSummary,
   categorizeAttributionSource,
@@ -142,7 +142,7 @@ let tmpRoot: string;
 before(async () => {
   // Held for the whole run: this suite seeds every canonical attribution_source a few
   // hours back, which is a fresh row on the channels /channel-liveness reads as silent.
-  await acquireOutcomesWriteLock();
+  await lockTableWrites("outcomes");
   tmpRoot = await mkdtemp(join(tmpdir(), "attr-daily-registry-"));
   const registryPath = join(tmpRoot, "agent-registry.json");
   await writeFile(registryPath, JSON.stringify(REGISTRY_FIXTURE), "utf8");
@@ -174,7 +174,7 @@ after(async () => {
     // surface, never throw — disconnect 도 시도해야 함.
     console.error("[attr-daily-test cleanup] DB scrub failed:", error);
   }
-  await releaseOutcomesWriteLock();
+  await unlockTableWrites("outcomes");
   await disconnectPrisma();
   delete process.env.AGENT_REGISTRY_PATH;
   resetAgentRegistryCache();

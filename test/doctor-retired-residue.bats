@@ -47,6 +47,7 @@ GONE_PATH="scripts/lib/no-such-retired-file.sh"
 
 setup() {
   load 'lib/bats-db-seal'
+  load 'lib/remote-run-stub'
   ga_bats_db_seal
   [[ -f "${REAL_GA}" ]] || skip "glass-atrium not found: ${REAL_GA}"
   [[ -f "${GA}/${PRESENT_PATH}" ]] || skip "fixture path absent: ${PRESENT_PATH}"
@@ -54,6 +55,8 @@ setup() {
   TARGET="$(mktemp -d -t ga-doctor-residue-target.XXXXXX)"
   DATA_ROOT="$(mktemp -d -t ga-doctor-residue-data.XXXXXX)"
   STATE="$(mktemp -d -t ga-doctor-residue-state.XXXXXX)"
+  GA_SANDBOX="$(mktemp -d -t ga-doctor-residue-root.XXXXXX)"
+  make_remote_stub_root "${GA_SANDBOX}" "${GA}"
   mkdir -p "${TARGET}/bin"
   cat >"${TARGET}/bin/claude" <<'SH'
 #!/bin/bash
@@ -72,6 +75,7 @@ teardown() {
   if ga_guard_path "${TARGET:-}"; then rm -rf -- "${TARGET:?}"; fi
   if ga_guard_path "${DATA_ROOT:-}"; then rm -rf -- "${DATA_ROOT:?}"; fi
   if ga_guard_path "${STATE:-}"; then rm -rf -- "${STATE:?}"; fi
+  if ga_guard_path "${GA_SANDBOX:-}"; then rm -rf -- "${GA_SANDBOX:?}"; fi
 }
 
 # Drive the REAL doctor with the target, runtime-data, updater-state and backup-dir seams at the
@@ -87,7 +91,7 @@ run_doctor_seam() {
     ATRIUM_UPDATE_STATE_DIR="${STATE}" \
     ATRIUM_MONITOR_PORT="1" \
     AUTOAGENT_BACKUP_DIR="${BACKUP_DIR}" \
-    run "${REAL_GA}" doctor
+    run "${GA_SANDBOX}/glass-atrium" doctor
 }
 
 assert_output_has() {

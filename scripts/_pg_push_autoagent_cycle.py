@@ -9,7 +9,10 @@
 #   * core.daemon_run_payload (FK 1:1) with the full JSON blob.
 #   * core.autoagent_proposals — one UPSERT per patches[] entry, keyed by
 #     (cycle_date, pattern_label, target_file). cost_guard_state is the
-#     cycle-level snapshot copied to every proposal row.
+#     cycle-level snapshot copied to every proposal row. A patch carrying a
+#     preregistration_payload object goes as one combined op: the UPSERT and its
+#     live pre-registration in one transaction. Any other non-None value is a
+#     named fault for that patch alone — nothing sent, never the plain write.
 #
 # All writes go through the sibling _pg_dual_write_daemon.py
 # (subprocess) so retry / hook_failures / fail-loud-and-skip semantics
@@ -17,7 +20,8 @@
 #
 # Exit code: 0 when every attempted PG write committed (or the cycle had
 # nothing to push — missing/empty/unparseable report); 1 when one or more
-# writes FAILED (DB down / connection refused). The daemon still never BLOCKS —
+# writes FAILED (DB down / connection refused, a rolled-back combined write) or a
+# patch was refused. The daemon still never BLOCKS —
 # every write is attempted and each failure is recorded to core.hook_failures +
 # stderr — but a failed cycle now surfaces non-zero so daemon-cycle.sh folds it
 # into PIPELINE_RC and the log aggregator sees a degraded run (DF-16).
@@ -38,6 +42,8 @@ _FAILURE_CLASS_QUOTA = "quota-limit"
 _STATUS_QUOTA_EXCEEDED = "quota_exceeded"
 # Sibling of this module — scripts/ is consumed in place from the store.
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_pg_dual_write_daemon.py")
+# The PatchResult field the cycle fills, read here under the same name.
+_PREREGISTRATION_KEY = "preregistration_payload"
 
 
 def _aggregate(payload):
@@ -213,6 +219,16 @@ def main():
                 % json.dumps(patch)[:200]
             )
             continue
+        preregistration = patch.get(_PREREGISTRATION_KEY)
+        if preregistration is not None and not isinstance(preregistration, dict):
+            sys.stderr.write(
+                f"[autoagent-cycle-pg] patch refused (pattern_label={pattern_label}, "
+                f"target_file={target_file}): {_PREREGISTRATION_KEY} is "
+                f"{type(preregistration).__name__}, not an object — neither the proposal "
+                "row nor its live pre-registration written\n"
+            )
+            all_writes_ok = False
+            continue
         patch_classification = patch.get("classification") or "reject"
         # Status fallback derives from classification — a reject patch with an
         # absent/empty status settles as 'rejected', not the blanket 'pending'
@@ -248,9 +264,8 @@ def main():
                 "pre_verify_status": patch.get("pre_verify_status", ""),
                 "pre_verify_rationale": patch.get("pre_verify_rationale", ""),
                 "pre_verify_axes": patch.get("pre_verify_axes") or {},
-                # Confidence-weighted promotion ladder. daemon_cycle.py
-                # PatchResult emits 3 fields when the feature flag is on;
-                # absent/None when off (helper treats NULL as no-op).
+                # Proposal-row labels from daemon_cycle.py PatchResult;
+                # confidence_observed has no producer → None (helper stores NULL).
                 "confidence_observed": patch.get("confidence_observed"),
                 "project_key": patch.get("project_key") or "",
                 "promotion_tier": patch.get("promotion_tier") or "",
@@ -259,12 +274,17 @@ def main():
                 "generator_input_version": patch.get("generator_input_version"),
             },
         }
+        if preregistration is not None:
+            proposal_env = {
+                "op": "write_autoagent_proposal_preregistration",
+                "args": {**proposal_env["args"], _PREREGISTRATION_KEY: preregistration},
+            }
         all_writes_ok &= _invoke_helper(proposal_env)
 
     if not all_writes_ok:
         sys.stderr.write(
-            "[autoagent-cycle-pg] one or more PG writes failed "
-            "(DB down / connection refused) — exiting non-zero for the log aggregator\n"
+            "[autoagent-cycle-pg] one or more PG writes failed or patches were refused "
+            "— exiting non-zero for the log aggregator\n"
         )
         return 1
     return 0

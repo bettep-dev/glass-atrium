@@ -91,8 +91,8 @@ conforming_doc() {
   }
 }
 
-# The block names the correction path (delete + Write re-save), not a dead end.
-@test "V7: SCOPE-007 suggestion names the delete + Write re-save correction path" {
+# The block names the correction path (full-content Write re-save), not a dead end.
+@test "Edit block suggestion names the full-content Write re-save correction path" {
   run bash "${RAW_HOOK}" <<<"$(edit_payload "${WIKI_ROOT}/raw/page.md" 'a' 'b')"
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${output}" == *"immutable"* ]] || {
@@ -101,6 +101,10 @@ conforming_doc() {
   }
   [[ "${output}" == *"re-save"* ]] || {
     echo "suggestion must name re-save path: ${output}" >&2
+    return 1
+  }
+  [[ "${output}" == *"full corrected content over the file"* ]] || {
+    echo "suggestion must name the full-content Write over the file: ${output}" >&2
     return 1
   }
 }
@@ -171,7 +175,7 @@ conforming_doc() {
 }
 
 # Content past the frontmatter is what the extraction leaves unread → large pages must still reach the V5/V6 verdict.
-@test "Write: an envelope-less raw write over the size limit blocks on both its size and its missing envelope below and above the pipe capacity" {
+@test "Write: an envelope-less raw write over the size limit blocks on both its size and its missing envelope below and above the pipe capacity and suggests skip-and-report" {
   local row name lines bytes content
   # name | padding lines (~47 bytes each): one size between the 51200-byte limit and 64 KiB, one well past 64 KiB
   local rows=("below the pipe capacity|1250" "above the pipe capacity|4000")
@@ -190,6 +194,10 @@ conforming_doc() {
     }
     [[ "${output}" == *"SCOPE-005"* && "${output}" == *"SCOPE-006"* ]] || {
       echo "${name} (${bytes} bytes): expected SCOPE-005 and SCOPE-006: ${output}"
+      return 1
+    }
+    [[ "${output}" == *"never split"* ]] || {
+      echo "${name} (${bytes} bytes): SCOPE-005 suggestion must say skip and report, never split: ${output}"
       return 1
     }
   done

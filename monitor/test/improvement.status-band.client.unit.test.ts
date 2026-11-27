@@ -1,14 +1,9 @@
 // Render guards for the status band in public/src/screens/improvement.jsx.
 //
-// The band replaced the KPI row to honour one standing decision: every payload
-// renders loading, empty, error and unavailable distinctly, and nothing may read as
-// a zero that was never loaded. That contract is the band's only reason to exist and
-// nothing asserted it — `tileStatusI` is pure, and `TilePlaceholderI` / `StatusTileI`
-// render in the same recording-`createElement` harness the sibling client guards use.
-//
-// The last test is a unit guard, not a state guard: a tile's value and its population
-// must be counted over the same table, which is what "no count without its population"
-// buys. Same harness limit as the sibling guards — the emitted element tree, not CSS.
+// The band is one StatRow of the counts that change the operator's next action. Its
+// contract: every payload state reads distinctly, nothing reads as a zero that was never
+// loaded, and a value and its population are counted over the same table. Same harness
+// limit as the sibling guards — the emitted element tree, not CSS.
 //
 // Runner: npx tsx --test test/improvement.status-band.client.unit.test.ts
 
@@ -18,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
+import { createFakeDocument } from "./lib/render-screen.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const IMPROVEMENT_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
@@ -30,13 +26,8 @@ interface RecordedElement {
 interface BandSandbox {
   React: { createElement: unknown };
   window: { UI: Record<string, unknown> };
-  tileStatusI: (state: { status: string }, value: unknown) => string;
-  TilePlaceholderI: (props: {
-    status: string;
-    label: string;
-    onRetry?: unknown;
-  }) => RecordedElement;
-  StatusTileI: (props: Record<string, unknown>) => RecordedElement;
+  document: Record<string, unknown>;
+  getStatStatusI: (state: { status: string }, value: unknown) => string;
   StatusBandI: (props: Record<string, unknown>) => RecordedElement;
   InstrumentationViewI: (props: Record<string, unknown>) => RecordedElement | null;
   getBannerFocusTargetI: (view: string) => string;
@@ -47,7 +38,9 @@ interface BandSandbox {
   BoardRowI: (props: Record<string, unknown>) => RecordedElement;
   CompactProposalCardI: (props: Record<string, unknown>) => RecordedElement;
   ProposalCardI: (props: Record<string, unknown>) => RecordedElement;
-  getBandVerdictI: (input: Record<string, unknown>) => { tone: string; sentence: string };
+  LedgerHeldSectionI: (props: Record<string, unknown>) => RecordedElement | null;
+  InstrumentationStripI: (props: Record<string, unknown>) => RecordedElement | null;
+  getDeviationChipsI: (props: Record<string, unknown>) => Array<Record<string, unknown>>;
   getInstrumentationChipsI: (
     verdicts: unknown,
     styleRef: unknown,
@@ -94,383 +87,299 @@ sandbox.React.createElement = (type: unknown, props: Record<string, unknown> | n
   props: { ...(props ?? {}), children: rest.length > 1 ? rest : rest[0] },
 });
 // Installed once → every test sees the same UI, whatever order they run in.
-const ShippedPageVerdict = sandbox.window.UI.PageVerdict as (props: Record<string, unknown>) => unknown;
-const PageVerdictStub = () => null;
-Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value, PageVerdict: PageVerdictStub });
-
-// the shared first-read note ui.jsx shows while a page has nothing read yet
-function getUnreadCheckingNote(): string {
-  // sandbox types window.UI loosely; ui.jsx exports getFreshnessVerdict with this shape
-  const getVerdict = sandbox.window.UI.getFreshnessVerdict as (input: Record<string, unknown>) => { note: string };
-  return getVerdict({ at: null, loading: true }).note;
-}
+Object.assign(sandbox.window.UI, { titleOf: (value: unknown) => value });
 
 // The relationship, not four hand-picked pairs: the tile's state is the payload's
 // state, except that a landed payload carrying no value is "unavailable", never ready.
 test("a tile's state follows its own payload, and a missing value is never ready", () => {
-  assert.equal(sandbox.tileStatusI({ status: "loading" }, { n: 1 }), "loading");
-  assert.equal(sandbox.tileStatusI({ status: "error" }, { n: 1 }), "error");
-  assert.equal(sandbox.tileStatusI({ status: "ready" }, null), "unavailable");
-  assert.equal(sandbox.tileStatusI({ status: "ready" }, undefined), "unavailable");
-  assert.equal(sandbox.tileStatusI({ status: "ready" }, { n: 1 }), "ready");
-});
-
-// The discriminating assertion: three non-ready states must be told apart, and none
-// of them may put a number where the value goes.
-test("the three non-ready states render distinctly", () => {
-  const retries: string[] = [];
-  const shapes = ["loading", "error", "unavailable"].map((status) => {
-    const tree = sandbox.TilePlaceholderI({
-      status,
-      label: "Applied (7 days)",
-      onRetry: () => retries.push(status),
-    });
-    const nodes = collectElements(tree, []);
-    return {
-      status,
-      placeholder: nodes.find((el) => el.type === sandbox.window.UI.LoadingPlaceholder),
-      retry: nodes.filter((el) => el.type === "button"),
-      text: textOf(tree),
-    };
-  });
-  const [loading, error, unavailable] = shapes;
-
-  assert.ok(loading?.placeholder, "loading must announce itself through the status-role placeholder");
-  assert.equal(loading?.placeholder?.props.label, "Applied (7 days)", "the visible loading text names the tile");
-  assert.equal(loading?.retry.length, 0);
-
-  assert.equal(error?.retry.length, 1, "a failed payload must offer a retry");
-  (error?.retry[0]?.props.onClick as () => void)();
-  assert.deepEqual(retries, ["error"], "the retry button is wired to onRetry");
-  assert.ok(!error?.placeholder);
-
-  assert.match(unavailable?.text ?? "", /Not measured/);
-  assert.ok(!unavailable?.placeholder);
-  assert.equal(unavailable?.retry.length, 0);
-});
-
-// The "no unloaded zero" half, stated as the relationship that carries it: for every
-// non-ready status the value handed to the tile must not reach the tree at all.
-test("a tile that has not landed never renders the value it was handed", () => {
-  for (const status of ["loading", "error", "unavailable"]) {
-    const tree = sandbox.StatusTileI({
-      status,
-      tone: "text-ok",
-      symbol: "\u2713",
-      label: "Applied",
-      value: "4242",
-      population: "of 12 cycles in the last 7 days",
-      onRetry: () => {},
-    });
-    assert.doesNotMatch(textOf(tree), /4242/, `a ${status} tile leaked its value`);
-    assert.ok(
-      !collectElements(tree, []).some((el) => el.props.value === "4242"),
-      `a ${status} tile passed its value on instead of a placeholder`,
-    );
-  }
-});
-
-test("a ready tile renders its value and its population", () => {
-  const tile = sandbox.StatusTileI({
-    status: "ready",
-    tone: "text-ok",
-    symbol: "✓",
-    label: "Applied (7 days)",
-    value: "3",
-    population: "of 12 cycles in the last 7 days",
-  });
-  assert.equal(tile.props.value, "3");
-  assert.equal(tile.props.hint, "of 12 cycles in the last 7 days");
-  assert.match(textOf(tile), /Applied \(7 days\)/);
-});
-
-// the population line is body text, not a micro caption
-test("a ready tile renders its population at the body type scale", () => {
-  const tile = sandbox.StatusTileI({
-    status: "ready",
-    tone: "text-ok",
-    symbol: "✓",
-    label: "Applied (7 days)",
-    value: "3",
-    population: "of 12 cycles in the last 7 days",
-  });
-  const card = (tile.type as (props: Record<string, unknown>) => unknown)(tile.props);
-  const holders = collectElements(card, []).filter(
-    (el) => typeof el.props.className === "string" && textOf(el).includes("of 12 cycles in the last 7 days"),
-  );
-  assert.ok(holders.length > 0, "the population reaches the rendered card");
-  for (const el of holders) {
-    assert.doesNotMatch(String(el.props.className), /\bfs-micro\b/, "population rendered at the retired micro step");
-  }
-  assert.ok(
-    holders.some((el) => /\bfs-meta\b/.test(String(el.props.className))),
-    "population carries the 13px meta step",
-  );
-});
-
-// The unit guard: `applied_last_7d` counts proposals and `cycle_total_7d` counts
-// cycles, so pairing them reads "3 of 12 cycles were applied" over two tables.
-test("the applied tile is counted over the same population it names", () => {
-  const stats = {
-    applied_last_7d: 9,
-    cycles_generated_applied_7d: 3,
-    cycle_total_7d: 12,
-    latest_cycle_started_at: "2026-09-16T10:00:00.000Z",
-    review_flag_last_7d: 2,
-  };
-  const band = sandbox.StatusBandI({
-    statsState: { status: "ready", data: stats },
-    listState: { status: "ready", data: {} },
-    learningLogState: { status: "ready" },
-    suppression: { pending_total: 12, pending_unpromptable: 7 },
-    awaiting: 4,
-    reviewReasons: null,
-    onRetry: () => {},
-  });
-  const applied = collectElements(band, []).find(
-    (el) => el.props.label === "Applied (7 days)",
-  );
-  assert.ok(applied, "the band must render the applied tile");
-  assert.equal(
-    applied.props.value,
-    "3",
-    "the value must be the cycle count its population denominates, not the proposal count",
-  );
-  assert.match(String(applied.props.population), /of 12 cycles/);
-  assert.match(String(applied.props.basis), /last 7 days/);
-});
-
-test("the applied tile names a one-cycle week in the singular", () => {
-  const band = sandbox.StatusBandI({
-    statsState: {
-      status: "ready",
-      data: { cycle_total_7d: 1, cycles_generated_applied_7d: 1, latest_cycle_started_at: "2026-09-16T10:00:00.000Z" },
-    },
-    listState: { status: "ready", data: {} },
-    learningLogState: { status: "ready" },
-    suppression: { pending_total: 0, parked: [] },
-    awaiting: 0,
-    onRetry: () => {},
-  });
-  const applied = collectElements(band, []).find((el) => el.props.label === "Applied (7 days)");
-
-  assert.match(String(applied?.props.population), /^of 1 cycle · last /);
-});
-
-test("the decision tile reads ok at zero and warns while something awaits a decision", () => {
-  const renderAwaiting = (awaiting: number) =>
-    collectElements(
-      sandbox.StatusBandI({
-        statsState: { status: "ready", data: { cycle_total_7d: 1 } },
-        listState: { status: "ready", data: {} },
-        learningLogState: { status: "ready" },
-        suppression: { pending_total: 0, parked: [] },
-        awaiting,
-        onRetry: () => {},
-      }),
-      [],
-    ).find((el) => el.props.label === "Awaiting your decision");
-
-  const idle = renderAwaiting(0);
-  const pending = renderAwaiting(2);
-
-  assert.ok(idle && pending, "the band must render the decision tile");
-  assert.equal(idle.props.symbol, "✓", "an empty decision queue is good news, not a blank");
-  assert.equal(idle.props.tone, "text-ok");
-  assert.equal(pending.props.symbol, "⚠");
-  assert.equal(pending.props.tone, "text-warn");
-});
-
-const renderBand = (suppression: unknown, awaiting = 0) =>
-  sandbox.StatusBandI({
-    statsState: { status: "ready", data: { cycle_total_7d: 1, cycles_generated_applied_7d: 1 } },
-    listState: { status: "ready", data: {} },
-    learningLogState: { status: "ready" },
-    suppression,
-    awaiting,
-    onRetry: () => {},
-  });
-
-test("the backlog tile is a count, not a status, so it carries no status glyph", () => {
-  const backlog = collectElements(
-    renderBand({ pending_total: 5, pending_unpromptable: 1, parked: [] }),
-    [],
-  ).filter((el) => el.props.label === "Backlog that can propose");
-
-  assert.equal(backlog.length, 1);
-  assert.equal(backlog[0].props.symbol, null);
-});
-
-test("the held tile warns only while a held pattern needs a human", () => {
-  const heldTile = (parked: unknown[]) =>
-    collectElements(renderBand({ pending_total: 0, parked }), []).find(
-      (el) => el.props.label === "Held, needs a human",
-    );
-  const byDesign = heldTile([{ cause: "non-promptable", count: 4, agents: 2 }]);
-  const needsHuman = heldTile([{ cause: "repeat-apply-cap", count: 2, agents: 1 }]);
-
-  assert.equal(byDesign?.props.symbol, null, "rows closed by a design decision wait on no one");
-  assert.equal(needsHuman?.props.symbol, "⚠");
-  assert.equal(needsHuman?.props.tone, "text-warn");
-});
-
-const verdictRows = [
-  {
-    name: "nothing waiting on a human reads ok",
-    input: { status: "ready", awaiting: 0, applied: 2, heldNeedingHuman: 0 },
-    tone: "ok",
-    mentions: ["2 applied"],
-  },
-  {
-    name: "an awaiting decision warns and is counted",
-    input: { status: "ready", awaiting: 3, applied: 0, heldNeedingHuman: 0 },
-    tone: "warn",
-    mentions: ["3 awaiting"],
-  },
-  {
-    name: "a held pattern needing a human warns and is counted",
-    input: { status: "ready", awaiting: 0, applied: 1, heldNeedingHuman: 10 },
-    tone: "warn",
-    mentions: ["10 held"],
-  },
-  {
-    name: "a band that has not landed claims no status",
-    input: { status: "loading", awaiting: 0, applied: 0, heldNeedingHuman: 0 },
-    tone: "neutral",
-    mentions: [],
-  },
-  {
-    name: "a band whose payload failed says so and makes no loading claim",
-    input: { status: "error", awaiting: 0, applied: 0, heldNeedingHuman: 0 },
-    tone: "neutral",
-    mentions: ["could not load"],
-  },
-];
-for (const row of verdictRows) {
-  test(`band verdict: ${row.name}`, () => {
-    const verdict = sandbox.getBandVerdictI(row.input);
-    assert.equal(verdict.tone, row.tone);
-    for (const mention of row.mentions) assert.ok(verdict.sentence.includes(mention), verdict.sentence);
-  });
-}
-
-test("a failed band payload reads as a failure, never as still loading", () => {
-  const band = sandbox.StatusBandI({
-    statsState: { status: "error", data: null, error: "HTTP 500" },
-    listState: { status: "ready", data: {} },
-    learningLogState: { status: "loading" },
-    suppression: null,
-    awaiting: 0,
-    onRetry: () => {},
-  });
-  const verdict = collectElements(band, []).find((el) => el.type === PageVerdictStub);
-
-  assert.match(String(verdict?.props.children), /could not load/);
-  assert.ok(!String(verdict?.props.children).includes(getUnreadCheckingNote()));
+  assert.equal(sandbox.getStatStatusI({ status: "loading" }, { n: 1 }), "loading");
+  assert.equal(sandbox.getStatStatusI({ status: "error" }, { n: 1 }), "error");
+  assert.equal(sandbox.getStatStatusI({ status: "ready" }, null), "unavailable");
+  assert.equal(sandbox.getStatStatusI({ status: "ready" }, undefined), "unavailable");
+  assert.equal(sandbox.getStatStatusI({ status: "ready" }, { n: 1 }), "ready");
 });
 
 const LANDED = { status: "ready", busy: false, error: null, data: {} };
+const STATS_DATA = {
+  cycles_generated_applied_7d: 3,
+  cycle_total_7d: 12,
+  latest_cycle_started_at: "2026-09-16T10:00:00.000Z",
+};
+const NEEDS_HUMAN = [{ cause: "repeat-apply-cap", count: 2, agents: 1 }];
 
-// the band's verdict as the shipped PageVerdict renders it from the props the band hands it
-function renderBandVerdictText(asOf: string | null, states: Record<string, unknown>): string {
-  const band = sandbox.StatusBandI({
-    asOf,
-    statsState: LANDED,
+type BandStat = { key: string; label: string; value: unknown; context?: unknown; isLoading?: boolean };
+
+function renderBand(props: Record<string, unknown> = {}): RecordedElement {
+  return sandbox.StatusBandI({
+    asOf: null,
+    statsState: { ...LANDED, data: STATS_DATA },
     listState: LANDED,
     learningLogState: LANDED,
     suppression: { pending_total: 0, parked: [] },
     awaiting: 0,
-    onRetry: () => {},
-    ...states,
+    ...props,
   });
-  const verdict = collectElements(band, []).find((el) => el.type === PageVerdictStub);
-  assert.ok(verdict, "the band must render a verdict line");
-  return textOf(ShippedPageVerdict(verdict.props));
 }
 
-test("a failed refresh over a held band reads Last known, never the all-clear", () => {
-  const asOf = new Date().toISOString();
-  const statsData = { cycle_total_7d: 4, cycles_generated_applied_7d: 2 };
-  const settled = renderBandVerdictText(asOf, { statsState: { ...LANDED, data: statsData } });
-  const warmError = renderBandVerdictText(asOf, { statsState: { ...LANDED, data: statsData, error: "HTTP 500" } });
+// the stats the band hands its one StatRow, keyed by stat key
+function getBandStats(props: Record<string, unknown> = {}): Map<string, BandStat> {
+  const statRow = collectElements(renderBand(props), []).find((el) => el.type === sandbox.window.UI.StatRow);
+  assert.ok(statRow, "the band must render one shared StatRow");
+  return new Map(Array.from(statRow.props.stats as BandStat[], (stat) => [stat.key, stat]));
+}
 
-  assert.match(settled, /Healthy/, "a settled band with nothing waiting is the all-clear");
-  assert.match(warmError, /Last known/);
-  assert.doesNotMatch(warmError, /Healthy/, "held numbers under a failed read never read as the all-clear");
+test("the band is one stat row of the counts that change the next action", () => {
+  const elements = collectElements(renderBand({ awaiting: 2, suppression: { pending_total: 4, parked: NEEDS_HUMAN } }), []);
+  const stats = getBandStats({ awaiting: 2 });
+
+  assert.deepEqual([...stats.values()].map((stat) => stat.label), ["Awaiting your decision", "Applied, 7d", "Held, needs a human"]);
+  assert.equal(elements.filter((el) => el.type === sandbox.window.UI.StatRow).length, 1);
 });
 
-test("a failed refresh drops the held applied tile's ok tone under a Last known marker", () => {
-  const asOf = new Date().toISOString();
-  const statsData = { cycle_total_7d: 4, cycles_generated_applied_7d: 2 };
-  const renderApplied = (statsState: Record<string, unknown>) =>
-    collectElements(sandbox.StatusBandI({
-      asOf,
-      statsState,
-      listState: LANDED,
-      learningLogState: LANDED,
-      suppression: { pending_total: 0, parked: [] },
-      awaiting: 0,
-      onRetry: () => {},
-    }), []).find((el) => el.props.label === "Applied (7 days)");
-  const settled = renderApplied({ ...LANDED, data: statsData });
-  const warmError = renderApplied({ ...LANDED, data: statsData, error: "HTTP 500" });
-
-  assert.ok(settled && warmError, "the band must render the applied tile");
-  assert.equal(settled.props.tone, "text-ok");
-  assert.notEqual(warmError.props.tone, "text-ok", "held numbers under a failed read never keep the ok tone");
-  assert.equal(warmError.props.symbol, null);
-  assert.match(String(warmError.props.population), /^Last known · of 4 cycles/);
+test("no stat carries a status glyph — attention lives in the card that owns the rows", () => {
+  const stats = getBandStats({ awaiting: 2, suppression: { pending_total: 4, parked: NEEDS_HUMAN } });
+  for (const stat of stats.values()) {
+    const glyphs = collectElements([stat.label, stat.value], []).filter(
+      (el) => typeof el.type === "function" && /^(SymI|Icon)$/.test((el.type as { name: string }).name),
+    );
+    assert.equal(glyphs.length, 0, `${stat.label} draws a glyph`);
+  }
 });
 
-describe("the corpus growth chip keeps the shared freshness rule over a failed refresh", () => {
-  const asOf = new Date().toISOString();
-  const corpus = (verdict: Record<string, unknown>) => ({
-    styleRefGradeBadgeI: () => ({ symbol: "✓", tone: "text-ok", label: "ok", hint: "h1" }),
-    getCorpusGrowthVerdictI: () => verdict,
-  });
-  const audits = { status: "ready", data: { audits: [{ id: 1 }] } };
+describe("a stat whose payload has not landed never shows the value it was handed", () => {
   const rows = [
-    { name: "a settled reading keeps its all-clear", verdict: { symbol: "✓", tone: "text-ok", label: "within threshold" }, error: null, label: /^within threshold$/, tone: "text-ok" },
-    { name: "an all-clear held under a failed read reads Last known", verdict: { symbol: "✓", tone: "text-ok", label: "within threshold" }, error: "HTTP 500", label: /^Last known$/, tone: "text-faint" },
-    { name: "an alert held under a failed read keeps its tone", verdict: { symbol: "⚠", tone: "text-warn", label: "trend alert" }, error: "HTTP 500", label: /^Last known: trend alert$/, tone: "text-warn" },
+    { name: "a first read in flight hands the stat row a loading stat, its value and context unset", state: { status: "loading", data: null }, kind: "loading" },
+    { name: "a failed read reads Not loaded and points at its owning group", state: { status: "error", data: null, error: "HTTP 500" }, kind: "not-loaded", context: /^See the .+ below\.$/ },
+    { name: "a landed payload with no value reads Not loaded", state: { status: "ready", data: null }, kind: "not-loaded", context: /no value/ },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const chips = sandbox.getInstrumentationChipsI(corpus({ ...row.verdict, hint: "h2" }), null, { ...audits, error: row.error }, asOf);
-      const chip = chips.find((c) => c.key === "corpus");
-      assert.ok(chip, "the strip must carry the corpus chip");
-      assert.match(String(chip.label), row.label);
-      assert.equal(chip.tone, row.tone);
+      const stats = getBandStats({ statsState: row.state, listState: row.state, learningLogState: row.state, suppression: row.state.data, awaiting: 7 });
+      for (const stat of stats.values()) {
+        // the loading look is the stat row's (ui.display-atoms.client) → the band hands it no value to show
+        if (row.kind === "loading") {
+          assert.equal(stat.isLoading, true, `${stat.label} reads as loading`);
+          assert.equal(stat.value, undefined, `${stat.label} carries a value it never read`);
+          assert.equal(stat.context, undefined, `${stat.label} carries a context it never read`);
+        } else {
+          const value = stat.value as RecordedElement;
+          assert.ok(!/\d/.test(textOf(value)), `${stat.label} shows a number it never read`);
+          assert.equal(value.type, sandbox.window.UI.AbsentValue, stat.label);
+          assert.equal(value.props.kind, "not-loaded", stat.label);
+          assert.match(textOf(stat.context), row.context as RegExp, stat.label);
+        }
+      }
     });
   }
 });
 
-test("a band with nothing read yet speaks the shared first-read note, not its own sentence", () => {
-  const reading = { status: "loading", busy: true, error: null, data: null };
-  const text = renderBandVerdictText(null, { statsState: reading, listState: reading, learningLogState: reading });
-  const ownSentence = sandbox.getBandVerdictI({ status: "loading", awaiting: 0, applied: 0, heldNeedingHuman: 0 }).sentence;
+test("a failed read the page notice covers points at that notice alone", () => {
+  const failed = { status: "error", data: null, error: "HTTP 500" };
+  const failures = sandbox.getPageFailuresI(
+    ["suggestions", "pattern ledger", "loop stats"].map((source) => ({ source, state: failed })),
+    "board",
+  );
+  const stats = getBandStats({ statsState: failed, listState: failed, learningLogState: failed, suppression: null, failures });
+  for (const stat of stats.values()) {
+    assert.equal(textOf(stat.context), "See the notice above.", stat.label);
+  }
+});
 
-  assert.ok(text.includes(getUnreadCheckingNote()), text);
-  assert.ok(!text.includes(ownSentence), text);
+test("the applied stat is counted over the same population its context names, last cycle stamp whole", () => {
+  const applied = getBandStats().get("applied");
+  const stamp = collectElements(applied?.context, []).find((el) => el.type === sandbox.window.UI.NoWrap);
+
+  assert.equal(applied?.value, "3", "the value is the cycle count its population denominates");
+  assert.match(textOf(applied?.context), /of 12 cycles · last /);
+  assert.ok(stamp, "the last-cycle stamp is one unbreakable token");
+});
+
+test("the applied stat names a one-cycle week in the singular", () => {
+  const applied = getBandStats({ statsState: { ...LANDED, data: { cycles_generated_applied_7d: 1, cycle_total_7d: 1 } } }).get("applied");
+  assert.match(textOf(applied?.context), /of 1 cycle · /);
+});
+
+// §2.2 None is a cell word, never dropped into a sentence → a loop with no cycle on record says so whole
+describe("a week with no cycle names its last cycle only when one is on record", () => {
+  const rows = [
+    { name: "no cycle ever recorded", latest: null, expected: /^No cycles yet$/ },
+    { name: "an older cycle on record", latest: "2026-09-01T03:00:00Z", expected: /^of 0 cycles · last / },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const data = { cycles_generated_applied_7d: 0, cycle_total_7d: 0, latest_cycle_started_at: row.latest };
+      const applied = getBandStats({ statsState: { ...LANDED, data } }).get("applied");
+
+      assert.match(textOf(applied?.context), row.expected);
+      assert.equal(collectElements(applied?.context, []).some((el) => el.type === sandbox.window.UI.AbsentValue), false);
+    });
+  }
+});
+
+test("the held count links to the ledger's held section only while a held pattern needs a human", () => {
+  const byDesign = getBandStats({ suppression: { pending_total: 0, parked: [{ cause: "non-promptable", count: 4, agents: 2 }] } }).get("held");
+  const suppression = { pending_total: 0, parked: NEEDS_HUMAN, parked_patterns: [] };
+  const jump = getBandStats({ suppression }).get("held")?.value as RecordedElement;
+  // the screen's jump wrapper rendered one level → the shared Link it hands the count
+  const needsHuman = (jump.type as (props: Record<string, unknown>) => RecordedElement)(jump.props);
+  const heldIds = collectElements(sandbox.LedgerHeldSectionI({ suppression }), []).map((el) => el.props.id);
+
+  assert.equal(byDesign?.value, "0", "rows closed by a design decision wait on no one, so no link");
+  assert.equal(needsHuman.type, sandbox.window.UI.Link);
+  assert.equal(textOf(needsHuman.props.children), "2");
+  assert.ok(heldIds.includes(String(needsHuman.props.href).replace(/^#/, "")), "the link lands on the held section");
+});
+
+test("the held stat's context counts every held row under the one word held", () => {
+  const parked = [...NEEDS_HUMAN, { cause: "non-promptable", count: 4, agents: 2 }];
+  const held = getBandStats({ suppression: { pending_total: 0, parked } }).get("held");
+
+  assert.equal(textOf(held?.context), "of 6 held");
+});
+
+describe("the suggestion board's empty line says first use only before any cycle ran", () => {
+  const rows = [
+    { name: "a loop with a cycle on record has nothing waiting", stats: STATS_DATA, message: "No suggestions waiting" },
+    { name: "a loop with no cycle on record has no suggestions yet", stats: { cycle_total_7d: 0, latest_cycle_started_at: null }, message: "No suggestions yet" },
+    { name: "an unread stats payload never claims first use", stats: null, message: "No suggestions waiting" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const card = sandbox.KanbanCardI({
+        state: LANDED,
+        columnRows: { safety: [], applied: [], rejected: [] },
+        stats: row.stats,
+        onRetry: () => {},
+      });
+      const empty = collectElements(card, []).find((el) => el.type === sandbox.window.UI.EmptyState);
+
+      assert.equal(empty?.props.message, row.message);
+    });
+  }
+});
+
+describe("a failed refresh over held numbers marks them Last known", () => {
+  const asOf = new Date().toISOString();
+  const rows = [
+    { name: "the empty decision queue", key: "awaiting", props: { listState: { ...LANDED, error: "HTTP 500" } } },
+    { name: "the applied count", key: "applied", props: { statsState: { ...LANDED, data: STATS_DATA, error: "HTTP 500" } } },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const settled = getBandStats({ asOf }).get(row.key);
+      const warmError = getBandStats({ asOf, ...row.props }).get(row.key);
+      assert.doesNotMatch(textOf(settled?.context), /Last known/);
+      assert.match(textOf(warmError?.context), /^Last known · /);
+    });
+  }
+});
+
+test("clicking the held count keeps the hash and moves focus to the held section without a scroll jump", () => {
+  const suppression = { pending_total: 0, parked: NEEDS_HUMAN, parked_patterns: [] };
+  const jump = getBandStats({ suppression }).get("held")?.value as RecordedElement;
+  const link = (jump.type as (props: Record<string, unknown>) => RecordedElement)(jump.props);
+  const attributes = new Map<string, string>();
+  const calls: unknown[][] = [];
+  const section = {
+    hasAttribute: (name: string) => attributes.has(name),
+    setAttribute: (name: string, value: string) => attributes.set(name, value),
+    scrollIntoView: (options: unknown) => calls.push(["scroll", options]),
+    focus: (options: unknown) => calls.push(["focus", options]),
+  };
+  const heldId = String(link.props.href).replace(/^#/, "");
+  const doc = createFakeDocument();
+  doc.elements.set(heldId, section);
+  const fileDocument = sandbox.document;
+  let isDefaultPrevented = false;
+
+  sandbox.document = doc as unknown as Record<string, unknown>;
+  try {
+    (link.props.onClick as (event: unknown) => void)({ preventDefault: () => { isDefaultPrevented = true; } });
+  } finally {
+    sandbox.document = fileDocument;
+  }
+
+  assert.equal(isDefaultPrevented, true, "the default navigation would hand the hash router an unknown screen");
+  assert.equal(attributes.get("tabindex"), "-1", "a plain section takes focus only through tabindex -1");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [["scroll", { block: "nearest" }], ["focus", { preventScroll: true }]]);
+});
+
+// a held corpus reading under a failed refresh takes the shared freshness rule; the strip then shows it only while it alerts
+describe("the corpus growth gauge keeps the shared freshness rule over a failed refresh", () => {
+  const asOf = new Date().toISOString();
+  const corpus = (verdict: Record<string, unknown>) => ({
+    styleRefGradeBadgeI: () => ({ symbol: "✓", tone: "text-ok", label: "ok", hint: "h1" }),
+    getCorpusGrowthVerdictI: () => ({ ...verdict, hint: "h2" }),
+  });
+  const allClear = { symbol: "✓", tone: "text-ok", label: "within threshold" };
+  const alert = { symbol: "⚠", tone: "text-warn", label: "trend alert" };
+  const rows = [
+    { name: "a settled all-clear keeps its label and stays off the strip", verdict: allClear, error: null, label: /^within threshold$/, tone: "text-ok", isOnStrip: false },
+    { name: "an all-clear held under a failed read reads Last known and stays off the strip", verdict: allClear, error: "HTTP 500", label: /^Last known$/, tone: "text-faint", isOnStrip: false },
+    { name: "an alert held under a failed read keeps its tone and stays on the strip", verdict: alert, error: "HTTP 500", label: /^Last known: trend alert$/, tone: "text-warn", isOnStrip: true },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const corpusAuditState = { status: "ready", data: { audits: [{ id: 1 }] }, error: row.error };
+      const chip = sandbox.getInstrumentationChipsI(corpus(row.verdict), null, corpusAuditState, asOf).find((c) => c.key === "corpus");
+      (sandbox.window as Record<string, unknown>).ImprovementInstrumentationVerdicts = corpus(row.verdict);
+      const strip = sandbox.getDeviationChipsI({ styleRef: null, corpusAuditState, at: asOf });
+
+      assert.match(String(chip?.label), row.label);
+      assert.equal(chip?.tone, row.tone);
+      assert.equal(strip.some((c) => c.key === "corpus"), row.isOnStrip);
+    });
+  }
 });
 
 test("the page banner hands focus to a card the open view renders", () => {
-  const operatorIds = collectElements(renderBand({ pending_total: 0, parked: [] }), []).map((el) => el.props.id);
+  const operatorIds = collectElements(renderBand(), []).map((el) => el.props.id);
   const instrumentationIds = collectElements(sandbox.InstrumentationViewI({}), []).map((el) => el.props.id);
 
   assert.ok(operatorIds.includes(sandbox.getBannerFocusTargetI("operator")));
   assert.ok(instrumentationIds.includes(sandbox.getBannerFocusTargetI("instrumentation")));
 });
 
-test("the band states its verdict before the tiles", () => {
-  const elements = collectElements(renderBand({ pending_total: 0, parked: [] }, 2), []);
-  const verdictAt = elements.findIndex((el) => el.type === PageVerdictStub);
-  const firstTileAt = elements.findIndex((el) => el.props.label === "Awaiting your decision");
+describe("the instrumentation strip shows only the gauges that deviate", () => {
+  const judge = (tone: string) => ({
+    styleRefGradeBadgeI: () => ({ symbol: "⚠", tone, label: "warn", hint: "h1" }),
+    getCorpusGrowthVerdictI: () => ({ symbol: "✓", tone: "text-ok", label: "within threshold", hint: "h2" }),
+  });
+  const rows = [
+    { name: "a warn gauge is shown and an ok one is not", verdicts: judge("text-warn"), shown: ["style"] },
+    { name: "nothing renders when every gauge is ok", verdicts: judge("text-ok"), shown: [] },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      (sandbox.window as Record<string, unknown>).ImprovementInstrumentationVerdicts = row.verdicts;
+      const props = {
+        styleRef: { overall_emission_rate: 0.3, overall_uncorroborated_rate: 0.2 },
+        corpusAuditState: { status: "ready", data: { audits: [{}] } },
+      };
+      const card = collectElements(renderBand(props), []).find((el) => el.type === sandbox.window.UI.Card);
 
-  assert.ok(verdictAt >= 0, "the band must render a verdict line");
-  assert.equal(elements[verdictAt].props.tone, "warn");
-  assert.match(String(elements[verdictAt].props.children), /2 awaiting/);
-  assert.ok(verdictAt < firstTileAt, "the verdict is read before the numbers it summarises");
+      assert.deepEqual(Array.from(sandbox.getDeviationChipsI(props), (c) => c.key), row.shown);
+      assert.equal(card?.props.foot == null, row.shown.length === 0, "the strip is the stat card's foot, absent at rest");
+    });
+  }
+});
+
+describe("a deviating gauge reads as a sentence naming what it holds up, glyph at row size", () => {
+  const rows = [
+    { name: "a warn graduation gate names the style check it holds", chip: { key: "style", tone: "text-warn", label: "warn" }, tone: "warn", words: "Style check graduation held: too many unconfirmed claims" },
+    { name: "a blocked graduation gate names its own reason", chip: { key: "style", tone: "text-crit", label: "block" }, tone: "crit", words: "Style check graduation held: too few runs name a style source" },
+    { name: "a corpus alert names the prompts that grew", chip: { key: "corpus", tone: "text-warn", label: "trend alert" }, tone: "warn", words: "Agent prompts grew past their word line" },
+    { name: "a held reading says Last known first", chip: { key: "corpus", tone: "text-warn", label: "Last known: trend alert", isLastKnown: true }, tone: "warn", words: "Last known: Agent prompts grew past their word line" },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const strip = sandbox.InstrumentationStripI({ chips: [{ ...row.chip, name: "Gauge", symbol: "⚠", hint: "h" }], onOpen: () => {} });
+      const status = collectElements(strip, []).find((el) => el.type === sandbox.window.UI.HeadStatus);
+
+      assert.equal(status?.props.tone, row.tone);
+      assert.equal(textOf(status?.props.children), row.words, "the sentence replaces the raw state word");
+    });
+  }
 });
 
 test("instrumentation chips take each verdict from the instrumentation view's own rules", () => {
@@ -509,28 +418,6 @@ test("a gauge whose payload has not landed reads not read, never a verdict", () 
   assert.deepEqual(Array.from(chips, (c) => c.label), ["not read", "not read"]);
 });
 
-test("a failed refresh drops the held decision tile's ok tone under a Last known marker", () => {
-  const asOf = new Date().toISOString();
-  const renderAwaiting = (listState: Record<string, unknown>) =>
-    collectElements(sandbox.StatusBandI({
-      asOf,
-      statsState: { ...LANDED, data: { cycle_total_7d: 1 } },
-      listState,
-      learningLogState: LANDED,
-      suppression: { pending_total: 0, parked: [] },
-      awaiting: 0,
-      onRetry: () => {},
-    }), []).find((el) => el.props.label === "Awaiting your decision");
-  const settled = renderAwaiting({ ...LANDED, data: {} });
-  const warmError = renderAwaiting({ ...LANDED, data: {}, error: "HTTP 500" });
-
-  assert.ok(settled && warmError, "the band must render the decision tile");
-  assert.equal(settled.props.tone, "text-ok");
-  assert.notEqual(warmError.props.tone, "text-ok", "an empty queue read before a failed refresh is not the all-clear");
-  assert.equal(warmError.props.symbol, null);
-  assert.match(String(warmError.props.population), /^Last known · /);
-});
-
 test("a failed suggestions read speaks once, from the first board region it feeds", () => {
   const failed = { status: "error", data: null, error: "HTTP 500" };
   const regions = [
@@ -556,7 +443,7 @@ test("a failed suggestions read speaks once, from the first board region it feed
   assert.deepEqual(resolved, ["RegionUnavailable", "RegionCovered"]);
 });
 
-describe("a suggestion board row keeps its full text, clipped only until hover or focus", () => {
+describe("a suggestion board row keeps its full text, clipped in every state with the whole of it in a title", () => {
   const long =
     "Move the verification gate ahead of the regex removal so reviewers see the API change before the three matching suite edits";
   const rows = [
@@ -576,7 +463,8 @@ describe("a suggestion board row keeps its full text, clipped only until hover o
     test(row.name, () => {
       const text = collectElements(row.render(), []).find((el) => el.props.children === long);
       assert.ok(text, "the row must render the whole text, never a character-cut copy");
-      assert.match(String(text.props.className), /\bi-clip\b/, "the clipped text must unclip on hover and focus");
+      const titled = collectElements(row.render(), []).find((el) => el.props.title === long);
+      assert.ok(titled, "the clipped text's full value must ride in a title, since hover and focus never unclip it");
     });
   }
 });

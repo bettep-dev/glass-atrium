@@ -4,7 +4,7 @@
 #
 # Mirror each agent's authoritative frontmatter `tools:` array (<root>/agents/<name>.md)
 # into the matching `agents` entry of <root>/agent-registry.json. The
-# orchestrator-role.md Decision-phase Capability Probe reads frontmatter `tools:` at
+# skills/glass-atrium-ops-orchestrator-role.md Decision-phase Capability Probe reads frontmatter `tools:` at
 # delegation time, but tooling that prefers the JSON form consumes this mirror
 # (avoids re-parsing 23 markdown files); drift between the two breaks the probe.
 #

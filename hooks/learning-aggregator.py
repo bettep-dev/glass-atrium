@@ -5,6 +5,9 @@ PG is the single sink/source: core.learning_log · core.aggregator_state.
 Read paths go through the _pg_learning_dualwrite.read_* helpers.
 """
 
+# daemon runs this on an install's python3 3.9 → no 3.10+ construct at import
+from __future__ import annotations
+
 import json
 import os
 import re

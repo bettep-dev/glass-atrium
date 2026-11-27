@@ -1,0 +1,84 @@
+{
+  "lines": [
+    {
+      "name": "ASCII line with an environment reference",
+      "text": "const dbUrl = process.env.DATABASE_URL;",
+      "sha256": "27d20284fa1b33b6c9f2a34673b19ef0064155c9b7fa65d07b1ae645d29e8976"
+    },
+    {
+      "name": "empty line",
+      "text": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "trailing CR stays part of the line",
+      "text": "export const mode = \"local\";\r",
+      "sha256": "10ba801737699228e5e1c155b55f84f041f0cb43217cb560c4001e07cd74a29b"
+    },
+    {
+      "name": "no newline is added at the end",
+      "text": "mode = local",
+      "sha256": "9cec45a3d7dd184c468ab3b77b43d7b1b97ee09ffea07fb0c24f03dac8744333"
+    },
+    {
+      "name": "leading tab and trailing spaces",
+      "text": "\tretries = 42  ",
+      "sha256": "99be18e7a89fecc1ea3d28d357ce7a1aeffbefcd4872f293aa4d4d55435aa503"
+    },
+    {
+      "name": "two-byte UTF-8 (precomposed e acute)",
+      "text": "caf\u00e9 = \"cr\u00e8me\"",
+      "sha256": "5a56935f2c5c7d6361980aecde256536bfac1d32b62cfbef2f0cd55885026aa9"
+    },
+    {
+      "name": "decomposed e acute hashes apart from the precomposed form",
+      "text": "cafe\u0301 = \"cre\u0300me\"",
+      "sha256": "b9167042ff02b2aa609d63425118b9868fb5508876f2c561c39e60ee71e5eb6e"
+    },
+    {
+      "name": "three-byte UTF-8 (Hangul)",
+      "text": "\uc124\uc815 = \"\uac12\"",
+      "sha256": "3afb9b092a7a1301df03611d3eb165be42e4276807e8c718f7c4a3e05951151b"
+    },
+    {
+      "name": "four-byte UTF-8 (emoji)",
+      "text": "label = \"\ud83d\udd11 door\"",
+      "sha256": "6a14381837e073ea01c18a42fbeeab2d5a5594a3c35b98655bfb01fafc015e8b"
+    },
+    {
+      "name": "byte-order mark and zero-width space",
+      "text": "\ufeffalpha\u200bbeta",
+      "sha256": "a43938c39f06a586782ef904530266d0c3fcea7542862fc7f2fa7b525493d304"
+    },
+    {
+      "name": "bidi override and pop",
+      "text": "label = \"\u202eabc\u202c\"",
+      "sha256": "906229d7a6d6aa8472c5a73db3a60a42e7fcd2b6f858df25f51f006305d8b7d5"
+    },
+    {
+      "name": "backslashes and both quote kinds",
+      "text": "dir = \"C:\\\\data\\\\x\" + 'it\\'s'",
+      "sha256": "63e53ef2d060529f6789d1d96bf187ef27d5520860f17cc6fdc285d7e5f52b9f"
+    },
+    {
+      "name": "ESC control sequences",
+      "text": "\u001b[31mred\u001b[0m",
+      "sha256": "f0fdc93ea62798e8825aed0a921b4aef5c296da60d4713e60ae353732e3011dc"
+    },
+    {
+      "name": "NUL byte",
+      "text": "a\u0000b",
+      "sha256": "59b271ae1bbcb1d31d41929817f4b16fb439eb4f31520b5ad1d5ce98920a7138"
+    },
+    {
+      "name": "C1 control and DEL",
+      "text": "a\u0085b\u007fc",
+      "sha256": "79d3e640d63610fb22c0591936846cae340a23a7800c86341dee0fa5cb941730"
+    },
+    {
+      "name": "Unicode tag characters",
+      "text": "ok\udb40\udc41\udb40\udc7f",
+      "sha256": "50c0672b63a6f04417b3a990cba7db279cb02634894d33786de75f436d5fc9d7"
+    }
+  ]
+}

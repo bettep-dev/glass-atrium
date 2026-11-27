@@ -295,6 +295,31 @@ test("getUpdateStatus: caches within TTL, refetches after expiry", async () => {
   assert.strictEqual(calls, 2, "call after TTL expiry refetches");
 });
 
+test("getUpdateStatus: concurrent callers on an expired cache share one pending check", async () => {
+  let calls = 0;
+  const releases: Array<(version: string) => void> = [];
+  const opts = {
+    isSourceDev: NO_SOURCE_DEV,
+    localVersion: async () => "1.0.0",
+    releaseSlug: SLUG,
+    fetchLatest: () => {
+      calls += 1;
+      return new Promise<string>((resolve) => {
+        releases.push(resolve);
+      });
+    },
+    ttlMs: 60_000,
+  };
+
+  const pending = Array.from({ length: 5 }, () => getUpdateStatus(opts));
+  await new Promise((resolve) => setImmediate(resolve));
+  for (const release of releases) release("1.1.0");
+  const bodies = await Promise.all(pending);
+
+  assert.strictEqual(calls, 1, "five concurrent callers make one outbound check");
+  assert.ok(bodies.every((body) => body.status === "update-available"), "every caller gets the shared verdict");
+});
+
 // ====== real HTTPS fetch path (globalThis.fetch MOCKED — no real network) ====
 
 test("real fetch path: manifest.json asset version drives the verdict", async () => {

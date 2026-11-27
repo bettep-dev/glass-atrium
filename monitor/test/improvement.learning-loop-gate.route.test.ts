@@ -21,7 +21,7 @@
 // is the sole guard on the T10 registry gate and a self-skipping guard guards
 // nothing.
 //
-// Runner: npx tsx --test test/improvement.learning-loop-gate.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.learning-loop-gate.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
@@ -37,6 +37,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import { registerImprovementRoutes } from "../src/server/routes/improvement.js";
+import { lockTableWrites, unlockTableWrites } from "./lib/table-write-lock.js";
 
 const SUITE_MARKER = `impr-llgate-${randomUUID().slice(0, 8)}`;
 const CANONICAL_AGENT = `${SUITE_MARKER}-canon`;
@@ -89,6 +90,7 @@ before(async () => {
   }
 
   // Deliberately UNGUARDED — a seed failure reds the suite instead of skipping it.
+  await lockTableWrites("learning-log");
   await seedLearningLog();
   await seedLoopEvents();
 });
@@ -112,6 +114,7 @@ after(async () => {
       console.error("[impr-llgate cleanup] DB scrub failed:", error);
     }
   }
+  await unlockTableWrites("learning-log");
   await disconnectPrisma();
   delete process.env.AGENT_REGISTRY_PATH;
   resetAgentRegistryCache();

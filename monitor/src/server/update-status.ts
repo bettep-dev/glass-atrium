@@ -26,6 +26,8 @@ const DEFAULT_TIMEOUT_MS = 5000;
 // Cached verdict + warn-once flag (mirrors version.ts) — a missing/unreachable
 // release must not flood stderr nor re-hit GitHub on every dashboard load.
 let cache: { body: UpdateStatusResponse; expiresAt: number } | null = null;
+// One shared check while the cache is expired → N concurrent dashboard loads make one outbound call set.
+let pendingCheck: Promise<UpdateStatusResponse> | null = null;
 let warnedOnce = false;
 
 export interface GetUpdateStatusOptions {
@@ -53,16 +55,21 @@ export async function getUpdateStatus(
   const ttl = options.ttlMs ?? resolveTtlMs();
   const now = nowFn();
 
-  if (!options.bypassCache && cache !== null && now.getTime() < cache.expiresAt) {
+  if (options.bypassCache) {
+    return computeUpdateStatus(options, now);
+  }
+  if (cache !== null && now.getTime() < cache.expiresAt) {
     return cache.body;
   }
-
-  const body = await computeUpdateStatus(options, now);
-
-  if (!options.bypassCache) {
-    cache = { body, expiresAt: now.getTime() + ttl };
-  }
-  return body;
+  pendingCheck ??= computeUpdateStatus(options, now)
+    .then((body) => {
+      cache = { body, expiresAt: now.getTime() + ttl };
+      return body;
+    })
+    .finally(() => {
+      pendingCheck = null;
+    });
+  return pendingCheck;
 }
 
 async function computeUpdateStatus(
@@ -437,5 +444,6 @@ function warnOnce(logger: VersionLogger | undefined, obj: object, msg: string): 
 /** Test hook — clears the cached verdict + warn-once flag. Not for production. */
 export function resetUpdateStatusCache(): void {
   cache = null;
+  pendingCheck = null;
   warnedOnce = false;
 }

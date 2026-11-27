@@ -127,10 +127,12 @@ drive() {
 #!/usr/bin/env bash
 # shellcheck disable=SC1090
 source "${GA_LAUNCHER}" >/dev/null 2>&1
+source "${GA_REMOTE_STUB}"
 run_doctor
 DRV
   chmod +x "${stub}/tmux" "${doctor_drv}"
   run env PATH="${stub}:${PATH}" GA_LAUNCHER="${TUI}" GA_TARGET_HOME="${SANDBOX}/target" \
+    GA_REMOTE_STUB="${GA}/test/lib/remote-run-stub.bash" \
     GA_MANIFEST="${SANDBOX}/manifest.json" GA_GENERATE_MANIFEST="${SANDBOX}/no-such-manifest-gen" \
     ATRIUM_UPDATE_STATE_DIR="${SANDBOX}/state" ATRIUM_MONITOR_PORT="${GA_DOCTOR_DEAD_PORT:-9}" \
     GA_DB_NAME="ga_doctor_errtrap_sandbox" GA_SKIP_DB_SETUP=1 bash "${doctor_drv}"

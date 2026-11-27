@@ -29,10 +29,10 @@ const chart = renderToStaticMarkup(React.createElement(TrendChart, {
   yScale: true,
   formatValue: (v: number) => `${Math.round(v * 100)}% rejected`,
 }));
-// px-5 pb-4 body inside an overflow:hidden card, half the page wide like a split-row column
-const CARD_PAGE = `<!doctype html><html data-theme="light"><body style="margin: 0;">
+// px-4 pb-4 body inside an overflow:hidden card, half the page wide like a split-row column
+const CARD_PAGE = `<!doctype html><html><body style="margin: 0;">
   <div style="padding: 24px; width: 50%;">
-    <div class="card" id="card"><div style="padding: 0 20px 16px;">${chart}</div></div>
+    <div class="card" id="card"><div style="padding: 0 16px 16px;">${chart}</div></div>
   </div>
 </body></html>`;
 
@@ -88,7 +88,7 @@ describe("Recharts day ticks in a real browser", () => {
 
   test("a rendered tick label is no wider than the per-character estimate the gap math uses", async () => {
     const page = await browser.newPage({ viewport: { width: 1024, height: 200 } });
-    await page.setContent(`<!doctype html><html data-theme="light"><body>${tick}</body></html>`);
+    await page.setContent(`<!doctype html><html><body>${tick}</body></html>`);
     await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
     await page.addStyleTag({ path: resolve(STYLES, "base.css") });
     const width = await page.evaluate(() => document.querySelector("text")!.getComputedTextLength());

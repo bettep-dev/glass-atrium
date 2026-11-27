@@ -109,18 +109,6 @@ teardown() {
   [[ -f "${GA_DATA}/workflow-gate-fired.log" ]] || { echo "trace not appended to new default log" >&2; return 1; }
 }
 
-@test "block-doc-routing-leak.sh: no override → firing trace lands at \$HOME/.glass-atrium/data/doc-routing-leak-fired.log" {
-  local hook="${HOOKS_DIR}/block-doc-routing-leak.sh"
-  [[ -x "${hook}" ]] || skip "hook not executable: ${hook}"
-
-  run env -u GA_DATA_ROOT -u DOC_ROUTING_LEAK_FIRED_LOG HOME="${SANDBOX}" \
-    ATRIUM_MONITOR_PORT="16145" CLAUDED_DOCS_HTML_ROOT="${SANDBOX}/monitor-root" \
-    bash -c 'printf "%s" "$1" | "$2"' _ '{"tool_name":"Edit","agent_id":"reporter1"}' "${hook}"
-
-  [[ "${status}" -eq 0 ]] || { echo "status=${status} output=${output}" >&2; return 1; }
-  [[ -f "${GA_DATA}/doc-routing-leak-fired.log" ]] || { echo "trace not appended to new default log" >&2; return 1; }
-}
-
 @test "post-edit-typecheck.sh: no override → PostToolUse marker lands at \$HOME/.glass-atrium/data" {
   local hook="${HOOKS_DIR}/post-edit-typecheck.sh"
   [[ -x "${hook}" ]] || skip "hook not executable: ${hook}"

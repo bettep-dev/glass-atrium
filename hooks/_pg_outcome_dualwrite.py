@@ -60,6 +60,7 @@ import time
 # rules are stdlib-only, so keeping them out of this module lets a driver-less consumer
 # read them without tripping the module-scope sys.exit() that guard performs.
 from _outcome_signal import _role_task_type_allowed
+from _pg_connect import CONNECT_TIMEOUT_SEC, RETRY_BACKOFF_SEC
 
 # Named exit codes — loud-fail observability. A non-zero code is a VISIBLE
 # process-level failure signal, NOT a hard error: track-outcome.sh runs the helper
@@ -126,7 +127,7 @@ def _record_hook_failure(error_kind, payload_ref, retry_attempted):
     emitted to stderr so the failure stays observable (loud-fail), instead of the
     former `except: pass` that swallowed it."""
     try:
-        with psycopg.connect("dbname=glass_atrium", connect_timeout=1) as conn:
+        with psycopg.connect("dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO core.hook_failures "
@@ -695,7 +696,7 @@ def _do_transaction(envelope, attempt):
 
     try:
         with psycopg.connect(
-            "dbname=glass_atrium", connect_timeout=1, autocommit=False
+            "dbname=glass_atrium", connect_timeout=CONNECT_TIMEOUT_SEC, autocommit=False
         ) as conn:
             with conn.cursor() as cur:
                 # --- outcomes UPSERT with RETURNING id ---
@@ -776,7 +777,7 @@ def main():
         last_exc = exc
         if attempt == 1:
             retry_attempted = True
-            time.sleep(0.1)
+            time.sleep(RETRY_BACKOFF_SEC)
 
     # Both attempts failed — LOUD-FAIL: emit a structured stderr marker, record a
     # secondary hook_failures row if the table is reachable, and exit a NAMED code

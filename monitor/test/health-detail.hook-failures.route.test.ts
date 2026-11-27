@@ -1,7 +1,7 @@
 // Integration tests for /api/health/hook-failures recency aggregates (F08) and the
 // window-independent last-record time: an empty days window and an empty table are
 // different facts, and only the second one means the hook has never failed.
-// Runner: npx tsx --test test/health-detail.hook-failures.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/health-detail.hook-failures.route.test.ts
 // DB: real Postgres (read-only) — asserts shape + invariants, not fixture values.
 
 import test, { after, before } from "node:test";

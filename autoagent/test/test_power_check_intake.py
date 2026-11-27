@@ -2,8 +2,8 @@
 
 Projected units = the agent's spawns per day over the last 28 provenance-covered days
 × the 84-day horizon; the bound = 2 × the trial_design per-arm maximum (the larger of the
-efficacy and harm samples) at the floor-half baseline rate × the agent's latest design effect
-from a passed A/A; no such row → design-unmeasured, never passing. The verdict is counted
+efficacy and harm samples, grown at the agent's own k) at the floor-half baseline rate × the
+agent's latest design effect from a passed A/A; no such row → design-unmeasured, never passing. The verdict is counted
 on the cycle report and sent as a loop event; no status is written and no pattern is parked
 or dropped. Every row is database-free under
 ``seal_pg_reach``, except the ledger-read live class, which runs only under
@@ -22,6 +22,7 @@ import itertools
 import json
 import math
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -54,13 +55,12 @@ from _outcome_signal import (
     get_pair_windows,
     is_floor_half,
 )
-from _pg_seal import get_ephemeral_connection, seal_pg_reach
+from _pg_seal import get_connection, get_ephemeral_connection, seal_pg_reach
 
 _NOW = datetime(2026, 10, 5, 6, 0, tzinfo=timezone.utc)
 _WINDOWS = get_pair_windows(_NOW)
 _DAY = _WINDOWS.end  # D, the most recent UTC midnight
-# EMIT_ROW = the A/A row of emit_failure's attribution-leg definition; a row keyed EMIT is
-# the pre-split union event's
+# EMIT_ROW = the A/A row of emit_failure's attribution-leg definition; EMIT = the union event's
 _KEY = SimpleNamespace(
     BUDGET="budget_overage", EMIT="emit_failure", EMIT_ROW="emit_failure_attribution"
 )
@@ -80,13 +80,13 @@ _AA_START_ID = 1
 _REQUIRED_UNITS = trial_design.get_required_units(
     trial_design.get_trial_sample_size(_BASELINE_RATE), design_effect=_DESIGN_EFFECT
 )
-# baseline 17/29 at design effect 1 → bound 204 = exactly 68 × 84 / 28
-# (68 / 28) × 84 rounds below 204 in floating point
-_EXACT_BOUND_BASELINE = WindowCount(spawns=29, events=17, sessions=17)
-# 28-day spawn counts: 84-day projection just at-or-above / just below the bound; 68 at 17/29
+# baseline 43/100: maximum 191 grown to 225 at the passing agent's k 4
+# bound 450 at design effect 1 = exactly 150 × 84 / 28; (150 / 28) × 84 rounds below it in floats
+_EXACT_BOUND_BASELINE = WindowCount(spawns=100, events=43, sessions=43)
+# 28-day spawn counts: 84-day projection just at-or-above / just below the bound; 150 at 43/100
 _UNITS = SimpleNamespace(
     AT_BOUND=math.ceil(_REQUIRED_UNITS * 28 / 84),
-    AT_EXACT_BOUND=68,
+    AT_EXACT_BOUND=150,
 )
 _UNITS.BELOW_BOUND = _UNITS.AT_BOUND - 1
 
@@ -137,14 +137,15 @@ def _floor(verdict: str = "pass", baseline: WindowCount = _BASELINE) -> FloorRes
 
 
 def _get_power_inputs(
-    spawns: list[SpawnFacts], provenance_start: datetime | None, design_effect: float | None
+    spawns: list[SpawnFacts],
+    provenance_start: datetime | None,
+    design_effect: float | None,
+    agent: str = _AGENT.PASSING,
 ) -> dc.PowerInputs:
-    """The passing agent's budget_overage inputs; design_effect None → no A/A row at the key."""
-    key = (_AGENT.PASSING, _KEY.BUDGET)
+    """The agent's budget_overage inputs; design_effect None → no A/A row at the key."""
+    key = (agent, _KEY.BUDGET)
     design_effects = {} if design_effect is None else {key: design_effect}
-    return dc.PowerInputs(
-        provenance_start, {_AGENT.PASSING: spawns}, design_effects, frozenset(), {}
-    )
+    return dc.PowerInputs(provenance_start, {agent: spawns}, design_effects, frozenset(), {})
 
 
 def _get_floor_passing_history(units: int) -> list[SpawnFacts]:
@@ -301,12 +302,11 @@ class GetPowerCheckTest(unittest.TestCase):
                 dc.POWER.VERDICT.UNDERPOWERED,
             ),
             (
-                "efficacy larger: the bound is the efficacy sample",
+                "efficacy larger: the bound is the efficacy sample grown at the agent's k",
                 _floor(baseline=efficacy_binding),
                 _UNITS.AT_BOUND,
-                trial_design.get_required_units(
-                    trial_design.get_maximum_sample_size(55 / 100), design_effect=_DESIGN_EFFECT
-                ),
+                # efficacy 116 at 55/100, grown to 147 at dev-python's k 4
+                trial_design.get_required_units(147, design_effect=_DESIGN_EFFECT),
                 dc.POWER.VERDICT.PASSING,
             ),
             (
@@ -325,6 +325,66 @@ class GetPowerCheckTest(unittest.TestCase):
                     _WINDOWS,
                 )
                 self.assertEqual((check.verdict, check.units.required), (verdict, required))
+
+    def test_the_bound_sizes_the_trial_maximum_grown_at_the_agents_own_k(self) -> None:
+        # agent, synthetic baseline events / spawns, the ungrown per-arm maximum, the grown one;
+        # the agent sets only k, and the baselines are not that agent's recorded rates
+        rows = [
+            ("dev-react grows ×1.004 at k 4", "glass-atrium-dev-react", 50, 282, 729, 733),
+            ("dev-shell stays ungrown at k 4", "glass-atrium-dev-shell", 88, 532, 795, 795),
+            ("dev-nestjs stays ungrown at k 4", "glass-atrium-dev-nestjs", 36, 350, 1393, 1393),
+            (
+                "qa-code-reviewer stays ungrown at k 3",
+                "glass-atrium-qa-code-reviewer",
+                85,
+                1500,
+                2681,
+                2681,
+            ),
+            (
+                "meta-prompt-engineer stays ungrown at k 3",
+                "glass-atrium-meta-prompt-engineer",
+                66,
+                480,
+                995,
+                995,
+            ),
+            (
+                "intel-planner stays ungrown at k 3",
+                "glass-atrium-intel-planner",
+                38,
+                360,
+                1353,
+                1353,
+            ),
+            (
+                "a k-3 agent grows 55/100 to 139, short of k 4's 147",
+                "glass-atrium-qa-code-reviewer",
+                55,
+                100,
+                116,
+                139,
+            ),
+        ]
+        for name, agent, events, spawns, maximum, grown in rows:
+            with self.subTest(name):
+                rate = events / spawns
+                self.assertEqual(trial_design.get_trial_sample_size(rate), maximum)
+                baseline = WindowCount(spawns=spawns, events=events, sessions=events)
+                check = dc.get_power_check(
+                    dc.PowerSubject((agent, _KEY.BUDGET), _floor(baseline=baseline)),
+                    _get_power_inputs(
+                        _get_units(_UNITS.AT_BOUND),
+                        _DAY - timedelta(days=60),
+                        _DESIGN_EFFECT,
+                        agent,
+                    ),
+                    _WINDOWS,
+                )
+                self.assertEqual(
+                    check.units.required,
+                    trial_design.get_required_units(grown, design_effect=_DESIGN_EFFECT),
+                )
 
     def test_the_projection_is_the_daily_28_day_rate_over_the_84_day_horizon(
         self,
@@ -502,7 +562,20 @@ class CheckPatternPowerTest(_StageFixture):
             },
         )
         self.assertIn(f"agent={_AGENT.PASSING} key={_KEY.BUDGET}: passing", stderr_text)
-        self.assertNotIn(_AGENT.FLOOR_FAILING, stderr_text)
+        self.assertNotIn(f"agent={_AGENT.FLOOR_FAILING} key=", stderr_text)
+
+    def test_a_floor_failing_pattern_is_uncounted_and_named_as_a_stale_pattern_skip(
+        self,
+    ) -> None:
+        counts, stderr_text = self._check(self.patterns)
+        self.assertEqual(sum(counts.values()), 2)
+        self.assertIn(
+            f"pattern stale-pattern-skip — agent={_AGENT.FLOOR_FAILING}", stderr_text
+        )
+        self.assertIn(f"{_KEY.BUDGET} pair from", stderr_text)
+        self.assertIn(
+            (_AGENT.FLOOR_FAILING, dc.PAIR_FAIL_EVAL), self._get_event_results()
+        )
 
     def test_an_agent_with_no_aa_design_effect_row_is_counted_design_unmeasured_never_passing(
         self,
@@ -565,6 +638,8 @@ class CheckPatternPowerTest(_StageFixture):
                 counts, stderr_text = self._check([_pattern(_AGENT.PASSING, 1, _KEY.EMIT)])
                 self.assertEqual(counts[verdict], 1)
                 self.assertIn(f"agent={_AGENT.PASSING} key={_KEY.EMIT}: {verdict}", stderr_text)
+
+    def test_a_union_event_row_sizes_neither_split_key(self) -> None:
         union_row = _build_design_effect_payload(1.0, _KEY.EMIT)
         self.assertEqual(
             dc._get_design_effects([(_AGENT.PASSING, union_row, _AA_START_ID)]),
@@ -697,8 +772,13 @@ class CheckPatternPowerTest(_StageFixture):
 
     def test_each_verdict_is_sent_as_a_census_loop_event(self) -> None:
         self._check(self.patterns)
+        power_events = [
+            (agent, eval_result)
+            for agent, eval_result in self._get_event_results()
+            if eval_result.startswith(dc.POWER.CHECK_EVAL_PREFIX)
+        ]
         self.assertEqual(
-            self._get_event_results(),
+            power_events,
             sorted(
                 [
                     (_AGENT.PASSING, "power-check-passing"),
@@ -752,13 +832,51 @@ class CheckPatternPowerTest(_StageFixture):
             with self.subTest(name), mock.patch.multiple(dc, **patches):
                 counts, stderr_text = self._check(self.patterns)
                 self.assertEqual((counts["unchecked"], sum(counts.values())), (2, 2))
-                self.assertNotIn(_AGENT.FLOOR_FAILING, stderr_text)
+                self.assertNotIn(f"agent={_AGENT.FLOOR_FAILING} key=", stderr_text)
                 self.assertIn("WARN: power check", stderr_text)
 
     def test_a_no_write_cycle_counts_but_sends_no_loop_event(self) -> None:
         counts, _ = self._check(self.patterns, skip_loop_emit=True)
         self.assertEqual(counts["passing"], 1)
         self.assertEqual(self.events, [])
+
+
+class TrialDesignImportFailureTest(unittest.TestCase):
+    """An install whose trial_design cannot import still imports the cycle, the failure captured."""
+
+    _CHILD = "\n".join(
+        (
+            "import sys",
+            "sys.path[:0] = sys.argv[1:]",
+            "sys.modules['trial_design'] = None",
+            "import daemon_cycle as dc",
+            "print(isinstance(dc._TRIAL_DESIGN_IMPORT_EXC, ImportError))",
+        )
+    )
+
+    def test_daemon_cycle_imports_with_trial_design_unimportable_and_captures_the_failure(
+        self,
+    ) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in ("PGPORT", "PGHOSTADDR", "PGSERVICE", "PGDATABASE", "PGPASSFILE")
+        }
+        env.update(PGHOST=tmp.name, GA_DATA_ROOT=tmp.name, PYTHONDONTWRITEBYTECODE="1")
+        anchors = [str(_REPO_ROOT / name) for name in ("hooks", "autoagent", "autoagent/lib")]
+        flags = ["-S"] if sys.flags.no_site else []
+        run = subprocess.run(
+            [sys.executable, *flags, "-c", self._CHILD, *anchors],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=tmp.name,
+            check=False,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(run.stdout.strip(), "True", run.stderr)
 
 
 class DesignEffectReadLivePgTest(_StageFixture):
@@ -774,9 +892,6 @@ class DesignEffectReadLivePgTest(_StageFixture):
 
     def setUp(self) -> None:
         get_ephemeral_connection().close()
-        import psycopg
-
-        self.psycopg = psycopg
         super().setUp()
         self.histories = {_AGENT.PASSING: _get_floor_passing_history(_UNITS.AT_BOUND)}
 
@@ -789,13 +904,11 @@ class DesignEffectReadLivePgTest(_StageFixture):
         self.addCleanup(patcher.stop)
 
     def _run_admin(self, statement: str) -> None:
-        with self.psycopg.connect(
-            dbname="eph_bootstrap", connect_timeout=2, autocommit=True
-        ) as admin:
+        with get_connection("eph_bootstrap", autocommit=True) as admin:
             admin.execute(statement)
 
     def _connect(self):
-        return self.psycopg.connect(dbname=self.dbname, connect_timeout=2)
+        return get_connection(self.dbname)
 
     def _insert(
         self, recorded_at: datetime, event: str, payload: dict, dedupe_key: str | None = None
@@ -841,8 +954,7 @@ class DesignEffectReadLivePgTest(_StageFixture):
         event = dc.TRIAL_LEDGER.EVENT
         raised = _build_design_effect_payload(_DESIGN_EFFECT * 1.2)
         latest = _DAY - timedelta(days=1)
-        # passed A/As 1-4: older and higher · a tie at the latest instant broken by insertion
-        # order · a higher row on the other key after it · another event last
+        # A/As 1-4: older and higher · latest-instant tie, insertion order · other key higher · other event
         self._insert_design_effect(_DAY - timedelta(days=3), 1, raised)
         self._insert_design_effect(latest, 2, raised)
         self._insert_design_effect(latest, 3, _build_design_effect_payload())
@@ -946,7 +1058,7 @@ class DesignEffectReadLivePgTest(_StageFixture):
 
 
 class PowerCheckCycleReportTest(_StageFixture):
-    """run_cycle stores the counter on the report and in its JSON on the closed branch."""
+    """run_cycle stores the counter on the report and generates for power passes only."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -955,7 +1067,7 @@ class PowerCheckCycleReportTest(_StageFixture):
         self.root = Path(tmp.name)
         agents_dir = self.root / "agents"
         agents_dir.mkdir()
-        for agent in (_AGENT.PASSING, _AGENT.UNDERPOWERED):
+        for agent in (_AGENT.PASSING, _AGENT.UNDERPOWERED, _AGENT.FLOOR_FAILING):
             (agents_dir / f"{agent}.md").write_text("probe", encoding="utf-8")
         env = mock.patch.dict(
             os.environ,
@@ -970,7 +1082,7 @@ class PowerCheckCycleReportTest(_StageFixture):
             _AGENT.PASSING: _get_floor_passing_history(_UNITS.AT_BOUND),
             _AGENT.UNDERPOWERED: _get_floor_passing_history(_UNITS.BELOW_BOUND),
         }
-        rows = [
+        self.pattern_rows = rows = [
             {
                 "id": row_id,
                 "agent": agent,
@@ -994,9 +1106,9 @@ class PowerCheckCycleReportTest(_StageFixture):
             }
         )
 
-    def test_the_report_counter_equals_the_passing_count(self) -> None:
-        self.assertTrue(dc.IS_GENERATION_CLOSED)
-        with contextlib.redirect_stderr(io.StringIO()):
+    def _run(self) -> dc.CycleReport:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
             report = dc.run_cycle(
                 log_path=self.root / "learning-log.md",
                 agents_dir=self.root / "agents",
@@ -1004,14 +1116,82 @@ class PowerCheckCycleReportTest(_StageFixture):
                 skip_pre_verify=True,
                 skip_loop_emit=True,
             )
+        self.stderr_text = stderr.getvalue()
         self.assertEqual(self.pg_reach, [])
         self.assertEqual(self.statements.refused, [])
+        return report
+
+    def _stub_generator(self) -> list[str]:
+        """Generator calls land in the returned list, one agent name per call."""
+        generated: list[str] = []
+
+        def _generate(agent, _patterns, *, agents_dir, skip_haiku):
+            generated.append(agent)
+            return dc.PatchProposal(
+                target_file=str(agents_dir / f"{agent}.md"),
+                rationale="add one rule line",
+                proposed_diff="",
+                touched_frontmatter=False,
+                estimated_added_lines=0,
+                raw_response="",
+                parse_mode="strict",
+            )
+
+        patcher = mock.patch.object(dc, "generate_consolidated_proposal", _generate)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return generated
+
+    def test_the_report_counter_equals_the_passing_count(self) -> None:
+        report = self._run()
         self.assertCountEqual(
             self.statements.seen,
             [dc.POWER.DESIGN_EFFECT_SQL, *self.statements.answered_empty],
         )
         self.assertEqual(report.power_check["passing"], 1)
         self.assertEqual(dc._report_to_dict(report)["power_check"], report.power_check)
+
+    def test_an_underpowered_pattern_parks_with_no_generator_call_and_is_counted(
+        self,
+    ) -> None:
+        generated = self._stub_generator()
+        report = self._run()
+        self.assertEqual(generated, [_AGENT.PASSING])
+        self.assertEqual(
+            (report.power_check["passing"], report.power_check["underpowered"]), (1, 1)
+        )
+
+    def test_a_floor_failing_keyed_pattern_is_named_as_a_stale_pattern_skip_never_generated(
+        self,
+    ) -> None:
+        self.histories[_AGENT.FLOOR_FAILING] = _get_floor_failing_history()
+        self.pattern_rows.append(
+            {
+                **self.pattern_rows[0],
+                "id": 3,
+                "agent": _AGENT.FLOOR_FAILING,
+                "pattern_signature": f"budget-overage concentration|{_AGENT.FLOOR_FAILING}",
+            }
+        )
+        generated = self._stub_generator()
+        report = self._run()
+        self.assertEqual(generated, [_AGENT.PASSING])
+        self.assertEqual(sum(report.power_check.values()), 2)
+        skip_line = f"pattern stale-pattern-skip — agent={_AGENT.FLOOR_FAILING}"
+        self.assertIn(skip_line, self.stderr_text)
+
+    def test_the_cycle_date_reaches_the_generation_unit(self) -> None:
+        self._stub_generator()
+        handed: list[str] = []
+        real_build = dc.build_patch_result
+
+        def _build(agent, agent_patterns, **kwargs):
+            handed.append(kwargs["cycle_date"])
+            return real_build(agent, agent_patterns, **kwargs)
+
+        with mock.patch.object(dc, "build_patch_result", _build):
+            report = self._run()
+        self.assertEqual(handed, [report.cycle_date])
 
 
 if __name__ == "__main__":

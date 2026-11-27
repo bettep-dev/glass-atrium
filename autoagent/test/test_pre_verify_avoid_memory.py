@@ -295,8 +295,6 @@ class TestConsolidatedPromptInjection(unittest.TestCase):
 
 _HEAD_SENTINEL = "HEAD_SENTINEL_9f3a21"
 _TAIL_SENTINEL = "TAIL_SENTINEL_9f3a21"
-_SUPERSEDE_ANCHOR = "REPLACES that one rule in place"
-_APPEND_ONLY_ANCHOR = "DO NOT rewrite existing rules — only ADD"
 
 
 def _largest_registry_body_chars() -> int:
@@ -407,24 +405,25 @@ class TestGenerationPromptWholeFile(unittest.TestCase):
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
-class TestSupersedePermissionPrompt(unittest.TestCase):
-    """T5b-1 — conditional supersede permission replaces the append-only rule."""
+class TestPureAddPrompt(unittest.TestCase):
+    """Both generation templates ask for a pure ADD and invite no in-place replacement."""
 
-    def test_when_templates_read_then_permission_present_at_both_sites(self) -> None:
-        for template in (dc._PROMPT_TEMPLATE, dc._CONSOLIDATED_PROMPT_TEMPLATE):
-            self.assertIn(_SUPERSEDE_ANCHOR, template)
-            self.assertNotIn(_APPEND_ONLY_ANCHOR, template)
-
-    def test_when_templates_read_then_pure_add_still_required_without_a_rule(
+    def test_when_templates_read_then_each_requires_a_pure_add_and_invites_no_replace(
         self,
     ) -> None:
-        for template in (dc._PROMPT_TEMPLATE, dc._CONSOLIDATED_PROMPT_TEMPLATE):
-            self.assertIn("pure ADD", template)
+        templates = {
+            "single-pattern": dc._PROMPT_TEMPLATE,
+            "consolidated": dc._CONSOLIDATED_PROMPT_TEMPLATE,
+        }
+        for row_id, template in templates.items():
+            with self.subTest(row_id):
+                self.assertNotIn("REPLACE", template.upper())
+                self.assertIn("MUST be a pure ADD", template)
 
 
 @unittest.skipIf(dc is None, f"import failed: {_IMPORT_ERROR}")
 class TestLoopEventRemovedLines(unittest.TestCase):
-    """T6 — changes_removed measured from the FULL diff, never the stored one."""
+    """Line counts are measured from the FULL diff — never the stored one, never the generator's claim."""
 
     def _proposal_from_raw(self, diff: str) -> "dc.PatchProposal":
         raw = f"RATIONALE: fixture\nTOUCHES_FRONTMATTER: false\nADDED_LINES: 1\nDIFF:\n{diff}"
@@ -494,6 +493,24 @@ class TestLoopEventRemovedLines(unittest.TestCase):
         )
         events = self._events(self._proposal_from_raw(diff))
         self.assertEqual(events[0]["args"]["changes_removed"], 0)
+
+    def test_when_claimed_added_count_is_under_the_cap_and_the_diff_is_over_it_then_not_body_auto(
+        self,
+    ) -> None:
+        over_cap = dc.BODY_AUTO_LINE_LIMIT + 1
+        diff = (
+            "--- a/dev-python.md\n"
+            "+++ b/dev-python.md\n"
+            f"@@ -1,1 +1,{over_cap + 1} @@\n"
+            " context line\n"
+            + "".join(f"+added rule line {i}\n" for i in range(over_cap))
+        )
+        proposal = self._proposal_from_raw(diff)
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "dev-python.md"
+            target.write_text("context line\n", encoding="utf-8")
+            area = dc.classify_patch_area(proposal, target, agents_dir=Path(tmp))
+        self.assertEqual(area, "frontmatter-dryrun")
 
 
 if __name__ == "__main__":

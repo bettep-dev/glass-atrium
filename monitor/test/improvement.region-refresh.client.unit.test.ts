@@ -190,7 +190,6 @@ const sharedOutageRows = [
   { name: "applied changes", render: () => sandbox.ChangeSummaryCardI({ state: coldError, aggregate: null, failures: sharedOutage }) },
   { name: "pattern ledger", render: () => sandbox.PatternLedgerCardI({ state: coldError, suppression: null, failures: sharedOutage }) },
   { name: "suggestion board", render: () => sandbox.KanbanCardI({ state: coldError, failures: sharedOutage }) },
-  { name: "loop stats", render: () => sandbox.LoopOutputGroupI({ statsState: coldError, loopEventsState: coldError, listState: coldError, failures: sharedOutage }) },
   { name: "trend", render: () => sandbox.TrendCardI({ state: coldError, aggregate: null, failures: sharedOutage }) },
   { name: "learning memory", render: () => sandbox.BucketRowI({ state: coldError, buckets: null, failures: sharedOutage }) },
 ];

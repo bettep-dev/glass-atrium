@@ -135,7 +135,7 @@ write_proposal_row() {
   target_b64="$(b64 "${AGENTS}/probe.md")"
   diff_b64="$(printf '%s\n' '--- a/probe.md' '+++ b/probe.md' '@@ -5,1 +5,2 @@' \
     ' editable goal line one' '+inserted editable line' | base64 | tr -d '\n')"
-  printf '%s|2026-06-26|%s|%s|%s|%s|pending|ok\n' "${PROPOSAL_ID}" "${label_b64}" \
+  printf '%s|2026-06-26|%s|%s|%s|%s|pending|auto|ok\n' "${PROPOSAL_ID}" "${label_b64}" \
     "${agent_b64}" "${target_b64}" "${diff_b64}" >"${WORK}/proposal.row"
 }
 

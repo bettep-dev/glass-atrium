@@ -1,14 +1,9 @@
 #!/usr/bin/env bats
 # enforce-commit-guard.bats — pins the PreToolUse(Bash) dangerous-git-command gate.
 #
-# Regression under repair: the RULES table used '|' as the field delimiter, but the
-# force-push (GIT-001) and push-to-main (GIT-006) regexes contain '|' alternation.
-# The split truncated each pattern mid-regex — GIT-001 dropped its '-f' short-form
-# arm and GIT-006 became 'git\s+push\s+\S+\s+(main' (an unbalanced '(' grep rejects
-# as invalid) — so both blocks were silently disarmed (the sole gate fully bypassed)
-# AND every command leaked a grep parse error to stderr. The fix delimits fields
-# with US (0x1F), which can never occur in a regex, and lints each pattern's
-# compilation before use.
+# Protects: the RULES table's US (0x1F) field delimiter — the force-push
+# regex carries '|' alternation, which a '|' delimiter would truncate mid-regex — and
+# the per-pattern compile lint that fails closed on a malformed pattern.
 #
 # Decision channel = exit code: 0 PASS (not blocked) / 2 BLOCK. Block detail (the
 # JSON error object) is emitted to stderr → captured into GUARD_ERR.
@@ -56,20 +51,17 @@ run_guard() {
   [[ "${GUARD_ERR}" == *'"error_code":"GIT-001"'* ]] || return 1
 }
 
-# --- Push-to-main corpus (GIT-006): the truncated regex never compiled at all ---
+# --- Push to a default branch: rule text only (core-git-workflow.md → Branches), no block ---
 
-@test "git push origin main is blocked with code GIT-006" {
-  # RED before fix: 'git\s+push\s+\S+\s+(main' is an unbalanced-paren regex grep
-  # refused to compile → the block never fired.
-  run_guard 'git push origin main'
-  [[ "${status}" -eq 2 ]] || return 1
-  [[ "${GUARD_ERR}" == *'"error_code":"GIT-006"'* ]] || return 1
-}
-
-@test "git push origin master is blocked with code GIT-006" {
-  run_guard 'git push origin master'
-  [[ "${status}" -eq 2 ]] || return 1
-  [[ "${GUARD_ERR}" == *'"error_code":"GIT-006"'* ]] || return 1
+@test "a plain push to main or master is not blocked" {
+  local branch
+  for branch in main master; do
+    run_guard "git push origin ${branch}"
+    [[ "${status}" -eq 0 && -z "${GUARD_ERR}" ]] || {
+      echo "push to ${branch}: status ${status}: ${GUARD_ERR}"
+      return 1
+    }
+  done
 }
 
 # --- Emitted fields are un-corrupted (delimiter no longer collides) ---
@@ -89,8 +81,7 @@ run_guard() {
 # --- Non-matching control: no block AND no invalid-regex grep leak on stderr ---
 
 @test "benign git status is not blocked and leaks NO grep parse error" {
-  # RED before fix: the invalid GIT-006 regex made grep print 'parentheses not
-  # balanced' to stderr on EVERY command, even non-matching ones.
+  # A non-compiling pattern makes grep print a parse error on EVERY command, matching or not.
   run_guard 'git status'
   [[ "${status}" -eq 0 ]] || return 1
   [[ -z "${GUARD_ERR}" ]] || return 1
@@ -102,6 +93,16 @@ run_guard() {
   run_guard 'git reset --hard HEAD~1'
   [[ "${status}" -eq 2 ]] || return 1
   [[ "${GUARD_ERR}" == *'"error_code":"GIT-002"'* ]] || return 1
+}
+
+@test "git clean -fd (clean force-delete) is blocked with code GIT-003" {
+  run_guard 'git clean -fd'
+  [[ "${status}" -eq 2 ]] || {
+    echo "${output}"
+    echo "${GUARD_ERR}"
+    return 1
+  }
+  [[ "${GUARD_ERR}" == *'"error_code":"GIT-003"'* ]] || return 1
 }
 
 # --- Discard/restore-all corpus (GIT-004/GIT-005): the $-anchored arms ---
@@ -129,6 +130,93 @@ run_guard() {
   run_guard 'git checkout ./file.txt'
   [[ "${status}" -eq 0 ]] || return 1
   [[ -z "${GUARD_ERR}" ]] || return 1
+}
+
+# --- Checkout into another work tree (GIT-006): the shared index takes the foreign tree ---
+# A checkout, or a restore --staged, under --work-tree / GIT_WORK_TREE writes the CURRENT
+# repository's index (a --git-dir naming that repository included), so a "read-only" export
+# stages the foreign tree into the main checkout. Only a separate GIT_INDEX_FILE keeps it out.
+
+@test "a checkout or staged restore aimed at another work tree is blocked with code GIT-006" {
+  local row
+  local -a rows=(
+    'git --work-tree=/tmp/export checkout feature/x -- .'
+    'git --work-tree /tmp/export checkout main -- hooks'
+    'GIT_WORK_TREE=/tmp/export git checkout main -- .'
+    'git --git-dir=.git --work-tree=/tmp/export checkout main -- .'
+    'git --work-tree=/tmp/export restore --staged --source=main -- .'
+    'git --work-tree=/tmp/export restore -S --source main .'
+    'export GIT_WORK_TREE=/tmp/export; git checkout main -- .'
+    'GIT_INDEX_FILE=/tmp/export.idx git status; git --work-tree=/tmp/export checkout main -- .'
+    'GIT_INDEX_FILE= git --work-tree=/tmp/export checkout main -- .'
+    'GIT_INDEX_FILE="" git --work-tree=/tmp/export checkout main -- .'
+    'export GIT_INDEX_FILE=; git --work-tree=/tmp/export checkout main -- .'
+    'GIT_INDEX_FILE=/tmp/a.idx git --work-tree=/tmp/a checkout main -- .; git --work-tree=/tmp/b checkout main -- .'
+    'git --work-tree=/tmp/b checkout main -- .; export GIT_INDEX_FILE=/tmp/a.idx; git --work-tree=/tmp/a checkout main -- .'
+  )
+  for row in "${rows[@]}"; do
+    run_guard "${row}"
+    [[ "${status}" -eq 2 && "${GUARD_ERR}" == *'"error_code":"GIT-006"'* ]] || {
+      echo "not blocked as GIT-006: ${row}: status ${status}: ${GUARD_ERR}"
+      return 1
+    }
+  done
+}
+
+@test "the GIT-006 refusal names a read-only route to export a tree" {
+  run_guard 'git --work-tree=/tmp/export checkout main -- .'
+  [[ "${status}" -eq 2 ]] || {
+    echo "${GUARD_ERR}"
+    return 1
+  }
+  [[ "${GUARD_ERR}" == *'git archive <ref> | tar -x -C <dir>'* && "${GUARD_ERR}" == *'git worktree add'* ]] || {
+    echo "${GUARD_ERR}"
+    return 1
+  }
+}
+
+@test "a work-tree checkout with its own index or a checkout in the worktree itself is not blocked" {
+  local row
+  local -a rows=(
+    'GIT_INDEX_FILE=/tmp/export.idx git --work-tree=/tmp/export checkout main -- .'
+    'export GIT_INDEX_FILE=/tmp/export.idx; git --work-tree=/tmp/export checkout main -- .'
+    'GIT_INDEX_FILE="/tmp/export.idx" git --work-tree=/tmp/export checkout main -- .'
+    'GIT_WORK_TREE=/tmp/export GIT_INDEX_FILE=/tmp/export.idx git checkout main -- .'
+    'export GIT_WORK_TREE=/tmp/export; export GIT_INDEX_FILE=/tmp/export.idx; git checkout main -- .'
+    'git checkout main'
+    'git -C /repo/.claude/worktrees/wt-a checkout feature/x -- hooks/a.sh'
+    'git --work-tree=/tmp/export restore --source=main -- .'
+    'git --work-tree=/tmp/export status && git checkout main'
+  )
+  for row in "${rows[@]}"; do
+    run_guard "${row}"
+    [[ "${status}" -eq 0 && -z "${GUARD_ERR}" ]] || {
+      echo "blocked: ${row}: status ${status}: ${GUARD_ERR}"
+      return 1
+    }
+  done
+}
+
+@test "a GIT-006 exemption that does not compile blocks instead of exempting" {
+  local dir="${BATS_TEST_TMPDIR}/broken-exempt"
+  mkdir -p "${dir}/lib"
+  cp "${BATS_TEST_DIRNAME}/../hook-utils.sh" "${dir}/hook-utils.sh"
+  cp "${BATS_TEST_DIRNAME}/../lib/pipe-drain.sh" "${dir}/lib/pipe-drain.sh"
+  python3 -c 'import sys
+src = open(sys.argv[1]).read()
+old = "${US}${IDX_EXEMPT}\""
+assert src.count(old) == 1, "exempt field not found"
+src = src.replace(old, "${US}GIT_INDEX_FILE=(unbalanced\"")
+open(sys.argv[2], "w").write(src)' "${HOOK_SH}" "${dir}/enforce-commit-guard.sh"
+
+  local payload
+  payload="$(jq -n --arg c 'GIT_INDEX_FILE=/tmp/export.idx git --work-tree=/tmp/export checkout main -- .' \
+    '{tool_name:"Bash", tool_input:{command:$c}}')"
+  run bash -c 'printf "%s" "$1" | bash "$2" 2>&1' _ "${payload}" "${dir}/enforce-commit-guard.sh"
+  [[ "${status}" -eq 2 && "${output}" == *'"error_code":"GIT-006"'* ]] || {
+    echo "status ${status}: ${output}"
+    return 1
+  }
 }
 
 # --- Recurrence guard: rule-table lint fails CLOSED on a non-compiling pattern ---

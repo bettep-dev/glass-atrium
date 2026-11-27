@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 # workflow-gate-plan-stage.bats — the plan-stage advisories of enforce-workflow-verify-stage.sh: the
-#   close token (grammar SoT: orchestrator-role.md → Context Handoff Size, `[PLAN-CLOSE]`) with its
+#   close token (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md → Context Handoff Size, `[PLAN-CLOSE]`) with its
 #   --lint --template section, and the `implementing` stage nudge. Advisory only: every row exits 0 or
-#   keeps its block verdict.
+#   keeps its warning verdict.
 #
 # Hermetic: setup points WORKFLOW_GATE_MONITOR_URL at a refused loopback port, and the `implementing`
 #   rows at a file:// fixture dir (one JSON file per id) — no test reaches the live monitor.
@@ -19,7 +19,7 @@ setup() {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
-  # Port 9 on loopback refuses (curl rc 7) → every monitor read on the PASS arm fails open.
+  # Port 9 on loopback refuses (curl rc 7) → every trailing-advisory monitor read fails open.
   export WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
   FIXTURE_DIR="${BATS_TEST_TMPDIR}/clauded-docs"
   mkdir -p "${FIXTURE_DIR}"
@@ -132,17 +132,17 @@ agent('glass-atrium-intel-researcher',{goal:'survey'});"
   }
 }
 
-@test "close token: a blocked DEV workflow keeps its block and carries no nudge (PASS-arm siting)" {
+@test "close token: a warned DEV workflow keeps its warning and still carries the nudge" {
   run_hook_exec "log('plan-ref: clauded-docs/100');
 log('[SIZE-EST] bundles=1 tool_uses~=10 — one file');
 parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'}));
 agent('glass-atrium-dev-nestjs',{goal:'implement'});"
-  [[ "${status}" -eq 2 ]] || {
-    echo "declaration-less DEV script must block, status ${status} -- ${output}"
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || {
+    echo "declaration-less DEV script must warn, status ${status} -- ${output}"
     return 1
   }
-  [[ "${output}" != *"${CLOSE_PHRASE}"* ]] || {
-    echo "nudge rode a block -- ${output}"
+  [[ "${output}" == *"${CLOSE_PHRASE}"* ]] || {
+    echo "the warning swallowed the nudge -- ${output}"
     return 1
   }
 }
@@ -289,22 +289,26 @@ SH
   }
 }
 
-@test "implementing: a non-DEV or blocked workflow citing an unstarted plan is never nudged" {
+@test "implementing: a warned DEV workflow citing an unstarted plan is still nudged, a non-DEV one never" {
   use_fixture_monitor
   local -a rows=(
-    "non-DEV workflow|0|log('plan-ref: clauded-docs/101'); agent('glass-atrium-intel-researcher',{goal:'survey'});"
-    "declaration-less DEV workflow|2|log('plan-ref: clauded-docs/101'); log('[SIZE-EST] bundles=1 tool_uses~=10 — one file'); parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})); agent('glass-atrium-dev-nestjs',{goal:'implement'});"
+    "non-DEV workflow|pass|none|log('plan-ref: clauded-docs/101'); agent('glass-atrium-intel-researcher',{goal:'survey'});"
+    "declaration-less DEV workflow|warn|nudge|log('plan-ref: clauded-docs/101'); log('[SIZE-EST] bundles=1 tool_uses~=10 — one file'); parallel(agent('glass-atrium-qa-code-reviewer',{goal:'judge'}),agent('glass-atrium-dev-nestjs',{goal:'feasible'})); agent('glass-atrium-dev-nestjs',{goal:'implement'});"
   )
-  local row name want script
+  local row name want nudge script outcome nudged
   for row in "${rows[@]}"; do
-    IFS='|' read -r name want script <<<"${row}"
+    IFS='|' read -r name want nudge script <<<"${row}"
     run_hook_exec "${script}"
-    [[ "${status}" -eq "${want}" ]] || {
-      echo "${name}: status ${status}, expected ${want} -- ${output}"
+    outcome=pass
+    [[ "${output}" == *"] WARNING ("* ]] && outcome=warn
+    [[ "${status}" -eq 0 && "${outcome}" == "${want}" ]] || {
+      echo "${name}: status ${status}, outcome ${outcome}, expected ${want} -- ${output}"
       return 1
     }
-    [[ "${output}" != *"${STAGE_PHRASE}"* ]] || {
-      echo "${name}: nudged -- ${output}"
+    nudged=none
+    [[ "${output}" == *"${STAGE_PHRASE}"* ]] && nudged=nudge
+    [[ "${nudged}" == "${nudge}" ]] || {
+      echo "${name}: expected ${nudge}, got ${nudged} -- ${output}"
       return 1
     }
   done

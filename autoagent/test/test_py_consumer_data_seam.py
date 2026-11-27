@@ -11,7 +11,7 @@ FRESH under a HOME sandbox (with no GA_DATA_ROOT) and asserts:
     (daemon_config's DAEMON_CONFIG default path);
 (3) GA_DATA_ROOT redirects the root (env-override parity with the shell seam).
 
-Covered: the original set (project_key.py / learning-aggregator.py /
+Covered: the original set (learning-aggregator.py /
 autoagent-status-backfill.py) PLUS the seam-completion
 consumers that previously still resolved the legacy ``.claude`` store:
 daemon_config.py (CONFIG_PATH + the DAEMON_CONFIG override), compliance_telemetry.py
@@ -92,16 +92,6 @@ def _load_daemon_cycle():
 
 class DefaultResolutionTest(unittest.TestCase):
     """No GA_DATA_ROOT — every consumer anchors on $HOME/.glass-atrium, not .claude."""
-
-    def test_project_key_learning_root_under_glass_atrium(self) -> None:
-        with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
-            os.environ.pop("GA_DATA_ROOT", None)
-            m = _load_fresh(_LIB / "project_key.py", "project_key_probe")
-            self.assertEqual(
-                m._LEARNING_ROOT,
-                Path(_SANDBOX_HOME) / ".glass-atrium" / "data" / "learning",
-            )
-            self.assertNotIn(".claude", str(m._LEARNING_ROOT))
 
     def test_learning_aggregator_data_dir_under_glass_atrium(self) -> None:
         with mock.patch.dict("os.environ", {"HOME": _SANDBOX_HOME}, clear=False):
@@ -205,17 +195,6 @@ class DefaultResolutionTest(unittest.TestCase):
 class OverrideParityTest(unittest.TestCase):
     """GA_DATA_ROOT redirects the consumer root — shell-seam override parity."""
 
-    def test_ga_data_root_redirects_project_key(self) -> None:
-        with mock.patch.dict(
-            "os.environ",
-            {"GA_DATA_ROOT": "/var/atrium-alt", "HOME": _SANDBOX_HOME},
-            clear=False,
-        ):
-            m = _load_fresh(_LIB / "project_key.py", "project_key_override_probe")
-            self.assertEqual(
-                m._LEARNING_ROOT, Path("/var/atrium-alt") / "data" / "learning"
-            )
-
     def test_ga_data_root_redirects_daemon_config(self) -> None:
         with mock.patch.dict(
             "os.environ",
@@ -278,7 +257,7 @@ _FLAG_PROBE_AGENT = "flag-file-probe-agent"
 
 
 class FlagFileIgnoredByCycleTest(unittest.TestCase):
-    """With generation closed, a cycle on any data root calls no generator and applies nothing."""
+    """A cycle on any data root with no power pass calls no generator and applies nothing."""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -324,7 +303,6 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
             "generate_consolidated_proposal",
             "generate_patch_proposal",
             "run_pre_verify",
-            "update_generation_closed_proposals",
             "alert_post_apply_regression",
         ):
             patcher = mock.patch.object(self.dc, name, self._get_spy(name))
@@ -372,7 +350,10 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
                     without_file,
                 )
 
-    def test_closed_cycle_calls_no_generator_and_routes_no_candidate(self) -> None:
+    # the probe pattern carries no metric key, so it never passes the power check
+    def test_a_cycle_with_no_power_pass_calls_no_generator_and_routes_no_candidate(
+        self,
+    ) -> None:
         for skip_loop_emit in (True, False):
             with self.subTest(skip_loop_emit=skip_loop_emit):
                 report = self._run(skip_loop_emit=skip_loop_emit)
@@ -381,42 +362,18 @@ class FlagFileIgnoredByCycleTest(unittest.TestCase):
                 self.assertNotIn("generate_patch_proposal", self.calls)
                 self.assertNotIn("run_pre_verify", self.calls)
 
-    def test_closed_cycle_still_writes_a_report_naming_its_input(self) -> None:
+    def test_a_cycle_with_no_candidate_still_writes_a_report_naming_its_input(
+        self,
+    ) -> None:
         out = self.root / "report.json"
         self.dc.emit_report(self._run(), out)
         self.assertEqual(
             json.loads(out.read_text(encoding="utf-8"))["patterns_processed"], 1
         )
 
-    def test_terminalization_runs_once_only_when_the_cycle_may_write(self) -> None:
-        for skip_loop_emit, expected in ((False, 1), (True, 0)):
-            with self.subTest(skip_loop_emit=skip_loop_emit):
-                self._run(skip_loop_emit=skip_loop_emit)
-                self.assertEqual(
-                    self.calls.count("update_generation_closed_proposals"), expected
-                )
-
-    def test_closed_cycle_still_runs_the_post_apply_regression_watch(self) -> None:
+    def test_a_writing_cycle_runs_the_post_apply_regression_watch(self) -> None:
         self._run(skip_loop_emit=False)
         self.assertEqual(self.calls.count("alert_post_apply_regression"), 1)
-
-    def test_terminalization_fault_warns_and_the_cycle_continues(self) -> None:
-        # Psycopg importable but the server down → the helper raises at run time.
-        def _raise(*_args: object, **_kwargs: object) -> int:
-            self.calls.append("update_generation_closed_proposals")
-            raise RuntimeError("connection refused")
-
-        with mock.patch.object(self.dc, "update_generation_closed_proposals", _raise):
-            report = self._run(skip_loop_emit=False)
-        self.assertEqual(report.patterns_processed, 1, "report survives the fault")
-        self.assertIn(
-            "update_generation_closed_proposals raised", self.stderr.getvalue()
-        )
-        self.assertEqual(
-            self.calls.count("alert_post_apply_regression"),
-            1,
-            "post-loop steps still run",
-        )
 
 
 if __name__ == "__main__":

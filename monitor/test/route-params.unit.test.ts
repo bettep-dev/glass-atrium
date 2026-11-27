@@ -1,5 +1,5 @@
 // route-params 공유 파서 + 라우트 레벨 oversized-id 가드 테스트 (M1/M3 회귀 고정).
-// Runner: npx tsx --test test/route-params.unit.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/route-params.unit.test.ts
 //
 // Pinned invariant: 2^53..2^63 digit string 은 parseInt float-round 로 다른 정수가
 // 되므로(wrong-row) safe-int cap 으로 400 거부 · >2^63 은 pg bigint overflow(22003)

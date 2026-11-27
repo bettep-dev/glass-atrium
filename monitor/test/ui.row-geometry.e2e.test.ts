@@ -1,0 +1,522 @@
+// Shared-atom geometry read in a real browser: an icon stays inline with its label, a .tbl row holding a 32px control, a 24px
+// inline target or a value + bar cell stays 40, a column-header row sits on the 32 compact step (40 when sortable or holding a control),
+// a compact body row off .tbl sits on the 32 step (a mark + value cell too), a 24
+// inline target keeps a whole-pixel line box under a type-scale class, the shared error-details summary is the 32 disclosure atom,
+// and the page-header Refresh ends its label on its box's content edge.
+// Runner: npx tsx --test test/ui.row-geometry.e2e.test.ts — needs an installed chromium; no network, no app server.
+import test, { after, before, describe } from "node:test";
+import assert from "node:assert/strict";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import type { Browser, Page } from "playwright";
+import { chromium } from "playwright";
+
+import { collectText, findNodes, getHtml, loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const STYLES = resolve(HERE, "..", "public", "styles");
+
+const ui = await loadScreenModule(resolve(HERE, "../public/src/ui.jsx"));
+const React = ui.React as { createElement: (type: unknown, props: unknown, ...children: unknown[]) => unknown };
+const TYPE_SCALE_CSS = findNodes(renderScreen((ui.UI as { TypeScaleStyle: (props: unknown) => unknown }).TypeScaleStyle({})), (n) => n.type === "style")
+  .map((n) => collectText(n))
+  .join("\n");
+
+// The app loads Tailwind preflight from its CDN; these are the preflight rules the measured geometry depends on — the block svg
+// is the cause of the icon-over-label defect, so the fixture has to carry it for the test to mean anything.
+const PREFLIGHT = `*, ::before, ::after { box-sizing: border-box; border: 0 solid; }
+  html { line-height: 1.5; }
+  svg { display: block; vertical-align: middle; }
+  table { border-collapse: collapse; }
+  button, input, select { font: inherit; line-height: inherit; color: inherit; margin: 0; padding: 0; }
+  .w-28 { width: 7rem; } .justify-center { justify-content: center; } .justify-end { justify-content: flex-end; }`;
+
+const render = (type: unknown, props: Record<string, unknown>, ...children: unknown[]): string =>
+  getHtml(renderScreen(React.createElement(type, props, ...children)) as RenderedNode);
+
+// one rendered Icon as markup — its inline style is what this suite is about
+const iconMarkup = (props: Record<string, unknown>): string => render(ui.Icon, props);
+
+const ICON_ROWS = [
+  { name: "an icon before its label", id: "plain", markup: iconMarkup({ name: "check", size: 14 }) },
+  { name: "an icon whose caller passes an align class", id: "aligned", markup: iconMarkup({ name: "check", size: 14, className: "align-middle" }) },
+] as const;
+
+// the shipped DisclosureButton; a `summary` takes the same atom class
+const DISCLOSURE_CHEVRON = iconMarkup({ name: "chevR", size: 14 });
+const DISCLOSURE_BUTTON = render(ui.DisclosureButton, { isOpen: false, onToggle: () => {}, label: "2 more buckets" });
+const OPEN_DISCLOSURE = render(ui.DisclosureButton, { isOpen: true, onToggle: () => {}, label: "Recent runs" });
+
+// control family of the .tbl control-cell rule — each sits in a row beside a text cell
+const CONTROL_ROWS = [
+  { name: "a small button", control: `<button type="button" class="btn sm">Edit</button>` },
+  { name: "a button", control: `<button type="button" class="btn">Retry</button>` },
+  { name: "a segmented control", control: `<div class="seg"><button type="button" class="active">7d</button><button type="button">30d</button></div>` },
+  { name: "a select field", control: `<select class="field field-select"><option>claude-opus</option></select>` },
+  { name: "an affixed field", control: `<span class="field-affix"><span class="field-affix__sym">$</span><input class="field" value="12" /></span>` },
+  { name: "an interactive pill", control: `<button type="button" class="pill pill--interactive">Implementing</button>` },
+  { name: "a disclosure button", control: DISCLOSURE_BUTTON },
+  { name: "a disclosure summary", control: `<details><summary class="disclosure">${DISCLOSURE_CHEVRON}<span>Details</span></summary><p>body</p></details>` },
+] as const;
+
+// opt-in 24 targets the screens put in ledger rows: a text link, a ledger expander, a checkbox hit area (16 visual)
+const INLINE_TARGET_ROWS = [
+  { name: "a text link", target: `<a href="#cost" class="inline-target">Cost &amp; usage</a>` },
+  { name: "a ledger expander", target: `<button type="button" class="inline-target">+ 3 more</button>` },
+  { name: "a checkbox hit area", target: `<label class="inline-target"><input type="checkbox" class="ctl-checkbox" aria-label="Select row" /></label>` },
+] as const;
+// each kind + an unused one under a same-element .fs-meta → the line-box hold never rests on the element list
+const TYPE_SCALED_ROWS = [
+  ...INLINE_TARGET_ROWS,
+  { name: "an undocumented element kind (a span)", target: `<span class="inline-target">Recent costs</span>` },
+] as const;
+const typeScaled = (target: string): string => target.replace(`class="inline-target"`, `class="inline-target fs-meta"`);
+// each type step a row line pairs with the row-line key; TypeScaleStyle loads after base.css, as the live body <style> does
+const ROW_LINE_STEPS = ["fs-body", "fs-meta"] as const;
+
+// the shipped error-details fold every RegionFailure and AlertCard carries; each is laid out closed and open
+const ERROR_DETAIL = "HTTP 503 Service Unavailable";
+const ERROR_DETAILS_ROWS = [
+  { name: "a failed region", id: "details-region", markup: render(ui.RegionUnavailable, { source: "outcomes", error: new Error(ERROR_DETAIL) }) },
+  { name: "an alert card", id: "details-alert", markup: render(ui.AlertCard, { tone: "crit", title: "Couldn't load outcomes.", details: ERROR_DETAIL }) },
+] as const;
+
+// the alarm row as AlertCard draws it (raised and inset) and as a screen writes it by class; the detail line is
+// the one fact the title does not hold
+const RETRY = React.createElement("button", { type: "button", className: "btn sm" }, "Retry");
+const ALARM = (() => {
+  const rows = [
+    { name: "a raised alert card with one line and an action", id: "alarm-card-line", height: 48, glyph: 16,
+      markup: render(ui.AlertCard, { tone: "warn", title: "$842 so far today", actions: RETRY }) },
+    { name: "a raised alert card with a detail line", id: "alarm-card-detail", height: 70, glyph: 16,
+      markup: render(ui.AlertCard, { tone: "crit", title: "1 harness part is down", body: "Hooks" }) },
+    { name: "an inset alert card with one line and an action", id: "alarm-card-inset", height: 48, glyph: 14,
+      markup: render(ui.AlertCard, { tone: "info", surface: "inset", title: "This document was superseded", actions: RETRY }) },
+    { name: "a hairline alarm row", id: "alarm-row-line", height: 48, glyph: 16,
+      markup: `<div class="alarm-row" data-tone="warn"><span class="alarm-row-glyph" aria-hidden="true">${iconMarkup({ name: "warn", size: 16 })}</span>` +
+        `<div class="fs-body text-ink">$842 so far today</div></div>` },
+    { name: "a hairline alarm row with one line and an action", id: "alarm-row-action", height: 48, glyph: 16,
+      markup: `<div class="alarm-row" data-tone="warn"><span class="alarm-row-glyph" aria-hidden="true">${iconMarkup({ name: "warn", size: 16 })}</span>` +
+        `<div class="fs-body text-ink">$842 so far today</div><div class="alarm-row-actions">${render("button", { type: "button", className: "btn sm" }, "Retry")}</div></div>` },
+  ] as const;
+  return {
+    ROWS: rows,
+    DROP: {
+      // each alarm row that carries an action, laid out in a container either side of the 36rem drop
+      ROWS: rows.filter((row) => row.markup.includes("Retry")),
+      // 480 host → a container under 576 (36rem) whether the card shell or the padded row is the container; 640 → over it either way
+      PX: { narrow: 480, wide: 640 },
+    },
+  } as const;
+})();
+const alarmDropId = (rowId: string, px: number): string => `${rowId}-at-${px}`;
+
+// column-header rows, one table each: a house .tbl, a geometry-only .tbl--own-face, a table off .tbl that opts in through
+// thead.tbl-head (its own rule and inline padding, as the matrix and crosstab tables carry), and the sortable and control cases
+const headTable = (row: string, tableAttrs: string, theadAttrs: string, cells: string): string =>
+  `<table ${tableAttrs} style="width: 480px;"><thead${theadAttrs}><tr data-row="${row}">${cells}</tr></thead>` +
+  `<tbody><tr><td>dev-react</td><td>12</td></tr></tbody></table>`;
+const OFF_TBL_TH = `style="padding-inline: 8px; border-bottom: 1px solid;"`;
+const HEAD_ROWS = [
+  { name: "a house .tbl header row", row: "head-house", px: 32,
+    markup: headTable("head-house", `class="tbl"`, "", `<th>Agent</th><th class="num">Runs</th>`) },
+  { name: "an own-face .tbl header row", row: "head-own-face", px: 32,
+    markup: headTable("head-own-face", `class="tbl tbl--own-face fs-meta"`, "", `<th>Pair</th><th>Fails</th>`) },
+  { name: "a header row off .tbl, through thead.tbl-head", row: "head-off-tbl", px: 32,
+    markup: headTable("head-off-tbl", `class="fs-meta" style="border-collapse: separate; border-spacing: 0;"`, ` class="tbl-head"`,
+      `<th ${OFF_TBL_TH}>Cause</th><th ${OFF_TBL_TH}>Events</th>`) },
+  { name: "a sortable header row (a th carrying aria-sort)", row: "head-sortable", px: 40,
+    markup: headTable("head-sortable", `class="tbl"`, "", `<th aria-sort="descending"><span style="display: inline-flex;">Time</span></th><th>Agent</th>`) },
+  { name: "a header row holding a 32px control", row: "head-control", px: 40,
+    markup: headTable("head-control", `class="tbl"`, "", `<th>Agent</th><th><button type="button" class="btn sm">Filter</button></th>`) },
+  { name: "a sortable header row holding a 32px control", row: "head-sortable-control", px: 40,
+    markup: headTable("head-sortable-control", `class="tbl"`, "", `<th aria-sort="none"><button type="button" class="btn sm">Time</button></th><th>Agent</th>`) },
+] as const;
+
+// compact body rows off .tbl, one table per border model the screens carry: a separate-border table ruled per cell (Task results
+// Failures by agent) and a collapsed table ruled per row (the Learning instrumentation tables); the second row is measured, so
+// it shares a rule above and below. The glyph row carries the Suggestion confidence value cell: an inline flex box holding an
+// 11px mark and the rate, the shape that grew its row to 33 on the baseline
+const COMPACT_CELL = `style="padding-inline: 12px; border-bottom: 1px solid;"`;
+const COMPACT_GLYPH_VALUE = `<span class="inline-flex" style="display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px;">` +
+  `${iconMarkup({ name: "warn", size: 11, className: "align-middle" })} 50.0%</span>`;
+const compactTable = (row: string, tableAttrs: string, trAttrs: string, cell: string, value = "12"): string =>
+  `<table ${tableAttrs} style="width: 480px;"><tbody class="tbl-compact">` +
+  [0, 1, 2].map((i) => `<tr${i === 1 ? ` data-row="${row}"` : ""}${trAttrs}><td${cell}>dev-react</td><td${cell}>${value}</td></tr>`).join("") +
+  `</tbody></table>`;
+const COMPACT_ROWS = [
+  { name: "a separate-border table ruled per cell", row: "body-compact-separate",
+    markup: compactTable("body-compact-separate", `class="fs-meta" style="border-collapse: separate; border-spacing: 0;"`, "", ` ${COMPACT_CELL}`) },
+  { name: "a collapsed table ruled per row", row: "body-compact-collapse",
+    markup: compactTable("body-compact-collapse", `class="fs-meta"`, ` style="border-top: 1px solid;"`, ` style="padding-inline: 6px;"`) },
+  { name: "a collapsed table whose value cell holds a mark + its rate", row: "body-compact-glyph",
+    markup: compactTable("body-compact-glyph", `class="fs-meta"`, ` style="border-top: 1px solid;"`, ` style="padding-inline: 6px; text-align: right;"`,
+      COMPACT_GLYPH_VALUE) },
+] as const;
+
+// the page-header Refresh at rest and mid-read — the busy label is the widest it draws
+const REFRESH_STATES = [
+  { name: "at rest", id: "refresh-idle", markup: render(ui.RefreshButton, { onRefresh: () => {} }) },
+  { name: "refreshing", id: "refresh-busy", markup: render(ui.RefreshButton, { isBusy: true, hasRead: true, onRefresh: () => {} }) },
+] as const;
+
+const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body style="margin: 0; padding: 24px;">
+  ${ICON_ROWS.map((row) => `<p id="${row.id}" style="width: 320px;">${row.markup} Healthy</p>`).join("\n  ")}
+  <p id="bare" style="width: 320px;"><svg width="14" height="14" viewBox="0 0 24 24"></svg> Healthy</p>
+  <table class="tbl" style="width: 480px;"><tbody>
+    <tr data-row="text"><td>dev-react</td><td>12 runs</td></tr>
+    <tr data-row="pill"><td>dev-react</td><td><span class="pill">Done</span></td></tr>
+    <tr data-row="bar"><td>dev-react</td><td class="num tbl-bar-cell"><span id="bar-value" style="display: inline-flex;">92.0%</span><div style="height: 8px;"></div></td></tr>
+    ${CONTROL_ROWS.map((row, i) => `<tr data-row="control-${i}"><td>dev-react</td><td>${row.control}</td></tr>`).join("\n    ")}
+    ${INLINE_TARGET_ROWS.map((row, i) => `<tr data-row="target-${i}"><td>dev-react</td><td>${row.target}</td></tr>`).join("\n    ")}
+    <tr data-row="last"><td>last row</td><td>no rule below — keeps every measured row ruled</td></tr>
+  </tbody></table>
+  ${HEAD_ROWS.map((row) => row.markup).join("\n  ")}
+  ${COMPACT_ROWS.map((row) => row.markup).join("\n  ")}
+  ${ERROR_DETAILS_ROWS.map((row) => `<div id="${row.id}" style="width: 480px;">${row.markup}</div>` +
+    `<div id="${row.id}-open" style="width: 480px;">${row.markup.replace("<details", "<details open")}</div>`).join("\n  ")}
+  ${ALARM.ROWS.map((row) => `<div id="${row.id}" style="width: 640px;">${row.markup}</div>`).join("\n  ")}
+  ${ALARM.DROP.ROWS.flatMap((row) => Object.values(ALARM.DROP.PX).map((px) =>
+    `<div id="${alarmDropId(row.id, px)}" style="width: ${px}px;">${row.markup}</div>`)).join("\n  ")}
+  ${REFRESH_STATES.map((state) => `<div id="${state.id}" class="page-head-group" style="width: 480px;">${state.markup}</div>`).join("\n  ")}
+  ${TYPE_SCALED_ROWS.map((row, i) => `<div id="type-scaled-target-${i}">${typeScaled(row.target)}</div>`).join("\n  ")}
+  ${ROW_LINE_STEPS.map((step) => `<div id="row-line-${step}" class="${step} leading-row">Hooks · last run 3m ago</div>`).join("\n  ")}
+  <div id="disclosure-body-host" style="width: 480px;">${OPEN_DISCLOSURE}<div class="disclosure-body">PreToolUse · 3 hooks</div></div>
+  <div style="display: flex; align-items: flex-start; gap: 24px;">
+  </div>
+</body></html>`;
+
+let browser: Browser;
+let page: Page;
+
+before(async () => {
+  browser = await chromium.launch();
+  page = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+  await page.setContent(PAGE);
+  await page.addStyleTag({ path: resolve(STYLES, "tokens.css") });
+  await page.addStyleTag({ path: resolve(STYLES, "base.css") });
+  await page.addStyleTag({ content: TYPE_SCALE_CSS });
+});
+
+after(async () => {
+  await browser?.close();
+});
+
+interface InlineReading { iconTop: number; iconBottom: number; iconRight: number; textTop: number; textBottom: number; textLeft: number }
+
+// the icon box against the first line box of the label text that follows it
+async function readInline(id: string): Promise<InlineReading> {
+  return page.$eval(`#${id}`, (p) => {
+    const svg = p.querySelector("svg");
+    const text = [...p.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim());
+    if (!svg || !text) throw new Error(`fixture #${p.id} lacks its icon or label`);
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const line = range.getClientRects()[0];
+    const icon = svg.getBoundingClientRect();
+    return { iconTop: icon.top, iconBottom: icon.bottom, iconRight: icon.right, textTop: line.top, textBottom: line.bottom, textLeft: line.left };
+  });
+}
+
+const rowHeight = (row: string): Promise<number> =>
+  page.$eval(`tr[data-row="${row}"]`, (tr) => tr.getBoundingClientRect().height);
+
+describe("an icon stays inline with its label", () => {
+  test("precondition: a bare svg under the preflight block rule drops above its label", async () => {
+    const reading = await readInline("bare");
+    assert.ok(reading.iconBottom <= reading.textTop + 0.5, `the fixture reproduces the defect (icon bottom ${reading.iconBottom}, label top ${reading.textTop})`);
+  });
+
+  for (const row of ICON_ROWS) {
+    test(`${row.name} shares the label's line and sits before it`, async () => {
+      const reading = await readInline(row.id);
+      assert.ok(reading.iconTop >= reading.textTop - 1 && reading.iconBottom <= reading.textBottom + 1,
+        `icon ${reading.iconTop}–${reading.iconBottom} inside the label line ${reading.textTop}–${reading.textBottom}`);
+      assert.ok(reading.iconRight <= reading.textLeft + 0.5, `icon right ${reading.iconRight} before the label at ${reading.textLeft}`);
+    });
+  }
+});
+
+describe("a .tbl row is one 40px line whatever its cells hold", () => {
+  const ROW_PX = 40;
+
+  test("a text row rises to 40", async () => {
+    assert.equal(await rowHeight("text"), ROW_PX);
+  });
+
+  test("a row holding a badge stays 40", async () => {
+    assert.equal(await rowHeight("pill"), ROW_PX);
+  });
+
+  CONTROL_ROWS.forEach((row, i) => {
+    test(`a row holding ${row.name} (32px control) stays 40`, async () => {
+      const controlHeight = await page.$eval(`tr[data-row="control-${i}"] td:last-child > *`, (el) => el.getBoundingClientRect().height);
+      assert.equal(controlHeight, 32, `${row.name} is a 32px control`);
+      assert.equal(await rowHeight(`control-${i}`), ROW_PX);
+    });
+  });
+
+  INLINE_TARGET_ROWS.forEach((row, i) => {
+    test(`a row holding ${row.name} (24px inline target) stays 40`, async () => {
+      const targetHeight = await page.$eval(`tr[data-row="target-${i}"] td:last-child > *`, (el) => el.getBoundingClientRect().height);
+      assert.ok(targetHeight >= 24, `${row.name} target ${targetHeight} < 24`);
+      assert.equal(await rowHeight(`target-${i}`), ROW_PX);
+    });
+  });
+
+  test("a disclosure summary draws its chevron alone, never the UA marker beside it", async () => {
+    const summary = await page.$eval("summary.disclosure", (el) => ({ display: getComputedStyle(el).display, list: getComputedStyle(el).listStyleType }));
+    assert.notEqual(summary.display, "list-item", "a list-item summary draws the UA marker");
+    assert.equal(summary.list, "none");
+  });
+});
+
+// flex-centred 24 box + engine-floored half-leading → a fractional line box sets an odd-height face off centre; face-independent check
+describe("an inline target keeps a whole-pixel line box under a type-scale class on the same element", () => {
+  TYPE_SCALED_ROWS.forEach((row, i) => {
+    test(`${row.name} carrying .fs-meta computes a whole-pixel line-height`, async () => {
+      const { isScaled, lineHeight } = await page.$eval(`#type-scaled-target-${i} > *`,
+        (el) => ({ isScaled: el.matches(".inline-target.fs-meta"), lineHeight: getComputedStyle(el).lineHeight }));
+      assert.ok(isScaled, `${row.name} fixture lacks .inline-target.fs-meta`);
+      assert.ok(Number.isInteger(parseFloat(lineHeight)), `line box ${lineHeight} is not a whole pixel`);
+    });
+  });
+});
+
+describe("the row-line key holds the 20 row line box under a same-element type step", () => {
+  for (const step of ROW_LINE_STEPS) {
+    test(`.${step} with leading-row computes the 20px row line`, async () => {
+      assert.equal(await page.$eval(`#row-line-${step}`, (el) => getComputedStyle(el).lineHeight), "20px");
+    });
+  }
+});
+
+// the body's inset is the chevron's 14 + the .disclosure gap → a body opened under a DisclosureButton starts on its label
+test("a disclosure body starts on its trigger's label, past the chevron", async () => {
+  const { label, body } = await page.$eval("#disclosure-body-host", (host) => {
+    const text = host.querySelector(".disclosure-body")?.firstChild;
+    const span = host.querySelector(".disclosure > span");
+    if (!text || !span) throw new Error("fixture lacks the disclosure label or its body text");
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    return { label: span.getBoundingClientRect().left, body: range.getClientRects()[0].left };
+  });
+  assert.ok(Math.abs(body - label) < 0.5, `body text at ${body}, trigger label at ${label}`);
+});
+
+// RegionFailure and AlertCard share one error-details fold: its summary sits on the C32 disclosure atom, the chevron the one open-state cue
+describe("the shared error-details summary is the disclosure atom", () => {
+  interface SummaryReading { height: number; display: string; list: string; chevronCentre: number | null; labelCentre: number | null; chevronTurn: number }
+
+  const readSummary = (id: string): Promise<SummaryReading> =>
+    page.$eval(`#${id} summary`, (summary) => {
+      // a named helper here would pick up the runner's __name wrapper, which the page does not define
+      const [chevronCentre, labelCentre] = [summary.querySelector(":scope > svg"), summary.querySelector(":scope > span")]
+        .map((el) => (el ? (el.getBoundingClientRect().top + el.getBoundingClientRect().bottom) / 2 : null));
+      const chevron = summary.querySelector(":scope > svg");
+      const transform = chevron ? getComputedStyle(chevron).transform : "none";
+      const turn = transform === "none" ? new DOMMatrix() : new DOMMatrix(transform);
+      const style = getComputedStyle(summary);
+      return {
+        height: summary.getBoundingClientRect().height, display: style.display, list: style.listStyleType, chevronCentre, labelCentre,
+        chevronTurn: Math.round((Math.atan2(turn.b, turn.a) * 180) / Math.PI),
+      };
+    });
+
+  for (const row of ERROR_DETAILS_ROWS) {
+    test(`${row.name}: the summary is one 32 line, chevron then label on its centre, no UA marker`, async () => {
+      const summary = await readSummary(row.id);
+      assert.equal(summary.height, 32, "the C32 disclosure height");
+      assert.notEqual(summary.display, "list-item", "a list-item summary draws the UA marker");
+      assert.equal(summary.list, "none");
+      assert.ok(summary.chevronCentre !== null && summary.labelCentre !== null, "a chevron and a label span inside the summary");
+      assert.ok(Math.abs(summary.chevronCentre - summary.labelCentre) < 1, `chevron centre ${summary.chevronCentre} vs label ${summary.labelCentre}`);
+    });
+
+    test(`${row.name}: the chevron turns a quarter only while the details are open`, async () => {
+      assert.equal((await readSummary(row.id)).chevronTurn, 0, "closed");
+      assert.equal((await readSummary(`${row.id}-open`)).chevronTurn, 90, "open");
+    });
+  }
+});
+
+// one alarm-row geometry for the alert card and the hairline row: 8 above and below a 32 first line that the glyph, the title line and
+// the action share, the tone on a bare glyph and nothing painted behind it
+describe("an alarm row is one 32 line between 8 paddings, its tone on a bare glyph", () => {
+  interface AlarmReading {
+    height: number; lineCentre: number; glyphCentre: number; glyphWidth: number; titleCentre: number; actionCentre: number | null;
+    paintedInGlyphColumn: string[]; isGlyphHidden: boolean; glyphColor: string; toneColor: string;
+  }
+
+  const readAlarm = (id: string): Promise<AlarmReading> =>
+    page.$eval(`#${id}`, (host) => {
+      const row = host.querySelector(".alert-card-grid, .alarm-row");
+      const [slot, content] = row ? [row.children[0], row.children[1]] : [];
+      const svg = slot?.querySelector("svg");
+      if (!row || !slot || !content || !svg) throw new Error(`fixture #${host.id} lacks its row, glyph or content`);
+      const title = content.querySelector(".alert-card-title") ?? content;
+      const action = row.querySelector("button")?.getBoundingClientRect();
+      const rowBox = row.getBoundingClientRect();
+      const glyphBox = svg.getBoundingClientRect();
+      const root = getComputedStyle(document.documentElement);
+      const tone = row.closest("[data-tone]")?.getAttribute("data-tone") ?? "";
+      return {
+        height: rowBox.height,
+        lineCentre: rowBox.top + parseFloat(getComputedStyle(row).paddingTop) + parseFloat(root.getPropertyValue("--ctl-min-h")) / 2,
+        glyphCentre: (glyphBox.top + glyphBox.bottom) / 2,
+        glyphWidth: glyphBox.width,
+        titleCentre: title.getBoundingClientRect().top + parseFloat(getComputedStyle(title).paddingTop) + parseFloat(getComputedStyle(title).lineHeight) / 2,
+        actionCentre: action ? (action.top + action.bottom) / 2 : null,
+        paintedInGlyphColumn: [slot, ...slot.querySelectorAll("*")].map((el) => getComputedStyle(el).backgroundColor)
+          .filter((color) => color !== "rgba(0, 0, 0, 0)"),
+        isGlyphHidden: slot.getAttribute("aria-hidden") === "true" || svg.getAttribute("aria-hidden") === "true",
+        glyphColor: getComputedStyle(svg).color,
+        toneColor: `rgb(${root.getPropertyValue(`--${tone}`).trim().split(/\s+/).join(", ")})`,
+      };
+    });
+
+  for (const row of ALARM.ROWS) {
+    test(`${row.name} is ${row.height} tall`, async () => {
+      const { height } = await readAlarm(row.id);
+      assert.ok(Math.abs(height - row.height) < 0.5, `row height ${height}`);
+    });
+
+    test(`${row.name}: the glyph, the title line and any action centre on the first 32 line`, async () => {
+      const alarm = await readAlarm(row.id);
+      const centres = { glyph: alarm.glyphCentre, title: alarm.titleCentre, ...(alarm.actionCentre === null ? {} : { action: alarm.actionCentre }) };
+      for (const [part, centre] of Object.entries(centres)) {
+        assert.ok(Math.abs(centre - alarm.lineCentre) < 1, `${part} centre ${centre} vs line centre ${alarm.lineCentre}`);
+      }
+    });
+
+    test(`${row.name}: a bare ${row.glyph} glyph in the tone colour, hidden from the reader, nothing painted behind it`, async () => {
+      const alarm = await readAlarm(row.id);
+      assert.equal(alarm.glyphWidth, row.glyph);
+      assert.equal(alarm.glyphColor, alarm.toneColor, "the tone rides on the glyph");
+      assert.ok(alarm.isGlyphHidden, "the glyph is decoration; the title carries the severity word");
+      assert.deepEqual(alarm.paintedInGlyphColumn, [], "no well, fill or tile in the glyph column");
+    });
+  }
+});
+
+// spec 44084 §3.2: the actions sit at the row end, and under the content once the container is 36rem or narrower
+describe("an alarm row's actions drop under its content at a container width of 36rem or less", () => {
+  const readActions = (id: string): Promise<{ contentLeft: number; contentRight: number; contentBottom: number; actionsLeft: number; actionsTop: number }> =>
+    page.$eval(`#${id}`, (host) => {
+      const row = host.querySelector(".alert-card-grid, .alarm-row");
+      const [content, actions] = row ? [row.children[1], row.children[2]] : [];
+      if (!content || !actions) throw new Error(`fixture #${host.id} lacks its content or actions`);
+      const [contentBox, actionsBox] = [content.getBoundingClientRect(), actions.getBoundingClientRect()];
+      return { contentLeft: contentBox.left, contentRight: contentBox.right, contentBottom: contentBox.bottom, actionsLeft: actionsBox.left, actionsTop: actionsBox.top };
+    });
+
+  for (const row of ALARM.DROP.ROWS) {
+    test(`${row.name}, in a container of 36rem or less: the actions sit under the content, on its left edge`, async () => {
+      const box = await readActions(alarmDropId(row.id, ALARM.DROP.PX.narrow));
+      assert.ok(box.actionsTop >= box.contentBottom - 0.5, `actions top ${box.actionsTop} under the content bottom ${box.contentBottom}`);
+      assert.ok(Math.abs(box.actionsLeft - box.contentLeft) < 0.5, `actions left ${box.actionsLeft} on the content left ${box.contentLeft}`);
+    });
+
+    test(`${row.name}, in a container over 36rem: the actions sit at the row end`, async () => {
+      const box = await readActions(alarmDropId(row.id, ALARM.DROP.PX.wide));
+      assert.ok(box.actionsLeft >= box.contentRight - 0.5, `actions left ${box.actionsLeft} past the content right ${box.contentRight}`);
+    });
+  }
+});
+
+// R-a: one header-row system — a plain header row sits on the 32 compact step, a sortable one on the 40 row step, at the
+// shared rule, so a table routed off .tbl reads the same; a header cell holding a control keeps the control step (40)
+describe("a column-header row sits on the compact step, a sortable one on the row step", () => {
+  for (const row of HEAD_ROWS) {
+    test(`${row.name} is ${row.px}`, async () => {
+      assert.equal(await rowHeight(row.row), row.px);
+    });
+  }
+
+  test("a header cell's text sits on its row's centre line", async () => {
+    for (const row of ["head-house", "head-off-tbl"]) {
+      const { cell, text } = await page.$eval(`tr[data-row="${row}"]`, (tr) => {
+        const th = tr.querySelector("th")!;
+        const range = document.createRange();
+        range.selectNodeContents(th);
+        const line = range.getClientRects()[0];
+        const box = tr.getBoundingClientRect();
+        return { cell: (box.top + box.bottom - 1) / 2, text: (line.top + line.bottom) / 2 };
+      });
+      assert.ok(Math.abs(cell - text) < 1, `${row}: text centre ${text} vs row centre ${cell} (above its 1px rule)`);
+    }
+  });
+});
+
+// R-d: a nested ledger off .tbl puts its body rows on the 32 compact step through tbody.tbl-compact, whichever border model it uses
+describe("a compact body row sits on the 32 step, its text on the row's centre line", () => {
+  for (const row of COMPACT_ROWS) {
+    test(`${row.name} is 32`, async () => {
+      assert.equal(await rowHeight(row.row), 32);
+    });
+    test(`${row.name}: the cell text sits on the row's centre line`, async () => {
+      const { box, text } = await page.$eval(`tr[data-row="${row.row}"]`, (tr) => {
+        const range = document.createRange();
+        range.selectNodeContents(tr.querySelector("td")!);
+        const line = range.getClientRects()[0];
+        const rect = tr.getBoundingClientRect();
+        return { box: { top: rect.top, bottom: rect.bottom }, text: (line.top + line.bottom) / 2 };
+      });
+      const centre = (box.top + box.bottom) / 2;
+      assert.ok(Math.abs(centre - text) <= 1, `text centre ${text} vs row centre ${centre}`);
+    });
+  }
+
+  test("a mark + rate cell keeps the rate on the centre line of the text cell beside it", async () => {
+    const { value, text } = await page.$eval(`tr[data-row="body-compact-glyph"]`, (tr) => {
+      const rate = [...tr.querySelectorAll("td")[1].querySelector("span")!.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim());
+      if (!rate) throw new Error("fixture lacks the rate text");
+      // one range per text, inline — a named helper inside the page callback would not survive the transpile
+      const [label, figure] = [tr.querySelector("td")!, rate].map((node) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return range.getClientRects()[0];
+      });
+      return { value: (figure.top + figure.bottom) / 2, text: (label.top + label.bottom) / 2 };
+    });
+    assert.ok(Math.abs(value - text) < 1, `rate centre ${value} vs text centre ${text}`);
+  });
+});
+
+describe("a value + bar cell keeps the row at 40", () => {
+  test("a row whose cell holds a value over an 8px bar stays 40", async () => {
+    assert.equal(await rowHeight("bar"), 40);
+  });
+
+  test("the value sits on the centre line of the text cell beside it", async () => {
+    const { value, text } = await page.$eval(`tr[data-row="bar"]`, (tr) => {
+      const range = document.createRange();
+      range.selectNodeContents(tr.querySelector("td")!);
+      const line = range.getClientRects()[0];
+      const box = tr.querySelector("#bar-value")?.getBoundingClientRect();
+      if (!box) throw new Error("fixture lacks the bar value");
+      return { value: (box.top + box.bottom) / 2, text: (line.top + line.bottom) / 2 };
+    });
+    assert.ok(Math.abs(value - text) < 1, `value centre ${value} vs text centre ${text}`);
+  });
+});
+
+describe("the page-header Refresh ends its label on the content column's edge", () => {
+  for (const state of REFRESH_STATES) {
+    test(`${state.name}, its label ends on the box's content edge and the box stays 112 wide`, async () => {
+      const fit = await page.$eval(`#${state.id} button`, (button) => {
+        const label = [...button.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim()).at(-1);
+        if (!label) throw new Error("the Refresh button draws no label");
+        const range = document.createRange();
+        range.selectNodeContents(label);
+        const box = button.getBoundingClientRect();
+        const style = getComputedStyle(button);
+        const inset = parseFloat(style.borderRightWidth) + parseFloat(style.paddingRight);
+        return { labelRight: range.getBoundingClientRect().right, contentRight: box.right - inset, width: box.width };
+      });
+      assert.equal(fit.width, 112);
+      assert.ok(Math.abs(fit.labelRight - fit.contentRight) < 0.5, `label ends at ${fit.labelRight}, content edge at ${fit.contentRight}`);
+    });
+  }
+});

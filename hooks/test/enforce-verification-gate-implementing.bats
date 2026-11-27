@@ -6,7 +6,7 @@
 # at a refused loopback port — no case reaches the live monitor.
 #
 # Fixtures carry a [SIZE-EST] attestation, a line-opening [SCOPE] declaration and a pre-stamped
-# qa-code-reviewer marker, so a plan-referencing spawn reaches the pass arm the leg lives on.
+# qa-code-reviewer marker, so a plan-referencing spawn draws no warning beside the nudge.
 
 HOOK_SH="${VGATE_SH:-${BATS_TEST_DIRNAME}/../enforce-verification-gate.sh}"
 NUDGE_PHRASE='is still at doc_review'
@@ -93,18 +93,20 @@ get_nudged_ids() {
   [[ "${output}" != *"internal error"* ]] || { echo "the leg tripped the ERR trap -- ${output}"; return 1; }
 }
 
-@test "a reviewer-less plan spawn still blocks with VGATE-REVIEWER-001 and no nudge, monitor refused or reachable" {
+@test "a reviewer-less plan spawn warns with VGATE-REVIEWER-001 and still draws the nudge the monitor supports" {
   local -a rows=(
-    "monitor refused|${REFUSED_URL}"
-    "monitor citing a planner plan at doc_review|file://${FIXTURE_DIR}"
+    "monitor refused|${REFUSED_URL}|none"
+    "monitor citing a planner plan at doc_review|file://${FIXTURE_DIR}|nudge"
   )
-  local row name url
+  local row name url expected nudged
   for row in "${rows[@]}"; do
-    IFS='|' read -r name url <<<"${row}"
+    IFS='|' read -r name url expected <<<"${row}"
     VGATE_MONITOR_URL="${url}"
     run_gate "Implement clauded-docs/101. ${ATTESTATIONS}" "" "sess-impl-unreviewed"
-    [[ "${status}" -eq 2 ]] || { echo "${name}: block lost, status ${status} -- ${output}"; return 1; }
-    [[ "${output}" == *"VGATE-REVIEWER-001"* ]] || { echo "${name}: wrong verdict -- ${output}"; return 1; }
-    [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || { echo "${name}: the nudge reached a block path -- ${output}"; return 1; }
+    [[ "${status}" -eq 0 ]] || { echo "${name}: status ${status} -- ${output}"; return 1; }
+    [[ "${output}" == *"VGATE-REVIEWER-001"* && "${output}" == *'"severity":"warn"'* ]] || { echo "${name}: wrong verdict -- ${output}"; return 1; }
+    nudged=none
+    [[ "${output}" == *"${NUDGE_PHRASE}"* ]] && nudged=nudge
+    [[ "${nudged}" == "${expected}" ]] || { echo "${name}: expected ${expected}, got ${nudged} -- ${output}"; return 1; }
   done
 }

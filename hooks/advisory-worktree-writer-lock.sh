@@ -5,14 +5,12 @@
 # on STDERR when a DIFFERENT agent already holds it. The release arm lives in agent-tracker.sh's
 # SubagentStop branch; the lock primitive itself lives in lib/worktree-lock.sh.
 #
-# ADVISORY-FIRST — exits 0 on EVERY path, including contention. There is no block path and therefore
-# no retry contract in this version: promotion to exit 2 is a LATER, EXPLICIT step, gated on a clean
-# advisory measurement window (zero false positives), the same deferred-then-promote pattern
-# scripts/audit-absorption.sh followed. Until then the value is measurement: disjoint-ownership
-# fan-outs should NEVER contend, so an observed contention is a real race the prose rule was masking.
+# ADVISORY ONLY — exits 0 on EVERY path, including contention: there is no block path and no retry
+# contract. The value is measurement: disjoint-ownership fan-outs should NEVER contend, so an
+# observed contention is a real race the prose rule was masking.
 #
 # WHY a lock rather than prose: one worktree has exactly ONE git index, so two concurrent writers
-# there is a race that file-set partitioning cannot prevent (orchestrator-role.md, Automatic
+# there is a race that file-set partitioning cannot prevent (skills/glass-atrium-ops-orchestrator-role.md, Automatic
 # Parallelization guardrail (a)). That rule is honor-system today; this makes a violation visible.
 #
 # IDENTITY IS FAIL-CLOSED: the holder is the OPAQUE agent_id from the envelope, compared by
@@ -42,15 +40,15 @@
 #     still needs can therefore vanish, after which a second writer enters silently and NO
 #     LOCK-ADV-001 fires though two writers are really present. That false negative is the accepted
 #     side of a deliberate trade (worktree-lock.sh, Collision note case 2): not folding would make
-#     every id-less lock unreleasable and warn every later writer for 6 h, and this hook's promotion
-#     gate is keyed on zero FALSE POSITIVES. Closing it properly needs a Stop-wired release arm.
+#     every id-less lock unreleasable and warn every later writer for 6 h, and a measurement advisory
+#     is only worth reading at zero FALSE POSITIVES. Closing it properly needs a Stop-wired release arm.
 #
 # WIRED as of this commit: `PreToolUse<TAB>advisory-worktree-writer-lock.sh<TAB>Write|Edit` in
-# EXPECTED_HOOK_BINDINGS (lib/ga-env.sh), so wire_hooks registers the acquire arm and the advisory
-# measurement window its promotion gate depends on can accumulate. The release arm was already live
-# (agent-tracker.sh). Two caveats on when firing actually STARTS: settings.json is written by
-# wire_hooks (an install/update run), and Claude Code snapshots the hook config at SESSION START — so
-# the first data point comes from a fresh session after the next release lands, not from this commit.
+# EXPECTED_HOOK_BINDINGS (lib/ga-env.sh), so wire_hooks registers the acquire arm. The release arm
+# was already live (agent-tracker.sh). Two caveats on when firing actually STARTS: settings.json is
+# written by wire_hooks (an install/update run), and Claude Code snapshots the hook config at SESSION
+# START — so the first data point comes from a fresh session after the next release lands, not from
+# this commit.
 # MultiEdit is deliberately NOT in the matcher: it has zero registrations on the recorded host
 # (test/hook-matcher-shape-invariant.bats), so binding it would add a dead token — that file's
 # one-token legacy allowlist exists precisely to stop the set widening. Re-check before relying on
@@ -120,7 +118,7 @@ if [[ "${TI_STATE}" == "unrecognized" ]]; then
 fi
 [[ -z "${FILE_PATH}" ]] && exit 0
 
-# Normalize FIRST (enforce-harness-critical.sh precedent): a "../" form must never dodge the
+# Normalize FIRST: a "../" form must never dodge the
 # exemptions below, and a relative path is only meaningful against the envelope cwd.
 case "${FILE_PATH}" in
   /* | '~'*) ;;
@@ -130,15 +128,15 @@ TARGET="$(hook_normalize_path "${FILE_PATH}")"
 
 # memory/progress-*.md is the checkpoint path a NON-index-owner agent is INSTRUCTED to write while
 # sharing a worktree (core-git-workflow.md), so locking it would warn on exactly the prescribed
-# behaviour. The three basenames are the harness-write exemption enforce-delegation.sh already
+# behaviour. The three basenames are the allowed-basename exemption enforce-delegation.sh already
 # carries; keeping the two exemption sets aligned avoids contradicting a sanctioned write.
 #
 # The seven-arm carve-out is enforce-delegation.sh's, mirrored VERBATIM (its step 3) rather than
 # approximated: a "memory" segment nested directly under a protected harness dir is not a
-# session-state root, which is why that gate BLOCKS those forms. Exempting them here would have been
-# the opposite of the alignment this comment claims — and would have hidden concurrent writes to
-# agents/memory/ and rules/memory/, which are real shared surfaces, behind a rule written for a
-# checkpoint file. The "/${TARGET}/" wrapping is that gate's form too, so the two read the same.
+# session-state root, so that gate withholds its session-state exemption from those forms and leaves
+# them to its later checks. Exempting them here would hide concurrent writes to agents/memory/ and
+# rules/memory/, which are real shared surfaces, behind a rule written for a checkpoint file. The
+# "/${TARGET}/" wrapping is that gate's form too, so the two read the same.
 #
 # DRIFT HAZARD (deferred, not overlooked): "verbatim" is maintained BY HAND. These seven arms have no
 # shared source with enforce-delegation.sh's copy and no test compares the two lists, so an eighth
@@ -185,7 +183,7 @@ emit_error "LOCK-ADV-001" "warn" \
   "${CTX}"
 
 printf '%s\n' \
-  "[worktree-writer-lock] ADVISORY ONLY — this hook never blocks (exit 0); promotion to a block is a later explicit step." \
+  "[worktree-writer-lock] ADVISORY ONLY — this hook never blocks (exit 0)." \
   "  worktree : ${WORKTREE_ROOT}" \
   "  holder   : ${OTHER}" \
   "  writer   : ${HOLDER}" \

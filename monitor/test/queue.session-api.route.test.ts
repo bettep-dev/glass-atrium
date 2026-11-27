@@ -1,0 +1,1257 @@
+// Owner queue session-side API (/api/queue/*): request gate, register/deregister, post/get, pull, ack, withdraw, count.
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/queue.session-api.route.test.ts
+// Home is a mktemp fixture passed as a plugin option → no live config dir is read.
+// Every session id a test creates is tracked and its rows are deleted in after().
+
+import test, { type TestContext, after, before, describe } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import "dotenv/config";
+
+import Fastify, { type FastifyInstance, type FastifyServerOptions, type LightMyRequestResponse } from "fastify";
+
+import type { Prisma } from "../src/generated/prisma/client.js";
+import { disconnectPrisma, getPrisma } from "../src/server/db.js";
+import { logger } from "../src/server/logger.js";
+import { ANSWERED_IDS_LIMIT, PULL, WAIT_FRESH_MS, isSessionWaiting } from "../src/server/queue/delivery.js";
+import { QueueRequestError } from "../src/server/queue/errors.js";
+import { AWAITING_IDS_LIMIT } from "../src/server/queue/registry.js";
+import { SECRET_REQUEST_LIMIT, getLineHash, secretRequests } from "../src/server/queue/scan-approvals.js";
+import { registerQueueRoutes } from "../src/server/routes/queue.js";
+import { deleteDirectory } from "./lib/remove-dir.js";
+import { lockQueueRows, unlockQueueRows, withQueueRowsExclusive } from "./lib/queue-rows-lock.js";
+import { recordQueries } from "./lib/query-recorder.js";
+
+const PORT = 16145;
+const CLI_PATH = "/opt/atrium-test/scripts/atrium-queue.sh";
+const HOST = `127.0.0.1:${PORT}`;
+const ACK_DEADLINE_MS = 120_000;
+const QUEUE_CLI_SOURCE = fileURLToPath(new URL("../../scripts/atrium-queue.sh", import.meta.url));
+const QUEUE_OPS_SOURCE = fileURLToPath(new URL("../../scripts/lib/queue-ops.sh", import.meta.url));
+
+const fixtureRoot = mkdtempSync(path.join(tmpdir(), "queue-api-"));
+const dir = { home: path.join(fixtureRoot, "home") };
+const trackedSessionIds: string[] = [];
+let app: FastifyInstance;
+
+before(async () => {
+  await lockQueueRows();
+  mkdirSync(path.join(dir.home, ".claude-work"), { recursive: true });
+  mkdirSync(path.join(dir.home, "elsewhere"), { recursive: true });
+  app = await buildApp();
+});
+
+after(async () => {
+  await app.close();
+  const prisma = getPrisma();
+  await prisma.queueDelivery.deleteMany({ where: { item: { sessionId: { in: trackedSessionIds } } } });
+  await prisma.queueItem.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
+  await prisma.queueSession.deleteMany({ where: { sessionId: { in: trackedSessionIds } } });
+  await unlockQueueRows();
+  await disconnectPrisma();
+  deleteDirectory(fixtureRoot);
+});
+
+async function buildApp(logger: FastifyServerOptions["logger"] = false): Promise<FastifyInstance> {
+  const instance = Fastify({ logger });
+  instance.get("/api/root-probe", async () => ({ ok: true }));
+  await registerQueueRoutes(instance, { port: PORT, homeDir: dir.home, cliPath: CLI_PATH, imageDir: path.join(fixtureRoot, "images"), scannerPath: "/opt/atrium-test/scripts/lib/secret-scan.sh" });
+  await instance.ready();
+  return instance;
+}
+
+function send(method: "GET" | "POST", url: string, body?: object, options: { host?: string; headers?: Record<string, string> } = {}): Promise<LightMyRequestResponse> {
+  const headers = { host: options.host ?? HOST, ...options.headers };
+  return app.inject({ method, url, headers, ...(body === undefined ? {} : { payload: body }) });
+}
+
+function trackSessionId(): string {
+  const sessionId = randomUUID();
+  trackedSessionIds.push(sessionId);
+  return sessionId;
+}
+
+async function seedSession(overrides: Partial<Prisma.QueueSessionUncheckedCreateInput> = {}): Promise<string> {
+  const sessionId = trackSessionId();
+  const pid = overrides.pid ?? 700_000 + Math.floor(Math.random() * 100_000);
+  await getPrisma().queueSession.create({
+    data: {
+      sessionId,
+      isConfigDirSet: false,
+      profileLabel: "default",
+      cwd: "/Users/owner/Desktop/git/glass-atrium",
+      worktreeRoot: "/Users/owner/Desktop/git/glass-atrium",
+      processStartTime: "Mon Nov  9 08:01:12 2026",
+      socketPath: `/private/tmp/cc-socks/${pid}.sock`,
+      state: "live",
+      lastSeenAt: new Date(),
+      ...overrides,
+      pid,
+    },
+  });
+  return sessionId;
+}
+
+async function seedItem(sessionId: string, overrides: Partial<Prisma.QueueItemUncheckedCreateInput> = {}): Promise<bigint> {
+  const item = await getPrisma().queueItem.create({
+    data: { kind: "report", sessionId, title: "Build finished", body: "All 12 suites green.", isFreeTextAllowed: true, ...overrides },
+  });
+  return item.id;
+}
+
+function decisionItem(overrides: Partial<Prisma.QueueItemUncheckedCreateInput> = {}): Partial<Prisma.QueueItemUncheckedCreateInput> {
+  return {
+    kind: "decision",
+    title: "Pick the cache backend",
+    body: "Two options fit the measured load.",
+    options: [
+      { code: "R1", label: "Postgres table", pros: "no new service", cons: "slower reads" },
+      { code: "R2", label: "Redis", pros: "fast", cons: "one more daemon" },
+    ],
+    recommendedCode: "R1",
+    isFreeTextAllowed: false,
+    ...overrides,
+  };
+}
+
+function ownerMessageItem(): Partial<Prisma.QueueItemUncheckedCreateInput> {
+  return {
+    kind: "message",
+    title: "Rebase onto main",
+    body: "Rebase onto main before the review.",
+    isFreeTextAllowed: false,
+    status: "answered",
+    answeredAt: new Date(),
+    answerRoute: "message",
+    answerSignal: "fetch_metadata",
+  };
+}
+
+async function seedDelivery(itemId: bigint, attempt = 1): Promise<string> {
+  const msgId = randomUUID();
+  const sentAt = new Date();
+  await getPrisma().queueDelivery.create({
+    data: { msgId, itemId, route: "socket", attempt, result: "sent", sentAt, ackDeadlineAt: new Date(sentAt.getTime() + ACK_DEADLINE_MS) },
+  });
+  return msgId;
+}
+
+async function getStatus(itemId: bigint): Promise<string> {
+  const item = await getPrisma().queueItem.findUniqueOrThrow({ where: { id: itemId } });
+  return item.status;
+}
+
+function makeFixtureDir(name: string): string {
+  const fixtureDir = path.join(fixtureRoot, `${name}-${randomUUID().slice(0, 8)}`);
+  mkdirSync(fixtureDir, { recursive: true });
+  return realpathSync(fixtureDir);
+}
+
+function registerBody(sessionId: string, extra: object = {}): object {
+  return { sessionId, pid: process.pid, cwd: makeFixtureDir("cwd"), ...extra };
+}
+
+describe("queue request gate", () => {
+  test("the Host allowlist is the only gate a session route has: no key header, no secrets directory", async () => {
+    const rows = [
+      { name: "rebinding host", host: `evil.example:${PORT}`, status: 403 },
+      { name: "allowlisted name on another port", host: "127.0.0.1:1", status: 403 },
+      { name: "127.0.0.1 with no key header reaches the handler", host: HOST, status: 404 },
+      { name: "localhost with no key header reaches the handler", host: `localhost:${PORT}`, status: 404 },
+      { name: "[::1] with no key header reaches the handler", host: `[::1]:${PORT}`, status: 404 },
+    ];
+    for (const row of rows) {
+      const response = await send("POST", "/api/queue/pending", { sessionId: randomUUID() }, { host: row.host });
+      assert.equal(response.statusCode, row.status, row.name);
+    }
+  });
+
+  test("a root route outside the queue plugin sees no queue hook", async () => {
+    const response = await send("GET", "/api/root-probe", undefined, { host: `evil.example:${PORT}` });
+    assert.equal(response.statusCode, 200);
+  });
+
+  test("the count route refuses a rebinding host", async () => {
+    const refused = await send("GET", "/api/queue/count", undefined, { host: `evil.example:${PORT}` });
+    const counted = await send("GET", "/api/queue/count");
+    assert.equal(refused.statusCode, 403);
+    assert.equal(counted.statusCode, 200);
+    assert.deepEqual(Object.keys(counted.json()).sort(), ["awaiting", "deviations", "oldestAgeSeconds"]);
+  });
+});
+
+describe("register", () => {
+  test("rejects a body outside the registration rules and stores no row", async () => {
+    const regularFile = path.join(makeFixtureDir("file"), "plain.txt");
+    writeFileSync(regularFile, "x");
+    const rows = [
+      { name: "client-sent start time", extra: { processStartTime: "Mon Nov  9 08:01:12 2026" }, error: "invalid_input" },
+      { name: "relative cwd", extra: { cwd: "relative/dir" }, error: "invalid_input" },
+      { name: "cwd is a file", extra: { cwd: regularFile }, error: "invalid_cwd" },
+      { name: "config dir outside $HOME/.claude*", extra: { configDir: path.join(dir.home, "elsewhere") }, error: "invalid_config_dir" },
+      { name: "socket path, even one naming the registered pid", extra: { socketPath: `/tmp/cc-socks/${process.pid}.sock` }, error: "invalid_input" },
+      { name: "accept-wrapper launch hint", extra: { launchHint: "accept_wrapper" }, error: "invalid_input" },
+      { name: "pid of no running process", extra: { pid: 2_147_483_646 }, error: "invalid_pid" },
+      { name: "name past 100 characters", extra: { name: "n".repeat(101) }, error: "invalid_input" },
+      { name: "blank name", extra: { name: "   " }, error: "invalid_input" },
+      { name: "name carrying a line break", extra: { name: "queue sessions\nsecond line" }, error: "invalid_input" },
+      { name: "derived name carrying a line break", extra: { derivedName: "queue sessions\nsecond line" }, error: "invalid_input" },
+    ];
+    for (const row of rows) {
+      const sessionId = trackSessionId();
+      const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId, row.extra));
+      const stored = await getPrisma().queueSession.findUnique({ where: { sessionId } });
+      assert.deepEqual([response.statusCode, response.json().error], [400, row.error], row.name);
+      assert.equal(stored, null, row.name);
+    }
+  });
+
+  test("rejects a non-UUID session id", async () => {
+    const response = await send("POST", "/api/queue/sessions/register", registerBody("not-a-uuid"));
+    assert.equal(response.statusCode, 400);
+  });
+
+  test("a cwd the monitor may not read is an environment failure, never a database outage", async () => {
+    const locked = makeFixtureDir("locked");
+    const cwd = path.join(locked, "inner");
+    mkdirSync(cwd);
+    chmodSync(locked, 0o000);
+    try {
+      const sessionId = trackSessionId();
+      const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId, { cwd }));
+      assert.deepEqual([response.statusCode, response.json()], [500, { error: "queue_environment_failure" }]);
+    } finally {
+      chmodSync(locked, 0o700);
+    }
+  });
+
+  test("stores the realpath of a cwd reached through a symlink", async () => {
+    const target = makeFixtureDir("cwd-target");
+    const link = path.join(fixtureRoot, `cwd-link-${randomUUID().slice(0, 8)}`);
+    symlinkSync(target, link, "dir");
+    const sessionId = trackSessionId();
+    const response = await send("POST", "/api/queue/sessions/register", { sessionId, pid: process.pid, cwd: link });
+    const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+    assert.equal(response.statusCode, 200);
+    assert.equal(stored.cwd, target);
+  });
+
+  test("derives the worktree root from the nearest .git entry above the cwd", async () => {
+    const dirCheckout = makeFixtureDir("checkout");
+    mkdirSync(path.join(dirCheckout, ".git"));
+    const linkedWorktree = makeFixtureDir("linked");
+    writeFileSync(path.join(linkedWorktree, ".git"), "gitdir: /elsewhere/.git/worktrees/linked\n");
+    const rows = [
+      { name: "directory .git", root: dirCheckout as string | null },
+      { name: "file .git", root: linkedWorktree as string | null },
+      { name: "no .git above", root: null },
+    ];
+    for (const row of rows) {
+      const base = row.root ?? makeFixtureDir("plain");
+      const cwd = path.join(base, "monitor", "src");
+      mkdirSync(cwd, { recursive: true });
+      const sessionId = trackSessionId();
+      await send("POST", "/api/queue/sessions/register", { sessionId, pid: process.pid, cwd });
+      const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+      assert.equal(stored.worktreeRoot, row.root, row.name);
+    }
+  });
+
+  test("stores the start time the server reads under TZ=UTC, never one the client sends", async () => {
+    const sessionId = trackSessionId();
+    await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
+    const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+    const psRead = execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(process.pid)], {
+      env: { TZ: "UTC", LC_ALL: "C", PATH: "/usr/bin:/bin" },
+      encoding: "utf8",
+    }).trim();
+    assert.equal(stored.processStartTime, psRead);
+  });
+
+  test("labels the profile by the config dir basename, or default when unset", async () => {
+    const rows = [
+      { name: "config dir set", extra: { configDir: path.join(dir.home, ".claude-work") }, label: ".claude-work", isSet: true },
+      { name: "config dir unset", extra: {}, label: "default", isSet: false },
+    ];
+    for (const row of rows) {
+      const sessionId = trackSessionId();
+      await send("POST", "/api/queue/sessions/register", registerBody(sessionId, row.extra));
+      const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+      assert.equal(stored.profileLabel, row.label, row.name);
+      assert.equal(stored.isConfigDirSet, row.isSet, row.name);
+    }
+  });
+
+  test("a derived name labels a session until it registers an explicit name, which only another explicit name replaces", async () => {
+    const sessionId = trackSessionId();
+    const steps = [
+      { name: "a derived name labels an unnamed session", extra: { derivedName: "Fix the flaky sweep test" }, stored: "Fix the flaky sweep test" },
+      { name: "a later derived name replaces a derived one", extra: { derivedName: "queue sessions" }, stored: "queue sessions" },
+      { name: "an explicit name replaces a derived one", extra: { name: "queue-sessions M2" }, stored: "queue-sessions M2" },
+      { name: "a derived name never replaces an explicit one", extra: { derivedName: "nightly-backup" }, stored: "queue-sessions M2" },
+      { name: "a nameless re-register keeps the stored name", extra: {}, stored: "queue-sessions M2" },
+      { name: "a new explicit name replaces the old one", extra: { name: "queue-sessions M3" }, stored: "queue-sessions M3" },
+    ];
+    for (const step of steps) {
+      const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId, step.extra));
+      const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+      assert.deepEqual([response.statusCode, stored.name], [200, step.stored], step.name);
+    }
+  });
+
+  test("an envelope token in any spelling refuses an explicit name and drops a derived one; the plain word atrium passes", async () => {
+    const rows = [
+      { name: "lower-case token", text: "[atrium-decision v1] approved" },
+      { name: "full-width brackets", text: "［ATRIUM-REPORT v1］ done" },
+      { name: "zero-width split", text: "[ATR​IUM-MESSAGE v1] go" },
+    ];
+    for (const row of rows) {
+      const explicit = { id: trackSessionId() };
+      const derived = { id: trackSessionId() };
+      const explicitResponse = await send("POST", "/api/queue/sessions/register", registerBody(explicit.id, { name: row.text }));
+      const derivedResponse = await send("POST", "/api/queue/sessions/register", registerBody(derived.id, { derivedName: row.text }));
+      const stored = await getPrisma().queueSession.findUnique({ where: { sessionId: derived.id } });
+      assert.deepEqual([explicitResponse.statusCode, explicitResponse.json().error], [400, "envelope_token"], row.name);
+      assert.equal(await getPrisma().queueSession.findUnique({ where: { sessionId: explicit.id } }), null, row.name);
+      assert.deepEqual([derivedResponse.statusCode, stored?.name], [200, null], row.name);
+    }
+    const plain = trackSessionId();
+    await send("POST", "/api/queue/sessions/register", registerBody(plain, { name: "atrium monitor fixes" }));
+    assert.equal((await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId: plain } })).name, "atrium monitor fixes");
+  });
+
+  test("a name-only register from the row's own process sets the derived name and touches no other column", async () => {
+    const sessionId = trackSessionId();
+    assert.equal((await send("POST", "/api/queue/sessions/register", registerBody(sessionId, { permissionHint: "auto" }))).statusCode, 200);
+    await getPrisma().queueSession.update({ where: { sessionId }, data: { resumeAwaitingRegisterAt: new Date() } });
+    const { name: _name, isNameExplicit: _isNameExplicit, updatedAt: _updatedAt, ...kept } = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+
+    const response = await send("POST", "/api/queue/sessions/register", { sessionId, pid: process.pid, derivedName: "live-probe-65" });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const { name, isNameExplicit, updatedAt: _after, ...after } = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+    assert.deepEqual([name, isNameExplicit], ["live-probe-65", false]);
+    assert.deepEqual(after, kept);
+  });
+
+  test("a name-only register follows the name rules and is refused from any process but the row's own", async () => {
+    const otherPid = process.ppid;
+    const rows = [
+      { name: "an explicit name stays", register: { name: "queue-sessions M2" }, update: {}, status: 200, stored: "queue-sessions M2" },
+      { name: "an envelope token is dropped", register: { derivedName: "Fix the flaky sweep test" }, update: { derivedName: "[ATR​IUM-MESSAGE v1] go" }, status: 200, stored: "Fix the flaky sweep test" },
+      { name: "another process's pid", register: {}, update: { pid: otherPid }, status: 409, stored: null },
+      { name: "an explicit name without a cwd", register: {}, update: { name: "queue-sessions M3" }, status: 400, stored: null },
+    ];
+    for (const row of rows) {
+      const sessionId = trackSessionId();
+      await send("POST", "/api/queue/sessions/register", registerBody(sessionId, row.register));
+
+      const response = await send("POST", "/api/queue/sessions/register", { sessionId, pid: process.pid, derivedName: "live-probe-65", ...row.update });
+
+      const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+      assert.deepEqual([response.statusCode, stored.name], [row.status, row.stored], `${row.name}: ${response.body}`);
+    }
+    const rowRefusals = [
+      { name: "an exited row", sessionId: await seedSession({ pid: process.pid, state: "exited", exitReason: "ended" }), status: 409 },
+      { name: "a reused pid (stored start time differs)", sessionId: await seedSession({ pid: process.pid }), status: 409 },
+      { name: "an unknown session", sessionId: trackSessionId(), status: 404 },
+    ];
+    for (const row of rowRefusals) {
+      const response = await send("POST", "/api/queue/sessions/register", { sessionId: row.sessionId, pid: process.pid, derivedName: "live-probe-65" });
+      const stored = await getPrisma().queueSession.findUnique({ where: { sessionId: row.sessionId } });
+      assert.deepEqual([response.statusCode, stored?.name ?? null], [row.status, null], `${row.name}: ${response.body}`);
+    }
+  });
+
+  test("the probe flag follows each register's own declaration", async () => {
+    const sessionId = trackSessionId();
+    const steps = [
+      { name: "a probe declaration flags the row", extra: { isProbe: true }, isProbe: true },
+      { name: "a register without it clears the flag", extra: {}, isProbe: false },
+    ];
+    for (const step of steps) {
+      await send("POST", "/api/queue/sessions/register", registerBody(sessionId, step.extra));
+      const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+      assert.equal(stored.isProbe, step.isProbe, step.name);
+    }
+  });
+
+  test("keeps a transcript path only when it names the session's own file in its config dir's projects folder", async () => {
+    const projects = { default: path.join(dir.home, ".claude", "projects"), work: path.join(dir.home, ".claude-work", "projects") };
+    mkdirSync(projects.default, { recursive: true });
+    mkdirSync(projects.work, { recursive: true });
+    const rows = [
+      { name: "default profile, own file", extra: {}, transcript: (id: string) => path.join(projects.default, "-Users-owner", `${id}.jsonl`), isKept: true },
+      { name: "named profile, own file", extra: { configDir: path.join(dir.home, ".claude-work") }, transcript: (id: string) => path.join(projects.work, "-Users-owner", `${id}.jsonl`), isKept: true },
+      { name: "another profile's folder", extra: {}, transcript: (id: string) => path.join(projects.work, "-Users-owner", `${id}.jsonl`), isKept: false },
+      { name: "another session's file", extra: {}, transcript: () => path.join(projects.default, "-Users-owner", `${randomUUID()}.jsonl`), isKept: false },
+      { name: "outside the project folders", extra: {}, transcript: (id: string) => path.join(dir.home, ".claude", `${id}.jsonl`), isKept: false },
+      { name: "dot-dot escape", extra: {}, transcript: (id: string) => `${projects.default}/../../elsewhere/x/${id}.jsonl`, isKept: false },
+      { name: "a sub-agent depth", extra: {}, transcript: (id: string) => path.join(projects.default, "-Users-owner", "subagents", `${id}.jsonl`), isKept: false },
+    ];
+    for (const row of rows) {
+      const sessionId = trackSessionId();
+      const transcriptPath = row.transcript(sessionId);
+      const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId, { ...row.extra, transcriptPath }));
+      const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+      assert.equal(response.statusCode, 200, row.name);
+      assert.equal(stored.transcriptPath !== null, row.isKept, row.name);
+    }
+  });
+
+  test("a register without a transcript path keeps the stored one", async () => {
+    const sessionId = trackSessionId();
+    const projectDir = path.join(dir.home, ".claude", "projects", "-Users-owner");
+    mkdirSync(projectDir, { recursive: true });
+    await send("POST", "/api/queue/sessions/register", registerBody(sessionId, { transcriptPath: path.join(projectDir, `${sessionId}.jsonl`) }));
+    await send("POST", "/api/queue/sessions/register", registerBody(sessionId, { name: "queue relay" }));
+    const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+    assert.equal(stored.transcriptPath, path.join(realpathSync(projectDir), `${sessionId}.jsonl`));
+  });
+
+  test("a new session id on the same pid and start time marks the old row replaced", async () => {
+    const id = { old: trackSessionId(), new: trackSessionId() };
+    await send("POST", "/api/queue/sessions/register", registerBody(id.old));
+    await send("POST", "/api/queue/sessions/register", registerBody(id.new));
+    const row = await Promise.all([id.old, id.new].map((sessionId) => getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } }))).then(
+      ([old, current]) => ({ old, new: current }),
+    );
+    assert.deepEqual([row.old.state, row.old.exitReason], ["exited", "replaced"]);
+    assert.deepEqual([row.new.state, row.new.exitReason], ["live", null]);
+  });
+
+  test("clears the marker, returns resume-pending items to answered and reports the answered count with the relays among it", async () => {
+    const sessionId = await seedSession({ pid: process.pid, socketPath: null, state: "exited", exitReason: "dead", resumeAwaitingRegisterAt: new Date() });
+    const peer = await seedSession();
+    const resumePending = await seedItem(sessionId, { status: "resume_pending" });
+    await seedItem(sessionId, { status: "answered" });
+    await seedItem(sessionId, { status: "open" });
+    await seedItem(sessionId, { kind: "relay", fromSessionId: peer, relayHop: 0, title: "Lint is green", body: "Lint is green.", isFreeTextAllowed: false, status: "answered" });
+    const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
+    const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual([response.json().answeredWaiting, response.json().relayWaiting], [3, 1]);
+    assert.deepEqual([stored.state, stored.exitReason, stored.resumeAwaitingRegisterAt], ["live", null, null]);
+    assert.equal(await getStatus(resumePending), "answered");
+  });
+
+  test("lists this session's non-terminal items that expect an answer, newest first, and no other session's", async () => {
+    const sessionId = await seedSession({ state: "exited", exitReason: "dead" });
+    const otherSessionId = await seedSession();
+    const id = {
+      openDecision: await seedItem(sessionId, decisionItem({ status: "open" })),
+      answeredFreeTextReport: await seedItem(sessionId, { status: "answered" }),
+      reportTakingNoReply: await seedItem(sessionId, { isFreeTextAllowed: false, status: "open" }),
+      deliveredDecision: await seedItem(sessionId, decisionItem({ status: "delivered" })),
+      ownerMessage: await seedItem(sessionId, ownerMessageItem()),
+      otherSessionDecision: await seedItem(otherSessionId, decisionItem({ status: "open" })),
+    };
+    const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json().awaitingItemIds, [Number(id.answeredFreeTextReport), Number(id.openDecision)]);
+  });
+
+  test("the awaiting list is an added key: a session with none gets an empty list beside the answered count", async () => {
+    const sessionId = await seedSession({ state: "exited", exitReason: "dead" });
+    await seedItem(sessionId, { isFreeTextAllowed: false, status: "open" });
+    const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
+    assert.deepEqual([response.statusCode, response.json()], [200, { answeredWaiting: 0, relayWaiting: 0, awaitingItemIds: [] }]);
+  });
+
+  test("the awaiting list stops at its limit and keeps the newest ids", async () => {
+    const sessionId = await seedSession({ state: "exited", exitReason: "dead" });
+    const report = { kind: "report" as const, sessionId, title: "Nightly sweep", body: "One mismatch needs a reply.", isFreeTextAllowed: true };
+    await getPrisma().queueItem.createMany({ data: Array.from({ length: AWAITING_IDS_LIMIT + 1 }, () => report) });
+    const newest = await getPrisma().queueItem.findMany({ where: { sessionId }, orderBy: { id: "desc" }, take: AWAITING_IDS_LIMIT, select: { id: true } });
+    const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
+    assert.deepEqual(response.json().awaitingItemIds, newest.map((row) => Number(row.id)));
+  });
+
+  test("a row still holding a retired socket path of its old process registers live from a new process and drops the path", async () => {
+    const sessionId = await seedSession({ state: "exited", exitReason: "dead" });
+    const response = await send("POST", "/api/queue/sessions/register", registerBody(sessionId));
+    const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual([stored.state, stored.pid, stored.socketPath], ["live", process.pid, null]);
+  });
+});
+
+describe("deregister", () => {
+  test("on a marked row only another process's pid clears the marker, and only the stored process or no pid ends the session", async () => {
+    const storedPid = 812_345;
+    const rows = [
+      { name: "another pid", extra: { pid: storedPid + 1 }, isCleared: true, isEnded: false },
+      { name: "the stored pid", extra: { pid: storedPid }, isCleared: false, isEnded: true },
+      { name: "no pid", extra: {}, isCleared: false, isEnded: true },
+      { name: "socket path naming another pid", extra: { socketPath: `/tmp/cc-socks/${storedPid + 1}.sock` }, isCleared: true, isEnded: false },
+      { name: "socket path naming the stored pid", extra: { socketPath: `/private/tmp/cc-socks/${storedPid}.sock` }, isCleared: false, isEnded: true },
+    ];
+    for (const row of rows) {
+      const sessionId = await seedSession({ pid: storedPid, state: "exited", exitReason: "dead", resumeAwaitingRegisterAt: new Date() });
+      const response = await send("POST", "/api/queue/sessions/deregister", { sessionId, ...row.extra });
+      const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+      assert.equal(response.statusCode, 200, row.name);
+      assert.equal(stored.resumeAwaitingRegisterAt === null, row.isCleared, row.name);
+      assert.deepEqual(response.json(), { ok: true, isEnded: row.isEnded }, row.name);
+    }
+  });
+
+  test("ends a live row whose own process deregisters and says so", async () => {
+    const sessionId = await seedSession({ pid: 823_456 });
+    const response = await send("POST", "/api/queue/sessions/deregister", { sessionId, pid: 823_456 });
+    const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+    assert.deepEqual([stored.state, stored.exitReason], ["exited", "ended"]);
+    assert.deepEqual(response.json(), { ok: true, isEnded: true });
+  });
+
+  test("keeps a live row live when another process under the same session id deregisters, and says it did not end", async () => {
+    const sessionId = await seedSession({ pid: 834_567 });
+    const response = await send("POST", "/api/queue/sessions/deregister", { sessionId, pid: 834_568 });
+    const stored = await getPrisma().queueSession.findUniqueOrThrow({ where: { sessionId } });
+    assert.equal(stored.state, "live");
+    assert.deepEqual(response.json(), { ok: true, isEnded: false });
+  });
+
+  test("refuses an unknown session and an unconfined socket path", async () => {
+    const sessionId = await seedSession();
+    const unknown = await send("POST", "/api/queue/sessions/deregister", { sessionId: randomUUID() });
+    const unconfined = await send("POST", "/api/queue/sessions/deregister", { sessionId, socketPath: "/tmp/elsewhere/1.sock" });
+    assert.equal(unknown.statusCode, 404);
+    assert.equal(unconfined.statusCode, 400);
+  });
+});
+
+describe("post and get by id", () => {
+  const decision = (sessionId: string, extra: object = {}): object => ({
+    kind: "decision",
+    sessionId,
+    title: "Pick the cache backend",
+    body: "Two options fit the measured load.",
+    options: [
+      { code: "R1", label: "Postgres table", pros: "no new service", cons: "slower reads" },
+      { code: "R2", label: "Redis", pros: "fast", cons: "one more daemon" },
+    ],
+    recommendedCode: "R1",
+    isFreeTextAllowed: true,
+    ...extra,
+  });
+
+  test("a posted decision is readable by its own session and by no other", async () => {
+    const sessionId = await seedSession();
+    const posted = await send("POST", "/api/queue/items", decision(sessionId, { isApprovalClass: true }));
+    const id = posted.json().id;
+    const own = await send("GET", `/api/queue/items/${id}?sessionId=${sessionId}`);
+    const foreign = await send("GET", `/api/queue/items/${id}?sessionId=${await seedSession()}`);
+    assert.equal(posted.statusCode, 201);
+    assert.equal(own.statusCode, 200);
+    assert.deepEqual(
+      [own.json().kind, own.json().status, own.json().recommendedCode, own.json().isApprovalClass, own.json().options.length, own.json().answer],
+      ["decision", "open", "R1", true, 2, { code: null, text: null }],
+    );
+    assert.equal(foreign.statusCode, 404);
+  });
+
+  test("a report posted without its free-text flag is stored as taking no reply", async () => {
+    const sessionId = await seedSession();
+    const posted = await send("POST", "/api/queue/items", { kind: "report", sessionId, title: "Deploy 75 finished", body: "The monitor restarted and every probe passed." });
+    const fetched = await send("GET", `/api/queue/items/${posted.json().id}?sessionId=${sessionId}`);
+    assert.equal(posted.statusCode, 201, posted.body);
+    assert.equal(fetched.json().isFreeTextAllowed, false);
+  });
+
+  test("accepts linked doc ids that exist", async () => {
+    const doc = await getPrisma().claudedDoc.create({
+      data: { title: "Queue fixture doc", author: "queue-test", createdAt: new Date(), contentHash: "0".repeat(64), htmlPath: "queue-fixture.html", indexableText: "fixture" },
+    });
+    try {
+      const sessionId = await seedSession();
+      const posted = await send("POST", "/api/queue/items", decision(sessionId, { linkedDocIds: [Number(doc.id)] }));
+      const fetched = await send("GET", `/api/queue/items/${posted.json().id}?sessionId=${sessionId}`);
+      assert.equal(posted.statusCode, 201);
+      assert.deepEqual(fetched.json().linkedDocIds, [Number(doc.id)]);
+    } finally {
+      await getPrisma().queueItem.deleteMany({ where: { linkedDocIds: { has: doc.id } } });
+      await getPrisma().claudedDoc.delete({ where: { id: doc.id } });
+    }
+  });
+
+  test("rejects an item outside the post rules", async () => {
+    const sessionId = await seedSession();
+    const rows = [
+      { name: "recommended code not among the options", body: decision(sessionId, { recommendedCode: "R3" }), error: "invalid_input" },
+      { name: "decision with no recommended code", body: decision(sessionId, { recommendedCode: undefined }), error: "invalid_input" },
+      { name: "duplicate option codes", body: decision(sessionId, { options: [{ code: "R1", label: "a", pros: "", cons: "" }, { code: "R1", label: "b", pros: "", cons: "" }] }), error: "invalid_input" },
+      { name: "report carrying options", body: { ...(decision(sessionId) as Record<string, unknown>), kind: "report" }, error: "invalid_input" },
+      { name: "unknown linked doc id", body: decision(sessionId, { linkedDocIds: [9_007_199_254_740_000] }), error: "unknown_linked_doc" },
+      { name: "unknown key", body: decision(sessionId, { status: "answered" }), error: "invalid_input" },
+      { name: "blank title", body: decision(sessionId, { title: "   " }), error: "invalid_input" },
+      { name: "message kind, which only the owner send creates", body: { ...(decision(sessionId) as Record<string, unknown>), kind: "message", options: undefined, recommendedCode: undefined }, error: "invalid_input" },
+    ];
+    for (const row of rows) {
+      const response = await send("POST", "/api/queue/items", row.body);
+      assert.deepEqual([response.statusCode, response.json().error], [400, row.error], row.name);
+    }
+  });
+
+  // a key name may be text the caller wrote → a refusal never repeats it
+  test("every session route answers an unknown key without its name", async () => {
+    const sessionId = await seedSession();
+    const key = `unknownkey${randomUUID().replaceAll("-", "")}`;
+    const rows = [
+      { route: "POST /api/queue/sessions/register", body: { sessionId, pid: 4242, derivedName: "s" } },
+      { route: "POST /api/queue/sessions/deregister", body: { sessionId } },
+      { route: "POST /api/queue/items", body: { kind: "report", sessionId, title: "Done", body: "Merged." } },
+      { route: `GET /api/queue/items/1?sessionId=${sessionId}&${key}=1`, body: undefined },
+      { route: "POST /api/queue/pending", body: { sessionId } },
+      { route: "POST /api/queue/items/1/ack", body: { sessionId, msgId: randomUUID() } },
+      { route: "POST /api/queue/pending/count", body: { sessionId, pid: 4242 } },
+      { route: "POST /api/queue/items/1/withdraw", body: { sessionId } },
+      { route: "POST /api/queue/peers", body: { sessionId } },
+      { route: "POST /api/queue/relay", body: { sessionId, to: ["abcd1234"], text: "Rebase onto main." } },
+      { route: "POST /api/queue/scan-approvals", body: { sessionId } },
+      { route: "POST /api/queue/scan-approvals/consume", body: { sessionId } },
+    ];
+    const replies = [];
+    for (const row of rows) {
+      const [method, url] = row.route.split(" ") as ["GET" | "POST", string];
+      const response = await send(method, url, row.body === undefined ? undefined : { ...row.body, [key]: 1 });
+      replies.push([row.route, response.statusCode, response.json().error, response.body.includes(key)]);
+    }
+    assert.deepEqual(replies, rows.map((row) => [row.route, 400, "invalid_input", false]));
+  });
+
+  test("answers 404 for an unknown session or item and 400 for a malformed id", async () => {
+    const sessionId = await seedSession();
+    const unknownSession = await send("POST", "/api/queue/items", decision(randomUUID()));
+    const unknownItem = await send("GET", `/api/queue/items/9007199254740000?sessionId=${sessionId}`);
+    const malformed = await send("GET", `/api/queue/items/abc?sessionId=${sessionId}`);
+    assert.equal(unknownSession.statusCode, 404);
+    assert.equal(unknownItem.statusCode, 404);
+    assert.equal(malformed.statusCode, 400);
+  });
+});
+
+interface HookPayloads {
+  subagent: { session_id: string; agent_id: string; agent_type: string; tool_input: { file_path: string } };
+}
+
+// fixture-only: a hand-written subagent PreToolUse payload, not a capture → which session id a live subagent payload carries is not shown here
+const hookPayloads: HookPayloads = JSON.parse(readFileSync(new URL("./fixtures/subagent-hook-payloads.json", import.meta.url), "utf8"));
+
+describe("secret-approval post", () => {
+  /** A request as the hook registers it from the subagent payload: that payload's session id, its agent as information. */
+  const createRequest = (sessionId: string): string => {
+    const text = `retries_${randomUUID().slice(0, 8)} = 3`;
+    return secretRequests.create({
+      sessionId,
+      agent: { id: hookPayloads.subagent.agent_id, type: hookPayloads.subagent.agent_type },
+      path: hookPayloads.subagent.tool_input.file_path,
+      rule: "SEC-013",
+      lines: [{ text, hash: getLineHash(text) }],
+    });
+  };
+  const approvalPost = (sessionId: string, requestId: string, extra: object = {}): object => ({ kind: "secret-approval", sessionId, requestId, ...extra });
+  const findLinkedItem = (requestId: string) => getPrisma().queueItem.findUnique({ where: { secretRequestId: requestId } });
+  const getLifetimeMs = (requestId: string): number | undefined => {
+    const request = secretRequests.find(requestId);
+    return request === null ? undefined : request.expiresAt.getTime() - request.createdAt.getTime();
+  };
+  /** The item transaction runs its work, then `afterWork` before the commit → a failure or a lapse lands between the link check and the commit. */
+  const interceptTransaction = (t: TestContext, afterWork: () => void): void => {
+    const prisma = getPrisma();
+    const original = prisma.$transaction;
+    const intercepted = (work: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+      original.call(prisma, async (tx: Prisma.TransactionClient) => {
+        const result = await work(tx);
+        afterWork();
+        return result;
+      });
+    // the client is a Proxy node:test's mock.method finds no method descriptor on → a plain swap; the item post uses the callback form only
+    prisma.$transaction = intercepted as typeof original;
+    t.after(() => {
+      prisma.$transaction = original;
+    });
+  };
+  const getOptionLabels = (options: Prisma.JsonValue): Record<string, string> => {
+    assert.ok(Array.isArray(options), "options are not an array");
+    return Object.fromEntries(
+      options.map((option) => {
+        assert.ok(option !== null && typeof option === "object" && !Array.isArray(option), "option is not an object");
+        return [String(option.code), String(option.label)];
+      }),
+    );
+  };
+
+  test("a request posted by the session id of the hook payload it was registered from becomes an open approval-class decision linked to it, the request still pending", async () => {
+    const sessionId = hookPayloads.subagent.session_id;
+    trackedSessionIds.push(sessionId);
+    await seedSession({ sessionId });
+    const requestId = createRequest(sessionId);
+    const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+    const item = await findLinkedItem(requestId);
+    assert.equal(posted.statusCode, 201, posted.body);
+    assert.deepEqual(
+      [Number(item?.id), item?.kind, item?.isApprovalClass, item?.isFreeTextAllowed, item?.status],
+      [posted.json().id, "decision", true, false, "open"],
+    );
+    assert.deepEqual([secretRequests.find(requestId)?.state, getLifetimeMs(requestId)], ["pending", SECRET_REQUEST_LIMIT.LINKED_MS]);
+  });
+
+  test("a post rolled back after the link check leaves the request unlinked: its 15-minute lapse kept and still counted toward the session cap", async (t) => {
+    const sessionId = await seedSession();
+    const requestId = createRequest(sessionId);
+    interceptTransaction(t, () => {
+      throw new Error("item transaction failed after the link check");
+    });
+
+    const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+
+    assert.deepEqual([posted.statusCode, await findLinkedItem(requestId), getLifetimeMs(requestId)], [503, null, SECRET_REQUEST_LIMIT.UNLINKED_MS]);
+    for (let index = 1; index < SECRET_REQUEST_LIMIT.SESSION_REQUESTS; index += 1) createRequest(sessionId);
+    assert.throws(() => createRequest(sessionId), { code: "secret_request_cap" });
+  });
+
+  test("a request that lapses between the link check and the commit fails the post and leaves no item naming it", async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    const sessionId = await seedSession();
+    const requestId = createRequest(sessionId);
+    interceptTransaction(t, () => t.mock.timers.tick(SECRET_REQUEST_LIMIT.UNLINKED_MS));
+
+    const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+
+    const linked = await getPrisma().queueItem.count({ where: { secretRequestId: requestId } });
+    assert.deepEqual([posted.statusCode, posted.json().error, linked], [409, "secret_request_gone", 0]);
+  });
+
+  describe("a refused link whose item removal fails keeps the link error as the post's answer", () => {
+    const rows = [
+      { name: "a removal failing once is retried: no item left naming the request, nothing logged", failures: 1, linked: 0, errorLogs: 0 },
+      { name: "a removal failing every try stops: the item left behind is logged once with its item and request ids", failures: Infinity, linked: 1, errorLogs: 1 },
+    ];
+    for (const row of rows) {
+      test(row.name, async (t) => {
+        t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+        const sessionId = await seedSession();
+        const requestId = createRequest(sessionId);
+        interceptTransaction(t, () => t.mock.timers.tick(SECRET_REQUEST_LIMIT.UNLINKED_MS));
+        const items = getPrisma().queueItem;
+        const original = items.delete;
+        let failed = 0;
+        const failingDelete = (args: Parameters<typeof original>[0]) => {
+          if (failed >= row.failures) return original.call(items, args);
+          failed += 1;
+          return Promise.reject(new Error("connection terminated unexpectedly"));
+        };
+        // a transient database error on the compensating delete; mock.method finds no method on the Prisma delegate → a plain swap
+        // the cast holds: the stub forwards the one argument unchanged, and a non-generic stub cannot spell the generic delete signature
+        items.delete = failingDelete as unknown as typeof original;
+        t.after(() => {
+          items.delete = original;
+        });
+        const error = t.mock.method(logger, "error", () => undefined);
+
+        const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+
+        const left = await getPrisma().queueItem.findMany({ where: { secretRequestId: requestId }, select: { id: true } });
+        assert.deepEqual([posted.statusCode, posted.json().error, left.length, error.mock.callCount()], [409, "secret_request_gone", row.linked, row.errorLogs]);
+        for (const call of error.mock.calls) {
+          const [context] = call.arguments as unknown as [{ itemId: number; requestId: string }];
+          assert.deepEqual([context.itemId, context.requestId], [Number(left[0]?.id), requestId]);
+          assert.ok(!JSON.stringify(context).includes("retries_"), "the log carries a captured line");
+        }
+      });
+    }
+  });
+
+  test("a request past its 15-minute lapse is refused as unknown and links no item", async (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    const sessionId = await seedSession();
+    const requestId = createRequest(sessionId);
+    t.mock.timers.tick(SECRET_REQUEST_LIMIT.UNLINKED_MS);
+
+    const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+
+    assert.deepEqual([posted.statusCode, posted.json().error, await findLinkedItem(requestId)], [404, "unknown_secret_request", null]);
+  });
+
+  test("past the machine ceiling of linked requests the post is refused 429, no item stored, the request keeping its 15-minute lapse", async () => {
+    const filler: string[] = [];
+    try {
+      // the one store keeps earlier tests' linked requests → filled up to its ceiling from whatever it holds
+      for (let index = 0; index < SECRET_REQUEST_LIMIT.LINKED_REQUESTS; index += 1) {
+        filler.push(createRequest(randomUUID()));
+        try {
+          secretRequests.link(filler[index]);
+        } catch (error) {
+          assert.ok(error instanceof QueueRequestError && error.code === "secret_request_link_cap", String(error));
+          break;
+        }
+      }
+      const sessionId = await seedSession();
+      const requestId = createRequest(sessionId);
+
+      const posted = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+
+      assert.deepEqual(
+        [posted.statusCode, posted.json().error, await findLinkedItem(requestId), getLifetimeMs(requestId)],
+        [429, "secret_request_link_cap", null, SECRET_REQUEST_LIMIT.UNLINKED_MS],
+      );
+    } finally {
+      for (const requestId of filler) secretRequests.delete(requestId);
+    }
+  });
+
+  test("the server writes the item text: the same title, body and options for every request, the body naming the approving option", async () => {
+    const items = [];
+    for (let index = 0; index < 2; index += 1) {
+      const sessionId = await seedSession();
+      const requestId = createRequest(sessionId);
+      await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+      items.push(await findLinkedItem(requestId));
+    }
+    const [first, second] = items;
+    assert.ok(first && second, "an approval post stored no linked item");
+    const labels = getOptionLabels(first.options);
+    assert.deepEqual([second.title, second.body, second.options, second.recommendedCode], [first.title, first.body, first.options, first.recommendedCode]);
+    assert.deepEqual(Object.keys(labels), ["R1", "R2"]);
+    assert.ok(first.body.includes(`${labels.R1} (R1)`), first.body);
+  });
+
+  test("refuses a request that is not this session's, not pending or already linked, and links no further item", async () => {
+    const sessionId = await seedSession();
+    const rows = [
+      { name: "registered under another session id", prepare: async () => createRequest(await seedSession()), status: 404, error: "unknown_secret_request", linked: 0 },
+      { name: "never registered", prepare: async () => randomUUID(), status: 404, error: "unknown_secret_request", linked: 0 },
+      {
+        name: "registered, then declined, so gone from the store",
+        prepare: async () => {
+          const requestId = createRequest(sessionId);
+          secretRequests.delete(requestId);
+          return requestId;
+        },
+        status: 404,
+        error: "unknown_secret_request",
+        linked: 0,
+      },
+      {
+        name: "already approved",
+        prepare: async () => {
+          const requestId = createRequest(sessionId);
+          secretRequests.approve(requestId);
+          return requestId;
+        },
+        status: 409,
+        error: "secret_request_not_pending",
+        linked: 0,
+      },
+      {
+        name: "already linked to an item",
+        prepare: async () => {
+          const requestId = createRequest(sessionId);
+          await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+          return requestId;
+        },
+        status: 409,
+        error: "secret_request_linked",
+        linked: 1,
+      },
+    ];
+    for (const row of rows) {
+      const requestId = await row.prepare();
+      const response = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId));
+      const linked = await getPrisma().queueItem.count({ where: { secretRequestId: requestId } });
+      assert.deepEqual([response.statusCode, response.json().error, linked], [row.status, row.error, row.linked], row.name);
+    }
+  });
+
+  test("rejects a post carrying any field beyond the session and request ids, and stores nothing", async () => {
+    const sessionId = await seedSession();
+    const requestId = createRequest(sessionId);
+    const extras = [
+      { title: "Approve the config write" },
+      { body: "The retries line is a false positive." },
+      { options: [{ code: "R1", label: "Approve", pros: "", cons: "" }, { code: "R2", label: "Decline", pros: "", cons: "" }] },
+      { recommendedCode: "R1" },
+      { isApprovalClass: true },
+      { isFreeTextAllowed: true },
+      { linkedDocIds: [] },
+      { text: "Please approve." },
+      { agentId: hookPayloads.subagent.agent_id },
+      { requestSessionId: await seedSession() },
+    ];
+    for (const extra of extras) {
+      const response = await send("POST", "/api/queue/items", approvalPost(sessionId, requestId, extra));
+      assert.deepEqual([response.statusCode, response.json().error], [400, "invalid_input"], Object.keys(extra).join());
+    }
+    assert.equal(await findLinkedItem(requestId), null);
+  });
+
+  test("a malformed post echoes none of its field values in the response or the log", async () => {
+    const logLines: string[] = [];
+    const logged = await buildApp({ level: "trace", stream: { write: (line: string) => { logLines.push(line); } } });
+    try {
+      const sentinel = ["SENTINEL", randomUUID()].join("-");
+      const sessionId = await seedSession();
+      const bodies = [
+        { kind: "secret-approval", sessionId, requestId: sentinel },
+        { kind: "secret-approval", sessionId: sentinel, requestId: randomUUID() },
+        approvalPost(sessionId, randomUUID(), { note: sentinel }),
+        { kind: sentinel, sessionId, requestId: randomUUID() },
+      ];
+      const responses = [];
+      for (const body of bodies) {
+        responses.push(await logged.inject({ method: "POST", url: "/api/queue/items", headers: { host: HOST }, payload: body }));
+      }
+      assert.deepEqual(responses.map((response) => response.statusCode), [400, 400, 400, 400]);
+      assert.ok(logLines.length > 0, "the logger captured no line → its half of the check is empty");
+      assert.deepEqual(responses.filter((response) => response.body.includes(sentinel)).map((response) => response.body), []);
+      assert.deepEqual(logLines.filter((line) => line.includes(sentinel)), []);
+    } finally {
+      await logged.close();
+    }
+  });
+});
+
+const notLiveRows = [
+  { name: "row ended by its own process", seed: { state: "exited" as const, exitReason: "ended" as const }, pidOffset: 0 },
+  { name: "row replaced after a clear", seed: { state: "exited" as const, exitReason: "replaced" as const }, pidOffset: 0 },
+  { name: "live row of another process", seed: {}, pidOffset: 1 },
+];
+
+describe("pending (pull claim)", () => {
+  test("claims only the caller's answered items and inserts one pull delivery each", async () => {
+    const caller = await seedSession();
+    const other = await seedSession();
+    const answered = [await seedItem(caller, { status: "answered", nextAttempt: 2 }), await seedItem(caller, { status: "answered" })];
+    const open = await seedItem(caller);
+    const foreign = await seedItem(other, { status: "answered" });
+    const response = await send("POST", "/api/queue/pending", { sessionId: caller });
+    const deliveries = await getPrisma().queueDelivery.findMany({ where: { itemId: { in: [...answered, open, foreign] } } });
+    const claims: Array<{ id: { item: number; msg: string } }> = response.json().items;
+    const ids = { claimed: claims.map((claim) => BigInt(claim.id.item)).sort(), msg: new Set(deliveries.map((row) => row.msgId)) };
+    assert.deepEqual(ids.claimed, [...answered].sort());
+    assert.ok(claims.every((claim) => ids.msg.has(claim.id.msg)), "every claim names its own pull delivery");
+    assert.deepEqual(await Promise.all(answered.map(getStatus)), ["delivering", "delivering"]);
+    assert.deepEqual([await getStatus(open), await getStatus(foreign)], ["open", "answered"]);
+    assert.deepEqual(deliveries.map((row) => [row.itemId, row.route, row.attempt]).sort(), [[answered[0], "pull", 2], [answered[1], "pull", 1]].sort());
+  });
+
+  for (const row of notLiveRows) {
+    test(`a wait pull from a process the row is not live for is refused and claims nothing: ${row.name}`, async () => {
+      const pid = 700_000 + Math.floor(Math.random() * 100_000);
+      const sessionId = await seedSession({ ...row.seed, pid });
+      const itemId = await seedItem(sessionId, { status: "answered" });
+
+      const response = await send("POST", "/api/queue/pending", { sessionId, pid: pid + row.pidOffset, wait: true });
+
+      assert.deepEqual([response.statusCode, response.json().error], [409, "session_not_live"], row.name);
+      assert.equal(await getStatus(itemId), "answered", row.name);
+      assert.equal(await getPrisma().queueDelivery.count({ where: { itemId } }), 0, row.name);
+      assert.equal(isSessionWaiting(sessionId), false, row.name);
+    });
+  }
+
+  test("a wait pull from the row's own live process claims like a plain pull", async () => {
+    const pid = 700_000 + Math.floor(Math.random() * 100_000);
+    const sessionId = await seedSession({ pid });
+    const itemId = await seedItem(sessionId, { status: "answered" });
+
+    const response = await send("POST", "/api/queue/pending", { sessionId, pid, wait: true });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json().items.map((claim: { id: { item: number } }) => claim.id.item), [Number(itemId)]);
+    assert.equal(await getStatus(itemId), "delivering");
+  });
+
+  test("rejects a wait flag with no pid and a pid with no wait flag", async () => {
+    const sessionId = await seedSession();
+    for (const body of [{ sessionId, wait: true }, { sessionId, pid: 4242 }]) {
+      const response = await send("POST", "/api/queue/pending", body);
+      assert.equal(response.statusCode, 400, JSON.stringify(body));
+    }
+  });
+});
+
+describe("pending count (listener read)", () => {
+  test("counts only the caller's unclaimed answers and owner messages, claims nothing, and returns their count and ids", async () => {
+    const pid = 700_000 + Math.floor(Math.random() * 100_000);
+    const caller = await seedSession({ pid });
+    const other = await seedSession();
+    const items = [
+      await seedItem(caller, { status: "answered" }),
+      await seedItem(caller, ownerMessageItem()),
+      await seedItem(caller),
+      await seedItem(caller, { status: "delivering" }),
+      await seedItem(other, { status: "answered" }),
+    ];
+    const statusesBefore = await Promise.all(items.map(getStatus));
+
+    const response = await send("POST", "/api/queue/pending/count", { sessionId: caller, pid });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), { answeredWaiting: 2, relayWaiting: 0, answeredItemIds: [Number(items[0]), Number(items[1])] });
+    assert.deepEqual(await Promise.all(items.map(getStatus)), statusesBefore);
+    assert.equal(await getPrisma().queueDelivery.count({ where: { itemId: { in: items } } }), 0);
+  });
+
+  test("an unknown session is refused as the other session routes refuse it", async () => {
+    const sessionId = trackSessionId();
+
+    const response = await send("POST", "/api/queue/pending/count", { sessionId, pid: 4242 });
+
+    assert.deepEqual([response.statusCode, response.json().error], [404, "unknown_session"]);
+    assert.equal(isSessionWaiting(sessionId), false);
+  });
+
+  for (const row of notLiveRows) {
+    test(`a count read from a process the row is not live for is refused and marks no waiting: ${row.name}`, async () => {
+      const pid = 700_000 + Math.floor(Math.random() * 100_000);
+      const sessionId = await seedSession({ ...row.seed, pid });
+      await seedItem(sessionId, { status: "answered" });
+
+      const response = await send("POST", "/api/queue/pending/count", { sessionId, pid: pid + row.pidOffset });
+
+      assert.deepEqual([response.statusCode, response.json().error], [409, "session_not_live"], row.name);
+      assert.equal(isSessionWaiting(sessionId), false, row.name);
+    });
+  }
+
+  test("rejects a count read that names no pid", async () => {
+    const sessionId = await seedSession();
+
+    const response = await send("POST", "/api/queue/pending/count", { sessionId });
+
+    assert.equal(response.statusCode, 400, response.body);
+  });
+
+  test("the answered-ids bound is what one queue CLI pull drains: its pull rounds times the claim batch", () => {
+    const rounds = Number(/^readonly QUEUE_PULL_ROUNDS_MAX=(\d+)$/m.exec(readFileSync(QUEUE_OPS_SOURCE, "utf8"))?.[1]);
+
+    assert.equal(ANSWERED_IDS_LIMIT, rounds * PULL.BATCH_LIMIT);
+  });
+});
+
+describe("waiting fact", () => {
+  test("a count read makes its session waiting until the freshness window passes", async () => {
+    const pid = 700_000 + Math.floor(Math.random() * 100_000);
+    const sessionId = await seedSession({ pid });
+
+    await send("POST", "/api/queue/pending/count", { sessionId, pid });
+    const now = Date.now();
+
+    assert.deepEqual(
+      [isSessionWaiting(sessionId, new Date(now)), isSessionWaiting(sessionId, new Date(now + WAIT_FRESH_MS + 1_000))],
+      [true, false],
+    );
+  });
+
+  test("a wait pull makes its session waiting until the freshness window passes; a plain pull never does", async () => {
+    const pid = 700_000 + Math.floor(Math.random() * 100_000);
+    const waiting = await seedSession({ pid });
+    const plain = await seedSession();
+
+    await send("POST", "/api/queue/pending", { sessionId: waiting, pid, wait: true });
+    await send("POST", "/api/queue/pending", { sessionId: plain });
+    const now = Date.now();
+
+    assert.deepEqual(
+      [isSessionWaiting(waiting, new Date(now)), isSessionWaiting(waiting, new Date(now + WAIT_FRESH_MS + 1_000)), isSessionWaiting(plain, new Date(now))],
+      [true, false, false],
+    );
+  });
+
+  test("the freshness window is two of the queue CLI's wait poll intervals", () => {
+    const pollSeconds = Number(/^readonly WAIT_POLL_S=(\d+)$/m.exec(readFileSync(QUEUE_CLI_SOURCE, "utf8"))?.[1]);
+
+    assert.equal(WAIT_FRESH_MS, 2 * pollSeconds * 1_000);
+  });
+});
+
+describe("ack", () => {
+  test("the first valid ack wins in every ackable state and a repeat is already handled", async () => {
+    const sessionId = await seedSession();
+    for (const status of ["answered", "delivering", "unacked", "held", "expired", "resume_pending"] as const) {
+      const itemId = await seedItem(sessionId, { status });
+      const msgId = await seedDelivery(itemId);
+      const first = await send("POST", `/api/queue/items/${itemId}/ack`, { sessionId, msgId });
+      const repeat = await send("POST", `/api/queue/items/${itemId}/ack`, { sessionId, msgId });
+      assert.deepEqual([first.json().result, repeat.json().result], ["first", "already_handled"], status);
+      assert.equal(await getStatus(itemId), "delivered", status);
+    }
+  });
+
+  test("a late ack for an earlier msg id after a Resend still wins", async () => {
+    const sessionId = await seedSession();
+    const itemId = await seedItem(sessionId, { status: "answered", nextAttempt: 2 });
+    const earlierMsgId = await seedDelivery(itemId, 1);
+    const response = await send("POST", `/api/queue/items/${itemId}/ack`, { sessionId, msgId: earlierMsgId });
+    assert.equal(response.json().result, "first");
+  });
+
+  test("an ack on a terminal item is already handled and changes nothing", async () => {
+    const sessionId = await seedSession();
+    for (const status of ["delivered", "seen", "withdrawn"] as const) {
+      const itemId = await seedItem(sessionId, { status });
+      const msgId = await seedDelivery(itemId);
+      const response = await send("POST", `/api/queue/items/${itemId}/ack`, { sessionId, msgId });
+      assert.equal(response.json().result, "already_handled", status);
+      assert.equal(await getStatus(itemId), status, status);
+    }
+  });
+
+  test("rejects a msg id of another item and a caller naming another session", async () => {
+    const sessionId = await seedSession();
+    const itemId = await seedItem(sessionId, { status: "delivering" });
+    await seedDelivery(itemId);
+    const msgId = { foreign: await seedDelivery(await seedItem(sessionId, { status: "delivering" })), own: await seedDelivery(itemId) };
+    const foreignMsg = await send("POST", `/api/queue/items/${itemId}/ack`, { sessionId, msgId: msgId.foreign });
+    const foreignCaller = await send("POST", `/api/queue/items/${itemId}/ack`, { sessionId: await seedSession(), msgId: msgId.own });
+    assert.deepEqual([foreignMsg.statusCode, foreignCaller.statusCode], [404, 404]);
+    assert.equal(await getStatus(itemId), "delivering");
+  });
+});
+
+describe("withdraw", () => {
+  test("withdraws every non-terminal state except delivering, which is a conflict", async () => {
+    const sessionId = await seedSession();
+    const rows = [
+      ...(["open", "answered", "unacked", "held", "expired", "resume_pending"] as const).map((status) => ({ status, code: 200, after: "withdrawn" })),
+      ...(["delivering", "delivered", "seen", "withdrawn"] as const).map((status) => ({ status, code: 409, after: status })),
+    ];
+    for (const row of rows) {
+      const itemId = await seedItem(sessionId, { status: row.status });
+      const response = await send("POST", `/api/queue/items/${itemId}/withdraw`, { sessionId });
+      assert.equal(response.statusCode, row.code, row.status);
+      assert.equal(await getStatus(itemId), row.after, row.status);
+    }
+  });
+
+  test("a withdraw closes an open item at that write and keeps an answered item's answer time", async () => {
+    const sessionId = await seedSession();
+    const answeredAt = new Date("2026-11-19T05:41:07.318Z");
+    const rows = [
+      { name: "open report", seed: {}, closedAt: "write" },
+      { name: "open decision", seed: decisionItem(), closedAt: "write" },
+      { name: "answered decision", seed: decisionItem({ status: "answered", answerCode: "R2", answeredAt }), closedAt: answeredAt },
+    ];
+    for (const row of rows) {
+      const itemId = await seedItem(sessionId, row.seed);
+      const sentAt = new Date();
+      await send("POST", `/api/queue/items/${itemId}/withdraw`, { sessionId });
+      const { status, closedAt } = await getPrisma().queueItem.findUniqueOrThrow({ where: { id: itemId } });
+      const isWriteTime = closedAt !== null && closedAt >= sentAt && closedAt <= new Date();
+      assert.deepEqual([status, isWriteTime ? "write" : closedAt], ["withdrawn", row.closedAt], row.name);
+    }
+  });
+
+  test("refuses an owner message or a peer's relay in every withdrawable state and leaves it in place", async () => {
+    const sessionId = await seedSession();
+    const peer = await seedSession();
+    const kinds = [
+      { name: "owner message", fields: ownerMessageItem() },
+      { name: "relay", fields: { kind: "relay" as const, fromSessionId: peer, relayHop: 0, title: "Lint is green", body: "Lint is green.", isFreeTextAllowed: false } },
+    ];
+    for (const kind of kinds) {
+      for (const status of ["answered", "unacked", "held", "expired", "resume_pending"] as const) {
+        const itemId = await seedItem(sessionId, { ...kind.fields, status });
+        const response = await send("POST", `/api/queue/items/${itemId}/withdraw`, { sessionId });
+        assert.deepEqual([response.statusCode, response.json().error], [409, "not_withdrawable"], `${kind.name} ${status}`);
+        assert.equal(await getStatus(itemId), status, `${kind.name} ${status}`);
+      }
+    }
+  });
+});
+
+describe("peers", () => {
+  test("lists only live, listed sessions other than the caller, by id prefix and never a full id", async () => {
+    const caller = await seedSession();
+    const missingTranscript = path.join(fixtureRoot, "projects", `${randomUUID()}.jsonl`);
+    const id = {
+      named: await seedSession({ name: "queue relay", cwd: "/Users/owner/Desktop/git/library" }),
+      probe: await seedSession({ isProbe: true }),
+      unused: await seedSession({ transcriptPath: missingTranscript }),
+      stale: await seedSession({ state: "stale" }),
+      exited: await seedSession({ state: "exited", exitReason: "ended" }),
+    };
+    await seedItem(id.exited);
+
+    const response = await send("POST", "/api/queue/peers", { sessionId: caller });
+
+    assert.equal(response.statusCode, 200, response.body);
+    const peers = response.json().peers as Array<Record<string, unknown>>;
+    const named = peers.find((peer) => peer.sessionIdPrefix === id.named.slice(0, 8));
+    assert.deepEqual(named, {
+      sessionIdPrefix: id.named.slice(0, 8),
+      name: "queue relay",
+      isNameRegistered: true,
+      profileLabel: "default",
+      cwdTail: "git/library",
+      state: "live",
+      isWaiting: false,
+    });
+    for (const sessionId of [caller, ...Object.values(id)]) {
+      assert.ok(!response.body.includes(sessionId), "no full session id in the reply");
+    }
+    const prefixes = new Set(peers.map((peer) => peer.sessionIdPrefix));
+    for (const hidden of [caller, id.probe, id.unused, id.stale, id.exited]) {
+      assert.ok(!prefixes.has(hidden.slice(0, 8)), "caller, probe, unused, stale and exited rows are no peers");
+    }
+  });
+
+  test("refuses any browser signal — Origin, Referer, any fetch metadata header or a Cookie — before any query; only the header-less request reads", async () => {
+    const caller = await seedSession();
+    const rows = [
+      { name: "foreign Origin", headers: { origin: "https://evil.example" } as Record<string, string>, status: 403 },
+      { name: "loopback Origin on another port, no fetch metadata", headers: { origin: "http://127.0.0.1:5173" }, status: 403 },
+      { name: "cross-site fetch metadata", headers: { "sec-fetch-site": "cross-site" }, status: 403 },
+      { name: "same-origin fetch metadata", headers: { "sec-fetch-site": "same-origin" }, status: 403 },
+      { name: "fetch mode alone", headers: { "sec-fetch-mode": "cors" }, status: 403 },
+      { name: "fetch destination alone", headers: { "sec-fetch-dest": "empty" }, status: 403 },
+      { name: "Referer alone", headers: { referer: `http://${HOST}/queue` }, status: 403 },
+      { name: "Cookie alone", headers: { cookie: "theme=dark" }, status: 403 },
+      { name: "header-less", headers: {}, status: 200 },
+    ];
+    for (const row of rows) {
+      const { result: response, queries } = await recordQueries(() => send("POST", "/api/queue/peers", { sessionId: caller }, { headers: row.headers }));
+      assert.deepEqual([response.statusCode, queries.length > 0], [row.status, row.status === 200], row.name);
+    }
+  });
+
+  test("an unknown caller is refused as the other session routes refuse it", async () => {
+    const response = await send("POST", "/api/queue/peers", { sessionId: randomUUID() });
+    assert.deepEqual([response.statusCode, response.json().error], [404, "unknown_session"]);
+  });
+});
+
+describe("count", () => {
+  test("counts open items as awaiting and only the unacked, held, expired and resume-pending items as deviations, none of a probe session's and no relay", async () => {
+    const readCount = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> =>
+      (await send("GET", "/api/queue/count")).json();
+    const measureSeedDelta = async (): Promise<{ awaiting: number; deviations: number; oldestAgeSeconds: number | null }> => {
+      const baseline = await readCount();
+      const live = await seedSession();
+      const noSocket = await seedSession({ socketPath: null });
+      const stale = await seedSession({ state: "stale" });
+      await seedItem(live, { status: "open", askedAt: new Date(Date.now() - 3_600_000) });
+      for (const status of ["unacked", "held", "expired", "resume_pending"] as const) await seedItem(live, { status });
+      for (const sessionId of [live, noSocket, stale]) await seedItem(sessionId, { status: "answered" });
+      const probe = await seedSession({ isProbe: true });
+      for (const status of ["open", "unacked"] as const) await seedItem(probe, { status, askedAt: new Date(Date.now() - 7_200_000) });
+      for (const status of ["unacked", "held", "expired"] as const) {
+        await seedItem(live, { kind: "relay", fromSessionId: stale, relayHop: 0, isFreeTextAllowed: false, status, askedAt: new Date(Date.now() - 7_200_000) });
+      }
+      const counted = await readCount();
+      return { awaiting: counted.awaiting - baseline.awaiting, deviations: counted.deviations - baseline.deviations, oldestAgeSeconds: counted.oldestAgeSeconds };
+    };
+    // the count is database-wide → measured while no other suite holds queue items
+    const delta = await withQueueRowsExclusive(measureSeedDelta);
+    assert.deepEqual({ awaiting: delta.awaiting, deviations: delta.deviations }, { awaiting: 1, deviations: 4 }, "an answered item waits for its session's pull, never a deviation");
+    assert.ok((delta.oldestAgeSeconds ?? 0) >= 3600 && (delta.oldestAgeSeconds ?? 0) < 7200, `oldest age ${delta.oldestAgeSeconds}`);
+  });
+});

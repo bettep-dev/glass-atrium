@@ -3,8 +3,8 @@
 #   - PostToolUse(Edit|Write): on .ts/.tsx edit, append PROJECT_ROOT to the per-session marker
 #     only (no tsc) — keeps every edit sub-second (marker append, not a full recompile).
 #   - Stop / SubagentStop: marker present → run tsc --noEmit once per recorded root, then remove.
-# Non-blocking: type error → exit 0 + stderr only (Stop is observe-only — exit 2 cannot reverse an
-# ended turn). Marker key = session_id (Stop payload carries no file_path). emit_error EXEMPT: raw
+# Non-blocking: type error → exit 0 + stderr only (by choice — a Stop block would continue the turn,
+# never undo it). Marker key = session_id (Stop payload carries no file_path). emit_error EXEMPT: raw
 # tsc output IS the error display. tsc resolution: ${root}/node_modules/.bin/tsc, else npx tsc.
 # Env (testing): TYPECHECK_MARKER_DIR (marker dir) · TYPECHECK_DRY_RUN=1 (print plan, no tsc).
 

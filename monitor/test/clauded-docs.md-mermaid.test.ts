@@ -23,6 +23,7 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import vm from "node:vm";
 
 import { marked } from "marked";
 import { chromium, type Browser } from "playwright";
@@ -40,6 +41,7 @@ import {
   MERMAID_RENDERED_SVG_SELECTOR,
 } from "../src/server/clauded-docs/mermaid-selector.js";
 import { evaluateMermaidConfig } from "./lib/mermaid-config-source.js";
+import { loadScreenModule } from "./lib/render-screen.js";
 import { assertFallbackWarningVisible, createFallbackWatch } from "./lib/mermaid-elk-probe.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -89,21 +91,10 @@ function loadInjectMdTypographyClasses(): (html: string) => string {
   return new Function(`${source}\nreturn ${name};`)() as (html: string) => string;
 }
 
-/**
- * The viewer's own DOMPurify config, lifted from the source file.
- *
- * Same slice technique and same reason as the injector above: a copy of the
- * config here would let the test pass while the shipped sanitizer stripped the
- * container. Sliced on the column-0 `};`.
- */
-function loadDompurifyConfig(): Record<string, unknown> {
-  const jsx = readFileSync(VIEWER_SCREEN_PATH, "utf8");
-  const open = jsx.indexOf("const DOMPURIFY_CONFIG_CD = {");
-  assert.notEqual(open, -1, "DOMPURIFY_CONFIG_CD not found in clauded-docs.jsx");
-  const close = jsx.indexOf("\n};\n", open);
-  assert.notEqual(close, -1, "DOMPURIFY_CONFIG_CD has no column-0 closing brace");
-  const source = jsx.slice(open, close + 3);
-  return new Function(`${source}\nreturn DOMPURIFY_CONFIG_CD;`)() as Record<string, unknown>;
+/** The viewer's own DOMPurify config, as the shipped ui.jsx exposes it (a copy here could pass while the shipped sanitizer stripped the container). */
+async function loadDompurifyConfig(): Promise<Record<string, unknown>> {
+  const ui = (await loadScreenModule(resolve(MONITOR_ROOT, "public/src/ui.jsx"))).UI as { SANITIZE_CONFIG: Record<string, unknown> };
+  return ui.SANITIZE_CONFIG;
 }
 
 let injectorCache: ((html: string) => string) | null = null;
@@ -246,12 +237,16 @@ async function renderInViewer(convertedHtml: string): Promise<ViewerRender> {
   }
 }
 
-test("the viewer's selector copy matches the server constant byte for byte", () => {
-  const jsx = readFileSync(VIEWER_SCREEN_PATH, "utf8");
-  const declaration = /const MERMAID_NODE_SELECTOR_CD = "([^"]*)";/.exec(jsx);
-  assert.notEqual(declaration, null, "clauded-docs.jsx declares no MERMAID_NODE_SELECTOR_CD");
+test("the viewer's selector copy matches the server constant byte for byte", async () => {
+  const ui = await loadScreenModule(resolve(MONITOR_ROOT, "public/src/ui.jsx"));
+  const docsScreen = await loadScreenModule(VIEWER_SCREEN_PATH, {
+    UI: ui.UI,
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  });
+  const selector: unknown = vm.runInContext("typeof MERMAID_NODE_SELECTOR_CD === 'undefined' ? undefined : MERMAID_NODE_SELECTOR_CD", docsScreen);
+  assert.equal(typeof selector, "string", "clauded-docs.jsx declares no MERMAID_NODE_SELECTOR_CD");
   assert.equal(
-    (declaration as RegExpExecArray)[1],
+    selector,
     MERMAID_NODE_SELECTOR,
     "the viewer's selector copy has drifted from mermaid-selector.ts — a document would " +
       "then validate, export and still show a code block, with nothing red anywhere",
@@ -463,7 +458,7 @@ test("the diagram container survives the viewer's sanitizer with its source inta
   // different React would be a claim about code no reader runs. The sanitizer is
   // where the risk is; React cannot drop a className off a parsed node.
   const converted = convertMdBody(MD_BODY);
-  const config = loadDompurifyConfig();
+  const config = await loadDompurifyConfig();
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.route("**/*", (route) => route.abort());

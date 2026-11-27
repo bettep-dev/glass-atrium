@@ -1,0 +1,622 @@
+#!/usr/bin/env bash
+# queue-session.sh — the owner queue's session side, shared by the SessionStart / SessionEnd / Stop hooks and the
+# queue CLI so each has one owner: the register and deregister steps, the name refresh, the count line, the shadowing
+# check, the monitor reply framing, the item status sets and read, the awaiting marks, the turn record and the
+# wait-lock reader. Sourced, not executable; never reads the messaging token, and sends a pid, never a start time.
+
+if [[ -n "${_QUEUE_SESSION_LOADED:-}" ]]; then
+  return 0
+fi
+readonly _QUEUE_SESSION_LOADED=1
+
+# shellcheck source-path=SCRIPTDIR source=atrium-config.sh
+source "${BASH_SOURCE[0]%/*}/atrium-config.sh"
+# shellcheck source-path=SCRIPTDIR source=path-guard.sh
+source "${BASH_SOURCE[0]%/*}/path-guard.sh"
+
+readonly QUEUE_CONNECT_TIMEOUT_S=1
+readonly QUEUE_MAX_TIME_S=2
+readonly QUEUE_UUID_SHAPE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+readonly QUEUE_PID_SHAPE='^[1-9][0-9]{0,9}$'
+readonly QUEUE_ITEM_ID_SHAPE='^[1-9][0-9]{0,15}$'
+# another session's awaiting set untouched this long → that session is gone (a kill or a closed terminal skips SessionEnd)
+readonly QUEUE_AWAITING_TTL_DAYS=30
+readonly QUEUE_PERMISSION_HINTS=' default acceptEdits auto bypassPermissions dontAsk plan '
+# the item states nothing moves on from; the set itself is the monitor's TERMINAL in registry.ts
+# (queue-turn-end-check.bats compares the two)
+# shellcheck disable=SC2034  # read by the sourcing turn-end hook
+readonly QUEUE_TERMINAL_STATUSES=' delivered seen withdrawn '
+# the kinds a session posts → an owner message or a relay is never an item this session posted
+readonly QUEUE_POSTED_KINDS=' report decision '
+# the states a running wait carries forward: open (no answer yet) and answered (claimed by the wait)
+# shellcheck disable=SC2034  # read by the sourcing turn-end hook
+readonly QUEUE_WAIT_RESOLVED_STATUSES=' open answered '
+# the holder kind a listener's lock record ends with ("…|owner start|listen"); a session-run wait's record has none
+readonly QUEUE_LISTENER_KIND=listen
+# a listener's mark in its session's awaiting set: "<owner pid>|<its start>" of the Claude process it listens for
+readonly QUEUE_LISTENING_MARK=.listening
+# the same items to the same Claude process → named again only after this long, by the turn-end check's wait nudge and
+# the listener's re-announce alike → a wait that fails fast starts no loop, and an ignored wake is not repeated at once
+readonly QUEUE_NUDGE_INTERVAL_MIN=10
+# in code points; the number itself is the monitor's SESSION_NAME_MAX (atrium-queue.bats compares the two)
+readonly QUEUE_NAME_MAX=100
+# the Atrium queue's MCP server name; a project or local server of the same name replaces it in a session
+readonly QUEUE_MCP_SERVER_NAME=atrium-queue
+# the one value of ATRIUM_QUEUE_PROBE that declares this session a probe at every register: hidden on the Queue page,
+# refused as a message or relay target and as a relay sender
+readonly QUEUE_PROBE_DECLARED=1
+# the record's write time, in the transcript's own timestamp form → the turn-end check compares the two as strings
+readonly QUEUE_RECORD_TIME_SHAPE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$'
+# space: the whitespace JS String.prototype.trim strips → a name the monitor would read as blank is never sent
+QUEUE_NAME_JQ="$(
+  cat <<'JQ'
+def space: "[\\s\\p{Zs}\\x{FEFF}\\x{2028}\\x{2029}]";
+$name | explode | map(if . < 32 or (. >= 127 and . < 160) then 32 else . end) | implode
+| sub("^\(space)+"; "")
+| explode | .[:$max] | implode | sub("\(space)+$"; "")
+| select(test("[^" + (space | .[1:-1]) + "]"))
+JQ
+)"
+readonly QUEUE_NAME_JQ
+
+queue_get_root() {
+  printf '%s\n' "${GA_ROOT:-${HOME}/.glass-atrium}"
+}
+
+# The installed CLI's absolute path — the one literal the pointer line and the help name.
+queue_get_cli_path() {
+  local root
+  root="$(queue_get_root)"
+  printf '%s/scripts/atrium-queue.sh\n' "${root}"
+}
+
+queue_get_token_dir() {
+  local root
+  root="$(queue_get_root)"
+  printf '%s/data/queue/tokens\n' "${root}"
+}
+
+# This session's id: $1 (a hook payload's session_id) when a UUID, else the one this Claude process last registered
+# (queue_get_registered_session_id), else the session env; empty when none is
+queue_get_session_id() {
+  local id="${1:-}"
+  [[ "${id}" =~ ${QUEUE_UUID_SHAPE} ]] || id="$(queue_get_registered_session_id)"
+  [[ "${id}" =~ ${QUEUE_UUID_SHAPE} ]] || id="${CLAUDE_CODE_SESSION_ID:-}"
+  if [[ "${id}" =~ ${QUEUE_UUID_SHAPE} ]]; then printf '%s\n' "${id}"; fi
+}
+
+# <pid> → the path of its owner record: "<its start>|<session id>", written by each SessionStart register → a /clear's
+# new id reaches every later call, though an already-started process (the MCP server) keeps the old id in its env
+queue_get_owner_record_path() {
+  local root
+  root="$(queue_get_root)"
+  printf '%s/data/queue/owners/%s\n' "${root}" "$1"
+}
+
+# → the session id the owner record of CLAUDE_PID names while that process still runs with the recorded start;
+# nothing for no pid, no record, a recycled pid or an unreadable record
+queue_get_registered_session_id() {
+  local pid record recorded="" id="" started
+  pid="$(queue_get_pid)"
+  [[ -n "${pid}" ]] || return 0
+  record="$(queue_get_owner_record_path "${pid}")"
+  [[ -f "${record}" ]] || return 0
+  IFS='|' read -r recorded id <"${record}" || true
+  started="$(queue_get_start_time "${pid}")"
+  if [[ -n "${recorded}" && "${recorded}" == "${started}" ]]; then printf '%s\n' "${id}"; fi
+}
+
+# <session id> <pid> → the owner record names the session for that process; a record not written leaves the session
+# env as the fallback → never the register's result
+queue_put_owner_record() {
+  local record started
+  record="$(queue_get_owner_record_path "$2")"
+  started="$(queue_get_start_time "$2")"
+  [[ -n "${started}" ]] || return 0
+  queue_delete_dead_owner_records "${record%/*}"
+  { mkdir -p -- "${record%/*}" && printf '%s|%s\n' "${started}" "$1" >"${record}"; } 2>/dev/null || true
+}
+
+# <owners dir> → drops each pid-named record whose process is gone or runs with another start than recorded → a
+# session that never ran its deregister leaves no record behind past the next register
+queue_delete_dead_owner_records() {
+  local record recorded started
+  for record in "$1"/*; do
+    [[ "${record##*/}" =~ ^[0-9]+$ && -f "${record}" ]] || continue
+    recorded=""
+    IFS='|' read -r recorded _ <"${record}" || true
+    started="$(queue_get_start_time "${record##*/}")"
+    if [[ -n "${started}" && "${started}" == "${recorded}" ]]; then continue; fi
+    if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
+  done
+}
+
+# <session id> <pid> → the owner record goes when it names that session
+queue_delete_owner_record() {
+  local record id=""
+  record="$(queue_get_owner_record_path "$2")"
+  [[ -f "${record}" ]] || return 0
+  IFS='|' read -r _ id <"${record}" || true
+  [[ "${id}" == "$1" ]] || return 0
+  if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
+}
+
+# The session's start directory: $1 (a hook payload's cwd) when an absolute directory, else this process's cwd.
+# The server resumes from it and finds the worktree root from it, so a Bash-tool `cd` must never move it.
+queue_get_cwd() {
+  local cwd="${1:-}"
+  [[ "${cwd}" == /* && -d "${cwd}" ]] || cwd="${PWD}"
+  printf '%s\n' "${cwd}"
+}
+
+queue_get_pid() {
+  local pid="${CLAUDE_PID:-}"
+  if [[ "${pid}" =~ ${QUEUE_PID_SHAPE} ]]; then printf '%s\n' "${pid}"; fi
+}
+
+queue_get_socket_path() {
+  local socket="${CLAUDE_CODE_MESSAGING_SOCKET:-}"
+  if [[ "${socket}" == /* ]]; then printf '%s\n' "${socket}"; fi
+}
+
+# <method> <route> [json body | - for the body on stdin] [max seconds] → the reply body, then a last line holding
+# the HTTP status; non-zero only with no reply at all (unreachable or slow).
+queue_send() {
+  local method="$1" route="$2" body="${3:-}" max_time="${4:-${QUEUE_MAX_TIME_S}}" port
+  port="$(atrium_monitor_port 2>/dev/null)" || return 1
+  local -a args=(--silent --connect-timeout "${QUEUE_CONNECT_TIMEOUT_S}" --max-time "${max_time}"
+    --request "${method}" --write-out '\n%{http_code}')
+  if [[ -n "${body}" ]]; then
+    # curl reads a stdin body itself → a body that must stay off every argument list never reaches one
+    [[ "${body}" != - ]] || body=@-
+    args+=(--header 'content-type: application/json' --data-binary "${body}")
+  fi
+  curl "${args[@]}" "http://127.0.0.1:${port}${route}" 2>/dev/null
+}
+
+# <queue_send reply> → its HTTP status
+queue_get_reply_code() {
+  printf '%s\n' "${1##*$'\n'}"
+}
+
+# <queue_send reply> → its body
+queue_get_reply_body() {
+  printf '%s\n' "${1%$'\n'*}"
+}
+
+# POST <route> <json body> [max seconds] → reply body on stdout; non-zero when unreachable, slow or refused.
+queue_post() {
+  local reply code
+  # shellcheck disable=SC2310  # no reply → this function's own failure, never an errexit
+  reply="$(queue_send POST "$1" "$2" "${3:-}")" || return 1
+  code="$(queue_get_reply_code "${reply}")"
+  [[ "${code}" == 2?? ]] || return 1
+  queue_get_reply_body "${reply}"
+}
+
+# <text> → the name the monitor accepts: control characters as spaces, trimmed, cut to QUEUE_NAME_MAX; nothing when blank
+queue_get_shown_name() {
+  jq -rn --arg name "$1" --argjson max "${QUEUE_NAME_MAX}" "${QUEUE_NAME_JQ}"
+}
+
+# This session's derived name → stdout, shown form; nothing when no source holds one. Sources in order:
+# the background job's state when it names session $2 · the last custom title, else the last AI title, in transcript $1
+queue_get_derived_name() {
+  local name
+  name="$(queue_get_job_name "$2")"
+  [[ -n "${name}" ]] || name="$(queue_get_transcript_title "$1")"
+  if [[ -n "${name}" ]]; then queue_get_shown_name "${name}"; fi
+}
+
+# a job dir inherited by another session's process names that job's session, not this one
+queue_get_job_name() {
+  local state="${CLAUDE_JOB_DIR:-}/state.json"
+  [[ "${CLAUDE_JOB_DIR:-}" == /* && -f "${state}" ]] || return 0
+  jq -r --arg id "$1" 'select(.sessionId == $id or .resumeSessionId == $id) | .name | strings' "${state}" 2>/dev/null || return 0
+}
+
+# title records only → the transcript's conversation text is never parsed
+queue_get_transcript_title() {
+  local transcript="${1:-}"
+  [[ "${transcript}" == /* && -f "${transcript}" ]] || return 0
+  { grep -F -e '"custom-title"' -e '"ai-title"' -- "${transcript}" 2>/dev/null || true; } \
+    | jq -Rrn '[inputs | fromjson? | objects] | (map(select(.type == "custom-title") | .customTitle | strings) | last)
+      // (map(select(.type == "ai-title") | .aiTitle | strings) | last) // empty' 2>/dev/null || return 0
+}
+
+# The register step: the register POST → "<owner count> <relay count>" on stdout (queue_get_answered_counts), after writing back an awaiting mark for
+# each item the reply lists (the marks a SessionEnd cleared → a resumed session gets them back).
+# All optional: $1 permission mode hint (dropped unless one the monitor accepts) · $2 max seconds ·
+# $3 cwd and $4 session id from a hook payload (queue_get_cwd / queue_get_session_id fallbacks) ·
+# $5 an explicit session name, already in shown form (queue_get_shown_name), sent as name ·
+# $6 the payload's transcript path, sent as transcriptPath (the monitor keeps it only under the profile's projects/)
+# and, without $5, read by queue_get_derived_name, sent as derivedName
+# (the monitor lets only an explicit name replace an explicit one)
+queue_register_session() {
+  local hint="${1:-}" max_time="${2:-}" cwd session_id pid name="${5:-}" derived_name="" transcript="${6:-}" body reply
+  local is_probe=false
+  session_id="$(queue_get_session_id "${4:-}")"
+  pid="$(queue_get_pid)"
+  [[ -n "${session_id}" && -n "${pid}" ]] || return 1
+  queue_put_owner_record "${session_id}" "${pid}"
+  [[ "${QUEUE_PERMISSION_HINTS}" == *" ${hint} "* ]] || hint=""
+  [[ "${transcript}" == /* ]] || transcript=""
+  if [[ "${ATRIUM_QUEUE_PROBE:-}" == "${QUEUE_PROBE_DECLARED}" ]]; then is_probe=true; fi
+  cwd="$(queue_get_cwd "${3:-}")"
+  if [[ -z "${name}" ]]; then derived_name="$(queue_get_derived_name "${transcript}" "${session_id}")" || derived_name=""; fi
+  body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${pid}" --arg cwd "${cwd}" \
+    --arg configDir "${CLAUDE_CONFIG_DIR:-}" --arg permissionHint "${hint}" --arg name "${name}" \
+    --arg derivedName "${derived_name}" --arg transcriptPath "${transcript}" \
+    --argjson isProbe "${is_probe}" \
+    '{$sessionId, $pid, $cwd, $configDir, $permissionHint, $name, $derivedName, $transcriptPath, $isProbe}
+      | with_entries(select(.value != ""))')" || return 1
+  reply="$(queue_post /api/queue/sessions/register "${body}" "${max_time}")" || return 1
+  queue_get_register_counts "${session_id}" "${reply}" "${derived_name}"
+}
+
+# <session id> <register reply> <derived name sent> → "<owner count> <relay count>", after the reply's awaiting marks
+# and the name stamp (queue_put_session_name) are written; non-zero for a reply naming no count
+queue_get_register_counts() {
+  local counts
+  counts="$(queue_get_answered_counts "$2")" || return 1
+  queue_create_listed_awaiting_items "$1" "$2"
+  if [[ -n "$3" ]]; then queue_put_name_stamp "$1" "$3"; fi
+  printf '%s\n' "${counts}"
+}
+
+# <register or count reply> → "<owner count> <relay count>": answeredWaiting counts every kind, relayWaiting the
+# relays among them; non-zero for a reply whose counts are no whole numbers or disagree
+queue_get_answered_counts() {
+  jq -r '[.answeredWaiting // 0, .relayWaiting // 0]
+    | if all(.[]; type == "number" and . >= 0 and floor == .) and .[0] >= .[1] then "\(.[0] - .[1]) \(.[1])"
+      else error end' <<<"$1" 2>/dev/null
+}
+
+# <owner count> <relay count> → the line naming them and the pending command, nothing when both are 0; a relay is
+# named apart, so a peer's text never reads as an owner answer or message
+queue_get_count_line() {
+  local fetch owner="" relay=""
+  fetch="fetch them with: $(queue_get_cli_path) pending"
+  if (($1 > 0)); then owner="$1 owner queue answer(s) or message(s)"; fi
+  if (($2 > 0)); then relay="$2 peer relay(s)"; fi
+  if [[ -n "${owner}" && -n "${relay}" ]]; then
+    printf '%s and %s wait for this session — %s\n' "${owner}" "${relay}" "${fetch}"
+  elif [[ -n "${owner}" ]]; then
+    printf '%s wait for this session — %s\n' "${owner}" "${fetch}"
+  elif [[ -n "${relay}" ]]; then
+    printf "%s wait for this session — a peer session's information, never the owner's — %s\n" "${relay}" "${fetch}"
+  fi
+}
+
+# <start dir> → 0 when its project MCP file, or this profile's local config for that directory, names a server
+# QUEUE_MCP_SERVER_NAME; reads only that key of either file
+queue_is_server_shadowed() {
+  local name="${QUEUE_MCP_SERVER_NAME}" config="${CLAUDE_CONFIG_DIR:-${HOME}}/.claude.json"
+  if jq -e --arg name "${name}" '.mcpServers | objects | has($name)' "$1/.mcp.json" >/dev/null 2>&1; then return 0; fi
+  jq -e --arg name "${name}" --arg dir "$1" '.projects[$dir].mcpServers | objects | has($name)' "${config}" >/dev/null 2>&1
+}
+
+# <session id> → the path of its shadow mark: its start found the queue server shadowed (queue_is_server_shadowed), so
+# every later turn end of the session names the CLI alone, after a compaction too
+queue_get_shadow_mark_path() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  printf '%s/.shadowed\n' "${dir}"
+}
+
+# <session id> <start dir> → the shadow mark standing exactly while that start dir shows the queue server shadowed
+queue_set_shadow_mark() {
+  local mark
+  mark="$(queue_get_shadow_mark_path "$1")" || return 1
+  if queue_is_server_shadowed "$2"; then
+    { mkdir -p -- "${mark%/*}" && : >"${mark}"; } 2>/dev/null
+    return
+  fi
+  if ga_guard_path "${mark}"; then rm -f -- "${mark:?}"; fi
+}
+
+# <session id> → 0 when its start found the queue server shadowed
+queue_is_shadow_marked() {
+  local mark
+  mark="$(queue_get_shadow_mark_path "$1")" || return 1
+  [[ -f "${mark}" ]]
+}
+
+# <transcript path> [session id from a hook payload] → the derived name (queue_get_derived_name) sent as a name-only
+# register once it differs from the last one sent for this session; nothing sent with no name, pid or session id.
+# Non-zero only when an update was due and the monitor did not accept it → the next turn end sends it again.
+queue_put_session_name() {
+  local session_id pid name stamp body
+  session_id="$(queue_get_session_id "${2:-}")"
+  pid="$(queue_get_pid)"
+  [[ -n "${session_id}" && -n "${pid}" ]] || return 0
+  name="$(queue_get_derived_name "${1:-}" "${session_id}")" || name=""
+  [[ -n "${name}" ]] || return 0
+  stamp="$(queue_get_name_stamp_path "${session_id}")"
+  if [[ -f "${stamp}" && "$(<"${stamp}")" == "${name}" ]]; then return 0; fi
+  body="$(jq -nc --arg sessionId "${session_id}" --argjson pid "${pid}" --arg derivedName "${name}" \
+    '{$sessionId, $pid, $derivedName}')"
+  queue_post /api/queue/sessions/register "${body}" "${QUEUE_CONNECT_TIMEOUT_S}" >/dev/null || return 1
+  queue_put_name_stamp "${session_id}" "${name}"
+}
+
+# <session id> → the path of the last derived name sent for it
+queue_get_name_stamp_path() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  printf '%s/.named\n' "${dir}"
+}
+
+# <session id> <name> → the name stamp; a stamp not written costs one repeated update → never the caller's result
+queue_put_name_stamp() {
+  local stamp
+  stamp="$(queue_get_name_stamp_path "$1")" || return 0
+  { mkdir -p -- "${stamp%/*}" && printf '%s\n' "$2" >"${stamp}"; } 2>/dev/null || true
+}
+
+# <session id> <register reply> → an awaiting mark per id in its awaitingItemIds; an older monitor's reply lists none.
+# A mark that cannot be written costs only a turn-end reminder → never the register's result.
+queue_create_listed_awaiting_items() {
+  local ids id
+  ids="$(jq -r '.awaitingItemIds // [] | .[] | numbers | tostring' <<<"$2" 2>/dev/null)" || return 0
+  while IFS= read -r id; do
+    # shellcheck disable=SC2310  # a failed mark → the next id, per the header
+    if [[ -n "${id}" ]]; then queue_create_awaiting_item "$1" "${id}" || continue; fi
+  done <<<"${ids}"
+}
+
+# The deregister step: pid, else the socket path (the monitor reads the pid from its name), else the id alone.
+# The session's awaiting set goes only when the reply says this deregister ended the session, and only with a pid:
+# - another process still running the same session id → its marks stay, else its turn-end check finds none
+# - the register that writes the marks back at a resume needs a pid → a host without one keeps its set
+# - an older monitor's reply says nothing → kept; the stale-set prune drops a kept set later
+# $1: session id from a hook payload (optional; queue_get_session_id fallback)
+queue_deregister_session() {
+  local session_id pid socket body token_file reply is_ended
+  session_id="$(queue_get_session_id "${1:-}")"
+  [[ -n "${session_id}" ]] || return 1
+  pid="$(queue_get_pid)"
+  socket=""
+  [[ -n "${pid}" ]] || socket="$(queue_get_socket_path)"
+  body="$(jq -nc --arg sessionId "${session_id}" --arg pid "${pid}" --arg socketPath "${socket}" \
+    '{$sessionId, pid: ($pid | if . == "" then null else tonumber end), $socketPath} | with_entries(select(.value != "" and .value != null))')" || return 1
+  # retired messaging token → also deleted here, not only by the monitor sweep, so a down monitor leaves none behind
+  token_file="$(queue_get_token_dir)/${session_id}"
+  if ga_guard_path "${token_file}"; then rm -f -- "${token_file:?}"; fi
+  if [[ -n "${pid}" ]]; then queue_delete_owner_record "${session_id}" "${pid}"; fi
+  reply="$(queue_post /api/queue/sessions/deregister "${body}")" || return 1
+  if [[ -n "${pid}" ]]; then
+    is_ended="$(jq -r '.isEnded == true' <<<"${reply}" 2>/dev/null)" || is_ended=false
+    if [[ "${is_ended}" == true ]]; then queue_delete_awaiting_set "${session_id}"; fi
+  fi
+}
+
+# <session id> → the path of its wait lock
+queue_get_wait_lock_path() {
+  local root
+  root="$(queue_get_root)"
+  printf '%s/data/queue/waits/%s\n' "${root}" "$1"
+}
+
+# <session id> → this Claude process's view of the session's wait lock: none · live (a running wait of this process) ·
+# listener (a running listener of this process — no wait) · stale. Without CLAUDE_PID the owner is the one the lock
+# records → live while that owner and its waiter both still run with their recorded starts; a wait of another process
+# under the same session id then counts as running too.
+queue_get_wait_state() {
+  local lock owner_pid owner=""
+  lock="$(queue_get_wait_lock_path "$1")"
+  owner_pid="$(queue_get_pid)"
+  if [[ -n "${owner_pid}" ]]; then owner="${owner_pid}|$(queue_get_start_time "${owner_pid}")"; fi
+  queue_get_wait_lock_state "${lock}" "${owner}"
+}
+
+# <pid> → its process start time, the recycled-pid guard; nothing when the pid is gone
+queue_get_start_time() {
+  local started
+  started="$(LC_ALL=C ps -p "$1" -o lstart= 2>/dev/null)" || return 0
+  started="${started#"${started%%[![:space:]]*}"}"
+  printf '%s\n' "${started%"${started##*[![:space:]]}"}"
+}
+
+# <lock path> <owner "pid|its start"> [this wait's own record] → none · mine (holds that record) · live (another
+# running wait of that owner) · listener (a running listener of that owner) · stale (its waiter is gone, or it names
+# another owner); the one reader of the lock name
+# - an empty owner → the owner the record names, live while it still runs with its recorded start
+queue_get_wait_lock_state() {
+  local held
+  held="$(readlink "$1" 2>/dev/null)" || held=""
+  # shellcheck disable=SC2310  # a liveness test in a condition, never an errexit
+  if [[ -z "${held}" ]]; then
+    printf 'none\n'
+  elif [[ "${held}" == "${3:-}" ]]; then
+    printf 'mine\n'
+  elif ! queue_is_wait_live "${held}" "$2"; then
+    printf 'stale\n'
+  elif [[ "${held}" == *"|${QUEUE_LISTENER_KIND}" ]]; then
+    printf 'listener\n'
+  else
+    printf 'live\n'
+  fi
+}
+
+# <held record> <owner "pid|its start", or empty for its own> → 0 while its waiter still runs and it names that owner;
+# the one splitter of the record, whose optional fifth field is the holder kind
+queue_is_wait_live() {
+  local waiter_pid waiter_start owner_pid owner_start owner expected="$2" started
+  IFS='|' read -r waiter_pid waiter_start owner_pid owner_start _ <<<"$1"
+  owner="${owner_pid}|${owner_start}"
+  if [[ -z "${expected}" ]]; then
+    [[ "${owner%%|*}" =~ ${QUEUE_PID_SHAPE} ]] || return 1
+    expected="${owner%%|*}|$(queue_get_start_time "${owner%%|*}")"
+  fi
+  [[ "${owner}" == "${expected}" && "${waiter_pid}" =~ ${QUEUE_PID_SHAPE} && -n "${waiter_start}" ]] || return 1
+  started="$(queue_get_start_time "${waiter_pid}")"
+  [[ "${started}" == "${waiter_start}" ]]
+}
+
+# Awaiting marks: one empty file per item a session posted that expects an owner answer, named by the item id → the
+# turn-end check lists them before any monitor call. SessionEnd clears them and the register writes them back
+# (queue_deregister_session, queue_register_session).
+
+# <session id> → its awaiting set's directory; non-zero for anything but a UUID
+queue_get_awaiting_dir() {
+  local root
+  [[ "$1" =~ ${QUEUE_UUID_SHAPE} ]] || return 1
+  root="$(queue_get_root)"
+  printf '%s/data/queue/awaiting/%s\n' "${root}" "$1"
+}
+
+# <session id> <owner "pid|its start"> → the listening mark: a listener of that Claude process started for the session
+queue_put_listening_mark() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  mkdir -p -- "${dir}" && printf '%s\n' "$2" >"${dir}/${QUEUE_LISTENING_MARK}"
+}
+
+# <session id> → 0 when the listening mark names this Claude process (CLAUDE_PID with its start): each turn end of
+# such a process starts a fresh listener (hooks/queue-listener.sh), in whatever order parallel Stop hooks start
+queue_is_listener_started() {
+  local dir owner_pid mark started
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  owner_pid="$(queue_get_pid)"
+  [[ -n "${owner_pid}" && -f "${dir}/${QUEUE_LISTENING_MARK}" ]] || return 1
+  mark="$(<"${dir}/${QUEUE_LISTENING_MARK}")"
+  started="$(queue_get_start_time "${owner_pid}")"
+  [[ -n "${started}" && "${mark}" == "${owner_pid}|${started}" ]]
+}
+
+# <session id> → what polls the monitor for this Claude process's session: wait (a running wait of it) · listener (a
+# running listener of it, or none between two runs while its listening mark stands: a wake drops the lock, and each
+# turn end starts a fresh listener in no set order beside the reader) · none
+queue_get_poller() {
+  local state
+  state="$(queue_get_wait_state "$1")"
+  # shellcheck disable=SC2310  # a mark it cannot read counts as none
+  if [[ "${state}" == live ]]; then
+    printf 'wait\n'
+  elif [[ "${state}" == listener ]] || queue_is_listener_started "$1"; then
+    printf 'listener\n'
+  else
+    printf 'none\n'
+  fi
+}
+
+# <session id> → the listener's announce record in its awaiting set; non-zero for anything but a UUID
+queue_get_announce_record_path() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  printf '%s/.announced\n' "${dir}"
+}
+
+# <session id> → its announce record gone: the answered set changed, so the next arrival is announced anew
+queue_delete_announce_record() {
+  local record
+  # shellcheck disable=SC2310  # no UUID → no record to drop
+  record="$(queue_get_announce_record_path "$1")" || return 0
+  if ga_guard_path "${record}"; then rm -f -- "${record:?}"; fi
+}
+
+# <path> → 0 when modified within QUEUE_NUDGE_INTERVAL_MIN; non-zero when older, missing or unreadable
+queue_is_touched_within_nudge() {
+  local recent
+  recent="$(find "$1" -mmin "-${QUEUE_NUDGE_INTERVAL_MIN}" 2>/dev/null)" || recent=""
+  [[ -n "${recent}" ]]
+}
+
+# <session id> <item id> → marks the posted item awaiting
+queue_create_awaiting_item() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  [[ "$2" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || return 1
+  { mkdir -p -- "${dir}" && : >"${dir}/$2"; } 2>/dev/null
+}
+
+# <session id> <item id> → the item awaits no longer (acked or withdrawn)
+queue_delete_awaiting_item() {
+  local dir marker
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  [[ "$2" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || return 1
+  marker="${dir}/$2"
+  if ga_guard_path "${marker}"; then rm -f -- "${marker:?}"; fi
+}
+
+# <session id> → its awaiting item ids, newest (highest) first; nothing when none
+queue_get_awaiting_items() {
+  local dir marker ids=""
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  for marker in "${dir}"/*; do
+    if [[ -f "${marker}" && "${marker##*/}" =~ ${QUEUE_ITEM_ID_SHAPE} ]]; then ids+="${marker##*/}"$'\n'; fi
+  done
+  if [[ -n "${ids}" ]]; then sort -rn <<<"${ids%$'\n'}"; fi
+}
+
+# <session id> <item id> [max seconds] → the status of an item this session posted; gone when the monitor knows no such
+# item of this session or it is one a session never posts (an owner message, a relay). 1 on no reply, 2 on an id off
+# its shape or an unusable reply
+queue_get_item_status() {
+  local reply code body status
+  [[ "$2" =~ ${QUEUE_ITEM_ID_SHAPE} ]] || return 2
+  # shellcheck disable=SC2310  # no reply → this function's own status 1
+  reply="$(queue_send GET "/api/queue/items/$2?sessionId=$1" "" "${3:-}")" || return 1
+  code="$(queue_get_reply_code "${reply}")"
+  if [[ "${code}" == 404 ]]; then
+    printf 'gone\n'
+    return 0
+  fi
+  [[ "${code}" == 2?? ]] || return 2
+  body="$(queue_get_reply_body "${reply}")"
+  status="$(jq -r --arg session "$1" --arg kinds "${QUEUE_POSTED_KINDS}" \
+    '" \(.kind) " as $kind | if .sessionId == $session and ($kinds | contains($kind)) then .status | strings else "gone" end' \
+    <<<"${body}" 2>/dev/null)" || return 2
+  [[ "${status}" =~ ^[a-z_]+$ ]] || return 2
+  printf '%s\n' "${status}"
+}
+
+# The turn record: one line "<written at>|<form>|<item ids, space-separated>" in the session's awaiting set, written
+# by the record operation and read by the turn-end check, which accepts a turn whose record is no older than its start
+
+# <session id> → the path of its turn record; non-zero for anything but a UUID
+queue_get_record_path() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  printf '%s/.record\n' "${dir}"
+}
+
+# <session id> <form> [item id…] → the record written now, in UTC to the millisecond
+queue_put_record() {
+  local record written IFS=' '
+  record="$(queue_get_record_path "$1")" || return 1
+  shift
+  written="$(perl -MTime::HiRes=time -MPOSIX=strftime \
+    -e '$t = time; printf "%s.%03dZ\n", strftime("%Y-%m-%dT%H:%M:%S", gmtime $t), ($t - int $t) * 1000')" || return 1
+  { mkdir -p -- "${record%/*}" && printf '%s|%s|%s\n' "${written}" "$1" "${*:2}" >"${record}"; } 2>/dev/null
+}
+
+# <session id> → its record's write time; nothing for no record or an unreadable one
+queue_get_record_time() {
+  local record written=""
+  record="$(queue_get_record_path "$1")" || return 0
+  [[ -f "${record}" ]] || return 0
+  IFS='|' read -r written _ <"${record}" || true
+  if [[ "${written}" =~ ${QUEUE_RECORD_TIME_SHAPE} ]]; then printf '%s\n' "${written}"; fi
+}
+
+# <session id> → its awaiting set removed
+queue_delete_awaiting_set() {
+  local dir
+  dir="$(queue_get_awaiting_dir "$1")" || return 1
+  if ga_guard_path "${dir}"; then rm -rf -- "${dir:?}"; fi
+}
+
+# Drops every awaiting set untouched for QUEUE_AWAITING_TTL_DAYS; run right after a create, so the caller's own set is
+# fresh and never among them.
+# ponytail: a live session whose newest mark is older than the TTL loses its set → raise the TTL if owners answer later
+queue_delete_stale_awaiting() {
+  local root sets set
+  root="$(queue_get_root)/data/queue/awaiting"
+  sets="$(find "${root}" -mindepth 1 -maxdepth 1 -type d -mtime "+${QUEUE_AWAITING_TTL_DAYS}" 2>/dev/null)" || return 1
+  [[ -n "${sets}" ]] || return 0
+  while IFS= read -r set; do
+    if ga_guard_path "${set}"; then rm -rf -- "${set:?}"; fi
+  done <<<"${sets}"
+}

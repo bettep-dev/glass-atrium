@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# enforce-workflow-verify-stage.sh — PreToolUse(Workflow) static composition-declaration gate.
+# enforce-workflow-verify-stage.sh — PreToolUse(Workflow) static composition-declaration check.
+# Advisory: every tripped check prints a WARNING on stderr and exits 0, so the Workflow still runs.
 #
 # WHY: under ultracode the Workflow engine's internal agent() spawns fire NO PreToolUse(Agent)
 # event, so enforce-verification-gate.sh is bypassed and the {qa-code-reviewer, DEV} Plan Direction
@@ -13,6 +14,11 @@
 # dev is the verify partner vs the gated implementation dev) does NOT exist in the code, so any
 # inference was a guess. The author declares; the hook checks presence + consistency.
 #
+# SIMPLE-TASK ENTRY: a DEV workflow carrying [ENTRY-CLASS] simple-task and NO plan-reference owes no
+# other attestation token — the helper marks it ENTRY_SIMPLE, every [AGENT-COMPOSITION] / [SIZE-EST]
+# block resolves to PASS, and the [SIZE-EST] and [SCOPE] advisories stay silent. A plan-reference keeps
+# every check, whatever classification travels beside it. The doc-routing warning is unaffected.
+#
 # DECLARATION GRAMMAR (raw-scanned, but the opening sentinel must NOT sit inside a string literal so
 # an incidental prompt/goal mention is not mistaken for a declaration; canonical home = a /* */
 # block comment):
@@ -22,12 +28,13 @@
 #   impl: <literal dev agentType spawn(s)>            (comma-separated) | none
 #   impl-computed: <dev agentType(s) spawned indirectly, e.g. agentType: b.agent over a config array>
 #   [/AGENT-COMPOSITION]
-# STRICT LINE GRAMMAR (the Stage-2 DEV hard-gate lives HERE): key set {verify, impl, impl-computed};
+# STRICT LINE GRAMMAR (the Stage-2 DEV check lives HERE): key set {verify, impl, impl-computed};
 # ONE line per key; agent names validated against the runtime DEV_SET argument (never a second
 # roster) plus the reviewer literal; free text admitted only after a spaced-dash delimiter; a
 # well-formed sentinel pair whose lines are garbage (unknown/duplicate key, unknown name, unterminated
 # block, 2+ blocks, a verify team naming 2+ dev types) is a DECIDABLE author error → BLOCK_GRAMMAR. A
-# team-form verify clause that names NO dev-* partner → BLOCK_NOVERIFYDEV (the DEV hard-gate).
+# team-form verify clause that names NO dev-* partner → BLOCK_NOVERIFYDEV (the DEV check). BLOCK_* are
+# cause tokens: each selects a warning text and a trace tag, never a block.
 # Consistency checks (all fail-OPEN on any parse uncertainty):
 #   (a) every declared literal role (verify reviewer/dev + impl dev) maps to a Tier-B spawn-position
 #       token in the code                                                        -> else BLOCK_DECLSPAWN
@@ -40,17 +47,16 @@
 #   (e) an upstream clauded-docs/<N> verify clause requires the SAME id cited by a plan-ref token in
 #       the script BODY (outside the declaration)                                -> else BLOCK_UPSTREAM
 # UPSTREAM SCOPE (decision codified): the upstream form waives the in-script verify pair-mapping AND
-# ordering ONLY — the BLOCK_NOREV zero-reviewer hard guarantee is evaluated INDEPENDENTLY of the
+# ordering ONLY — the BLOCK_NOREV zero-reviewer guarantee is evaluated INDEPENDENTLY of the
 # declaration form and SURVIVES upstream (a fake upstream line can NEVER delete reviewer presence).
 # RETAINED verbatim: Tier-A/Tier-B token classification (Tier-B is the code-side operand of the
-# consistency check), the BLOCK_NOREV zero-reviewer hard guarantee, the entry-miss gate, the
-# [SIZE-EST] size-attestation gate, the doc-routing-leak pass (BLOCK_DOCROUTE, the WEAKEST layer),
+# consistency check), the BLOCK_NOREV zero-reviewer guarantee, the entry-miss check, the
+# [SIZE-EST] size-attestation check, the doc-routing-leak pass (BLOCK_DOCROUTE),
 # the fail-open ERR-trap posture, and the two-line emit contract.
 #
-# SECOND DETECTION PASS (doc-routing-leak, the WEAKEST layer — NOT the confidence anchor): flags an
-# intel-reporter / intel-planner spawn hardcoding a local FS path as a Target with NO monitor-POST /
-# clauded-docs routing instruction. Workflow-script mirror of the runtime PreToolUse(Write) hook
-# (block-doc-routing-leak.sh); defense-in-depth, fail-open dominant. Details at the doc-routing helper.
+# SECOND DETECTION PASS (doc-routing-leak, a string heuristic): flags an intel-reporter / intel-planner
+# spawn hardcoding a local FS path as a Target with NO monitor-POST / clauded-docs routing instruction.
+# No runtime write check backs it; fail-open dominant. Details at the doc-routing helper.
 #
 # THIRD ADVISORY PASS (schema-cap, PRESENCE-ONLY, advisory — NEVER exit 2): flags the StructuredOutput
 # schema cap shapes that drive the engine's "retry cap (5) exceeded" collapse loop. Three scoped rules
@@ -60,13 +66,11 @@
 # one-edit remediations, the published non-flag list, and the honest scan limits ship IN the message
 # (print_schema_cap_advisory). VERDICT ISOLATION: the scan is its own top-level python function with
 # its own internal except -> False, so a scan failure can never reach the module-level handler (which
-# emits PASS) and silently convert a real BLOCK into a fail-open pass.
+# emits PASS) and silently convert a real warning into a fail-open pass.
 #
 # FOURTH ADVISORY PASS (scope declaration, PRESENCE-ONLY, advisory — NEVER exit 2): flags a DEV
 # workflow carrying no [SCOPE] declaration. Decided in bash off the raw script (the helper's fixed
-# output-line contract is untouched) and emitted on the PASS arm only, so it can mask no verdict.
-# Advisory-first is a ceiling, not a stage: a raw scan cannot separate a declaration from a mention of
-# one, so promotion needs accumulated false-positive data plus an explicit user decision.
+# output-line contract is untouched) and emitted after any cause warning, so it can mask none.
 #
 # FIFTH ADVISORY PASS (completion channel, advisory — NEVER exit 2): flags a script declaring a
 # schema-mode spawn while the reserved completion-channel property is absent from that script.
@@ -92,60 +96,62 @@
 #             non-DEV analysis fan-outs (docroute still pre-empts it).
 #   DEV     → folded into the TERMINAL emit, so every attestation gate keeps precedence and no
 #             message-asserting fixture moves. Consequence, stated rather than implied: a DEV script
-#             blocked earlier carries NO completion-channel tag — the block is the louder signal.
+#             warned earlier carries NO completion-channel tag — the earlier warning is the louder signal.
 # ADDENDUM-ALLOWLIST MEMBERSHIP (decided here, not deferred): EXCLUDED. This is an advisory VALUE on
-# the multiplexed flag line and never reaches block_and_exit's tag argument, so an entry would be
-# inert; a promotion to a block cause decides membership at that time.
-# KNOWN FALSE POSITIVES — the FULL measured list, not a sample, because this text is what a promotion
-# decision reads (each remediable by declaring the property inline): a schema bound in ANOTHER module
-# (invisible to the scan → site visible, token absent); ANY member read or write of the property
-# (opts.schema); an assignment binding the bare word to undefined or null (the exclusion is key-position
-# only); an import, a destructuring bind, or a parameter named schema; and the bare word inside a REGEX
-# LITERAL. Every one was measured against its candidate exclusion before being left in: the member form
-# is the one case where excluding it would blank a REAL site, the bind forms are cases where excluding
-# them is inert because the bind's USE is itself a site, and the regex-literal form is a lexical-class
-# problem whose fix belongs in the shared _string_mask. Per-shape verdicts sit at the predicate.
+# the multiplexed flag line and never reaches print_cause_warning's tag argument, so an entry would be
+# inert.
+# KNOWN FALSE POSITIVES — the FULL measured list, not a sample, so a firing is adjudicable (each
+# remediable by declaring the property inline): a schema bound in ANOTHER module (invisible to the
+# scan → site visible, token absent); ANY member read or write of the property (opts.schema); an
+# assignment binding the bare word to undefined or null (the exclusion is key-position only); an
+# import, a destructuring bind, or a parameter named schema; and the bare word inside a REGEX
+# LITERAL. Every one was measured against its candidate exclusion before being left in: the member
+# form is the one case where excluding it would blank a REAL site, the bind forms are cases where
+# excluding them is inert because the bind's USE is itself a site, and the regex-literal form is a
+# lexical-class problem whose fix belongs in the shared _string_mask. Per-shape verdicts sit at the
+# predicate.
 # KNOWN FALSE NEGATIVE: a QUOTED schema key, blanked by the mask — fail-open, the safe direction.
 # WHERE THE CLAIM STOPS: this raises the floor from "channel structurally ABSENT" to "channel
 # structurally PRESENT" and no further. It does NOT reach whether the prompt instructs the fill
-# (unfilled → empty string → the same lost signal) or whether a filled block parses. A schema dropped
-# ENTIRELY yields no site at all, so it is out of THIS value's reach and stays out of BLOCKING reach
-# for good — forcing schema everywhere would trade the non-emit failure class for the crash-on-non-emit
-# class — and is carried, as a nudge only, by the schema-absent value below. A second bare site behind a
-# compliant one is likewise out of THIS value's reach — one declaration satisfies its token half for the
-# whole file — and is carried by the per-site value below. Above that floor everything stays honor-system.
+# (unfilled → empty string → the same lost signal) or whether a filled block parses. A schema
+# dropped ENTIRELY yields no site at all, so it is out of THIS value's reach for good — forcing
+# schema everywhere would trade the non-emit failure class for the crash-on-non-emit class — and is
+# carried, as a nudge only, by the schema-absent value below. A second bare site behind a compliant
+# one is likewise out of THIS value's reach — one declaration satisfies its token half for the whole
+# file — and is carried by the per-site value below. Above that floor everything stays honor-system.
 #
-# PER-SITE GAP (the SECOND value on the same multiplexed line, advisory — NEVER exit 2, no promotion
-# staging of its own): flags the property declared on ONE schema-mode site and omitted from ANOTHER, the
-# shape no script-wide read can see. PREDICATE (completion_per_site_advisory_needed, verdict-isolated,
-# own except -> False): the same opposite-polarity operands, applied INSIDE a site span, not across the
-# file. ADJUDICABLE SITES ONLY — a site counts only when its own schema is an INLINE OBJECT LITERAL; a
-# constant, builder call, spread or shorthand is SKIPPED rather than judged, so firing needs BOTH halves
-# in-file and a file of only those shapes stays silent (false NEGATIVE, the safe direction). DISJOINT by
-# construction (token absent script-wide vs present on some site); residuals sit at the predicate.
+# PER-SITE GAP (the SECOND value on the same multiplexed line, advisory — NEVER exit 2): flags the
+# property declared on ONE schema-mode site and omitted from ANOTHER, the shape no script-wide read
+# can see. PREDICATE (completion_per_site_advisory_needed, verdict-isolated, own except -> False):
+# the same opposite-polarity operands, applied INSIDE a site span, not across the file. ADJUDICABLE
+# SITES ONLY — a site counts only when its own schema is an INLINE OBJECT LITERAL; a constant,
+# builder call, spread or shorthand is SKIPPED rather than judged, so firing needs BOTH halves
+# in-file and a file of only those shapes stays silent (false NEGATIVE, the safe direction).
+# DISJOINT by construction (token absent script-wide vs present on some site); residuals sit at the
+# predicate.
 #
-# SCHEMA ABSENT (the THIRD value on the same multiplexed line, advisory — NEVER exit 2, and no promotion
-# staging is even available to it): flags an analysis-class NON-DEV spawn in a script carrying NO
-# schema-mode site anywhere. This is THE MEASURED INCIDENT SHAPE — the recorded outage was a schema
-# DROPPED from the spawn call — and it is the one shape neither sibling value can reach, since both
-# require a site to exist. PREDICATE (completion_schema_absent_advisory_needed, verdict-isolated, own
-# except -> False): non-DEV script AND no site (the SHARED site test, _has_schema_site, so the value that
-# fires on a site and the value that fires on none can never disagree about what a site is) AND a spawn
-# literal on the roster the analysis-size advisory already uses (non-DEV BY EXCLUSION from the runtime
-# dev_set, via the shared _non_dev_analysis_spawn_present — never a second roster). DISJOINT from both
-# siblings by the site half alone, so the single-value contract stays structural.
-# ACCEPTED OVER-NUDGE, not a defect to be tuned away: an analysis spawn whose deliverable is GENUINELY
-# prose has no schema to declare and nudges anyway. Whether a deliverable is structured is not statically
-# decidable, so a suppression heuristic here could only re-introduce the false-NEGATIVE direction this
-# value exists to cover; blocking this shape is a stated NON-GOAL, and one ignorable stderr line is the
-# whole cost. DEV scripts are excluded for a measured reason, not for symmetry with the sibling: a
-# canonical DEV workflow carries a reviewer verify-stage that is deliberately text-mode, so including
-# them would fire on nearly every copy-verbatim skeleton.
+# SCHEMA ABSENT (the THIRD value on the same multiplexed line, advisory — NEVER exit 2): flags an
+# analysis-class NON-DEV spawn in a script carrying NO schema-mode site anywhere. This is THE
+# MEASURED INCIDENT SHAPE — the recorded outage was a schema DROPPED from the spawn call — and it is
+# the one shape neither sibling value can reach, since both require a site to exist. PREDICATE
+# (completion_schema_absent_advisory_needed, verdict-isolated, own except -> False): non-DEV script
+# AND no site (the SHARED site test, _has_schema_site, so the value that fires on a site and the
+# value that fires on none can never disagree about what a site is) AND a spawn literal on the
+# roster the analysis-size advisory already uses (non-DEV BY EXCLUSION from the runtime dev_set, via
+# the shared _non_dev_analysis_spawn_present — never a second roster). DISJOINT from both siblings
+# by the site half alone, so the single-value contract stays structural. ACCEPTED OVER-NUDGE, not a
+# defect to be tuned away: an analysis spawn whose deliverable is GENUINELY prose has no schema to
+# declare and nudges anyway. Whether a deliverable is structured is not statically decidable, so a
+# suppression heuristic here could only re-introduce the false-NEGATIVE direction this value exists
+# to cover; blocking this shape is a stated NON-GOAL, and one ignorable stderr line is the whole
+# cost. DEV scripts are excluded for a measured reason, not for symmetry with the sibling: a
+# canonical DEV workflow carries a reviewer verify-stage that is deliberately text-mode, so
+# including them would fire on nearly every copy-verbatim skeleton.
 #
 # SIXTH ADVISORY PASS ([SIZE-EST] plausibility bounds, advisory — NEVER exit 2): bounds the DECLARED
 # DEV-mode tool_uses~ value against the implementation-slot count the gate already computes — below
 # slots x 4.5 (the empirical per-file calibration) fires `:low`, above ~40 (the split trigger ahead of
-# the measured 46-52 truncation band) fires `:high`. Both anchors are DERIVED from orchestrator-role.md
+# the measured 46-52 truncation band) fires `:high`. Both anchors are DERIVED from skills/glass-atrium-ops-orchestrator-role.md
 # -> Spawn Budget, not counts maintained here. Fires ONLY where a DEV-mode token exists: the
 # token-absent case is the BLOCK_SIZEEST gate's, and advising it too would double-advise one miss.
 # The value rides its OWN output line rather than the completion-channel multiplex — that line's trace
@@ -153,7 +159,7 @@
 #
 # SEVENTH ADVISORY PASS (first-link question on a REVISION cycle, advisory — NEVER exit 2): flags a DEV
 # workflow that EXECUTES a revised plan while its text carries no first-link question. Decided in bash
-# off the raw script plus a LIVE monitor read, on the PASS arm only (siting rationale at the call site).
+# off the raw script plus a LIVE monitor read, after any cause warning (siting at the call site).
 # PREDICATE, four conjuncts in cost order so the compliant case pays nothing:
 #   (1) a DEV workflow (dev=yes) — the question is the Stage-2 DEV participant's verdict-gating job;
 #   (2) FIRST_LINK_LITERAL absent from the RAW script — raw, not comment-stripped, because the literal's
@@ -191,18 +197,12 @@
 # plan-ref — driven: a `// background reading: clauded-docs/101` comment placed ahead of a plan-ref to 103
 # walks the depth-0 root and yields silence, and a monitor URL naming 102 makes the nudge report that
 # document's depth rather than the plan's.
-# PROMOTION: advisory-first is a ceiling here, not a staging step. The load-bearing blocker is the
-# string-residency ceiling above — a raw scan cannot separate a delegation's goal text from a mention of
-# one, so an exit-2 verdict would rest on an observable a non-compliant author satisfies with a comment.
-# The live network read adds NO second blocker: every infrastructure failure fails open to silence, so a
-# monitor outage yields no nudge rather than a spurious block. Re-opening the decision needs a new signal
-# that separates goal text from a mention, plus an explicit user decision — not more coverage of this one.
 #
 # EIGHTH ADVISORY PASS (close token, advisory — NEVER exit 2): flags a plan-referencing DEV workflow that
-# carries neither [PLAN-CLOSE] form (grammar SoT: orchestrator-role.md -> Context Handoff Size).
+# carries neither [PLAN-CLOSE] form (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md -> Context Handoff Size).
 #   Predicate → in the helper, raw scan: dev_present AND the entry gate's PLAN_REF_RE AND no form match;
 #     `deferred:` needs a named step, so an empty value or an unfilled <placeholder> fires.
-#   Siting → rendered on the PASS arm only (twelfth helper line), so it can mask no verdict.
+#   Siting → rendered after any cause warning (twelfth helper line), so it can mask none.
 #   Why advisory, stated as a ceiling → a multi-script track legitimately closes in a later script, and
 #     whether a close form is truthful (a terminal Reconcile & Close phase exists) is honor-system.
 #
@@ -217,8 +217,28 @@
 #   Shared reads → both walks read through get_monitor_doc, one read per id per invocation, failed
 #     reads included, so a hung monitor costs one timeout across the pair.
 #   Fail-open → curl or jq absent, no resolvable URL, a failed or non-JSON read: silence, never
-#     checked-and-clean. Siting → PASS arm only, after the first-link walk.
+#     checked-and-clean. Siting → after any cause warning, after the first-link walk.
 #   Cost → one read per cited id up to the first planner document, with no count cap of its own.
+#
+# TENTH ADVISORY PASS (review fallback, advisory — NEVER exit 2): flags a reviewer / sec-guard read that
+# falls back to an empty value through a conditional while a DEV spawn follows it unstopped, so a review
+# that returned nothing lets the build run unreviewed (review_fallback_advisory_needed).
+#   Read → a const/let/var bound to a call whose arguments quote glass-atrium-qa-code-reviewer or
+#     glass-atrium-sec-guard, or whose helper is named for the review (review, runReview, secGuard).
+#   Fallback → the first `x ? … : []`, `x || []` or `x ?? []` on that variable or a member of it after
+#     the read, on one line; an empty object counts as empty too.
+#   Silent → no Tier-B DEV spawn after the fallback, or an `if (!x) … return|throw` between the read
+#     and that spawn. Comment-stripped + string-masked → a quoted or commented fallback never fires.
+#   Not modelled (text pattern, no JS parse) → a destructured or reassigned read, a ternary spanning
+#     lines, a stop scoped to a nested function, and any stop other than `if (!x)` — `if (x == null)
+#     return` or a stop on a derived value such as `if (!items.length) throw` fires anyway. Honest
+#     limit: a fallback on an unrelated variable of the same name can fire.
+#
+# ELEVENTH ADVISORY PASS (units, advisory — NEVER exit 2): flags a DEV workflow whose [SIZE-EST] lines
+# declare units= above 1 on any spawn — one work-unit per DEV spawn by default, tiny units may share one.
+#   Decided in bash off the raw script (attestation weighting), with the manual gate's parser and advice
+#   (hook-utils.sh → hook_get_size_est_units · hook_get_multi_unit_advice), loaded lazily.
+#   Silent → key absent (optional), units=1, a simple-task entry, no DEV spawn, or the library unreadable.
 #
 # MULTIPLEXED ADVISORY LINE (the helper's TENTH output line, COMPLETION_FLAG): the completion-channel
 # decisions share ONE flag line carrying a value suffix (COMPLETION_ADVISE:<value>), so the output-arity
@@ -229,22 +249,9 @@
 # advisory would stop printing AND stop being traced with no error anywhere — the identical trap
 # recorded for the schema-cap `:R<n>` suffix.
 #
-# PROMOTION CONDITION (verbatim — this header is the referenced SoT; the authoring guidance points here
-# rather than restating it):
-#   Promotion of the schema-cap advisory to blocking requires, verbatim: zero adjudicated false
-#   positives across a full rolling firing-log window, the copy-verbatim skeletons in
-#   skills/glass-atrium-ops-orchestrator.md passing the check unmodified, and a named one-edit
-#   remediation in the advisory text for each of the three scoped rules.
-#   Promotion of the completion-channel advisory to blocking requires, verbatim: zero adjudicated false
-#   positives across a full rolling firing-log window; every copy-verbatim declaration-bearing skeleton
-#   in skills/glass-atrium-ops-orchestrator.md passing unmodified; and the remediation round-trip green
-#   with a paired negative control.
-#
-# ROLLBACK LEVER (the operator-reversible counterpart of the promotion condition above): while a MARKER
+# ROLLBACK LEVER (operator-reversible): while a MARKER
 # FILE exists at WORKFLOW_GATE_COMPLETION_ROLLBACK_MARKER, the completion-channel property-absent value
-# is DEMOTED — its message is not printed. Stage A carries no blocking verdict for this cause, so today
-# the lever silences one message and moves nothing else; the obligation it places on the promoting
-# commit is that a Stage-B blocking verdict route through this same marker read before it can exit 2.
+# is DEMOTED — its message is not printed. The lever silences one message and moves nothing else.
 # A FILE rather than an environment variable because the hook is a fresh process per tool call yet
 # inherits the session's SNAPSHOTTED environment, so only a per-invocation file read is reversible
 # mid-session; the path takes its own env override mirroring the trace-log variable, so a suite never
@@ -254,7 +261,7 @@
 # and schema-absent values, the schema-cap advisory and the [SIZE-EST]-bounds pass are UNCHANGED by the
 # marker — demoting the whole multiplexed line would silence the schema-absent nudge, which is the only
 # signal on the measured incident shape. And the TRACE is never demoted: the tag is accumulated PAST the
-# message dispatch, so a rollback period keeps recording its firings and the promotion window stays
+# message dispatch, so a rollback period keeps recording its firings and the firing window stays
 # adjudicable instead of going vacuously quiet.
 #
 # HONEST SCOPE — STATIC HEURISTIC (string/pattern scan), NOT a full parse and NOT DEV-verdict
@@ -264,7 +271,7 @@
 # the comment-STRIPPED source (a commented spawn is not a real one); author self-attestation tokens
 # ([ENTRY-CLASS], [SIZE-EST], plan-ref, monitor-POST) scan RAW src (identical weight in a comment or
 # a string). The [AGENT-COMPOSITION] block scans RAW-but-not-inside-a-string. FAIL-OPEN DOMINANT: any
-# ambiguity (python3 absent · helper error · output outside the enumerated BLOCK_* tokens) → exit 0.
+# ambiguity (python3 absent · helper error · output outside the enumerated BLOCK_* tokens) → PASS.
 #
 # KNOWN LIMITATION / ACCEPTED FALSE-NEGATIVE (reported honestly): a fully-COMPUTED spawn whose
 # agentType resolves only at runtime (e.g. agent('x', {agentType: chosen})) with ZERO dev-* literals
@@ -278,12 +285,11 @@
 # STRICTNESS-SWITCH BOUNDARY: fail-open protects an honest author from HOOK/ENVIRONMENT uncertainty
 # (tooling absent, undecodable envelope, parser crash) — those stay PASS. A well-formed sentinel pair
 # containing garbage is NOT hook uncertainty; it is a broken contract artifact, fully decidable, with
-# a deterministic fix → strict BLOCK. The switch lives INSIDE the found-sentinel branch, so a crash
+# a deterministic fix → a strict WARNING. The switch lives INSIDE the found-sentinel branch, so a crash
 # BEFORE a non-string opening sentinel is detected stays fail-open (accepted residual).
 #
 # ACTIVATION (binding live): the harness fires PreToolUse(Workflow) with tool_input.script exposed —
-# the rolling firing log below (cap 1000 lines) shows the gate firing AND blocking in production
-# (observed 2026-07: ~N exit-2 blocks among up to 1000 recorded firings; counts roll with the log).
+# the rolling firing log below (cap 1000 lines) shows the check firing in production.
 # Honest residual: pass-noscript rows — Workflow envelopes arriving WITHOUT .tool_input.script pass
 # uninspected (fail-open); no full-coverage claim. Measured N of up to 1000 recorded firings as of
 # 2026-07-21. The figure is a ROLLING-BUFFER reading, not a lifetime rate: the log caps at 1000 lines,
@@ -294,25 +300,24 @@
 # one-line trace is appended to ${HOME}/.glass-atrium/data/workflow-gate-fired.log (timestamp · tool_name ·
 # verdict · script-length · advisory · dev · impl_slots). Trace verdict tags: pass · pass-noscript · block-nodecl · block-grammar ·
 # block-norev · block-noverifydev · block-declspawn · block-undecl · block-computed · block-order ·
-# block-upstream · block-docroute · block-entry · block-sizeest; python3-absent / helper-error
+# block-upstream · block-docroute · block-entry · block-sizeest — each block-* tag names a tripped
+# check whose warning printed while the Workflow still ran; the names stay because
+# hooks/compliance_telemetry.py reads the block-* prefix as the trip verdict. python3-absent / helper-error
 # fallbacks emit bare "pass". How to check: `cat ~/.glass-atrium/data/workflow-gate-fired.log`. The trace is
 # fail-SAFE (a logging error NEVER changes the verdict/exit code — the verdict is decided first).
 #
 # ADVISORY FIELD (presence-only, positioned after the original four fields — append-only, backward
-# compatible): `advisory=` records WHICH advisories
-# fired on that invocation and, for the two suffixed advisories, WHICH value matched — the schema-cap
-# rule (`advisory=schema-cap:R1`) and the multiplexed completion-channel value
-# (`advisory=completion-channel:property-absent`, `:per-site-gap` or `:schema-absent`);
-# the revision-cycle nudge records as `advisory=first-link`, the close-token nudge as
-# `advisory=close-token` and the stage nudge as `advisory=implementing`, all unsuffixed (each carries
-# one decision);
-# several tags join with a comma; none fired →
-# `advisory=none`. This exists so
-# the promotion condition's first clause (zero adjudicated false positives across a rolling firing-log
-# window) is MEASURABLE at all — before it, the record carried no advisory signal of any kind and no
-# window could be constructed. It records only that a firing happened, NEVER whether it was correct:
-# adjudication stays human, and this field neither promotes the advisory nor touches a verdict or exit
-# code. The field is APPENDED after those four so a reader keyed on the existing positions is unaffected
+# compatible): `advisory=` records WHICH advisories fired on that invocation and, for the two
+# suffixed advisories, WHICH value matched — the schema-cap rule (`advisory=schema-cap:R1`) and the
+# multiplexed completion-channel value (`advisory=completion-channel:property-absent`,
+# `:per-site-gap` or `:schema-absent`); the revision-cycle nudge records as `advisory=first-link`,
+# the close-token nudge as `advisory=close-token` and the stage nudge as `advisory=implementing`,
+# all unsuffixed (each carries one decision); several tags join with a comma; none fired →
+# `advisory=none`. This exists so a false-positive count across a rolling firing-log window is
+# MEASURABLE at all — before it, the record carried no advisory signal of any kind and no window
+# could be constructed. It records only that a firing happened, NEVER whether it was correct:
+# adjudication stays human, and this field touches no verdict or exit code. The field is APPENDED
+# after those four so a reader keyed on the existing positions is unaffected
 # (hooks/compliance_telemetry.py parse_gate_log splits on TAB and reads `verdict=` by key).
 #
 # MEASUREMENT FIELDS (`dev=`, `impl_slots=`, appended AFTER `advisory=` — same append-only contract):
@@ -334,12 +339,13 @@
 # truthfulness above — and the count is blind to a loop fan-out, which spawns N runtime instances from
 # ONE static position and so reads as one slot. That residual is unrepaired and stated at the counter.
 #
-# Exit codes: 0 = pass / fail-open (default) · 2 = BLOCK. The exit-2 verdicts share the block channel:
+# Exit codes (hook mode): 0 on every path. The warning causes print one stderr WARNING each:
 #   missing-declaration (block-nodecl) · malformed-declaration (block-grammar) · the five
 #   consistency-check causes above · zero-reviewer (block-norev) · verify-team-lacks-DEV
 #   (block-noverifydev) · doc-routing leak (block-docroute) · entry-miss (block-entry) ·
 #   size-attestation-miss (block-sizeest).
-# Channel: STDERR for the block reason (PreToolUse block surface) · exit 2 signals the block.
+# --lint: 0 = no cause warning · 1 = at least one cause WARNING line (advisories alone stay 0) · 2 = an
+#   unreadable file argument.
 # fail-open: script absent/empty/unparseable · no DEV spawn (simple workflow, Stage-2 exempt) ·
 #            wrong tool_name · any internal error → exit 0.
 
@@ -427,10 +433,10 @@ monitor_doc_ids=()
 monitor_doc_bodies=()
 
 # advisory_trace — parent-scope accumulator of the advisory tags fired on this invocation, read by
-# emit_trace for the trailing `advisory=` field. Every advisory emitter runs BEFORE the pass-path trace
-# emit and before block_and_exit, so a tag set here is always visible inside emit_trace's subshell and
-# nothing needs to escape it. Empty (no advisory fired, or a path that never reaches the advisory
-# printers such as pass-noscript) records as `none`.
+# emit_trace for the trailing `advisory=` field. Every advisory emitter runs BEFORE the trace emit, so a
+# tag set here is always visible inside emit_trace's subshell and nothing needs to escape it. Empty
+# (no advisory fired, or a path that never reaches the advisory printers such as pass-noscript)
+# records as `none`.
 advisory_trace=""
 
 # dev_flag / impl_slots — the two instrumentation-only trace fields appended after `advisory=`. Both
@@ -497,27 +503,24 @@ emit_trace() {
   ) 2>/dev/null || true
 }
 
-# block_and_exit REASON TRACE_TAG — terminal block: stderr reason + firing trace + exit 2. Shared by
-# every exit-2 verdict — only the reason text and the trace tag differ. ${script_len} is read from
-# the global set after the script decode.
+# print_cause_warning REASON TRACE_TAG — the stderr warning of a tripped check; returns, so the
+# trailing advisories and the one trace line still follow. Shared by every tripped check — only the
+# reason text and the trace tag differ.
 #
-# CENTRALIZED ENTRY ADDENDUM (message-only) — when the block is one that SUPPRESSES the dedicated
-# entry-miss nudge (a composition/verify cause tag or the docroute verdict all pre-empt the entry-miss
-# block) AND the entry signal is missing (${entry_marker:-} == ENTRY_ADVISORY), append the entry-format
-# requirement to the SAME message so the author resolves both needs in one pass. ALLOWLIST gate
-# (ADR-2): explicit enumeration — NO block-* glob; "block-entry" is EXCLUDED (it already prints full
-# entry guidance) and "block-sizeest" is EXCLUDED (deliberate ADR-2 opt-OUT: block-sizeest fires ONLY
-# under ENTRY_OK — the entry-miss block above has already exited on ENTRY_ADVISORY — so the entry
-# addendum is structurally inert on it), and a future block path must opt IN deliberately (fail-safe
-# vs silent scope-creep). block-grammar is opt-IN: a malformed declaration on an entry-missing DEV
-# workflow needs both fixes surfaced together.
+# CENTRALIZED ENTRY ADDENDUM (message-only) — when the warning is one that SUPPRESSES the dedicated
+# entry-miss warning (a composition/verify cause tag or the docroute verdict all pre-empt the
+# entry-miss check) AND the entry signal is missing (${entry_marker:-} == ENTRY_ADVISORY), append the
+# entry-format requirement to the SAME message so the author resolves both needs in one pass. ALLOWLIST
+# gate (ADR-2): explicit enumeration — NO block-* glob; "block-entry" is EXCLUDED (it already prints
+# full entry guidance) and "block-sizeest" is EXCLUDED (block-sizeest fires ONLY under ENTRY_OK — the
+# entry-miss warning has already exited on ENTRY_ADVISORY — so the addendum is structurally inert on
+# it), and a future cause must opt IN deliberately. block-grammar is opt-IN: a malformed declaration on
+# an entry-missing DEV workflow needs both fixes surfaced together.
 # Reads the GLOBAL entry_marker via ${entry_marker:-} — NO `local entry_marker` (a local would shadow
-# the global with an empty value and silently disable the addendum on every path); the :- default is
-# mandatory for set -u safety because this function runs under the fail-open ERR trap (an unbound-var
-# error would fail-open to exit 0 and silently drop a legitimate block). The addendum is a
-# single-quoted heredoc (no expansion -> injection-safe). MESSAGE-ONLY: verdict logic, branch
-# conditions, the exit code (always 2), and emit_trace tag semantics are all unchanged.
-block_and_exit() {
+# the global with an empty value and silently disable the addendum on every path); the :- default keeps
+# set -u from tripping the ERR trap, which would drop the warning. The addendum is a single-quoted
+# heredoc (no expansion -> injection-safe).
+print_cause_warning() {
   local reason="${1}"
   local addendum_allowed
   case "${2}" in
@@ -527,15 +530,13 @@ block_and_exit() {
   if [[ "${addendum_allowed}" == true && "${entry_marker:-}" == "ENTRY_ADVISORY" ]]; then
     reason="${reason}"$'\n\n'"$(
       cat <<'EOF'
-ADDITIONALLY (entry classification / plan-reference also required): beyond the block above, this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification — so once the issue above is fixed it will STILL be blocked for a missing entry signal. Resolve BOTH in one pass. Two ways to supply the entry signal: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-reference token); (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate), record an [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> classification in the workflow script. CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — persist a REAL plan. Placement is not enforced (these tokens are raw-scanned), so a commented token also satisfies it.
+ADDITIONALLY (entry classification / plan-reference also required): beyond the warning above, this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification, so it also needs an entry signal. Two ways to supply it: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-reference token) — then fix the issue above too, in the same pass; (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate), record an [ENTRY-CLASS] simple-task: multi-file=no cross-module=no turns<3 contract=no — <1-line> classification in the workflow script, with no plan-reference — path (2) alone clears the warning above when it is an [AGENT-COMPOSITION] one, since a simple-task entry owes no other attestation token; a doc-routing leak still needs its own fix. CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — persist a REAL plan. Placement is not enforced (these tokens are raw-scanned), so a commented token also satisfies it.
 EOF
     )"
   fi
-  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → exit 2 stands.
+  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
   # An interrupted in-shell write would hold the reason and flush it later into emit_trace's log.
   (printf '%s\n' "${reason}") >&2 || true
-  emit_trace "${2}" "${script_len}"
-  exit 2
 }
 
 # print_resilience_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
@@ -551,7 +552,7 @@ EOF
 # which is exactly why this remains advisory-only, fail-open (a surviving advisory MAY be a false alarm,
 # and it NEVER blocks).
 print_resilience_advisory() {
-  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → a block path keeps exit 2.
+  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
   (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (resilience, non-blocking): this workflow spawns a schema-mode agent() with at least one UNHANDLED spawn site (not .catch-chained, not inside a try{}, not routed through a robustAgent or custom .catch-chained wrapper). A schema-mode agent() THROWS on non-emit (uncaught → crashes the run) — wrap every schema-mode agent() in robustAgent so .catch(() => null) converts the throw to a handled null, via the retry-once-on-null + .catch(() => null) + .filter(Boolean) idiom (copy-verbatim skeleton: skills/glass-atrium-ops-orchestrator.md '#### Resilient Workflow Authoring [ORCHESTRATOR]' + the '#### Pipeline Acceptance Criteria [ORCHESTRATOR]' in-script verify-stage). PER-SITE scan with residual undecidability: Promise.allSettled + custom-helper indirection remain uncredited, so a surviving advisory MAY be a false alarm — ADVISORY ONLY, this check NEVER blocks.") >&2 || true
   return 0
 }
@@ -559,12 +560,11 @@ print_resilience_advisory() {
 # print_analysis_size_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
 # DECISION fires INSIDE the python3 verdict helper: a schema-mode NON-DEV analysis/research/audit spawn
 # (an agent()/agentType literal NOT in the sync-gate-roster-fed DEV_SET) with NO [SIZE-EST] token, on a
-# NON-DEV workflow (a DEV workflow is already hard-blocked by BLOCK_SIZEEST, unchanged). It returns an
-# ANALYSIS_SIZE_ADVISE / ANALYSIS_SIZE_SILENT flag on its FOURTH output line. Advisory (not exit 2) is
-# deliberate: the analysis roster is exclusion-derived + broad, so a nudge cannot false-block a legit
-# workflow — matching the resilience-advisory posture + the plan (clauded-docs/279 D2) fail-open floor.
+# NON-DEV workflow (a DEV workflow already draws the BLOCK_SIZEEST warning). It returns an
+# ANALYSIS_SIZE_ADVISE / ANALYSIS_SIZE_SILENT flag on its FOURTH output line. A nudge rather than a
+# cause-token warning: the analysis roster is exclusion-derived + broad — matching the resilience-advisory posture + the plan (clauded-docs/279 D2) fail-open floor.
 print_analysis_size_advisory() {
-  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → a block path keeps exit 2.
+  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
   (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (analysis size-attestation, non-blocking): this workflow spawns a schema-mode NON-DEV analysis/research/audit agent (researcher/planner/reporter/reviewer) but carries NO [SIZE-EST] delegation-size token. A single broad-read + high-effort + 3-4-field schema agent exhausts the turn budget before the terminal StructuredOutput (the non-emit failure class). RIGHT-SIZE at Decision time: emit the analysis-mode token log('[SIZE-EST] reads~=N fields=N effort=<medium|high> scope=<allowlist|bounded> — <reason>'), and if reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high) SPLIT by domain into N narrow agents up front (never one broad agent then a reactive split). Bound each track: a file/dir read allowlist (NOT a repo sweep), effort matched to depth (default medium for broad reads; high only for narrow deep reasoning), <=2-3 output fields, and a HARD BUDGET guard ('STOP and EMIT partial when approaching ~N tool uses'). Presence-only, never estimate correctness — parity with the DEV [SIZE-EST]. ADVISORY ONLY, this check NEVER blocks (fail-open on ambiguous shapes).") >&2 || true
   return 0
 }
@@ -572,40 +572,65 @@ print_analysis_size_advisory() {
 # print_schema_cap_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
 # DECISION fires INSIDE the python3 verdict helper (get_schema_cap_rule) and arrives as a
 # SCHEMA_CAP_ADVISE[:R<n>] / SCHEMA_CAP_SILENT flag on its FIFTH output line. The `:R<n>` suffix is
-# TRACE instrumentation only (it names the matched rule for the per-rule promotion window); the message
-# itself stays PRESENCE-ONLY, enumerating all three rules and their one-edit fixes rather than naming
-# the matched rule or field — deliberate, and stated in the text so silence on a detail is not
-# read as a clean bill. Shipping the per-rule remediations + the published non-flag list from day one
-# is required by the promotion condition in the header (building them at promotion time would block
-# promotion on a message rewrite).
+# TRACE instrumentation only (it names the matched rule, so firings are adjudicable per rule); the
+# message itself stays PRESENCE-ONLY, enumerating all three rules and their one-edit fixes rather
+# than naming the matched rule or field — deliberate, and stated in the text so silence on a detail
+# is not read as a clean bill.
 print_schema_cap_advisory() {
-  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → a block path keeps exit 2.
-  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (schema-cap, non-blocking): this workflow declares a StructuredOutput schema cap matching at least one of three scoped rules. An over-tight cap is the dominant 'StructuredOutput schema retry cap (5) exceeded' cause — told only to emit, the model SHRINKS its prose on each internal retry instead of fixing the shape, so the loop never converges. PRESENCE-ONLY: this nudge does NOT name which rule or field matched, and it NEVER judges whether a cap fits its realistic content. The three rules, each with its ONE-EDIT fix: (R1) a maxLength on a completion-block field — DROP the cap entirely (a real block's length varies several-fold from run to run, so any fixed cap is overrun by some block, and the standing rule mandates the FULL multi-line block, so schema compliance and rule compliance are mutually exclusive under ANY such cap). (R2) a maxLength/maxItems inside an items object — remove the per-element caps and keep a single top-level item-count cap (per-element caps MULTIPLY the constraint count, so shrinking one element re-balances and overflows another). (R3) a maxLength strictly between 64 and 300 — raise the cap to the realistic worst case, or hand the bulk to a FILE and return a path plus a compact summary. DELIBERATE NON-FLAGS (published so silence is not mistaken for a clean bill): maxLength >= 300 on a non-completion non-item field; maxLength <= 64 (enum / verdict / identifier shapes); maxItems on a TOP-LEVEL array (one non-multiplying constraint on inherently multi-item content); the observed 500-char cap on a top-level free-text field; caps of EXACTLY 300 (excluded by R3's strict upper edge, a consistency choice against the guidance's own per-row floor — the largest accepted miss); and any cap notation carrying no numeric literal (a quoted shorthand type descriptor or a chained-builder form). HONEST LIMITS: raw-text scan over a comment-stripped + string-masked operand, no JS parse — a schema assembled by a helper / spread / variable / import, a variable-valued cap, and a fully-quoted JSON-style schema (where the cap TOKEN itself is string-resident) are all invisible; the items span is a brace-scan heuristic. ADVISORY ONLY, this check NEVER blocks — promotion condition recorded verbatim in this hook's header.") >&2 || true
+  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
+  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (schema-cap, non-blocking): this workflow declares a StructuredOutput schema cap matching at least one of three scoped rules. An over-tight cap is the dominant 'StructuredOutput schema retry cap (5) exceeded' cause — told only to emit, the model SHRINKS its prose on each internal retry instead of fixing the shape, so the loop never converges. PRESENCE-ONLY: this nudge does NOT name which rule or field matched, and it NEVER judges whether a cap fits its realistic content. The three rules, each with its ONE-EDIT fix: (R1) a maxLength on a completion-block field — DROP the cap entirely (a real block's length varies several-fold from run to run, so any fixed cap is overrun by some block, and the standing rule mandates the FULL multi-line block, so schema compliance and rule compliance are mutually exclusive under ANY such cap). (R2) a maxLength/maxItems inside an items object — remove the per-element caps and keep a single top-level item-count cap (per-element caps MULTIPLY the constraint count, so shrinking one element re-balances and overflows another). (R3) a maxLength strictly between 64 and 300 — raise the cap to the realistic worst case, or hand the bulk to a FILE and return a path plus a compact summary. DELIBERATE NON-FLAGS (published so silence is not mistaken for a clean bill): maxLength >= 300 on a non-completion non-item field; maxLength <= 64 (enum / verdict / identifier shapes); maxItems on a TOP-LEVEL array (one non-multiplying constraint on inherently multi-item content); the observed 500-char cap on a top-level free-text field; caps of EXACTLY 300 (excluded by R3's strict upper edge, a consistency choice against the guidance's own per-row floor — the largest accepted miss); and any cap notation carrying no numeric literal (a quoted shorthand type descriptor or a chained-builder form). HONEST LIMITS: raw-text scan over a comment-stripped + string-masked operand, no JS parse — a schema assembled by a helper / spread / variable / import, a variable-valued cap, and a fully-quoted JSON-style schema (where the cap TOKEN itself is string-resident) are all invisible; the items span is a brace-scan heuristic. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
   return 0
 }
 
 # print_scope_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). Decided in
 # bash off the raw script text rather than in the verdict helper, so the helper's fixed output-line
-# contract is untouched. Advisory-first is deliberate and not a staging step: a raw scan cannot tell a
-# declaration from a mention of one, so promotion to exit 2 waits on false-positive data plus an
-# explicit user decision.
+# contract is untouched.
 # print_sizeest_low_advisory / print_sizeest_high_advisory — ADVISORY-ONLY (stderr, NEVER blocks /
 # NEVER alters the exit code). The DECISION fires inside the verdict helper (sizeest_bounds) and
 # arrives as a value on the eleventh output line; these only render it. Both bounds are DERIVED from
-# orchestrator-role.md -> Spawn Budget (the `ceil(files x 4.5)` empirical tool_use calibration and the
+# skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget (the `ceil(files x 4.5)` empirical tool_use calibration and the
 # ~40 split trigger ahead of the measured 46-52 truncation band), never a count maintained here.
 print_sizeest_low_advisory() {
-  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → a block path keeps exit 2.
-  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value is BELOW the slot-count floor (implementation slots x 4.5, the empirical per-file tool_use calibration in orchestrator-role.md -> Spawn Budget). Under-declaring is the DANGEROUS direction: it smuggles an oversized delegation past the split discipline, and the sub-agent then truncates mid-work with no [COMPLETION]. Re-estimate UP against the files x 4.5 floor and, if the honest estimate exceeds ~30, SPLIT the delegation instead of re-declaring it smaller. PLAUSIBILITY-ONLY, never estimate correctness — parity with the presence-only [SIZE-EST] gate. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
+  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
+  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value is BELOW the slot-count floor (implementation slots x 4.5, the empirical per-file tool_use calibration in skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget). Under-declaring is the DANGEROUS direction: it smuggles an oversized delegation past the split discipline, and the sub-agent then truncates mid-work with no [COMPLETION]. Re-estimate UP against the files x 4.5 floor and, if the honest estimate exceeds ~30, SPLIT the delegation instead of re-declaring it smaller — one work-unit per DEV spawn, each declaring units=1 on its [SIZE-EST]. PLAUSIBILITY-ONLY, never estimate correctness — parity with the presence-only [SIZE-EST] gate. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
 }
 
 print_sizeest_high_advisory() {
-  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored → a block path keeps exit 2.
-  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value EXCEEDS the ~40 delegation ceiling (the HARD SECONDARY split trigger in orchestrator-role.md -> Spawn Budget, set ahead of the measured 46-52 truncation band). A delegation this size is expected to run out of budget before its terminal emit: SPLIT it into sequential checkpointed sub-delegations, keeping each implementation together with its NEW tests and peeling off run-full-suite / report-consolidation instead. PLAUSIBILITY-ONLY, never estimate correctness. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
+  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
+  (printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY ([SIZE-EST] plausibility, non-blocking): the declared tool_uses~ value EXCEEDS the ~40 delegation ceiling (the HARD SECONDARY split trigger in skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget, set ahead of the measured 46-52 truncation band). A delegation this size is expected to run out of budget before its terminal emit: SPLIT it into sequential checkpointed sub-delegations — one work-unit per DEV spawn, each declaring units=1 on its [SIZE-EST] — keeping each implementation together with its NEW tests and peeling off run-full-suite / report-consolidation instead. PLAUSIBILITY-ONLY, never estimate correctness. ADVISORY ONLY, this check NEVER blocks.") >&2 || true
+}
+
+# get_size_est_form — the DEV-mode [SIZE-EST] form (hook-utils.sh → HOOK_SIZE_EST_FORM), read in a
+# command substitution → the library's globals stay out of the gate. Unreadable library → its path in place
+# of the form, so the taught line never reads log('').
+get_size_est_form() {
+  local lib="${BASH_SOURCE%/*}/hook-utils.sh"
+  # shellcheck source=hook-utils.sh
+  if [[ -r "${lib}" ]] && source "${lib}"; then
+    printf '%s' "${HOOK_SIZE_EST_FORM}"
+  else
+    printf '[SIZE-EST] form unavailable: cannot read %s' "${lib}"
+  fi
+}
+
+# get_units_advice — the units nudge's advice for the raw script (header -> ELEVENTH ADVISORY PASS);
+# empty when silent. Called in a command substitution → the library's globals stay out of the gate.
+get_units_advice() {
+  local lib="${BASH_SOURCE%/*}/hook-utils.sh" units
+  [[ -r "${lib}" ]] || return 0
+  # shellcheck source=hook-utils.sh
+  source "${lib}" || return 0
+  units="$(hook_get_size_est_units "${script_src}")"
+  hook_get_multi_unit_advice "${units}"
+}
+
+print_units_advisory() {
+  # Subshell owns no child → no SIGCHLD can interrupt the write (bash 3.2 EINTR); status ignored.
+  (printf '[enforce-workflow-verify-stage] ADVISORY (units, non-blocking): a DEV spawn in this workflow %s\n' "${1}") >&2 || true
 }
 
 print_scope_advisory() {
-  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (scope declaration, non-blocking): this workflow spawns DEV agent(s) but carries NO [SCOPE] declaration. Fix the delegation's literal scope in text before the work starts, in the canonical middot-separated grammar: log('[SCOPE] files=path/one, path/two · deliverable=<type> · out=none') (grammar SoT: orchestrator-role.md → Context Handoff Size). Declare the paths that travel WITH the implementation too — its companion tests and any mandatory co-deliverable — so a compliant edit is not read as excess later. PRESENCE-ONLY, parity with [ENTRY-CLASS] / [SIZE-EST]: whether the declaration matches the user's instruction is never checked here. ADVISORY ONLY, this check NEVER blocks." >&2
+  printf '%s\n' "[enforce-workflow-verify-stage] ADVISORY (scope declaration, non-blocking): this workflow spawns DEV agent(s) but carries NO [SCOPE] declaration. Fix the delegation's literal scope in text before the work starts, in the canonical middot-separated grammar: log('[SCOPE] files=path/one, path/two · deliverable=<type> · out=none') (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md → Context Handoff Size). Declare the paths that travel WITH the implementation too — its companion tests and any mandatory co-deliverable — so a compliant edit is not read as excess later. PRESENCE-ONLY, parity with [ENTRY-CLASS] / [SIZE-EST]: whether the declaration matches the user's instruction is never checked here. ADVISORY ONLY, this check NEVER blocks." >&2
   return 0
 }
 
@@ -613,7 +638,16 @@ print_scope_advisory() {
 # decision arrives as the helper's twelfth line; the remediation mirrors the --lint --template section.
 print_close_token_advisory() {
   cat <<'EOF' >&2
-[enforce-workflow-verify-stage] ADVISORY (close token, non-blocking): this DEV workflow references a plan but carries neither form of the close token, so the flow declares no close for that plan. ONE-EDIT FIX — add ONE line: log('[PLAN-CLOSE] in-script') when the script ends in the terminal Reconcile & Close phase (a glass-atrium-qa-code-reviewer spawn after the last delivering phase), or log('[PLAN-CLOSE] deferred: <the later script or step that closes the plan>') with the placeholder replaced by that script or step. Grammar SoT: orchestrator-role.md -> Context Handoff Size; phase: skills/glass-atrium-ops-orchestrator.md -> In-script verify-stage (ultracode); scaffold: enforce-workflow-verify-stage.sh --lint --template. PRESENCE-ONLY: whether the form is truthful — a close form with no terminal phase in the script — is never checked here. ADVISORY ONLY, this check NEVER blocks: a multi-script track legitimately closes in a later script, which a block would false-positive on.
+[enforce-workflow-verify-stage] ADVISORY (close token, non-blocking): this DEV workflow references a plan but carries neither form of the close token, so the flow declares no close for that plan. ONE-EDIT FIX — add ONE line: log('[PLAN-CLOSE] in-script') when the script ends in the terminal Reconcile & Close phase (a glass-atrium-qa-code-reviewer spawn after the last delivering phase), or log('[PLAN-CLOSE] deferred: <the later script or step that closes the plan>') with the placeholder replaced by that script or step. Grammar SoT: skills/glass-atrium-ops-orchestrator-role.md -> Context Handoff Size; phase: skills/glass-atrium-ops-orchestrator.md -> In-script verify-stage (ultracode); scaffold: enforce-workflow-verify-stage.sh --lint --template. PRESENCE-ONLY: whether the form is truthful — a close form with no terminal phase in the script — is never checked here. ADVISORY ONLY, this check NEVER blocks: a multi-script track legitimately closes in a later script, which a block would false-positive on.
+EOF
+  return 0
+}
+
+# print_review_fallback_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit code). The
+# decision arrives as the helper's thirteenth line. An external writer → no bash 3.2 EINTR on the write.
+print_review_fallback_advisory() {
+  cat <<'EOF' >&2 || true
+[enforce-workflow-verify-stage] ADVISORY (review fallback, non-blocking): a glass-atrium-qa-code-reviewer or glass-atrium-sec-guard read falls back to an empty value through a conditional (x ? ... : [], x || [], x ?? []) and a DEV spawn follows with no stop on the empty read, so a review that returned nothing lets the build run unreviewed. ONE-EDIT FIX — stop on the missing read before the DEV stage: if (!x) return { status: 'blocked', reason: '<the read that returned nothing>' }. TEXT PATTERN ONLY: a declaration bound to a call whose arguments quote the reviewer or sec-guard name, or whose helper is named for the review (review, secGuard); a destructured or reassigned read, a ternary spanning lines and a stop inside a nested function are not modelled. ADVISORY ONLY, this check NEVER blocks.
 EOF
   return 0
 }
@@ -744,16 +778,14 @@ print_implementing_advisory() {
 # print_completion_channel_advisory — ADVISORY-ONLY (stderr, NEVER blocks / NEVER alters the exit
 # code). The DECISION fires inside the verdict helper (completion_block_advisory_needed) and arrives as
 # the COMPLETION_ADVISE:property-absent value on the multiplexed TENTH output line.
-# Authored as a SINGLE-QUOTED heredoc → zero expansion: a workflow script is untrusted tool input, and
-# this text is the one destined to become a block reason if the advisory is ever promoted.
-# Message content is fixed by the promotion condition rather than by taste → the one-edit remediation,
-# the published false-positive list and the honest scope boundary all ship from day one, because
-# building them at promotion time would block promotion on a message rewrite.
+# Authored as a SINGLE-QUOTED heredoc → zero expansion: a workflow script is untrusted tool input.
+# The one-edit remediation, the published false-positive list and the honest scope boundary all ship
+# in the text, so a firing is actionable and adjudicable as printed.
 print_completion_channel_advisory() {
   cat <<'EOF' >&2
 [enforce-workflow-verify-stage] ADVISORY (completion channel, non-blocking): this workflow script carries a schema-mode site but never mentions the reserved completion-channel property, so a StructuredOutput payload has nowhere to carry the [COMPLETION] block. A schema-mode emit is engine-guaranteed while the text channel is honor-system — non-emission on the text channel recurs on a share of runs that varies by window (population = outcome rows attributed to the direct hook input or to one of the two synthesis arms; non-emission = the two synthesis arms) — so a schema omitting the property drops the writer signal SILENTLY: the recorder falls to derived synthesis and the run loses the writer's self-assessment. ONE-EDIT FIX — add this property to the schema you already declare:
   completion_block: { type: 'string', description: 'the FULL multi-line [COMPLETION] block: the tag alone on its line, each field on its own line, closed by [/COMPLETION] alone on its line' }
-and instruct the agent in its delegation prompt to FILL it — that half is prompt-side and is NOT checked here (an unfilled property yields an empty string and the same lost signal). WHERE THIS CHECK STOPS: it raises the floor from "channel structurally absent" to "channel structurally present" and no further. It does not reach whether the block is filled, whether a filled block parses, a second bare site behind a compliant one, or a spawn passing no schema at all — that last shape is deliberately out of reach, because forcing schema everywhere would trade the non-emit failure class for the crash-on-non-emit class. WHAT COUNTS AS A SITE, stated exactly so this nudge is not read as narrower than it is: the BARE WORD schema anywhere in the comment-stripped, string-masked script — not only a spawn argument. A key-position ABSENT value is the only exclusion (schema: undefined, schema: null, schema: void <anything>); everything else that spells the bare word is a site. KNOWN FALSE POSITIVES, published in FULL so a firing is adjudicable rather than mysterious, each measured against its candidate exclusion rather than assumed: a schema bound in ANOTHER module is invisible to this raw scan (site visible, property absent); ANY member read or write of the property (opts.schema) is a site, and excluding it is the one case that would blank a REAL site, since opts.schema = S followed by agent(t, opts) is a genuine schema-mode configuration; an assignment binding the bare word to undefined or null is a site, because the exclusion covers the key position only; an import, a destructuring bind, or a parameter named schema is a site, and excluding those is inert — the bind gets USED at a spawn and that use is itself a site, so only a bind with no use would fall silent; the bare word inside a REGEX LITERAL is a site, a lexical-class limit of the shared string mask rather than a value one. A quoted schema key is the mirror false NEGATIVE (the string mask blanks it) and fails open by design. MEASUREMENT SoT for the non-emission share quoted above: skills/glass-atrium-ops-orchestrator.md, section "Completion-channel non-emission" — re-derivation recipe and the population stated as attribution-token membership. This message quotes that share's shape, never a figure; re-derive the share there rather than adding a figure here. ADVISORY ONLY, this check NEVER blocks — promotion condition recorded verbatim in this hook's header.
+and instruct the agent in its delegation prompt to FILL it — that half is prompt-side and is NOT checked here (an unfilled property yields an empty string and the same lost signal). WHERE THIS CHECK STOPS: it raises the floor from "channel structurally absent" to "channel structurally present" and no further. It does not reach whether the block is filled, whether a filled block parses, a second bare site behind a compliant one, or a spawn passing no schema at all — that last shape is deliberately out of reach, because forcing schema everywhere would trade the non-emit failure class for the crash-on-non-emit class. WHAT COUNTS AS A SITE, stated exactly so this nudge is not read as narrower than it is: the BARE WORD schema anywhere in the comment-stripped, string-masked script — not only a spawn argument. A key-position ABSENT value is the only exclusion (schema: undefined, schema: null, schema: void <anything>); everything else that spells the bare word is a site. KNOWN FALSE POSITIVES, published in FULL so a firing is adjudicable rather than mysterious, each measured against its candidate exclusion rather than assumed: a schema bound in ANOTHER module is invisible to this raw scan (site visible, property absent); ANY member read or write of the property (opts.schema) is a site, and excluding it is the one case that would blank a REAL site, since opts.schema = S followed by agent(t, opts) is a genuine schema-mode configuration; an assignment binding the bare word to undefined or null is a site, because the exclusion covers the key position only; an import, a destructuring bind, or a parameter named schema is a site, and excluding those is inert — the bind gets USED at a spawn and that use is itself a site, so only a bind with no use would fall silent; the bare word inside a REGEX LITERAL is a site, a lexical-class limit of the shared string mask rather than a value one. A quoted schema key is the mirror false NEGATIVE (the string mask blanks it) and fails open by design. MEASUREMENT SoT for the non-emission share quoted above: skills/glass-atrium-ops-orchestrator.md, section "Completion-channel non-emission" — re-derivation recipe and the population stated as attribution-token membership. This message quotes that share's shape, never a figure; re-derive the share there rather than adding a figure here. ADVISORY ONLY, this check NEVER blocks.
 EOF
   return 0
 }
@@ -763,8 +795,6 @@ EOF
 # as the COMPLETION_ADVISE:per-site-gap value on the SAME multiplexed TENTH output line — a value, not a
 # line, which is what keeps the output-arity seam paid once.
 # Authored as a SINGLE-QUOTED heredoc → zero expansion: a workflow script is untrusted tool input.
-# NO promotion staging of its own: the header records a promotion condition for the property-absent
-# value only, and this shape stays advisory.
 print_completion_per_site_advisory() {
   cat <<'EOF' >&2
 [enforce-workflow-verify-stage] ADVISORY (completion channel per-site, non-blocking): this workflow declares the reserved completion-channel property on one schema-mode site and omits it from another, so the script-wide check reads the file as compliant while a second StructuredOutput payload still has nowhere to carry the [COMPLETION] block. One compliant site MASKS the bare one: a single declaration satisfies the script-wide token half for the whole file, and the run behind the bare site loses the writer's self-assessment because the recorder falls to derived synthesis. ONE-EDIT FIX — add the same property to the schema on the site that omits it:
@@ -778,8 +808,8 @@ EOF
 # code). The DECISION fires inside the verdict helper (completion_schema_absent_advisory_needed) and
 # arrives as the COMPLETION_ADVISE:schema-absent value on the SAME multiplexed TENTH output line.
 # Authored as a SINGLE-QUOTED heredoc → zero expansion: a workflow script is untrusted tool input.
-# NO promotion staging is available to this value at all, by design rather than by deferral: the shape
-# is not statically separable from a legitimately prose deliverable, so a nudge is its ceiling.
+# A nudge is this value's ceiling: the shape is not statically separable from a legitimately prose
+# deliverable.
 print_completion_schema_absent_advisory() {
   cat <<'EOF' >&2
 [enforce-workflow-verify-stage] ADVISORY (completion channel absent, non-blocking): this workflow spawns a NON-DEV analysis/research/audit agent (researcher/planner/reporter/reviewer — anything off the DEV roster) but declares NO schema-mode site ANYWHERE in the script, so there is no StructuredOutput payload to carry the [COMPLETION] block at all. THIS IS THE MEASURED INCIDENT SHAPE: the recorded outage was a schema DROPPED from the spawn call, and that shape leaves nothing for the two sibling completion-channel checks to see, since both require a site to exist. WHY IT MATTERS: a schema-mode emit is engine-guaranteed while the text channel is honor-system — non-emission on the text channel recurs on a share of runs that varies by window (population = outcome rows attributed to the direct hook input or to one of the two synthesis arms; non-emission = the two synthesis arms) — so a spawn with no schema at all drops the writer signal SILENTLY: the recorder falls to derived synthesis and the run loses the writer's self-assessment. ONE-EDIT FIX — give the spawn a bounded schema carrying the reserved property, and instruct the agent in its delegation prompt to FILL it (prompt-side, NOT checked here):
@@ -789,7 +819,7 @@ EOF
   return 0
 }
 
-# ==== author-facing scaffold emitters (single SoT — reused by both a BLOCK remediation AND --template) ===
+# ==== author-facing scaffold emitters (single SoT — reused by both a warning remediation AND --template) ===
 # Keeping the copy-paste examples in ONE function each guarantees the block-reason stderr the gate emits
 # and the --lint --template preview can NEVER drift apart. Single-quoted heredocs = no expansion (the
 # <…> placeholders + $HOME-style paths stay literal, injection-safe).
@@ -811,7 +841,7 @@ emit_composition_scaffold() {
   impl-computed: glass-atrium-dev-node
   [/AGENT-COMPOSITION] */
   NOTE: impl-computed is OPTIONAL — include it ONLY for indirect/computed spawns; with none, OMIT the line
-  entirely. `impl-computed: none` is malformed (only impl: accepts the `none` literal) and blocks as block-grammar.
+  entirely. `impl-computed: none` is malformed (only impl: accepts the `none` literal) and warns as block-grammar.
 EOF
 }
 
@@ -829,7 +859,8 @@ EOF
 
 # print_lint_template — --lint --template output: the full author self-attestation scaffold assembled
 # from the SAME scaffold emitters the gate's block remediations use (so the taught template is exactly
-# what the gate accepts). The [SIZE-EST] line mirrors the BLOCK_SIZEEST remediation format.
+# what the gate accepts). The DEV-mode [SIZE-EST] line and the BLOCK_SIZEEST remediation both print
+# get_size_est_form.
 #
 # FOURTH SECTION (completion channel) — CONDITIONAL, and the intro says so: the schema scaffold applies
 # to a schema-mode spawn only. A DEV verify stage returns a prose verdict and is deliberately text-mode
@@ -840,8 +871,10 @@ EOF
 # FIFTH SECTION (close token) — plan-referencing scripts only. It teaches the phase SHAPE and points at the
 # skill for RECONCILE_GOAL rather than copying the goal text, so the skill skeleton stays its one home.
 print_lint_template() {
+  local size_est_form
+  size_est_form="$(get_size_est_form)"
   cat <<'EOF'
-[enforce-workflow-verify-stage] --lint --template: canonical author self-attestation scaffold for a DEV-spawning Workflow script. Paste ONE [AGENT-COMPOSITION] form into a /* */ block comment, plus ONE entry token and the [SIZE-EST] token, then preview with: enforce-workflow-verify-stage.sh --lint <file> (exit 0 = will pass the gate). The fourth section is CONDITIONAL rather than universal — it applies to a schema-mode spawn only, and a DEV verify stage is deliberately text-mode, declares no schema and needs none of it. The fifth section applies to a plan-referencing script: ONE close-token form, plus the terminal phase when the script closes the plan itself.
+[enforce-workflow-verify-stage] --lint --template: canonical author self-attestation scaffold for a DEV-spawning Workflow script. Paste ONE entry token. A plan-referencing script also needs ONE [AGENT-COMPOSITION] form in a /* */ block comment and the [SIZE-EST] token; an [ENTRY-CLASS] simple-task script with no plan-reference needs neither. Then preview with: enforce-workflow-verify-stage.sh --lint <file> (exit 0 = no warning · exit 1 = a WARNING line names what to fix). The fourth section is CONDITIONAL rather than universal — it applies to a schema-mode spawn only, and a DEV verify stage is deliberately text-mode, declares no schema and needs none of it. The fifth section applies to a plan-referencing script: ONE close-token form, plus the terminal phase when the script closes the plan itself.
 
 [AGENT-COMPOSITION] declaration (pick ONE form):
 EOF
@@ -853,9 +886,11 @@ EOF
   emit_entry_token_scaffold
   cat <<'EOF'
 
-Delegation-size self-attestation (at EVERY DEV spawn — ONE [SIZE-EST] token, two modes):
+Delegation-size self-attestation (ONE [SIZE-EST] token, two modes — DEV mode at every DEV spawn of a plan-referencing script; a simple-task entry owes none):
   --- DEV mode ---
-  log('[SIZE-EST] bundles=N tool_uses~=N — <reason>');
+EOF
+  printf "  log('%s');\n" "${size_est_form}"
+  cat <<'EOF'
   --- analysis mode (schema-mode NON-DEV researcher/planner/reporter/reviewer spawn) ---
   log('[SIZE-EST] reads~=N fields=N effort=<medium|high> scope=<allowlist|bounded> — <reason>');
   RIGHT-SIZE the analysis spawn: reads~ > ~20 OR fields > 3 OR (broad scope AND effort:high) → SPLIT by
@@ -882,7 +917,7 @@ Completion channel (schema-mode spawns ONLY — a DEV verify stage is text-mode 
   agentType: field values only — so a DECLARED type must ALSO appear as an opts agentType: string literal
   (keep both literals identical), else the gate reads it un-spawned → block-declspawn.
 
-Close token (plan-referencing DEV scripts ONLY — ONE form; grammar SoT: orchestrator-role.md → Context Handoff Size):
+Close token (plan-referencing DEV scripts ONLY — ONE form; grammar SoT: skills/glass-atrium-ops-orchestrator-role.md → Context Handoff Size):
   --- close form (the script ends in the terminal Reconcile & Close phase) ---
   log('[PLAN-CLOSE] in-script');
   // terminal phase, after the last delivering phase; RECONCILE_GOAL is the skeleton const in
@@ -899,8 +934,8 @@ EOF
 # the gate verdict BY CONSTRUCTION (never a drift-prone reimplementation). emit_trace is LINT_MODE-guarded
 # so the preview writes zero trace lines; every verdict / exit path is otherwise unchanged.
 run_verdict_and_dispatch() {
-  # python3 absent is a system misconfiguration — fail-open (never block on a tooling gap). In lint mode
-  # emit_trace no-ops, so this is a clean "will pass" exit 0.
+  # python3 absent is a system misconfiguration — fail-open (never warn on a tooling gap). In lint mode
+  # emit_trace no-ops, so this is a clean exit 0.
   if ! command -v python3 >/dev/null 2>&1; then
     emit_trace "pass" "${script_len}"
     exit 0
@@ -1320,6 +1355,22 @@ def _chained_catch(struct, close_idx, n):
     return False
 
 
+def match_close(struct, open_idx, opench, closech):
+    # Index of the bracket closing struct[open_idx], or None when unbalanced. struct = string interiors
+    # blanked, so an in-string bracket never counts.
+    depth = 0
+    k, n = open_idx, len(struct)
+    while k < n:
+        if struct[k] == opench:
+            depth += 1
+        elif struct[k] == closech:
+            depth -= 1
+            if depth == 0:
+                return k
+        k += 1
+    return None
+
+
 def resilience_advisory_needed(stripped):
     # ADVISORY-ONLY per-site schema-spawn resilience scan (never alters the verdict; the caller only
     # prints a stderr nudge). Returns True when at least ONE UNHANDLED schema-mode agent-call site
@@ -1346,19 +1397,6 @@ def resilience_advisory_needed(stripped):
         struct = "".join(" " if smask[k] else ch for k, ch in enumerate(stripped))
         n = len(struct)
 
-        def match_close(open_idx, opench, closech):
-            depth = 0
-            k = open_idx
-            while k < n:
-                if struct[k] == opench:
-                    depth += 1
-                elif struct[k] == closech:
-                    depth -= 1
-                    if depth == 0:
-                        return k
-                k += 1
-            return None
-
         # HANDLED-region spans: try blocks + robustAgent-style wrapper bodies, brace-matched over struct.
         # chr(123)/chr(125) keep the heredoc balanced for the bash-3.2 dollar-paren scan.
         handled_spans = []
@@ -1367,13 +1405,13 @@ def resilience_advisory_needed(stripped):
             while k < n and struct[k] in " \t\r\n\f\v":
                 k += 1
             if k < n and struct[k] == chr(123):
-                end = match_close(k, chr(123), chr(125))
+                end = match_close(struct, k, chr(123), chr(125))
                 if end is not None:
                     handled_spans.append((k, end))
         for wm in re.finditer(r"(?<![A-Za-z0-9_$])robustAgent(?![A-Za-z0-9_$])", struct):
             brace = struct.find(chr(123), wm.end())
             if brace != -1:
-                end = match_close(brace, chr(123), chr(125))
+                end = match_close(struct, brace, chr(123), chr(125))
                 if end is not None:
                     handled_spans.append((brace, end))
 
@@ -1388,7 +1426,7 @@ def resilience_advisory_needed(stripped):
         # NAME(...) callee, excluding a member access (leading dot) so a.b() records nothing here.
         for cm in re.finditer(r"(?<![A-Za-z0-9_$.])([A-Za-z_$][A-Za-z0-9_$]*)\s*" + "\\" + chr(40), struct):
             copen = cm.end() - 1
-            cclose = match_close(copen, chr(40), chr(41))
+            cclose = match_close(struct, copen, chr(40), chr(41))
             if cclose is None:
                 continue
             if _chained_catch(struct, cclose, n):
@@ -1398,12 +1436,12 @@ def resilience_advisory_needed(stripped):
             for fm in re.finditer(r"(?<![A-Za-z0-9_$])function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*" + "\\" + chr(40), struct):
                 if fm.group(1) not in catch_callees:
                     continue
-                pclose = match_close(fm.end() - 1, chr(40), chr(41))
+                pclose = match_close(struct, fm.end() - 1, chr(40), chr(41))
                 if pclose is None:
                     continue
                 brace = struct.find(chr(123), pclose)
                 if brace != -1:
-                    end = match_close(brace, chr(123), chr(125))
+                    end = match_close(struct, brace, chr(123), chr(125))
                     if end is not None:
                         handled_spans.append((brace, end))
             # const|let|var NAME = (...) => { ... } | = function (...) { ... } — first brace after '=' is
@@ -1414,7 +1452,7 @@ def resilience_advisory_needed(stripped):
                 brace = struct.find(chr(123), fm.end())
                 if brace == -1:
                     continue
-                end = match_close(brace, chr(123), chr(125))
+                end = match_close(struct, brace, chr(123), chr(125))
                 if end is not None:
                     handled_spans.append((brace, end))
 
@@ -1424,7 +1462,7 @@ def resilience_advisory_needed(stripped):
         # the bash-3.2 dollar-paren scan (mirrors the _agent_open idiom below the try block).
         for am in re.finditer(r"(?<![A-Za-z0-9_$])agent\s*" + "\\" + chr(40), struct):
             open_idx = am.end() - 1
-            close_idx = match_close(open_idx, chr(40), chr(41))
+            close_idx = match_close(struct, open_idx, chr(40), chr(41))
             if close_idx is None:
                 continue
             if not _schema_site_in_span(stripped[open_idx + 1:close_idx]):
@@ -1505,8 +1543,8 @@ COMPLETION_KEY_RE = re.compile(r"completion[_-]?block", re.IGNORECASE)
 
 def get_schema_cap_rule(stripped):
     # Returns the FIRST matched scoped rule tag ("R1" / "R2" / "R3") or "" when none matched — the tag
-    # rides the SCHEMA_CAP_ADVISE flag so the firing trace can name the matched rule and a promotion
-    # window is adjudicable PER RULE rather than in aggregate. The advisory MESSAGE stays presence-only.
+    # rides the SCHEMA_CAP_ADVISE flag so the firing trace can name the matched rule and the firings
+    # are adjudicable PER RULE rather than in aggregate. The advisory MESSAGE stays presence-only.
     # ADVISORY-ONLY presence scan for the StructuredOutput cap shapes that drive the engine-internal
     # "retry cap (5) exceeded" collapse loop. Three scoped rules: R1 a maxLength on a completion-block
     # field (unconditional — the standing rule mandates the FULL block, so schema compliance and rule
@@ -1916,10 +1954,10 @@ ENTRY_CARD_FLAG = "ENTRY_CARD_SILENT"
 # SEPARATE LINE, not a value on the completion-channel multiplex: that line carries completion-channel
 # decisions whose trace tag names that channel, and a sizing value there would mis-report itself; the
 # two can also fire on one invocation, which a single-value multiplex cannot express.
-# ADVISORY ONLY — no verdict, no exit code, promotable later on this file's advisory-then-promote
-# precedent. The two anchors are DERIVED, not maintained here: the per-file floor is the
+# ADVISORY ONLY — the nudge's only effect is stderr: no verdict, no exit code. The two anchors are
+# DERIVED, not maintained here: the per-file floor is the
 # `ceil(files x 4.5)` empirical tool_use calibration and the ceiling is the ~40 split trigger ahead of
-# the measured 46-52 truncation band, both from orchestrator-role.md -> Spawn Budget
+# the measured 46-52 truncation band, both from skills/glass-atrium-ops-orchestrator-role.md -> Spawn Budget
 # ("Empirical tool_use calibration" + the HARD SECONDARY split rule).
 SIZEEST_BOUNDS_FLAG = "SIZEEST_BOUNDS_SILENT"
 SIZEEST_BOUNDS_LOW = "SIZEEST_BOUNDS_ADVISE:low"
@@ -1941,15 +1979,66 @@ COMPLETION_PROPERTY_ABSENT = "COMPLETION_ADVISE:property-absent"
 COMPLETION_PER_SITE_GAP = "COMPLETION_ADVISE:per-site-gap"
 COMPLETION_SCHEMA_ABSENT = "COMPLETION_ADVISE:schema-absent"
 
-# CLOSE_TOKEN_FLAG — the close-token nudge, printed as the TWELFTH output line and rendered on the shell
-# PASS arm only. Decided here so plan-referencing means the entry-gate PLAN_REF_RE itself, never a copy.
+# CLOSE_TOKEN_FLAG — the close-token nudge, printed as the TWELFTH output line and rendered by the shell
+# after any cause warning. Decided here so plan-referencing means the entry-gate PLAN_REF_RE itself, never a copy.
 CLOSE_TOKEN_FLAG = "CLOSE_TOKEN_SILENT"
-# The two [PLAN-CLOSE] forms (grammar SoT: orchestrator-role.md -> Context Handoff Size). A deferral must
+# The two [PLAN-CLOSE] forms (grammar SoT: skills/glass-atrium-ops-orchestrator-role.md -> Context Handoff Size). A deferral must
 # name its closing step → an empty value or an unfilled placeholder is neither form.
 # Deferral value → optional lead punctuation — quote, backtick, path — then a word character. `<` and the
 # host string closers \x29 , ; \x7d end the lead → an empty value closed by its quote, or a quoted
 # placeholder, still fires. Hex escapes keep this heredoc balanced for the bash-3.2 dollar-paren scan.
 CLOSE_TOKEN_RE = re.compile(r"\[PLAN-CLOSE\][ \t]+(?:in-script(?![A-Za-z0-9_-])|deferred:[ \t]*[^\s<\w\x29,;\x7d]*\w)")
+
+# REVIEW_FALLBACK_FLAG — the review-fallback nudge, printed as the THIRTEENTH output line (header ->
+# TENTH ADVISORY PASS). Hex escapes and chr() keep this heredoc balanced for the bash-3.2 dollar-paren scan.
+REVIEW_FALLBACK_FLAG = "REVIEW_FALLBACK_SILENT"
+_ROLE_QUOTE = "[" + chr(34) + chr(39) + chr(96) + "]"
+REVIEW_ROLE_RE = re.compile(_ROLE_QUOTE + r"glass-atrium-(?:qa-code-reviewer|sec-guard)" + _ROLE_QUOTE)
+# camelCase-bounded → review / runReview / secGuard match, preview does not
+REVIEW_HELPER_RE = re.compile(r"(?:^review|^secGuard|Review|SecGuard)(?:er)?(?![a-z])")
+REVIEW_ASSIGN_RE = re.compile(
+    r"(?<![\w$])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\x28")
+_EMPTY_VALUE = r"\s*(?:\[\s*\]|\x7b\s*\x7d)"
+
+
+def review_fallback_advisory_needed(stripped, dev_starts):
+    # True when a reviewer / sec-guard read falls back to an empty value and a DEV spawn follows it with
+    # no stop on that read in between. Any parse uncertainty → False: advisory-only, verdict untouched.
+    try:
+        smask = _string_mask(stripped)
+        struct = "".join(" " if smask[k] else ch for k, ch in enumerate(stripped))
+        return any(_fallback_reaches_dev(struct, name, read_end, dev_starts)
+                   for name, read_end in _get_review_reads(stripped, struct))
+    except Exception:
+        return False
+
+
+def _get_review_reads(stripped, struct):
+    # (variable, end of call) per declaration bound to a reviewer / sec-guard call → literal in the
+    # arguments, or a helper named for the review
+    reads = []
+    for m in REVIEW_ASSIGN_RE.finditer(struct):
+        close = match_close(struct, m.end() - 1, chr(40), chr(41))
+        if close is None:
+            continue
+        if REVIEW_HELPER_RE.search(m.group(2)) or REVIEW_ROLE_RE.search(stripped, m.end(), close):
+            reads.append((m.group(1), close))
+    return reads
+
+
+def _fallback_reaches_dev(struct, name, read_end, dev_starts):
+    # First empty fallback on the read → the next DEV spawn after it → an if-not stop before that spawn?
+    var = r"(?<![\w$.])" + re.escape(name) + r"(?:\??\.[\w$]+)*\s*"
+    fallback = re.compile(var + r"(?:\?(?![?.])[^;\n]{0,400}?:" + _EMPTY_VALUE
+                          + r"|(?:\|\||\?\?)" + _EMPTY_VALUE + r")").search(struct, read_end)
+    if fallback is None:
+        return False
+    later = [p for p in dev_starts if p > fallback.end()]
+    if not later:
+        return False
+    stop = re.compile(r"(?<![\w$])if\s*\x28\s*!\s*" + re.escape(name) + r"(?![\w$])[^\n]*?\x29\s*"
+                      r"(?:\x7b[^\x7b\x7d]*?)?(?<![\w$])(?:return|throw)(?![\w$])")
+    return stop.search(struct, read_end, min(later)) is None
 
 
 def impl_slot_count(dev_spawns, verify_types, impl_types, computed_types):
@@ -2018,7 +2107,22 @@ def sizeest_bounds(attestation_src, slots):
         return "SIZEEST_BOUNDS_SILENT"
 
 
+# Verdicts a simple-task entry waives: every [AGENT-COMPOSITION] and [SIZE-EST] block. The doc-routing
+# block is no token check and stays.
+SIMPLE_TASK_WAIVED_BLOCKS = frozenset((
+    "BLOCK_NODECL", "BLOCK_GRAMMAR", "BLOCK_NOREV", "BLOCK_NOVERIFYDEV", "BLOCK_DECLSPAWN",
+    "BLOCK_UNDECL", "BLOCK_COMPUTED", "BLOCK_ORDER", "BLOCK_UPSTREAM", "BLOCK_SIZEEST",
+))
+
+
 def emit(verdict, entry_marker):
+    # Simple-task entry → waived blocks become PASS and the [SIZE-EST] advisories go silent; the
+    # ENTRY_SIMPLE marker tells the bash side to skip its [SCOPE] advisory too.
+    size_map, sizeest_bounds_flag = SIZE_MAP_FLAG, SIZEEST_BOUNDS_FLAG
+    if entry_marker == "ENTRY_SIMPLE":
+        if verdict in SIMPLE_TASK_WAIVED_BLOCKS:
+            verdict = "PASS"
+        size_map, sizeest_bounds_flag = "SIZE_MAP_SILENT", "SIZEEST_BOUNDS_SILENT"
     print(verdict)
     print(entry_marker)
     print(RESIL_FLAG)
@@ -2026,11 +2130,12 @@ def emit(verdict, entry_marker):
     print(SCHEMA_CAP_FLAG)
     print(DEV_FLAG)
     print("IMPL_SLOTS=" + str(IMPL_SLOTS))
-    print(SIZE_MAP_FLAG)
+    print(size_map)
     print(ENTRY_CARD_FLAG)
     print(COMPLETION_FLAG)
-    print(SIZEEST_BOUNDS_FLAG)
+    print(sizeest_bounds_flag)
     print(CLOSE_TOKEN_FLAG)
+    print(REVIEW_FALLBACK_FLAG)
     sys.exit(0)
 
 
@@ -2091,10 +2196,15 @@ try:
     entry_literal_found = ENTRY_CLASS_LITERAL in attestation_src
     entry_ok = (not dev_present) or plan_ref_found or entry_literal_found
     entry_marker = "ENTRY_OK" if entry_ok else "ENTRY_ADVISORY"
+    # Simple-task entry: classified simple with no plan-reference → owes no other attestation token.
+    if dev_present and entry_literal_found and not plan_ref_found:
+        entry_marker = "ENTRY_SIMPLE"
     size_est_missing = dev_present and entry_ok and (SIZE_EST_LITERAL not in attestation_src)
     # Close-token decision: a plan-referencing DEV workflow carrying neither [PLAN-CLOSE] form (raw scan).
     if dev_present and plan_ref_found and not CLOSE_TOKEN_RE.search(attestation_src):
         CLOSE_TOKEN_FLAG = "CLOSE_TOKEN_ADVISE"
+    if review_fallback_advisory_needed(antigaming_src, [p for (p, _) in dev_spawns]):
+        REVIEW_FALLBACK_FLAG = "REVIEW_FALLBACK_ADVISE"
 
     # ANALYSIS-SIZE advisory (parallel NON-DEV branch) — computed BEFORE the first emit (incl. the
     # `if not dev_present` early PASS at the top of the DEV block) so EVERY emit path carries it on line
@@ -2303,14 +2413,15 @@ except Exception:
 PY
   )"
 
-  # Run the helper. It prints TWELVE lines: line 1 = verdict token, line 2 = entry marker
+  # Run the helper. It prints THIRTEEN lines: line 1 = verdict token, line 2 = entry marker
   # (ENTRY_OK|ENTRY_ADVISORY), line 3 = resilience flag (RESIL_ADVISE|RESIL_SILENT), line 4 =
   # analysis-size flag (ANALYSIS_SIZE_ADVISE|ANALYSIS_SIZE_SILENT), line 5 = schema-cap flag
   # (SCHEMA_CAP_ADVISE[:R<n>]|SCHEMA_CAP_SILENT), line 6 = DEV flag, line 7 = IMPL_SLOTS=<n>, line 8 =
   # size-map flag, line 9 = entry-cardinality flag, line 10 = the MULTIPLEXED completion-channel flag
   # (COMPLETION_ADVISE[:<value>]|COMPLETION_SILENT), line 11 = the [SIZE-EST] plausibility-bounds flag
   # (SIZEEST_BOUNDS_ADVISE[:<value>]|SIZEEST_BOUNDS_SILENT), line 12 = the close-token flag
-  # (CLOSE_TOKEN_ADVISE|CLOSE_TOKEN_SILENT).
+  # (CLOSE_TOKEN_ADVISE|CLOSE_TOKEN_SILENT), line 13 = the review-fallback flag
+  # (REVIEW_FALLBACK_ADVISE|REVIEW_FALLBACK_SILENT).
   # A non-zero exit OR unparseable output → fail-open (PASS + ENTRY_OK + all flags SILENT).
   # The fallback literal below MUST gain a token in LOCKSTEP with emit()
   # and the read group — pinned by a source-structural arity assertion in the bats suite, because a
@@ -2325,10 +2436,10 @@ PY
     # open to PASS without evaluating the verify-stage. Surface the disarm with a named code; the
     # fail-open verdict + exit stay UNCHANGED (advisory — stderr only).
     printf '[enforce-workflow-verify-stage] WFG-VERDICT-FAILOPEN: verdict helper produced no output (python3 crash / interpreter failure) — gate defaulted to fail-open PASS, verify-stage NOT evaluated\n' >&2
-    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT\nSCHEMA_CAP_SILENT\nDEV_NO\nIMPL_SLOTS=0\nSIZE_MAP_SILENT\nENTRY_CARD_SILENT\nCOMPLETION_SILENT\nSIZEEST_BOUNDS_SILENT\nCLOSE_TOKEN_SILENT'
+    helper_out=$'PASS\nENTRY_OK\nRESIL_SILENT\nANALYSIS_SIZE_SILENT\nSCHEMA_CAP_SILENT\nDEV_NO\nIMPL_SLOTS=0\nSIZE_MAP_SILENT\nENTRY_CARD_SILENT\nCOMPLETION_SILENT\nSIZEEST_BOUNDS_SILENT\nCLOSE_TOKEN_SILENT\nREVIEW_FALLBACK_SILENT'
   fi
 
-  # Parse the twelve helper lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
+  # Parse the thirteen helper lines with sequential reads. Pre-seeded defaults + a group-level `|| true` keep an
   # EOF on a short (legacy / fail-open) output from tripping the fail-open ERR trap; each field is then
   # normalized to a known value so a stray/absent line collapses to the safe default.
   verdict="PASS"
@@ -2341,6 +2452,7 @@ PY
   local completion_flag="COMPLETION_SILENT"
   local sizeest_bounds_flag="SIZEEST_BOUNDS_SILENT"
   local close_token_flag="CLOSE_TOKEN_SILENT"
+  local review_fallback_flag="REVIEW_FALLBACK_SILENT"
   {
     IFS= read -r verdict
     IFS= read -r entry_marker
@@ -2354,17 +2466,18 @@ PY
     IFS= read -r completion_flag
     IFS= read -r sizeest_bounds_flag
     IFS= read -r close_token_flag
+    IFS= read -r review_fallback_flag
   } <<<"${helper_out}" || true
   [[ -z "${verdict}" ]] && verdict="PASS"
-  [[ "${entry_marker}" == "ENTRY_ADVISORY" ]] || entry_marker="ENTRY_OK"
+  [[ "${entry_marker}" == "ENTRY_ADVISORY" || "${entry_marker}" == "ENTRY_SIMPLE" ]] || entry_marker="ENTRY_OK"
   [[ "${resil_flag}" == "RESIL_ADVISE" ]] || resil_flag="RESIL_SILENT"
   [[ "${analysis_size_flag}" == "ANALYSIS_SIZE_ADVISE" ]] || analysis_size_flag="ANALYSIS_SIZE_SILENT"
   # The schema-cap flag carries the matched scoped rule as a `:R<n>` suffix (trace instrumentation); a
   # bare SCHEMA_CAP_ADVISE stays admitted so a legacy/short helper output is not silently re-classified.
   # Admitted by SHAPE, never by an enumeration of today's rule tags: a fourth scoped rule added to
   # get_schema_cap_rule would fall through an enumeration to SILENT, so its advisory would stop printing
-  # AND stop being traced with no error anywhere — silently under-counting the very per-rule promotion
-  # window the suffix exists to build. Strictness over the seam is unchanged: an unanchored or
+  # AND stop being traced with no error anywhere — silently under-counting the very per-rule firing
+  # record the suffix exists to build. Strictness over the seam is unchanged: an unanchored or
   # non-`R<digits>` suffix still collapses to SILENT.
   if [[ ! "${schema_cap_flag}" =~ ^SCHEMA_CAP_ADVISE(:R[0-9]+)?$ ]]; then
     schema_cap_flag="SCHEMA_CAP_SILENT"
@@ -2388,6 +2501,7 @@ PY
     sizeest_bounds_flag="SIZEEST_BOUNDS_SILENT"
   fi
   [[ "${close_token_flag}" == "CLOSE_TOKEN_ADVISE" ]] || close_token_flag="CLOSE_TOKEN_SILENT"
+  [[ "${review_fallback_flag}" == "REVIEW_FALLBACK_ADVISE" ]] || review_fallback_flag="REVIEW_FALLBACK_SILENT"
 
   # INSTRUMENTATION FIELDS (never a verdict input) — normalize to the safe reading on any stray or
   # short helper output, mirroring the flag normalization above. A non-integer slot count records as
@@ -2402,7 +2516,7 @@ PY
 
   # RESILIENCE ADVISORY (fail-open, stderr-only) — the helper decided per-site whether >=1 unhandled
   # schema-mode agent spawn remains; print the nudge here so it rides along with ANY verdict (PASS or a
-  # BLOCK below). This NEVER alters the exit code.
+  # warning below). This NEVER alters the exit code.
   if [[ "${resil_flag}" == "RESIL_ADVISE" ]]; then
     print_resilience_advisory
     add_advisory "resilience"
@@ -2410,16 +2524,16 @@ PY
 
   # ANALYSIS-SIZE ADVISORY (fail-open, stderr-only) — the helper decided a schema-mode NON-DEV analysis
   # spawn lacks a [SIZE-EST] token; nudge here so it rides ANY verdict. NEVER alters the exit code (the
-  # DEV BLOCK_SIZEEST hard-block path stays exit 2 and is decided independently in the case dispatch).
+  # DEV BLOCK_SIZEEST warning is decided independently in the case dispatch).
   if [[ "${analysis_size_flag}" == "ANALYSIS_SIZE_ADVISE" ]]; then
     print_analysis_size_advisory
     add_advisory "analysis-size"
   fi
 
   # SCHEMA-CAP ADVISORY (fail-open, stderr-only) — the helper's isolated scan matched one of the three
-  # scoped cap rules; nudge here so it rides ANY verdict. Placed BEFORE the entry-miss block and the
-  # verdict case dispatch, so it can NEVER alter an exit code — a flagged cap on a hard-blocking script
-  # still exits 2 (pinned by the disarm-regression fixture).
+  # scoped cap rules; nudge here so it rides ANY verdict. Placed BEFORE the entry-miss warning and the
+  # verdict case dispatch, so a flagged cap on a warned script still prints both (pinned by the
+  # disarm-regression fixture).
   if [[ "${schema_cap_flag}" == SCHEMA_CAP_ADVISE* ]]; then
     print_schema_cap_advisory
     # Trace tag carries the matched rule when the helper supplied one (`SCHEMA_CAP_ADVISE:R1`); a bare
@@ -2430,7 +2544,7 @@ PY
   # COMPLETION-CHANNEL ADVISORY (fail-open, stderr-only) — the helper's isolated scans decided the
   # reserved completion-channel property is missing from a payload that needs it, or that no payload
   # exists at all; nudge here so it rides ANY verdict. Placed with the other advisory emitters, before
-  # the entry-miss block and the verdict case dispatch, so it can NEVER alter an exit code.
+  # the entry-miss warning and the verdict case dispatch.
   # MULTIPLEXED DISPATCH: the MESSAGE keys on the value, the TRACE TAG does not. A value added later is
   # therefore recorded from the moment it exists, and only its message waits on a new case arm — which
   # is what keeps the seam paid once.
@@ -2456,8 +2570,8 @@ PY
 
   # [SIZE-EST] PLAUSIBILITY ADVISORY (fail-open, stderr-only) — the helper bounded the DECLARED
   # DEV-mode tool_uses~ value against the slot count it already computes; nudge here so it rides ANY
-  # verdict. Placed with the other advisory emitters, before the entry-miss block and the verdict case
-  # dispatch, so it can NEVER alter an exit code. Same multiplexed dispatch shape as the
+  # verdict. Placed with the other advisory emitters, before the entry-miss warning and the verdict case
+  # dispatch. Same multiplexed dispatch shape as the
   # completion-channel arm: the MESSAGE keys on the value, the TRACE TAG does not.
   case "${sizeest_bounds_flag}" in
     SIZEEST_BOUNDS_ADVISE:low) print_sizeest_low_advisory ;;
@@ -2470,7 +2584,7 @@ PY
 
   # CARDINALITY ADVISORIES (trace-only — no stderr nudge, deliberately). These record a measurement;
   # they do NOT nudge, do not name a fix, and NOTHING below reads them. Placed with the other advisory
-  # emitters so the tag is set before any trace emit or block_and_exit, and after the flags are read.
+  # emitters so the tag is set before the trace emit, and after the flags are read.
   # size-map fires when the [SIZE-EST] occurrence count differs from the implementation-slot count in
   # EITHER direction; entry-cardinality fires when an [ENTRY-CLASS] simple-task classification
   # co-occurs with 4 or more implementation slots. Whether either is worth acting on is unknown —
@@ -2482,37 +2596,39 @@ PY
     add_advisory "entry-cardinality"
   fi
 
-  # ENTRY-MISS BLOCK (channel-a) — promoted from the former advisory. Fires ONLY when the verdict is
-  # NOT already a BLOCK_* (unquoted BLOCK* glob — fully DECOUPLED) AND the entry signal is
-  # ENTRY_ADVISORY (DEV spawn with no plan-ref AND no [ENTRY-CLASS] token). It can NEVER fire when
-  # entry_ok holds. Any python helper error yields PASS + ENTRY_OK (fail-open), so an internal error
-  # never produces a spurious entry-block.
+  trace_tag=""
+  reason=""
+  # ENTRY-MISS WARNING. Fires ONLY when the verdict is NOT already a BLOCK_* cause token (unquoted
+  # BLOCK* glob — fully DECOUPLED) AND the entry signal is ENTRY_ADVISORY (DEV spawn with no plan-ref
+  # AND no [ENTRY-CLASS] token). It can NEVER fire when entry_ok holds. Any python helper error yields
+  # PASS + ENTRY_OK (fail-open), so an internal error never produces a spurious entry warning.
   if [[ "${verdict}" != BLOCK* && "${entry_marker}" == "ENTRY_ADVISORY" ]]; then
     entry_reason="$(
       cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (entry-miss): this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification. Sizable DEV work MUST enter the Document-Driven Workflow (author a plan first). Two ways to clear this gate: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-ref token); (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate) record an [ENTRY-CLASS] simple-task: <reason> classification in the workflow script. ENTRY-CLASS NEGATIVE: `simple-task` is the ONLY recognized [ENTRY-CLASS] literal — sizable work has NO [ENTRY-CLASS] form (its entry signal is the plan-ref token, path 1); any other [ENTRY-CLASS] variant (e.g. [ENTRY-CLASS] sizable / complex / feature) is UNRECOGNIZED and does NOT clear this gate. Placement is not enforced (raw-scanned), so a commented token also satisfies this gate.
+[enforce-workflow-verify-stage] WARNING (entry-miss): this Workflow script spawns DEV agent(s) with NEITHER a plan-reference NOR an [ENTRY-CLASS] simple-task classification. Sizable DEV work MUST enter the Document-Driven Workflow (author a plan first). Two ways to clear this warning: (1) PERSIST the plan to the monitor (POST /api/clauded-docs) and reference the minted clauded-docs/<N> id in the workflow script (=> plan-ref token); (2) if GENUINELY simple (none of the sizable criteria hold — see scope-dev.md Sprint Contract Gate) record an [ENTRY-CLASS] simple-task: <reason> classification in the workflow script. ENTRY-CLASS NEGATIVE: `simple-task` is the ONLY recognized [ENTRY-CLASS] literal — sizable work has NO [ENTRY-CLASS] form (its entry signal is the plan-ref token, path 1); any other [ENTRY-CLASS] variant (e.g. [ENTRY-CLASS] sizable / complex / feature) is UNRECOGNIZED and does NOT clear this warning. Placement is not enforced (raw-scanned), so a commented token also satisfies this check.
 
 COPY-PASTE SCAFFOLD (fill the <…> placeholders, persist the plan, then paste path (1) OR (2) into the script):
 
 EOF
       emit_entry_token_scaffold
     )"
-    block_and_exit "${entry_reason}" "block-entry"
+    reason="${entry_reason}"
+    trace_tag="block-entry"
   fi
 
-  # Verdict-token → (trace_tag, reason) dispatch. Each BLOCK_* token carries its own dedicated stderr
-  # remediation. Default (PASS / any unenumerated token) → fail-open: emit_trace "pass" + exit 0. The
-  # `*)` default is the VERDICT-PLUMBING TRAP guard's other half: every python-side BLOCK token MUST
-  # have a case arm here (AND a block_and_exit ADR-2 allowlist entry AND a trace tag) or it silently
-  # falls to PASS — the enumerated arms below cover the identical token set the helper can emit.
-  trace_tag=""
-  reason=""
+  # Verdict-token → (trace_tag, reason) dispatch. Each BLOCK_* cause token (a tripped check, never a
+  # block) carries its own dedicated stderr remediation. Default (PASS / any unenumerated token) →
+  # fail-open: no cause warning, trace "pass". The `*)` default is the VERDICT-PLUMBING TRAP guard's
+  # other half: every python-side BLOCK token MUST have a case arm here (AND a print_cause_warning
+  # ADR-2 allowlist entry AND a trace tag) or it silently falls to PASS — the enumerated arms below
+  # cover the identical token set the helper can emit. An entry-miss leaves verdict at PASS, so it
+  # reaches the default arm with its reason already set.
   case "${verdict}" in
     BLOCK_NODECL)
       trace_tag="block-nodecl"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (missing composition declaration): this Workflow script spawns DEV agent(s) but carries NO [AGENT-COMPOSITION] declaration block. Like [ENTRY-CLASS] / [SIZE-EST], the composition declaration is a MANDATORY author self-attestation — its ABSENCE on a DEV workflow is a hard block (presence parity). It declares the verify team + the implementation spawns so the gate can consistency-check them against the code. STRING-RESIDENCY NOTE: if your block IS present but sits INSIDE a string literal (e.g. quoted in a goal/prompt template), it is treated as ABSENT on purpose (a worked example quoted into a prompt must stay inert) — move it into a real /* */ block comment. HONESTY: declaration truthfulness is NOT mechanically verified — same honor-system trust model as the sibling attestation tokens; only PRESENCE + CONSISTENCY are checked.
+[enforce-workflow-verify-stage] WARNING (missing composition declaration): this Workflow script spawns DEV agent(s) but carries NO [AGENT-COMPOSITION] declaration block. Like [SIZE-EST], the composition declaration is a MANDATORY author self-attestation on a DEV workflow that is not an [ENTRY-CLASS] simple-task entry — its ABSENCE there draws this warning (presence parity). A genuinely simple script with no plan-reference records [ENTRY-CLASS] simple-task instead and owes no declaration. It declares the verify team + the implementation spawns so the gate can consistency-check them against the code. STRING-RESIDENCY NOTE: if your block IS present but sits INSIDE a string literal (e.g. quoted in a goal/prompt template), it is treated as ABSENT on purpose (a worked example quoted into a prompt must stay inert) — move it into a real /* */ block comment. HONESTY: declaration truthfulness is NOT mechanically verified — same honor-system trust model as the sibling attestation tokens; only PRESENCE + CONSISTENCY are checked.
 
 COPY-PASTE SCAFFOLD — pick ONE form (canonical home: a /* */ block comment):
 
@@ -2520,7 +2636,7 @@ EOF
         emit_composition_scaffold
         cat <<'EOF'
 
-Clause grammar (ONE line per key): verify: (a) glass-atrium-qa-code-reviewer AND exactly ONE glass-atrium-dev-* (the DEV hard-gate is enforced HERE) OR (b) upstream clauded-docs/<N>. impl: <literal dev agentType spawn(s)> | none. impl-computed: <dev agentType(s) spawned indirectly, e.g. agentType: b.agent over a config array> — verified via data-literal presence. IMPL-COMPUTED NEGATIVE: when there are NO computed/indirect spawns, OMIT the impl-computed line entirely — `impl-computed: none` is MALFORMED (only impl: accepts the `none` literal) and BLOCKS as block-grammar (unknown-name). The upstream <N> MUST also be cited by a plan-ref token in the script body. TYPE vs INSTANCE: the block declares agent TYPES and ROLES; a fan-out that spawns N runtime instances from one token declares the TYPE once (instance cardinality is never checked).
+Clause grammar (ONE line per key): verify: (a) glass-atrium-qa-code-reviewer AND exactly ONE glass-atrium-dev-* (the DEV check lives HERE) OR (b) upstream clauded-docs/<N>. impl: <literal dev agentType spawn(s)> | none. impl-computed: <dev agentType(s) spawned indirectly, e.g. agentType: b.agent over a config array> — verified via data-literal presence. IMPL-COMPUTED NEGATIVE: when there are NO computed/indirect spawns, OMIT the impl-computed line entirely — `impl-computed: none` is MALFORMED (only impl: accepts the `none` literal) and warns as block-grammar (unknown-name). The upstream <N> MUST also be cited by a plan-ref token in the script body. TYPE vs INSTANCE: the block declares agent TYPES and ROLES; a fan-out that spawns N runtime instances from one token declares the TYPE once (instance cardinality is never checked).
 EOF
       )"
       ;;
@@ -2528,7 +2644,7 @@ EOF
       trace_tag="block-grammar"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (malformed composition declaration): this Workflow script carries an [AGENT-COMPOSITION] block, but its contents are not well-formed. A well-formed sentinel pair means you opted INTO the contract, so a decidable author error is a hard block (NOT fail-open) — silently ignoring a typo would run unvalidated DEV work while you believe the gate validated it. One of these decidable errors was detected: an unterminated block (opening sentinel with no [/AGENT-COMPOSITION] close); 2+ comment-resident blocks (ambiguous authority); a line that does not begin with a known key + colon; a duplicate key; an unknown agent name (validated against the runtime DEV_SET + the reviewer literal — NOTE names must be COMMA-separated: a space-separated pair like `verify: glass-atrium-qa-code-reviewer glass-atrium-dev-nestjs` reads as ONE unknown name and blocks here); a malformed `verify: upstream …` clause; or a team-form verify clause naming MORE THAN ONE dev-* type. Fix the block to the strict grammar below, then retry. HONESTY: only presence + grammar + code-consistency are mechanical; role truthfulness is honor-system.
+[enforce-workflow-verify-stage] WARNING (malformed composition declaration): this Workflow script carries an [AGENT-COMPOSITION] block, but its contents are not well-formed. A well-formed sentinel pair means you opted INTO the contract, so a decidable author error draws this warning (NOT fail-open) — silently ignoring a typo would run unvalidated DEV work while you believe the gate validated it. One of these decidable errors was detected: an unterminated block (opening sentinel with no [/AGENT-COMPOSITION] close); 2+ comment-resident blocks (ambiguous authority); a line that does not begin with a known key + colon; a duplicate key; an unknown agent name (validated against the runtime DEV_SET + the reviewer literal — NOTE names must be COMMA-separated: a space-separated pair like `verify: glass-atrium-qa-code-reviewer glass-atrium-dev-nestjs` reads as ONE unknown name and warns here); a malformed `verify: upstream …` clause; or a team-form verify clause naming MORE THAN ONE dev-* type. Fix the block to the strict grammar below, then retry. HONESTY: only presence + grammar + code-consistency are mechanical; role truthfulness is honor-system.
 
 STRICT GRAMMAR — exactly ONE comment-resident block, ONE line per key, keys drawn from {verify, impl, impl-computed}; agent names must be the reviewer literal or a runtime-DEV_SET dev-*; free text is admitted ONLY after a spaced-dash delimiter (e.g. `impl-computed: glass-atrium-dev-node — over the BATCHES array`):
 
@@ -2543,7 +2659,7 @@ STRICT GRAMMAR — exactly ONE comment-resident block, ONE line per key, keys dr
   impl: glass-atrium-dev-shell
   [/AGENT-COMPOSITION] */
 
-verify team form = glass-atrium-qa-code-reviewer + EXACTLY ONE dev-* type (the Stage-2 team of two roles). impl := comma-separated dev-* type list | none. impl-computed := comma-separated dev-* type list (indirect/computed spawns) — OMIT this line entirely when there are no computed spawns; `impl-computed: none` is malformed (only impl: accepts the `none` literal) and blocks here as block-grammar.
+verify team form = glass-atrium-qa-code-reviewer + EXACTLY ONE dev-* type (the Stage-2 team of two roles). impl := comma-separated dev-* type list | none. impl-computed := comma-separated dev-* type list (indirect/computed spawns) — OMIT this line entirely when there are no computed spawns; `impl-computed: none` is malformed (only impl: accepts the `none` literal) and warns here as block-grammar.
 EOF
       )"
       ;;
@@ -2551,7 +2667,7 @@ EOF
       trace_tag="block-norev"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (no reviewer, zero-reviewer hard guarantee): this DEV workflow contains NO glass-atrium-qa-code-reviewer spawn token ANYWHERE. This guarantee is UNCONDITIONAL — it is evaluated independently of the declaration form, so the upstream form does NOT waive it: even a workflow executing an already-verified plan must still carry a real reviewer spawn somewhere. Either add the reviewer verify spawn (in-script verify form), OR — if this workflow only EXECUTES an already-verified persisted plan AND still spawns a reviewer — keep the reviewer and use the upstream form (verify: upstream clauded-docs/<N>, cited by a plan-ref token in the body).
+[enforce-workflow-verify-stage] WARNING (no reviewer, zero-reviewer guarantee): this DEV workflow contains NO glass-atrium-qa-code-reviewer spawn token ANYWHERE. This guarantee is UNCONDITIONAL — it is evaluated independently of the declaration form, so the upstream form does NOT waive it: even a workflow executing an already-verified plan must still carry a real reviewer spawn somewhere. Either add the reviewer verify spawn (in-script verify form), OR — if this workflow only EXECUTES an already-verified persisted plan AND still spawns a reviewer — keep the reviewer and use the upstream form (verify: upstream clauded-docs/<N>, cited by a plan-ref token in the body).
 EOF
       )"
       ;;
@@ -2559,7 +2675,7 @@ EOF
       trace_tag="block-noverifydev"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (verify team lacks the DEV half — Stage-2 DEV hard-gate): the [AGENT-COMPOSITION] verify clause does NOT name BOTH glass-atrium-qa-code-reviewer AND a glass-atrium-dev-* partner. The Plan Direction Verification (Stage-2) gate REQUIRES a DEV verdict (feasible|infeasible) alongside the reviewer verdict — a reviewer-only verify team is rejected. Fix the declaration: verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-<domain>. If there is NO genuine in-script verify DEV (e.g. a lone audit reviewer plus scattered implementation devs), this is the correct block — add a real {qa, dev} verify pair, or use the upstream form if executing an already-verified plan. HONESTY: this checks the DECLARATION names a DEV; it does NOT verify a feasible verdict was emitted (honor-system, same as the attestation tokens).
+[enforce-workflow-verify-stage] WARNING (verify team lacks the DEV half — Stage-2 DEV gate): the [AGENT-COMPOSITION] verify clause does NOT name BOTH glass-atrium-qa-code-reviewer AND a glass-atrium-dev-* partner. The Plan Direction Verification (Stage-2) gate REQUIRES a DEV verdict (feasible|infeasible) alongside the reviewer verdict — a reviewer-only verify team draws this warning. Fix the declaration: verify: glass-atrium-qa-code-reviewer, glass-atrium-dev-<domain>. If there is NO genuine in-script verify DEV (e.g. a lone audit reviewer plus scattered implementation devs), this warning is correct — add a real {qa, dev} verify pair, or use the upstream form if executing an already-verified plan. HONESTY: this checks the DECLARATION names a DEV; it does NOT verify a feasible verdict was emitted (honor-system, same as the attestation tokens).
 EOF
       )"
       ;;
@@ -2567,7 +2683,7 @@ EOF
       trace_tag="block-declspawn"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (declared role never spawned): a literal agent role declared in [AGENT-COMPOSITION] (a verify-team member or an impl: spawn) has NO matching spawn-position token in the code (agent('<type>', …) first-arg OR agentType: '<type>'). The declaration must describe the ACTUAL spawns — a phantom verify team is falsifiable against code and blocks. Either add the missing spawn, correct the declared agentType, or (if the spawn is computed/indirect) move it to an impl-computed: line so it is checked via data-literal presence instead.
+[enforce-workflow-verify-stage] WARNING (declared role never spawned): a literal agent role declared in [AGENT-COMPOSITION] (a verify-team member or an impl: spawn) has NO matching spawn-position token in the code (agent('<type>', …) first-arg OR agentType: '<type>'). The declaration must describe the ACTUAL spawns — a phantom verify team is falsifiable against code and warns. Either add the missing spawn, correct the declared agentType, or (if the spawn is computed/indirect) move it to an impl-computed: line so it is checked via data-literal presence instead.
 EOF
       )"
       ;;
@@ -2575,7 +2691,7 @@ EOF
       trace_tag="block-undecl"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (undeclared DEV spawn): a glass-atrium-dev-* type appears in the code whose agentType is NOT covered by any verify / impl / impl-computed clause in [AGENT-COMPOSITION]. Every DEV type MUST be declared (so a silently-added implementation dev cannot bypass the verify contract). This fires on TWO shapes: (1) a real Tier-B spawn (agent('glass-atrium-dev-*', …) OR agentType: '…') that is undeclared — add its agentType to an impl: (or impl-computed:) line, or remove the spawn; (2) PROSE-MENTION / config-array coverage (b-prime): an exact-quoted dev-* name that is NOT a real spawn — e.g. a dev-* name quoted inside a goal/prose string, or a dev literal parked in a data config array (agentType: b.agent over a BATCHES array) with ZERO agent() spawn positions. ONE-EDIT remediation for shape (2): if the quoted name is merely a MENTION, reword it so the dev-* name is NOT a quote-bounded literal (drop the quotes / paraphrase); if it IS a real (computed) spawn, declare its type on an impl-computed: line.
+[enforce-workflow-verify-stage] WARNING (undeclared DEV spawn): a glass-atrium-dev-* type appears in the code whose agentType is NOT covered by any verify / impl / impl-computed clause in [AGENT-COMPOSITION]. Every DEV type MUST be declared (so a silently-added implementation dev cannot bypass the verify contract). This fires on TWO shapes: (1) a real Tier-B spawn (agent('glass-atrium-dev-*', …) OR agentType: '…') that is undeclared — add its agentType to an impl: (or impl-computed:) line, or remove the spawn; (2) PROSE-MENTION / config-array coverage (b-prime): an exact-quoted dev-* name that is NOT a real spawn — e.g. a dev-* name quoted inside a goal/prose string, or a dev literal parked in a data config array (agentType: b.agent over a BATCHES array) with ZERO agent() spawn positions. ONE-EDIT remediation for shape (2): if the quoted name is merely a MENTION, reword it so the dev-* name is NOT a quote-bounded literal (drop the quotes / paraphrase); if it IS a real (computed) spawn, declare its type on an impl-computed: line.
 EOF
       )"
       ;;
@@ -2583,7 +2699,7 @@ EOF
       trace_tag="block-computed"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (declared computed spawn absent): an impl-computed: agentType declared in [AGENT-COMPOSITION] does NOT appear as a data-literal anywhere in the code (e.g. inside the config array the computed agentType selects over). A computed/indirect spawn (agentType: b.agent / a ternary) is verified by the presence of its declared agent-type literals in the data. Add the agent-type literal to the config data, or correct the declared type.
+[enforce-workflow-verify-stage] WARNING (declared computed spawn absent): an impl-computed: agentType declared in [AGENT-COMPOSITION] does NOT appear as a data-literal anywhere in the code (e.g. inside the config array the computed agentType selects over). A computed/indirect spawn (agentType: b.agent / a ternary) is verified by the presence of its declared agent-type literals in the data. Add the agent-type literal to the config data, or correct the declared type.
 EOF
       )"
       ;;
@@ -2591,7 +2707,7 @@ EOF
       trace_tag="block-order"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (ordering): a declared implementation dev-* spawn textually precedes EVERY glass-atrium-qa-code-reviewer spawn, so the implementation is not gated by the verify stage. On the greedy-earliest same-type binding (the first Tier-B spawn of a declared verify-dev type is the verify slot; the rest of the declared impl-type positions are implementation slots), some reviewer MUST precede the first implementation slot. Reorder so the {qa-code-reviewer, DEV} verify stage runs BEFORE the implementation agent(); OR, if the earlier dev-* is a pre-verify Discovery/Design step, use a NON-DEV agent for it (glass-atrium-intel-researcher / glass-atrium-intel-planner) so no dev-* precedes the reviewer; OR front-load a genuine reviewer-first {qa-code-reviewer, DEV} Contract verify phase BEFORE any Discovery dev-*. (Computed/indirect impl spawns have no static position → ordering is honor-system for those.)
+[enforce-workflow-verify-stage] WARNING (ordering): a declared implementation dev-* spawn textually precedes EVERY glass-atrium-qa-code-reviewer spawn, so the implementation is not gated by the verify stage. On the greedy-earliest same-type binding (the first Tier-B spawn of a declared verify-dev type is the verify slot; the rest of the declared impl-type positions are implementation slots), some reviewer MUST precede the first implementation slot. Reorder so the {qa-code-reviewer, DEV} verify stage runs BEFORE the implementation agent(); OR, if the earlier dev-* is a pre-verify Discovery/Design step, use a NON-DEV agent for it (glass-atrium-intel-researcher / glass-atrium-intel-planner) so no dev-* precedes the reviewer; OR front-load a genuine reviewer-first {qa-code-reviewer, DEV} Contract verify phase BEFORE any Discovery dev-*. (Computed/indirect impl spawns have no static position → ordering is honor-system for those.)
 EOF
       )"
       ;;
@@ -2599,7 +2715,7 @@ EOF
       trace_tag="block-upstream"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (upstream plan not cited): the [AGENT-COMPOSITION] verify clause uses the upstream form (verify: upstream clauded-docs/<N>) but the referenced plan id is NOT cited by a plan-ref token in the script BODY (outside the declaration). The upstream form waives the in-script {qa, dev} verify PAIR-MAPPING and ORDERING ONLY — it does NOT waive the zero-reviewer hard guarantee, and it is honest ONLY for a workflow that genuinely executes an already-verified persisted plan. So the script must reference that plan. Add a plan-ref citation, e.g. log('plan-ref: clauded-docs/<N>'), matching the declared id; or switch to the in-script verify form. CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — reference a REAL, already-verified persisted plan (same honor-system floor as a fake plan-ref).
+[enforce-workflow-verify-stage] WARNING (upstream plan not cited): the [AGENT-COMPOSITION] verify clause uses the upstream form (verify: upstream clauded-docs/<N>) but the referenced plan id is NOT cited by a plan-ref token in the script BODY (outside the declaration). The upstream form waives the in-script {qa, dev} verify PAIR-MAPPING and ORDERING ONLY — it does NOT waive the zero-reviewer hard guarantee, and it is honest ONLY for a workflow that genuinely executes an already-verified persisted plan. So the script must reference that plan. Add a plan-ref citation, e.g. log('plan-ref: clauded-docs/<N>'), matching the declared id; or switch to the in-script verify form. CAUTION: do NOT mint a throwaway token-doc purely to harvest a clauded-docs id — reference a REAL, already-verified persisted plan (same honor-system floor as a fake plan-ref).
 EOF
       )"
       ;;
@@ -2607,74 +2723,100 @@ EOF
       trace_tag="block-docroute"
       reason="$(
         cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (doc-routing leak): this Workflow spawns an intel-reporter / intel-planner agent whose prompt hardcodes a LOCAL filesystem path as the deliverable Target AND contains NO monitor-POST / clauded-docs routing instruction. Route the document to the monitor clauded-docs API (POST /api/clauded-docs); if a local path is only a /tmp staging buffer piped into a monitor POST, include the monitor-POST instruction so this static check recognizes the routing. USER-REQUESTED LOCAL: stamp log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>') (path/line-scoped; concrete dotted path required). HONEST LIMIT: this is the WEAKEST string-heuristic layer; the runtime PreToolUse(Write) hook (block-doc-routing-leak.sh) is the primary guard.
+[enforce-workflow-verify-stage] WARNING (doc-routing leak): this Workflow spawns an intel-reporter / intel-planner agent whose prompt hardcodes a LOCAL filesystem path as the deliverable Target AND contains NO monitor-POST / clauded-docs routing instruction. Route the document to the monitor clauded-docs API (POST /api/clauded-docs); if a local path is only a /tmp staging buffer piped into a monitor POST, include the monitor-POST instruction so this static check recognizes the routing. USER-REQUESTED LOCAL: stamp log('[DOC-ROUTE] user-requested-local: <path> — <1-line justification>') (path/line-scoped; concrete dotted path required). HONEST LIMIT: a string heuristic over the script text only; no runtime write check backs it.
 EOF
       )"
       ;;
     BLOCK_SIZEEST)
       trace_tag="block-sizeest"
-      reason="$(
-        cat <<'EOF'
-[enforce-workflow-verify-stage] BLOCKED (size-attestation miss): this Workflow spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. Record the pre-spawn size estimate at EVERY DEV spawn: log('[SIZE-EST] bundles=N tool_uses~=N — <reason>'). Under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline); on a borderline count round UP. Placement is not enforced (raw-scanned); existence-only — the estimate correctness is never checked.
-EOF
-      )"
+      size_est_form="$(get_size_est_form)"
+      reason="[enforce-workflow-verify-stage] WARNING (size-attestation miss): this Workflow spawns DEV agent(s) but carries NO [SIZE-EST] delegation-size self-attestation token. Record the pre-spawn size estimate at every DEV spawn of a plan-referencing script: log('${size_est_form}'), units= being the work-units that spawn carries (one by default). A genuinely simple script with no plan-reference records [ENTRY-CLASS] simple-task instead and owes no [SIZE-EST]. Under-estimating is the DANGEROUS error (it masks an oversized delegation past the split discipline); on a borderline count round UP. Placement is not enforced (raw-scanned); existence-only — the estimate correctness is never checked."
       ;;
-    *)
-      # SCOPE ADVISORY — on the PASS arm only, so a fault in this newest check can never mask one of
-      # the block verdicts above. Ordered before emit_trace so the tag rides the pass trace line.
-      # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-      if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | drain_after grep -qF '[SCOPE]'; then
-        print_scope_advisory
-        add_advisory "scope"
-      fi
-      # CLOSE-TOKEN ADVISORY — PASS arm only, same siting reason as the scope advisory; the predicate is
-      # the helper's (header -> EIGHTH ADVISORY PASS).
-      if [[ "${close_token_flag}" == "CLOSE_TOKEN_ADVISE" ]]; then
-        print_close_token_advisory
-        add_advisory "close-token"
-      fi
-      # FIRST-LINK ADVISORY — PASS arm only, for the scope advisory's reason AND one of its own: the two
-      # monitor walks are the only network reads here, so a blocked script never pays a loopback GET. The
-      # three cheap conjuncts are ordered ahead of the walk, so a compliant or plan-ref-less workflow
-      # issues zero chain GETs. Predicate + full fail-open list: header -> SEVENTH ADVISORY PASS.
-      # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
-      if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | drain_after grep -qF "${FIRST_LINK_LITERAL}"; then
-        local plan_refs first_link_plan_id
-        # The first clauded-docs/<N> id in file order — the SHAPE, unanchored to any plan-ref token, so
-        # an earlier mention supplies it instead (header -> KNOWN FALSE NEGATIVES). No `head` in the pipe:
-        # a SIGPIPE'd grep under pipefail would trip the fail-open ERR trap, so the whole match set is
-        # captured and sliced in bash.
-        plan_refs="$(printf '%s' "${script_src}" | grep -oE 'clauded-docs/[0-9]+' || true)"
-        first_link_plan_id="${plan_refs%%$'\n'*}"
-        first_link_plan_id="${first_link_plan_id##*/}"
-        # shellcheck disable=SC2310
-        #   Predicate call — the exit status IS the answer (chain resolved vs fail-open).
-        if [[ -n "${first_link_plan_id}" ]] && get_supersede_chain "${first_link_plan_id}" \
-          && ((CHAIN_DEPTH >= 1)); then
-          print_first_link_advisory "${CHAIN_DEPTH}" "${CHAIN_ROOT_ID}"
-          add_advisory "first-link"
-        fi
-      fi
-      # IMPLEMENTING ADVISORY — after the first-link walk, whose reads it reuses. Predicate: header ->
-      # NINTH ADVISORY PASS.
-      # shellcheck disable=SC2310
-      #   Predicate call — the exit status IS the answer (unstarted plan found vs silence).
-      if [[ "${dev_flag}" == "yes" ]] && get_unstarted_plan_id; then
-        print_implementing_advisory "${UNSTARTED_PLAN_ID}"
-        add_advisory "implementing"
-      fi
-      emit_trace "pass" "${script_len}"
-      exit 0
-      ;;
+    *) ;;
   esac
 
-  block_and_exit "${reason}" "${trace_tag}"
+  if [[ -n "${reason}" ]]; then
+    print_cause_warning "${reason}" "${trace_tag}"
+  fi
+  # Trailing advisories follow every verdict, warned or not. `|| true` keeps an advisory fault from
+  # firing the fail-open ERR trap, which would drop the trace line and with it a trip's record.
+  # shellcheck disable=SC2310  # deliberate: each advisory step guards its own failure
+  print_trailing_advisories || true
+  emit_trace "${trace_tag:-pass}" "${script_len}"
+  # --lint has no tool call to let through: a cause warning is a finding → exit 1.
+  if [[ "${LINT_MODE}" == "1" && -n "${trace_tag}" ]]; then
+    exit 1
+  fi
+  exit 0
+}
+
+# print_trailing_advisories — the scope, units, close-token, review-fallback, first-link and implementing
+# nudges; each tags the trace. Reads the globals the verdict helper set (dev_flag, entry_marker,
+# close_token_flag, review_fallback_flag, script_src).
+print_trailing_advisories() {
+  # SCOPE ADVISORY — runs after the cause warning has printed, so a fault here cannot mask it.
+  # Ordered before emit_trace so the tag rides the trace line.
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  # A simple-task entry (ENTRY_SIMPLE) owes no [SCOPE] declaration.
+  if [[ "${dev_flag}" == "yes" && "${entry_marker}" != "ENTRY_SIMPLE" ]] \
+    && ! printf '%s' "${script_src}" | drain_after grep -qF '[SCOPE]'; then
+    print_scope_advisory
+    add_advisory "scope"
+  fi
+  # UNITS ADVISORY — header -> ELEVENTH ADVISORY PASS; no units= text → the library is never loaded.
+  if [[ "${dev_flag}" == "yes" && "${entry_marker}" != "ENTRY_SIMPLE" && "${script_src}" == *units=* ]]; then
+    local units_advice
+    units_advice="$(get_units_advice)"
+    if [[ -n "${units_advice}" ]]; then
+      print_units_advisory "${units_advice}"
+      add_advisory "units"
+    fi
+  fi
+  # CLOSE-TOKEN ADVISORY — the predicate is the helper's (header -> EIGHTH ADVISORY PASS).
+  if [[ "${close_token_flag}" == "CLOSE_TOKEN_ADVISE" ]]; then
+    print_close_token_advisory
+    add_advisory "close-token"
+  fi
+  # REVIEW-FALLBACK ADVISORY — the predicate is the helper's (header -> TENTH ADVISORY PASS).
+  if [[ "${review_fallback_flag}" == "REVIEW_FALLBACK_ADVISE" ]]; then
+    print_review_fallback_advisory
+    add_advisory "review-fallback"
+  fi
+  # FIRST-LINK ADVISORY — the two monitor walks are the only network reads here; the cheap conjuncts
+  # are ordered ahead of the walk, so a compliant or plan-ref-less workflow issues zero chain GETs.
+  # Predicate + full fail-open list: header -> SEVENTH ADVISORY PASS.
+  # shellcheck disable=SC2310  # the reader's status is the verdict; errexit has nothing else to catch
+  if [[ "${dev_flag}" == "yes" ]] && ! printf '%s' "${script_src}" | drain_after grep -qF "${FIRST_LINK_LITERAL}"; then
+    local plan_refs first_link_plan_id
+    # The first clauded-docs/<N> id in file order — the SHAPE, unanchored to any plan-ref token, so
+    # an earlier mention supplies it instead (header -> KNOWN FALSE NEGATIVES). No `head` in the pipe:
+    # a SIGPIPE'd grep under pipefail would trip the fail-open ERR trap, so the whole match set is
+    # captured and sliced in bash.
+    plan_refs="$(printf '%s' "${script_src}" | grep -oE 'clauded-docs/[0-9]+' || true)"
+    first_link_plan_id="${plan_refs%%$'\n'*}"
+    first_link_plan_id="${first_link_plan_id##*/}"
+    # shellcheck disable=SC2310
+    #   Predicate call — the exit status IS the answer (chain resolved vs fail-open).
+    if [[ -n "${first_link_plan_id}" ]] && get_supersede_chain "${first_link_plan_id}" \
+      && ((CHAIN_DEPTH >= 1)); then
+      print_first_link_advisory "${CHAIN_DEPTH}" "${CHAIN_ROOT_ID}"
+      add_advisory "first-link"
+    fi
+  fi
+  # IMPLEMENTING ADVISORY — after the first-link walk, whose reads it reuses. Predicate: header ->
+  # NINTH ADVISORY PASS.
+  # shellcheck disable=SC2310
+  #   Predicate call — the exit status IS the answer (unstarted plan found vs silence).
+  if [[ "${dev_flag}" == "yes" ]] && get_unstarted_plan_id; then
+    print_implementing_advisory "${UNSTARTED_PLAN_ID}"
+    add_advisory "implementing"
+  fi
 }
 
 # ==== entry point — arg parse MUST precede the unconditional stdin drain =============================
-# --lint [script-file] : OFFLINE preview (the verified prevention). Reads RAW script text from a file arg
-#   OR stdin (no JSON envelope, no jq/tool_name stage) and runs the IDENTICAL verdict helper + dispatch,
-#   so `exit 0 = will pass the gate` by construction. Side-effect-free: LINT_MODE guards emit_trace (no
+# --lint [script-file] : OFFLINE preview. Reads RAW script text from a file arg OR stdin (no JSON
+#   envelope, no jq/tool_name stage) and runs the IDENTICAL verdict helper + dispatch, so its stderr
+#   WARNING lines are exactly the hook's; exit 1 on a cause warning, else 0. Side-effect-free: LINT_MODE guards emit_trace (no
 #   trace line written). --lint --template : print the canonical author-attestation scaffold and exit 0.
 if [[ "${1:-}" == "--lint" ]]; then
   LINT_MODE=1
@@ -2686,8 +2828,8 @@ if [[ "${1:-}" == "--lint" ]]; then
   script_src=""
   if [[ -n "${1:-}" ]]; then
     # Explicit file arg — a missing/unreadable path MUST fail LOUD (exit 2), not swallow the read
-    # error into an empty script that reads as a clean "exit 0 = will pass". Only the stdin path and
-    # a readable-but-empty file mirror the hook no-script exit-0 (nothing to lint).
+    # error into an empty script that reads as a clean preview. Only the stdin path and a
+    # readable-but-empty file mirror the hook no-script exit-0 (nothing to lint).
     if [[ ! -r "${1}" ]]; then
       printf '[lint] cannot read %s\n' "${1}" >&2
       exit 2
@@ -2696,8 +2838,8 @@ if [[ "${1:-}" == "--lint" ]]; then
   elif [[ ! -t 0 ]]; then
     script_src="$(cat 2>/dev/null)" || script_src=""
   fi
-  # Empty (readable-but-empty file, or empty stdin) → nothing to lint → exit 0 (a clean "will pass";
-  # mirrors the hook no-script path).
+  # Empty (readable-but-empty file, or empty stdin) → nothing to lint → exit 0 (mirrors the hook
+  # no-script path).
   [[ -z "${script_src}" ]] && exit 0
   script_len="${#script_src}"
   # run_verdict_and_dispatch always terminates via exit (helper dispatch or python3-absent fail-open).

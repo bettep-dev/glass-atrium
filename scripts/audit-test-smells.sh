@@ -27,6 +27,9 @@
 #     `hook_require_python3_unless_empty`: 2nd), or as an entry of a code table an emitter consumes:
 #     a bash array passed as `"${NAME[...]}"`, or the field an `IFS="${SEP}" read -r` line names and
 #     the emitter receives as `"${field}"`, taken from every `${SEP}`-delimited row of that file.
+#     A code table also defines its codes with no emitter in its file: a bash array whose opening
+#     line starts with a code and that its own file reads as `"${NAME[...]}"` — a scanner's table
+#     reaches the emitter through the scanner's reply, in another file. An unread table defines none.
 #     A title is flagged when any one token stays undefined; a retired code defined nowhere is an ID.
 #   - incident_header: a file whose leading comment block — `#`, `//` or `/* */` lines after an
 #     optional shebang and leading blank lines, ending at the first blank or code line — carries an
@@ -168,7 +171,7 @@ readonly RE_SHELLCHECK_DIRECTIVE='^#[[:space:]]*shellcheck[[:space:]]'
 
 # The emitters live under hooks/; an absent root (a fixture tree, a partial install) defines nothing.
 readonly PRODUCT_DIRS=(hooks lib scripts autoagent)
-readonly EMITTERS_FIRST='emit_error|block_critical|block_and_exit|hook_require_python3'
+readonly EMITTERS_FIRST='emit_error|warn_tripped_check|hook_require_python3'
 readonly RE_CODE='^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+$'
 readonly RE_CODE_HEAD='(^|[^[:alnum:]_])(([A-Z][A-Z0-9]*-)+)$'
 readonly RE_CODE_TAIL='^((-[A-Z0-9]+)+)([^[:alnum:]_]|$)'
@@ -177,6 +180,9 @@ readonly RE_EMIT_ARG='("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]"'"'"';|&)]+)'
 readonly RE_EMIT_FIRST="(^|[^[:alnum:]_])(${EMITTERS_FIRST})[[:space:]]+${RE_EMIT_ARG}"
 readonly RE_EMIT_SECOND="(^|[^[:alnum:]_])hook_require_python3_unless_empty[[:space:]]+${RE_EMIT_ARG}[[:space:]]+${RE_EMIT_ARG}"
 readonly RE_ARRAY_REF='^\$\{([A-Za-z_][A-Za-z0-9_]*)\['
+# an assignment's optional declaring builtin and its flags (`readonly -a NAME=(`) → capture groups 1-2
+readonly RE_DECL_HEAD='^[[:space:]]*([a-z]+[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*)?'
+readonly RE_CODE_TABLE="${RE_DECL_HEAD}"'([A-Za-z_][A-Za-z0-9_]*)=\([[:space:]"'"'"']*[A-Z][A-Z0-9]*(-[A-Z0-9]+)+([[:space:]"'"'"')]|$)'
 readonly RE_VAR_REF='^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$'
 readonly RE_READ_TABLE='IFS="\$\{([A-Za-z_][A-Za-z0-9_]*)\}"[[:space:]]+read[[:space:]]+(-r[[:space:]]+)?([A-Za-z_][A-Za-z0-9_ ]*)'
 readonly RE_WORD='^[[:space:]]*([^[:space:]]+)(.*)$'
@@ -376,7 +382,40 @@ build_defined_codes() {
         register_line_codes "${file}" "${LINE_TEXT}"
       done <<<"${lines}"
     done <<<"${files}"
+    register_code_tables "${dir}"
   done
+}
+
+# Registers the code tables of every non-test file under one product root, emitter or none.
+register_code_tables() {
+  local files="" file="" lines="" line="" name=""
+  # shellcheck disable=SC2310  # product_grep reports its own failure; the exit carries it
+  files="$(product_grep -rlIE --exclude-dir=test -- "${RE_CODE_TABLE}" "${root_dir}/${1}")" || exit 3
+  while IFS= read -r file; do
+    [[ -n "${file}" ]] || continue
+    # shellcheck disable=SC2310  # as above
+    lines="$(product_grep -E -- "${RE_CODE_TABLE}" "${file}")" || exit 3
+    while IFS= read -r line; do
+      scan_line "${line}"
+      [[ "${LINE_TEXT}" =~ ${RE_CODE_TABLE} ]] || continue
+      name="${BASH_REMATCH[3]}"
+      # shellcheck disable=SC2310  # an unread table is the skipped outcome, not an error
+      is_table_read "${file}" "${name}" || continue
+      register_array_table "${file}" "${name}"
+    done <<<"${lines}"
+  done <<<"${files}"
+}
+
+# True when a non-comment line of the file reads the array as "${NAME[...]}".
+is_table_read() {
+  local ref="\"\${${2}[" reads="" line=""
+  # shellcheck disable=SC2310  # product_grep reports its own failure; the exit carries it
+  reads="$(product_grep -F -- "${ref}" "${1}")" || exit 3
+  while IFS= read -r line; do
+    scan_line "${line}"
+    [[ "${LINE_TEXT}" == *"${ref}"* ]] && return 0
+  done <<<"${reads}"
+  return 1
 }
 
 # grep whose no-match is an empty result; an unreadable product file is an IO error (exit 3).
@@ -420,7 +459,7 @@ register_code_arg() {
 
 # Registers every code-shaped element of the file's NAME=( … ) assignment, single- or multi-line.
 register_array_table() {
-  local file="${1}" re_open="^[[:space:]]*([a-z]+[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*)?${2}=\\((.*)$"
+  local file="${1}" re_open="${RE_DECL_HEAD}${2}=\\((.*)$"
   local line="" text="" in_array=0
   while IFS= read -r line || [[ -n "${line}" ]]; do
     scan_line "${line}"

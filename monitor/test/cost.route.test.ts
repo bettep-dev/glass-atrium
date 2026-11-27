@@ -1,8 +1,8 @@
 // Integration tests for /api/cost (비용·토큰 detail screen).
-// Runner: npx tsx --test test/cost.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/cost.route.test.ts
 // DB: real Postgres (read-only) — existing cost_events fixture drives assertions.
 
-import test, { after, before } from "node:test";
+import test, { after, before, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 
 import "dotenv/config";
@@ -11,13 +11,15 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { registerCostRoutes } from "../src/server/routes/cost.js";
-import { DAY_BUCKET_TIMEZONE } from "../src/server/timezone.js";
+import { registerDashboardRoutes } from "../src/server/routes/dashboard.js";
+import { computeBucketTzToday, DAY_BUCKET_TIMEZONE } from "../src/server/timezone.js";
 
 let app: FastifyInstance;
 
 before(async () => {
   app = Fastify({ logger: false });
   await registerCostRoutes(app);
+  await registerDashboardRoutes(app);
   await app.ready();
 });
 
@@ -29,6 +31,18 @@ after(async () => {
   }
   await disconnectPrisma();
 });
+
+// Oracle window = the routes' 30-day window: the day-bucket timezone's today and the 29 days before it.
+function getThirtyDayWindow(): { firstDay: string; lastDay: string } {
+  const lastDay = computeBucketTzToday(new Date());
+  return { firstDay: addDays(lastDay, -29), lastDay };
+}
+
+function addDays(isoDay: string, offset: number): string {
+  const day = new Date(`${isoDay}T00:00:00Z`);
+  day.setUTCDate(day.getUTCDate() + offset);
+  return day.toISOString().slice(0, 10);
+}
 
 test("GET /api/cost/by-model: happy path — 200 + complete shape", async () => {
   const res = await app.inject({ method: "GET", url: "/api/cost/by-model?days=30" });
@@ -65,12 +79,12 @@ test("GET /api/cost/by-model: no_assistant_in_turn zero-rows excluded from attri
   const prisma = getPrisma();
 
   // Ground truth: no_assistant_in_turn zero-row count in the window.
-  // Window days=30 → CURRENT_DATE - INTERVAL '29 days' (N-1 back = 30 calendar days incl. today).
-  // Oracle MUST mirror the API boundary (cost.ts buildWindowLowerBound) → same day-set on both sides.
+  // Oracle MUST mirror the API boundary → same day-set on both sides.
+  const { firstDay, lastDay } = getThirtyDayWindow();
   const designZeroRows = await prisma.$queryRaw<Array<{ cnt: bigint; sessions: bigint }>>`
     SELECT COUNT(*)::bigint AS cnt, COUNT(DISTINCT session_id)::bigint AS sessions
     FROM core.cost_events
-    WHERE event_date >= CURRENT_DATE - INTERVAL '29 days'
+    WHERE event_date BETWEEN ${firstDay}::date AND ${lastDay}::date
       AND stop_reason = 'no_assistant_in_turn'
   `;
   const zeroRowSessions = Number(designZeroRows[0]?.sessions ?? 0n);
@@ -79,7 +93,7 @@ test("GET /api/cost/by-model: no_assistant_in_turn zero-rows excluded from attri
   const apiUnknown = await prisma.$queryRaw<Array<{ sessions: bigint }>>`
     SELECT COUNT(DISTINCT session_id)::bigint AS sessions
     FROM core.cost_events
-    WHERE event_date >= CURRENT_DATE - INTERVAL '29 days'
+    WHERE event_date BETWEEN ${firstDay}::date AND ${lastDay}::date
       AND stop_reason IS DISTINCT FROM 'no_assistant_in_turn'
       AND model IS NULL
   `;
@@ -116,7 +130,7 @@ test("GET /api/cost/by-model: no_assistant_in_turn zero-rows excluded from attri
              / NULLIF(COUNT(*), 0), 1
            )::float8 AS pct
     FROM core.cost_events
-    WHERE event_date >= CURRENT_DATE - INTERVAL '29 days'
+    WHERE event_date BETWEEN ${firstDay}::date AND ${lastDay}::date
       AND stop_reason IS DISTINCT FROM 'no_assistant_in_turn'
   `;
   // Guard the oracle: cost_events is EMPTY in CI by design (no seed) → COUNT(*)=0 →
@@ -184,8 +198,9 @@ test("GET /api/cost/session-distribution: no_llm_session_count split + rows carr
     assert.ok(row.total_tokens > 0, "every distribution row carries > 0 tokens");
   }
 
-  // Oracle: zero-token-session count over the same 30d window (CURRENT_DATE - 29).
+  // Oracle: zero-token-session count over the same 30d window.
   const prisma = getPrisma();
+  const { firstDay, lastDay } = getThirtyDayWindow();
   const oracle = await prisma.$queryRaw<Array<{ with_tokens: bigint; zero: bigint }>>`
     SELECT
       COUNT(*) FILTER (WHERE session_tokens > 0)::bigint AS with_tokens,
@@ -194,7 +209,7 @@ test("GET /api/cost/session-distribution: no_llm_session_count split + rows carr
       SELECT SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens)
                AS session_tokens
       FROM core.cost_events
-      WHERE event_date >= CURRENT_DATE - INTERVAL '29 days'
+      WHERE event_date BETWEEN ${firstDay}::date AND ${lastDay}::date
       GROUP BY session_id
     ) s
   `;
@@ -282,6 +297,7 @@ const P8_SESSION_B = `p8-top-model-b-${process.pid}`;
 
 async function seedP8Events(): Promise<void> {
   const prisma = getPrisma();
+  const today = computeBucketTzToday(new Date());
   const events: Array<[string, string | null, number, string]> = [
     [P8_SESSION_A, "model-cheap", 1, "end_turn"],
     [P8_SESSION_A, "model-dear", 3, "tool_use"],
@@ -294,7 +310,7 @@ async function seedP8Events(): Promise<void> {
         (event_date, event_time, session_id, kind, dedup_key, input_tokens, output_tokens,
          cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms, num_turns,
          stop_reason, model, parse_error)
-      VALUES (CURRENT_DATE, '12:00:00', ${session}, 'turn', ${`${session}-${i}`}, 10, 10, 0, 0,
+      VALUES (${today}::date, '12:00:00', ${session}, 'turn', ${`${session}-${i}`}, 10, 10, 0, 0,
               ${cost}, 0, 1, ${reason}, ${model}, false)
     `;
   }
@@ -314,10 +330,11 @@ test("GET /api/cost/session-distribution: each row's top_model is the model carr
   const body = res.json() as { rows: Array<{ session_id: string; top_model: string | null }> };
 
   const prisma = getPrisma();
+  const { firstDay, lastDay } = getThirtyDayWindow();
   const oracle = await prisma.$queryRaw<Array<{ session_id: string; model: string | null; cost: number }>>`
     SELECT session_id, model, COALESCE(SUM(cost_usd), 0)::float8 AS cost
     FROM core.cost_events
-    WHERE event_date >= CURRENT_DATE - INTERVAL '29 days'
+    WHERE event_date BETWEEN ${firstDay}::date AND ${lastDay}::date
     GROUP BY session_id, model
   `;
   const seeded = body.rows.find((r) => r.session_id === P8_SESSION_A);
@@ -410,3 +427,113 @@ test("GET /api/cost/turn-stats: stop_reason_session_count is the distinct sessio
   assert.ok(body.stop_reason_session_count >= Math.max(0, ...perReason), "population >= largest bucket");
   assert.ok(body.stop_reason_session_count <= columnSum, "population <= column sum");
 });
+
+// One priced event on each side of both 30-day window edges; a model per day names the day in by-model.
+const EDGE_SESSION = `window-edge-${process.pid}`;
+const EDGE_MODEL_PREFIX = `edge-model-${process.pid}:`;
+// a stop reason only the seeded session carries → its turn-stats bucket holds the seeded events alone
+const EDGE_STOP_REASON = `edge-stop-${process.pid}`;
+const EDGE_OFFSETS = [-30, -29, 0, 1];
+// 00:30 in Seoul, still the previous day in UTC → the bucket-tz today and the UTC CURRENT_DATE differ
+const EDGE_NOW = Date.parse("2026-07-17T15:30:00Z");
+const EDGE_TODAY = computeBucketTzToday(new Date(EDGE_NOW));
+const SERIES_URL = "/api/dashboard/cost-timeseries?days=30";
+
+async function seedEdgeEvents(): Promise<void> {
+  for (const offset of EDGE_OFFSETS) {
+    await getPrisma().$executeRaw`
+      INSERT INTO core.cost_events
+        (event_date, event_time, session_id, kind, dedup_key, input_tokens, output_tokens,
+         cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms, num_turns,
+         stop_reason, model, parse_error)
+      VALUES (${addDays(EDGE_TODAY, offset)}::date, '00:10:00', ${EDGE_SESSION}, 'turn',
+              ${`${EDGE_SESSION}:${offset}`}, 10, 10, 0, 0, 1.25, 0, 1, ${EDGE_STOP_REASON},
+              ${`${EDGE_MODEL_PREFIX}${offset}`}, false)
+    `;
+  }
+}
+
+async function clearEdgeEvents(): Promise<void> {
+  await getPrisma().$executeRaw`DELETE FROM core.cost_events WHERE session_id = ${EDGE_SESSION}`;
+}
+
+async function getAtEdgeNow(t: TestContext, urls: string[]): Promise<unknown[]> {
+  t.mock.timers.enable({ apis: ["Date"], now: EDGE_NOW });
+  try {
+    const responses = await Promise.all(urls.map((url) => app.inject({ method: "GET", url })));
+    for (const res of responses) {
+      assert.strictEqual(res.statusCode, 200, res.body);
+    }
+    return responses.map((res) => res.json());
+  } finally {
+    t.mock.timers.reset();
+  }
+}
+
+interface SeriesBody {
+  points: Array<{ date: string }>;
+}
+
+test("GET /api/cost/by-model counts exactly the days the cost-timeseries spans, both edge days included", async (t) => {
+  await seedEdgeEvents();
+  t.after(clearEdgeEvents);
+  const [byModel, series] = (await getAtEdgeNow(t, ["/api/cost/by-model?days=30", SERIES_URL])) as [
+    { rows: Array<{ model: string }> },
+    SeriesBody,
+  ];
+
+  const seriesDays = new Set(series.points.map((point) => point.date));
+  const expected = EDGE_OFFSETS.filter((offset) => seriesDays.has(addDays(EDGE_TODAY, offset))).map(
+    (offset) => `${EDGE_MODEL_PREFIX}${offset}`,
+  );
+  const counted = byModel.rows.map((row) => row.model).filter((model) => model.startsWith(EDGE_MODEL_PREFIX));
+  assert.deepStrictEqual(counted.sort(), expected.sort(), "by-model counts the series' days, no more, no fewer");
+  assert.deepStrictEqual(
+    expected,
+    [`${EDGE_MODEL_PREFIX}-29`, `${EDGE_MODEL_PREFIX}0`],
+    "the series spans the bucket-tz today and the 29 days before it",
+  );
+});
+
+for (const row of [
+  { name: "cache-hit", url: "/api/cost/cache-hit?days=30" },
+  { name: "parse-errors", url: "/api/cost/parse-errors?days=30" },
+]) {
+  test(`GET /api/cost/${row.name}: its day series is the cost-timeseries day series`, async (t) => {
+    const [daily, series] = (await getAtEdgeNow(t, [row.url, SERIES_URL])) as [
+      { rows: Array<{ event_date: string }> },
+      SeriesBody,
+    ];
+    assert.deepStrictEqual(
+      daily.rows.map((day) => day.event_date),
+      series.points.map((point) => point.date),
+    );
+  });
+}
+
+// each body is that route's JSON payload → the cast names only the fields its row reads
+for (const row of [
+  {
+    name: "session-distribution",
+    url: "/api/cost/session-distribution?days=30",
+    getSeededCount: (body: unknown): number | undefined =>
+      (body as { rows: Array<{ session_id: string; event_count: number }> }).rows.find(
+        (session) => session.session_id === EDGE_SESSION,
+      )?.event_count,
+  },
+  {
+    name: "turn-stats",
+    url: "/api/cost/turn-stats?days=30",
+    getSeededCount: (body: unknown): number | undefined =>
+      (body as { stop_reasons: Array<{ stop_reason: string; event_count: number }> }).stop_reasons.find(
+        (bucket) => bucket.stop_reason === EDGE_STOP_REASON,
+      )?.event_count,
+  },
+]) {
+  test(`GET /api/cost/${row.name} counts a session's events on both edge days and none outside them`, async (t) => {
+    await seedEdgeEvents();
+    t.after(clearEdgeEvents);
+    const [body] = await getAtEdgeNow(t, [row.url]);
+    assert.strictEqual(row.getSeededCount(body), 2);
+  });
+}

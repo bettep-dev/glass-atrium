@@ -2,8 +2,6 @@
 // TS 모듈 채택 이유(rejected: 옵시디언 md 의존) — md 의존 제거로 fs.stat ENOENT 회귀 차단 · Node loader 의 import 영구 캐시로 mtime 폴링 불요 · as const 로 7 카운트를 컴파일 타임 검증.
 // 편집 후 반영: npm run build → launchctl kickstart 재기동.
 
-import { fileURLToPath } from "node:url";
-
 import type { DetailGrade } from "./content-budget.js";
 
 // 7 v2 mermaid 다이어그램. slug 는 frontend TAB_ORDER 와 1:1 매칭.
@@ -44,7 +42,7 @@ export const DIAGRAMS = [
     end
 
     subgraph agents["Specialist agents"]
-        agent_layer["23 agents"]
+        agent_layer["24 agents"]
     end
 
     subgraph hooks["Safety checks & tracking"]
@@ -307,8 +305,8 @@ export const DIAGRAMS = [
     delegate --> to_doc
     delegate --> code_team
 
-    %% [CONTINUITY] turn-0 parse — document team reached via boundary node
-    continuity_hook -. "reads progress files at session start" .-> to_doc
+    %% progress-file resume — document team reached via boundary node
+    continuity_hook -. "reads a progress file when resuming" .-> to_doc
 
     %% anti-slop skill binding
     reviewer -. "self-checks against anti-slop skill" .-> reviewer
@@ -364,9 +362,7 @@ export const DIAGRAMS = [
     end
 
     from_orch --> glass-atrium-intel-researcher
-    from_orch -. "reads progress files at session start" .-> glass-atrium-intel-researcher
-    from_orch -. "reads progress files at session start" .-> planner_d
-    from_orch -. "reads progress files at session start" .-> glass-atrium-intel-reporter
+    from_orch -. "reads a progress file when resuming" .-> planner_d
 
     glass-atrium-intel-researcher -- "research results" --> planner_d
     planner_d -- "plan document" --> domain
@@ -431,16 +427,15 @@ export const NODE_DESCRIPTIONS: Readonly<Record<string, string>> = {
 		"The orchestrator. It plans the work and assigns it; carrying the work out is the specialist agents' job, not its own.",
 	agent_layer:
 		"The specialist agents the orchestrator assigns work to. Their tool calls are what the hook pipeline sees.",
-	hook_pipeline:
-		"Every tool call an agent makes passes through here first — the safety checks that can stop a call, and the tracking that records what happened.",
+	hook_pipeline: "Checks every agent tool call, can stop it, and records what happened.",
 	pg_db:
 		"The PostgreSQL database. Agent documents and hook records both land here, and it is the single store the export path reads from.",
 	doc_export: "Renders the stored documents for export through a headless Chromium.",
 };
 
-// 본 모듈의 자기 식별자 — parser.ts 가 doc_path 응답 필드에 사용.
-// import.meta.url 런타임 파생 → 설치 사용자 환경 절대경로 (개발자 식별자 비포함).
-export const DIAGRAMS_SOURCE_PATH: string = fileURLToPath(import.meta.url);
+// This module's own name → parser.ts serves it as the doc_path response field.
+// Repo-relative literal, never import.meta.url → the remote listener sends no absolute local path off the Mac.
+export const DIAGRAMS_SOURCE_PATH = "monitor/src/server/architecture/diagrams-source.ts";
 
 export type DiagramSlug = (typeof DIAGRAMS)[number]["slug"];
 
@@ -487,7 +482,7 @@ export const CANONICAL_MAP: CanonicalMap = {
 	 * 라벨 여유: `main_session` 의 `Plans the work, then assigns it` 이 최장 라벨로 31자, faithful 라벨 상한은 50 임.
 	 * 라벨은 30px 지도 글꼴에서 한 줄로 그려지는 짧은 표시명임 — 긴 설명은 NODE_DESCRIPTIONS 가 실음.
 	 * 라벨이 존 제목으로 시작하지 않으므로 존 제목은 모두 보임 (제목 숨김은 단일 멤버가 제목을 되풀이할 때만).
-	 * 라벨의 `daemon` · `Chromium` 은 flow-extractor NODE_TYPE_RULES 가 노드 type 을 읽는 낱말이라 지우면 드로어 Pill 이 거짓이 됨.
+	 * 라벨의 `daemon` · `Chromium` 은 flow-extractor NODE_TYPE_RULES 가 노드 type 을 읽는 낱말이라 지우면 FlowNode.type 이 거짓이 됨.
 	 * 노드 9/14 · 엣지 7/18 도 같은 방향으로 느슨함 — 그래서 볼륨을 지키는 것은 밴드가 아니라
 	 * `architecture.budget.test.ts` 의 회귀 잠금 ①(실측값 정확 고정)②(상한 두 행 고정)③(drawn ⊆ source)임.
 	 * 이 주석을 mermaid 문자열 안으로 옮기지 말 것 — drawn 은 계수 대상이라 주석이 콘텐츠로 세어짐.
@@ -536,7 +531,7 @@ export const CANONICAL_MAP: CanonicalMap = {
     end
 
     subgraph agents["Agents"]
-        agent_layer["23 agents"]
+        agent_layer["24 agents"]
     end
 
     subgraph hooks["Safety"]

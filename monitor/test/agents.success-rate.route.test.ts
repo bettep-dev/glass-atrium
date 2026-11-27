@@ -1,5 +1,5 @@
 // /api/agents/success-rate 매트릭스 9-type allowlist 회귀 테스트.
-// Runner: npx tsx --test test/agents.success-rate.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/agents.success-rate.route.test.ts
 //
 // Pinned invariant: 비코드 4종 (review/diagnosis/doc/cleanup)이 defensive guard 에
 // 탈락하지 않고 매트릭스 행으로 노출 — 5종 allowlist 시절 124행 무공시 누락의 재현 probe.

@@ -32,7 +32,7 @@ window.MERMAID_CONFIG = {
   themeVariables: {
     darkMode: true,
 
-    // ── tokens.css 다크 블록 파생 ────────────────────────────────────────────
+    // tokens.css `:root` 파생
     // background/edgeLabelBackground=--surface · clusterBkg=--sunken · nodeTextColor=--ink
     // lineColor=--ink 40% 를 --surface 위에 합성한 값.
     background: '#0c0a09',

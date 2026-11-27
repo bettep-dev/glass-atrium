@@ -278,7 +278,8 @@ DEFAULT_REPORT_PATH="${REPORTS_DIR}/autoagent-${CYCLE_DATE}.json"
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
     OUT_PATH="${OUT_PATH:-/tmp/autoagent-daemon-cycle-${CYCLE_DATE}.dryrun.json}"
-    EXTRA_ARGS+=("--skip-haiku")
+    # the module's own no-write flag: --skip-haiku alone still runs its writing stages
+    EXTRA_ARGS+=("--dry-run")
 else
     OUT_PATH="${OUT_PATH:-${DEFAULT_REPORT_PATH}}"
 fi

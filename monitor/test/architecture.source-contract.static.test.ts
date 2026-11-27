@@ -5,8 +5,7 @@
 //
 // The screen is a browser JSX module: it sits outside the tsx --test import path and outside
 // tsconfig's include, so neither an import nor a type check reaches it — reading the text is
-// what is left. Precedent: test/daemon-status.enum-parity.test.ts reads route source and
-// compares the declaration block it extracts by regex.
+// what is left.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -69,9 +68,10 @@ test("no rule or wiring of the retired interactive legend survives in the screen
 // CDN 실패 시 증발하므로, 이 CSS 가 mermaid 인라인 max-width 스탬프의 유일한 상시 방어선임.
 // 초록에서 초록으로 남는 회귀 잠금이지 AC 가 아님.
 test("the canvas svg width override survives legend excision", () => {
-  const rule = SCREEN_SRC.match(/"\.arch-mermaid-canvas svg \{[^"]*"/);
+  // scoped to the diagram host's svg → the zoom controls' icons keep their own size
+  const rule = SCREEN_SRC.match(/"\.arch-mermaid-canvas \.arch-mermaid-host > svg \{[^"]*"/);
 
-  assert.ok(rule, "the .arch-mermaid-canvas svg rule must still be declared in the inline style block");
+  assert.ok(rule, "the canvas diagram-svg rule must still be declared in the inline style block");
   assert.match(rule[0], /max-width:\s*none\s*!important/);
   assert.match(rule[0], /width:\s*100%\s*!important/);
 });
@@ -85,48 +85,6 @@ test("no cadence-vs-staleness comparison survives in the screen source", () => {
     residue.map(([token]) => token),
     [],
     `staleness re-computation residue in architecture.jsx: ${residue.map(([t, c]) => `${t}\u00d7${c}`).join(", ")}`,
-  );
-});
-
-// 심각도 색이 meta/micro 글자에 얹히면 AA 대비(warn 3.05:1 · ok 3.61 · info 3.53)에 못 미침 —
-// 39578 §D 는 tone 을 글리프 · 바 · 경보 컨테이너에만 싣게 함. 색 리터럴을 표 하나에 모아 두고
-// 그 표를 글리프만 읽게 하면, 글자에 색을 다시 얹는 순간 둘 중 하나가 붉어짐.
-const TONE_COLOR_CLASSES = ["text-ok", "text-warn", "text-crit", "text-info"];
-
-// 표 선언 블록만 도려냄 — 값 리터럴이 사는 유일한 자리라 나머지는 전부 위반임.
-const TONE_TABLE_BLOCK = /const TONE_GLYPH_CLASS = \{[^}]*\};/;
-
-// 자기 닫힘 <Icon … /> 한 덩어리. className 식에 '>' 가 없어 [^>]* 로 끊김이 정확함.
-const ICON_ELEMENT = /<Icon\b[^>]*\/>/g;
-
-test("AC-T-tone severity colour literals live only in the glyph class table", () => {
-  const table = SCREEN_SRC.match(TONE_TABLE_BLOCK);
-  assert.ok(table, "TONE_GLYPH_CLASS must still be declared as a literal table");
-
-  const outsideTable = SCREEN_SRC.replace(table[0], "");
-  const residue = TONE_COLOR_CLASSES.map(
-    (token) => [token, countOccurrences(outsideTable, token)] as const,
-  ).filter(([, count]) => count > 0);
-
-  assert.deepEqual(
-    residue.map(([token]) => token),
-    [],
-    `tone colour on a non-glyph node in architecture.jsx: ${residue.map(([t, c]) => `${t}×${c}`).join(", ")}`,
-  );
-});
-
-test("AC-T-tone the glyph class table is read by icon elements only", () => {
-  const references = countOccurrences(SCREEN_SRC, "TONE_GLYPH_CLASS") - 1;
-  const onIcons = (SCREEN_SRC.match(ICON_ELEMENT) || []).reduce(
-    (sum, el) => sum + countOccurrences(el, "TONE_GLYPH_CLASS"),
-    0,
-  );
-
-  assert.ok(references > 0, "the glyph class table must still have a consumer");
-  assert.equal(
-    onIcons,
-    references,
-    `${references - onIcons} of ${references} TONE_GLYPH_CLASS references sit outside an <Icon> element`,
   );
 });
 

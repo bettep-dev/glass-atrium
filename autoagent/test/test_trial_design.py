@@ -20,8 +20,13 @@ Covered behaviors:
   * the trial's maximum sample is the larger of its efficacy and primary-harm
     samples, reproducing per-arm maxima to the unit on synthetic baselines, with
     no finite size at a baseline of 1/1.3 or above;
-  * sequential graduation and the growth to graduation 0.8 reproduce per-agent
-    figures on synthetic baselines.
+  * sequential graduation, its no-harm ceiling and the growth to graduation 0.8
+    reproduce per-agent figures on synthetic baselines;
+  * the follow-up count's randomization test ranks the observed studentized arm
+    difference among re-drawn arms, and each look's cut keeps the share crossed
+    at or before it within the alpha spent through that look;
+  * under no harm, on sessions sharing a heavy-tailed fan-out, that test's
+    four-look crossing share stays within its alpha.
 
 Every expected value is derived outside this module (published table, plan
 line, hand arithmetic shown inline, or an independent group-sequential computation).
@@ -33,11 +38,14 @@ Run with either runner:
 
 from __future__ import annotations
 
+import functools
+import hashlib
 import math
 import random
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 _LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
 if str(_LIB_DIR) not in sys.path:
@@ -131,8 +139,8 @@ class TrialSampleSize(unittest.TestCase):
                 self.assertEqual(td.get_trial_sample_size(baseline), harm if binding == "harm" else efficacy)
 
     def test_the_per_arm_maxima_reproduce_to_the_unit(self) -> None:
-        # synthetic baselines: reference rates + per-agent tables (tasks, both versions; spawns,
-        # methods A and B), rates 0.017-0.48 over 5-1500 units; efficacy → R33
+        # synthetic baselines: reference rates + per-agent tables (tasks; spawns, methods A and B)
+        # rates 0.017-0.48 over 5-1500 units
         rows = (
             ("reference 4.0%", 0.040, 2901, 3876),
             ("reference 7.5%", 0.075, 1499, 1980),
@@ -209,33 +217,36 @@ class TrialSampleSize(unittest.TestCase):
 
 
 class GraduationGrowth(unittest.TestCase):
-    def test_sequential_graduation_reproduces_the_per_agent_figures(self) -> None:
-        # synthetic agents, spawns and tasks baselines → α 0.05 on each guardrail,
-        # graduation on the sequential reading at R33's per-arm maximum, guardrails independent
+    def test_sequential_graduation_and_its_ceiling_reproduce_the_per_agent_figures(self) -> None:
+        # synthetic agents' spawns and tasks baselines; the sequential reading at the per-arm max
+        # guardrails independent at α 0.05 each, no harm
+        # ceiling = the share of efficacy crossings no guardrail stops at or before the crossing look
         rows = (
-            # (name, baseline, R33 per-arm maximum, guardrails, graduation)
-            ("agent A spawns", 85 / 1500, 2681, 3, 0.831),
-            ("agent A tasks", 98 / 600, 808, 3, 0.819),
-            ("agent B spawns", 88 / 532, 795, 4, 0.800),
-            ("agent B tasks", 68 / 155, 183, 4, 0.745),
-            ("agent F spawns", 36 / 350, 1393, 4, 0.808),
-            ("agent F tasks", 34 / 118, 377, 4, 0.782),
-            ("agent E spawns", 50 / 282, 729, 4, 0.799),
-            ("agent E tasks", 30 / 124, 484, 4, 0.789),
-            ("agent D spawns", 66 / 480, 995, 3, 0.822),
-            ("agent D tasks", 70 / 190, 254, 3, 0.784),
-            ("agent C spawns", 38 / 360, 1353, 3, 0.826),
-            ("agent C tasks", 48 / 170, 388, 3, 0.801),
+            # (name, baseline, per-arm maximum, guardrails, graduation, ceiling)
+            ("agent A spawns", 85 / 1500, 2681, 3, 0.831, 0.934),
+            ("agent A tasks", 98 / 600, 808, 3, 0.819, 0.932),
+            ("agent B spawns", 88 / 532, 795, 4, 0.800, 0.911),
+            ("agent B tasks", 68 / 155, 183, 4, 0.745, 0.904),
+            ("agent F spawns", 36 / 350, 1393, 4, 0.808, 0.912),
+            ("agent F tasks", 34 / 118, 377, 4, 0.782, 0.909),
+            ("agent E spawns", 50 / 282, 729, 4, 0.799, 0.911),
+            ("agent E tasks", 30 / 124, 484, 4, 0.789, 0.910),
+            ("agent D spawns", 66 / 480, 995, 3, 0.822, 0.933),
+            ("agent D tasks", 70 / 190, 254, 3, 0.784, 0.929),
+            ("agent C spawns", 38 / 360, 1353, 3, 0.826, 0.933),
+            ("agent C tasks", 48 / 170, 388, 3, 0.801, 0.930),
         )
-        for name, baseline, per_arm, guardrails, expected in rows:
+        for name, baseline, per_arm, guardrails, expected, ceiling in rows:
             with self.subTest(name):
                 graduation = td.get_graduation_probability(baseline, per_arm, guardrail_count=guardrails)
+                efficacy = td.get_graduation_probability(baseline, per_arm, guardrail_count=0)
                 self.assertAlmostEqual(graduation, expected, delta=5e-4)  # 3-decimal record
+                self.assertAlmostEqual(graduation / efficacy, ceiling, delta=5e-4)
 
     def test_the_grown_sample_is_the_smallest_reaching_graduation_0_8(self) -> None:
-        # synthetic agents → R45's grown sample on the sequential reading
+        # synthetic agents → the grown sample on the sequential reading
         rows = (
-            # (name, baseline, R33 per-arm maximum, guardrails, growth factor, grown per-arm maximum)
+            # (name, baseline, per-arm maximum, guardrails, growth factor, grown per-arm maximum)
             ("agent A spawns, not grown", 85 / 1500, 2681, 3, 1.000, 2681),
             ("agent B spawns, not grown", 88 / 532, 795, 4, 1.000, 795),
             ("agent F spawns, not grown", 36 / 350, 1393, 4, 1.000, 1393),
@@ -449,6 +460,43 @@ class ArmDifferenceDesignEffect(unittest.TestCase):
         singletons = [[(0, 1.0)], [(1, 0.0)], [(0, 0.0)], [(1, 1.0)]]
         self.assertEqual(td.get_arm_difference_design_effect(singletons), 1.0)
 
+    def test_the_independent_z_is_the_arm_difference_over_each_arms_variance_over_its_size_under_any_session_grouping(
+        self,
+    ) -> None:
+        # control 30/100, treatment 10/100 → se √(0.3·0.7/100 + 0.1·0.9/100) = √0.003 → z = −0.2 / 0.0547723
+        spawns = [(0, 1.0)] * 30 + [(0, 0.0)] * 70 + [(1, 1.0)] * 10 + [(1, 0.0)] * 90
+        # three groupings the clustered variance tells apart (asserted below) → the z reads none
+        rows = (
+            ("one spawn per session", [[spawn] for spawn in spawns]),
+            ("a session per arm", [spawns[:100], spawns[100:]]),
+            ("two sessions of both arms", [spawns[:40] + spawns[100:105], spawns[40:100] + spawns[105:]]),
+        )
+        effects = set()
+        for name, sessions in rows:
+            with self.subTest(name):
+                listed = [spawn for session in sessions for spawn in session]
+                self.assertAlmostEqual(td.get_independent_z(listed), -3.6514837, places=6)
+            effects.add(round(td.get_arm_difference_design_effect(sessions), 6))
+        # the session-clustered variance moved under every grouping
+        self.assertEqual(len(effects), len(rows))
+
+    def test_the_independent_z_is_undefined_only_on_an_empty_arm_or_arms_without_spread_whatever_the_float_residue(
+        self,
+    ) -> None:
+        # name, spawns, whether the z is defined
+        rows = (
+            ("no spawn", [], False),
+            ("no treatment spawn", [(0, 1.0), (0, 0.0)], False),
+            ("no control spawn", [(1, 1.0), (1, 0.0)], False),
+            ("neither arm has spread", [(0, 1.0), (0, 1.0), (1, 0.0), (1, 0.0)], False),
+            # fifths have no exact float → the float term stays above 0 where the exact one is 0
+            ("neither arm has spread, a float residue", [(0, 0.2)] * 3 + [(1, 0.1)] * 3, False),
+            ("one arm alone has spread", [(0, 1.0), (0, 1.0), (1, 0.0), (1, 1.0)], True),
+        )
+        for name, spawns, is_defined in rows:
+            with self.subTest(name):
+                self.assertEqual(td.get_independent_z(spawns) is not None, is_defined)
+
     def test_the_session_bootstrap_interval_covers_the_truth_at_about_its_level(self) -> None:
         # per-spawn arms → true value 1; a two-sided 90% interval → ~90% of datasets cover it
         generator = random.Random(20261012)
@@ -484,6 +532,299 @@ class ArmDifferenceDesignEffect(unittest.TestCase):
         clusters = [[(0, 1.0), (0, 0.0)], [(1, 1.0), (1, 0.0)]]
         reading = td.get_arm_design_effect_reading(clusters, seed="drop", replicates=200)
         self.assertTrue(0 < reading.replicates < 200, reading.replicates)
+
+
+_TRIAL_SALT = "7"  # a decimal arm salt, as the trial's
+# follow-ups per spawn, one row per session
+_SESSION_FOLLOW_UPS = (
+    (0, 2, 1, 0, 3),
+    (1, 0, 0),
+    (4, 1, 0, 2),
+    (0, 0, 1),
+    (2, 5, 0, 1, 1, 0),
+    (0, 1),
+    (3, 0, 0, 2),
+    (1, 1, 0),
+    (0, 4, 2),
+    (2, 0, 1, 0),
+    (0, 0, 3, 1),
+    (1, 2, 0),
+)
+_LOOK_SESSIONS = (3, 6, 9, 12)  # sessions closed by each look
+
+
+def _get_hash_arm(salt: str, agent_id: str) -> int:
+    """The trial's arm rule: sha256(salt ‖ agent_id) mod 2."""
+    return int(hashlib.sha256(f"{salt}{agent_id}".encode()).hexdigest(), 16) % 2
+
+
+class _RecordingArm:
+    """The trial's arm rule, keeping every salt it is asked under."""
+
+    def __init__(self) -> None:
+        self.salts: set[str] = set()
+
+    def __call__(self, salt: str, agent_id: str) -> int:
+        self.salts.add(salt)
+        return _get_hash_arm(salt, agent_id)
+
+
+def _get_sessions(rise: int = 0) -> list[list[tuple[str, int, float]]]:
+    """(agent_id, arm, follow-ups) per spawn, arms drawn under the trial salt; ``rise`` lands on treatment."""
+    sessions = []
+    for session, follow_ups in enumerate(_SESSION_FOLLOW_UPS):
+        agent_ids = [f"a{session:02d}{position:02d}" for position in range(len(follow_ups))]
+        arms = [_get_hash_arm(_TRIAL_SALT, agent_id) for agent_id in agent_ids]
+        sessions.append(
+            [(agent_id, arm, float(count + rise * arm)) for agent_id, arm, count in zip(agent_ids, arms, follow_ups)]
+        )
+    return sessions
+
+
+def _get_reference_z(clusters, salt: str, get_arm=_get_hash_arm) -> float | None:
+    """One reference member's statistic over the same spawns, None where undefined."""
+    armed = [[(agent_id, get_arm(salt, agent_id), count) for agent_id, _, count in cluster] for cluster in clusters]
+    return _get_statistic(armed)
+
+
+def _get_statistic(clusters) -> float | None:
+    """The count's statistic over (agent_id, arm, follow-ups) clusters as they stand: no re-draw taken."""
+    look = td.get_randomization_look(clusters, get_arm=_get_hash_arm, salt_namespace="", redraws=0, fraction=1.0)
+    return look.statistic
+
+
+# Synthetic fan-out shape: few look-1 sessions, one cluster near a third of each look's spawns
+# sessions join at every look; spawns closed by looks 1-4, one row per session
+_CALIBRATION = SimpleNamespace(
+    SESSIONS=(
+        (3, 4, 4, 4),
+        (11, 14, 14, 14),
+        (29, 29, 31, 46),
+        (61, 70, 97, 103),
+        (79, 168, 251, 263),
+        (93, 197, 288, 371),
+        (0, 8, 8, 8),
+        (0, 6, 6, 6),
+        (0, 33, 33, 71),
+        (0, 61, 128, 197),
+        (0, 5, 18, 19),
+        (0, 0, 27, 36),
+        (0, 0, 33, 58),
+        (0, 0, 12, 17),
+        (0, 0, 0, 24),
+        (0, 0, 0, 29),
+    ),
+    SEED=20261013,
+    DRAWS=200,
+    REDRAWS=199,  # 200 reference members → resolution 0.005; looks 1-4 admit 0 / 1 / 4 / 10
+)
+
+
+def _get_fan_out_looks(generator: random.Random, salt: str) -> list[list[list[tuple[str, int, float]]]]:
+    """One no-harm draw per look: a session's spawns share a Pareto fan-out level, arms under ``salt``."""
+    sessions = []
+    for session, sizes in enumerate(_CALIBRATION.SESSIONS):
+        level = 5 * generator.paretovariate(1.5)  # mean 15 per spawn; no finite variance
+        agent_ids = [f"c{session:02d}{position:03d}" for position in range(sizes[-1])]
+        sessions.append(
+            [
+                (agent_id, _get_hash_arm(salt, agent_id), float(int(generator.expovariate(1 / level))))
+                for agent_id in agent_ids
+            ]
+        )
+    return [
+        [spawns[: sizes[look]] for spawns, sizes in zip(sessions, _CALIBRATION.SESSIONS) if sizes[look]]
+        for look in range(len(td.LOOK_FRACTIONS))
+    ]
+
+
+class FollowUpRandomizationTest(unittest.TestCase):
+    def test_the_statistic_is_the_arm_difference_over_its_session_clustered_standard_error(self) -> None:
+        # control 30/100, treatment 10/100 → se √(0.3·0.7/100 + 0.1·0.9/100) = √0.003 → z = −0.2 / 0.0547723
+        # a spawn repeated inside its session → the clustered term unchanged; an independent one shrinks by √3
+        spawns = [(0, 1.0)] * 30 + [(0, 0.0)] * 70 + [(1, 1.0)] * 10 + [(1, 0.0)] * 90
+        rows = (("one spawn per session", 1), ("each spawn repeated inside its session", 3))
+        for name, copies in rows:
+            clusters = [
+                [(f"a{index}-{copy}", arm, outcome) for copy in range(copies)]
+                for index, (arm, outcome) in enumerate(spawns)
+            ]
+            with self.subTest(name):
+                look = td.get_randomization_look(
+                    clusters, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=1, fraction=1.0
+                )
+                self.assertAlmostEqual(look.statistic, -3.6514837, places=6)
+
+    def test_the_statistic_is_undefined_without_clustered_variance_though_spawns_vary(self) -> None:
+        # each session's deviations cancel inside each arm → clustered term 0, independent term above 0
+        clusters = [
+            [(f"a{session}{position}", arm, outcome) for position, (arm, outcome) in enumerate(spawns)]
+            for session, spawns in enumerate([[(0, 0.0), (0, 2.0), (1, 0.0), (1, 2.0)]] * 2)
+        ]
+        look = td.get_randomization_look(
+            clusters, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=19, fraction=1.0
+        )
+        self.assertIsNone(look.statistic)
+        armed = [[(arm, outcome) for _, arm, outcome in cluster] for cluster in clusters]
+        self.assertEqual(td.get_arm_difference_design_effect(armed), 0.0)
+
+    def test_the_statistic_is_undefined_when_its_clustered_term_is_zero_in_exact_arithmetic_whatever_the_float_residue(
+        self,
+    ) -> None:
+        # arm means 2/3 control, 1/3 treatment → each session's term (∓1/9) − (∓1/9) = 0 exactly;
+        # thirds leave a float residue above 0
+        cancelling = [[(0, 0.0), (0, 1.0), (1, 0.0)], [(0, 1.0), (1, 0.0), (1, 1.0)]]
+        clusters = [
+            [(f"a{session}{position}", arm, outcome) for position, (arm, outcome) in enumerate(spawns)]
+            for session, spawns in enumerate(cancelling)
+        ]
+        self.assertIsNone(_get_statistic(clusters))
+
+    def test_the_observed_draw_takes_a_place_in_the_reference(self) -> None:
+        # 179 re-draws + the observed draw = 180 members → one crossing admitted at look 2
+        # the observed draw ranks first under the rise → it takes that crossing, no re-draw beside it
+        look = td.get_randomization_look(
+            _get_sessions(rise=50)[:6], get_arm=_get_hash_arm, salt_namespace="redraw", redraws=179, fraction=0.5
+        )
+        self.assertEqual((look.budget, look.crossed, look.is_crossed), (1, frozenset({0}), True))
+
+    def test_each_redraw_takes_the_arm_rule_under_one_namespace_salt_never_the_trial_salt(self) -> None:
+        arm = _RecordingArm()
+        sessions = _get_sessions()
+        td.get_randomization_looks(
+            [sessions[:end] for end in _LOOK_SESSIONS], get_arm=arm, salt_namespace="redraw", redraws=40
+        )
+        self.assertEqual(len(arm.salts), 40)  # one salt per re-draw across the four looks
+        self.assertTrue(all(salt.startswith("redraw") for salt in arm.salts), arm.salts)
+        self.assertNotIn(_TRIAL_SALT, arm.salts)
+
+    def test_a_redraw_salt_is_never_a_decimal_integer(self) -> None:
+        arm = _RecordingArm()
+        td.get_randomization_look(_get_sessions(), get_arm=arm, salt_namespace="2000", redraws=40, fraction=1.0)
+        self.assertEqual(len(arm.salts), 40)
+        self.assertFalse([salt for salt in arm.salts if salt.isdecimal()])
+
+    def test_each_look_cut_keeps_the_share_crossed_by_then_within_the_alpha_spent_through_it(self) -> None:
+        # one-sided 0.05 spent through each look, O'Brien-Fleming-type: 2(1 − Φ(1.959964 / √t))
+        spent = (8.857544e-05, 5.574597e-03, 2.362512e-02, 0.05)
+        arm = _RecordingArm()
+        sessions = _get_sessions()
+        looks = [sessions[:end] for end in _LOOK_SESSIONS]
+        results = td.get_randomization_looks(looks, get_arm=arm, salt_namespace="redraw", redraws=399)
+        paths = [[_get_reference_z(look, salt) for look in looks] for salt in sorted(arm.salts | {_TRIAL_SALT})]
+        for index, (result, level) in enumerate(zip(results, spent)):
+            crossed = sum(
+                any(
+                    z is not None and earlier.critical is not None and z > earlier.critical
+                    for z, earlier in zip(path, results[: index + 1])
+                )
+                for path in paths
+            )
+            with self.subTest(look=index + 1):
+                self.assertLessEqual(crossed / 400, level)
+                self.assertEqual(crossed, len(result.crossed))
+        self.assertTrue(results[-1].crossed)
+
+    def test_a_look_below_its_minimum_redraw_count_never_crosses_and_says_so(self) -> None:
+        # one member of 11,290 sits within look 1's 8.857544e-05, one of 180 within look 2's 5.574597e-03
+        sessions = _get_sessions(rise=50)[:6]
+        rows = (
+            ("look 1 one below its minimum", 0.25, 11_288, 0),
+            ("look 1 at its minimum", 0.25, 11_289, 1),
+            ("look 2 one below its minimum", 0.5, 178, 0),
+            ("look 2 at its minimum", 0.5, 179, 1),
+        )
+        for name, fraction, redraws, budget in rows:
+            look = td.get_randomization_look(
+                sessions, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=redraws, fraction=fraction
+            )
+            with self.subTest(name):
+                self.assertEqual(look.budget, budget)
+                if not budget:
+                    self.assertEqual((look.critical, look.is_crossed), (None, False))
+
+    def test_a_redraw_with_an_undefined_statistic_never_crosses(self) -> None:
+        salts: set[str] = set()
+
+        def get_arm(salt: str, agent_id: str) -> int:
+            # about half the re-draws put every spawn on treatment → an empty control arm
+            salts.add(salt)
+            return _get_hash_arm(salt, "") or _get_hash_arm(salt, agent_id)
+
+        sessions = _get_sessions()
+        look = td.get_randomization_look(
+            sessions, get_arm=get_arm, salt_namespace="redraw", redraws=199, fraction=1.0
+        )
+        values = [_get_reference_z(sessions, salt, get_arm) for salt in sorted(salts)]
+        defined = [z for z in [*values, look.statistic] if z is not None]
+        self.assertLess(len(defined), 150)
+        self.assertTrue(look.crossed)
+        self.assertEqual(len(look.crossed), sum(z > look.critical for z in defined))
+
+    def test_an_undefined_observed_statistic_is_no_crossing_and_reads_undefined(self) -> None:
+        treated = [[(agent_id, 1, count) for agent_id, _, count in cluster] for cluster in _get_sessions()]
+        look = td.get_randomization_look(
+            treated, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=199, fraction=1.0
+        )
+        self.assertEqual((look.statistic, look.is_crossed), (None, False))
+        self.assertTrue(look.crossed)  # the re-draws still fill the look's budget
+
+    def test_a_cut_set_from_carried_crossings_decides_as_the_one_call_path(self) -> None:
+        sessions = _get_sessions()
+        looks = [sessions[:end] for end in _LOOK_SESSIONS]
+        results = td.get_randomization_looks(looks, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=399)
+        self.assertTrue(results[1].crossed)  # look 3 has crossings to carry
+        for index in range(1, len(looks)):
+            with self.subTest(look=index + 1):
+                carried = td.get_randomization_look(
+                    looks[index],
+                    get_arm=_get_hash_arm,
+                    salt_namespace="redraw",
+                    redraws=399,
+                    fraction=td.LOOK_FRACTIONS[index],
+                    crossed=sorted(results[index - 1].crossed),
+                )
+                self.assertEqual(carried, results[index])
+
+    def test_the_same_data_salts_and_redraw_count_give_the_same_decision(self) -> None:
+        sessions = _get_sessions()
+        rows = (
+            ("the same call again", sessions),
+            ("sessions and their spawns in another order", [cluster[::-1] for cluster in sessions[::-1]]),
+        )
+        first = td.get_randomization_look(
+            sessions, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=199, fraction=1.0
+        )
+        for name, clusters in rows:
+            with self.subTest(name):
+                again = td.get_randomization_look(
+                    clusters, get_arm=_get_hash_arm, salt_namespace="redraw", redraws=199, fraction=1.0
+                )
+                self.assertEqual(again, first)
+
+    def test_a_large_injected_rise_crosses(self) -> None:
+        sessions = _get_sessions(rise=50)
+        results = td.get_randomization_looks(
+            [sessions[:end] for end in _LOOK_SESSIONS], get_arm=_get_hash_arm, salt_namespace="redraw", redraws=399
+        )
+        # look 1 admits no crossing at 400 members; look 2 is the first that can cross
+        self.assertEqual([result.is_crossed for result in results[:2]], [False, True])
+
+    def test_under_no_harm_on_heavy_tailed_session_fan_out_the_four_look_crossing_share_stays_within_alpha_005(
+        self,
+    ) -> None:
+        # tolerance = the simulation interval's upper bound at a true share of 0.05 over 200 draws:
+        # P(Bin(200, 0.05) ≤ 16) = 0.9762 ≥ 0.975 > P(≤ 15) = 0.9556 → at most 16 draws cross
+        generator = random.Random(_CALIBRATION.SEED)
+        get_arm = functools.cache(_get_hash_arm)  # a re-draw keeps its salt, so its arms repeat across draws
+        crossed = 0
+        for draw in range(_CALIBRATION.DRAWS):
+            looks = _get_fan_out_looks(generator, salt=str(draw))
+            results = td.get_randomization_looks(
+                looks, get_arm=get_arm, salt_namespace="redraw", redraws=_CALIBRATION.REDRAWS
+            )
+            crossed += results[-1].is_crossed
+        self.assertLessEqual(crossed, 16)
 
 
 class RateHarm(unittest.TestCase):
@@ -549,6 +890,27 @@ class ToolUseHarm(unittest.TestCase):
         self.assertAlmostEqual(inflated, 2 * base)
 
 
+class FollowUpHarm(unittest.TestCase):
+    def test_the_counts_rise_is_the_upward_mean_shift_without_the_overage_flag(self) -> None:
+        rows = (
+            ("sd 1.5, 120 per arm, design effect 1", 1.5, 120, 1.0),
+            ("sd 0.8, 400 per arm, design effect 2", 0.8, 400, 2.0),
+        )
+        for name, sd, per_arm, design_effect in rows:
+            with self.subTest(name):
+                rise = td.get_follow_up_harm(sd, per_arm, design_effect=design_effect)
+                upward = td.get_tool_use_harm(
+                    sd, per_arm, is_overage_primary=True, design_effect=design_effect
+                )
+                self.assertEqual(rise, upward)
+                self.assertLess(
+                    rise,
+                    td.get_tool_use_harm(
+                        sd, per_arm, is_overage_primary=False, design_effect=design_effect
+                    ),
+                )
+
+
 class InvalidInputs(unittest.TestCase):
     def test_out_of_range_parameters_raise_instead_of_sizing(self) -> None:
         rows = (
@@ -563,6 +925,7 @@ class InvalidInputs(unittest.TestCase):
             ("maximum sample of zero", lambda: td.is_powered(500, 0)),
             ("negative daily units", lambda: td.get_projected_units(-1.0)),
             ("a single cluster", lambda: td.get_design_effect(([1, 0, 1],))),
+            ("follow-up rise at sd zero", lambda: td.get_follow_up_harm(0.0, 100)),
             ("an empty cluster", lambda: td.get_design_effect(([1, 0], []))),
             ("no variance in any cluster", lambda: td.get_design_effect(([0, 0], [0, 0, 0]))),
             ("no variance with a singleton beside a larger cluster", lambda: td.get_design_effect(([0], [0, 0]))),

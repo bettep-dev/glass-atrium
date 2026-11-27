@@ -12,7 +12,7 @@
 // DB: real Postgres (seeds scrubbed by suite-marker LIKE). Skips gracefully when
 // the DB is unreachable.
 //
-// Runner: npx tsx --test test/improvement.proposal-gate.route.test.ts
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/improvement.proposal-gate.route.test.ts
 
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";

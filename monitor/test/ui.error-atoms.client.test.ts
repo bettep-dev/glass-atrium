@@ -18,6 +18,8 @@ const ui = await loadScreenModule(UI_SRC);
 const React = ui.React as { createElement: (t: unknown, p: unknown) => unknown };
 const getFetchError = ui.getFetchError as (res: FakeResponse, bodyMax?: number) => Promise<Error>;
 const getErrorCopy = ui.getErrorCopy as (error: unknown, source: string) => ErrorCopy;
+// the screens reach it through window.UI
+const getReadFailureCause = (ui.UI as Record<string, unknown>).getReadFailureCause as (error: unknown) => string;
 const getSharedFailure = ui.getSharedFailure as (entries: FailureEntry[]) => { sources: string[]; error: unknown } | null;
 
 const SERVER_ERROR = "HTTP 500 Internal Server Error — relation core.outcomes does not exist at /srv/x.ts:42";
@@ -30,6 +32,11 @@ function getVisibleText(node: RenderedNode | string): string {
   if (typeof node === "string") return node;
   if (node.type === "details") return "";
   return node.children.map(getVisibleText).join(" ");
+}
+
+// the region failure's own row element, wherever the atom nests it
+function getRow(tree: RenderedNode): RenderedNode {
+  return findNodes(tree, (n) => n.type === "div" && /\balarm-row\b/.test(String(n.props.className)))[0];
 }
 
 function getButtons(tree: RenderedNode): RenderedNode[] {
@@ -55,6 +62,8 @@ test("an unreadable response body still yields the status line", async () => {
 test("error copy is one plain sentence naming the source plus a next step, never the raw answer", () => {
   const rows = [
     { name: "server error string", error: SERVER_ERROR, kind: "server" },
+    { name: "database outage", error: new Error("HTTP 503 Service Unavailable — {\"error\":\"database_unavailable\"}"), kind: "database" },
+    { name: "another 503", error: "HTTP 503 Service Unavailable — {\"error\":\"not_provisioned\"}", kind: "server" },
     { name: "client error object", error: new Error("HTTP 404 Not Found — {\"error\":\"no route\"}"), kind: "client" },
     { name: "network failure", error: new TypeError("Failed to fetch"), kind: "network" },
     { name: "unclassified failure", error: "boom", kind: "unknown" },
@@ -68,6 +77,30 @@ test("error copy is one plain sentence naming the source plus a next step, never
     assert.equal(copy.detail, raw, row.name);
     assert.doesNotMatch(`${copy.sentence} ${copy.next}`, /HTTP|\d{3}|—/, row.name);
   }
+});
+
+// spec 44084 §2.2: a failed stat's context line states its own cause, "<cause>, not read.", one line per error kind
+describe("a failed stat's cause words follow the read's error kind", () => {
+  const rows = [
+    { name: "a server error", error: SERVER_ERROR, words: "Server error, not read." },
+    { name: "no answer from the server", error: new TypeError("Failed to fetch"), words: "No answer, not read." },
+    { name: "a database outage", error: new Error("HTTP 503 Service Unavailable — {\"error\":\"database_unavailable\"}"), words: "Database down, not read." },
+    { name: "a refused request", error: "HTTP 404 Not Found — {\"error\":\"no route\"}", words: "Request refused, not read." },
+    { name: "an unclassified failure", error: "boom", words: "Unknown error, not read." },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      assert.equal(getReadFailureCause(row.error), row.words);
+    });
+  }
+});
+
+test("a database outage's next step names the database, never the generic server words", () => {
+  const database = getErrorCopy("HTTP 503 Service Unavailable — {\"error\":\"database_unavailable\"}", "spend");
+  const server = getErrorCopy(SERVER_ERROR, "spend");
+
+  assert.match(database.next, /database/);
+  assert.notEqual(database.next, server.next);
 });
 
 test("a region failure shows the sentence and next step, and keeps the raw answer inside a collapsed Details", () => {
@@ -94,10 +127,29 @@ test("a region failure offers Retry only when no page banner already carries it"
   }
 });
 
+test("a region failure sits inline in its card with no surface of its own", () => {
+  const tree = render("RegionUnavailable", { source: "spend", error: SERVER_ERROR });
+
+  assert.doesNotMatch(String(getRow(tree).props.className), /\bsub-card\b|\bbg-|\brounded|\bring-/);
+});
+
+test("a region failure is an alarm row: crit glyph, the sentence and next step on the content column, Retry in the row-end slot", () => {
+  const tree = render("RegionUnavailable", { source: "spend", error: SERVER_ERROR, onRetry: () => {} });
+  const row = getRow(tree);
+  const cells = row.children.filter((child): child is RenderedNode => typeof child !== "string");
+
+  assert.match(String(row.props.className), /\balarm-row\b.*\bregion-unavailable\b/);
+  assert.equal(row.props["data-tone"], "crit");
+  assert.deepEqual(cells.map((cell) => String(cell.props.className).split(" ")[0]), ["alarm-row-glyph", "min-w-0", "alarm-row-actions"]);
+  assert.match(getVisibleText(cells[1]), /Couldn't load spend\./);
+  assert.equal(findNodes(cells[1], (n) => n.type === "details").length, 1, "Details under the next step");
+  assert.equal(getButtons(cells[2]).length, 1);
+});
+
 test("a region failure reserves the slot height it was given", () => {
   const tree = render("RegionUnavailable", { source: "spend", error: SERVER_ERROR, minHeight: 218 });
 
-  assert.equal(((tree.children[0] as RenderedNode).props.style as { minHeight: number }).minHeight, 218);
+  assert.equal((getRow(tree).props.style as { minHeight: number }).minHeight, 218);
 });
 
 test("an outage shared by two or more failed regions collapses to one cause; mixed or single failures do not", () => {
@@ -177,22 +229,23 @@ describe("an alert card leads its title with a visually-hidden severity word, so
 
       assert.equal(collectText(getByClass(title, "sr-only")[0]).trim(), row.word, "hidden severity word");
       assert.match(collectText(title), new RegExp(`^${row.word}\\s*Harness drift$`), "the word leads the title");
-      assert.equal(getByClass(tree, "alert-card")[0].props["data-tone"], row.tone, "tone rides on the card for its well");
+      assert.equal(getByClass(tree, "alert-card")[0].props["data-tone"], row.tone, "tone rides on the card for its glyph");
     });
   }
 });
 
 describe("an alert card renders each optional slot only when given, on the surface the caller picked", () => {
   const rows = [
-    { name: "title only, raised", props: { surface: "raised" }, shell: "card", subjects: 0, details: 0, actions: 0 },
-    { name: "every slot, inset", props: { surface: "inset", subjects: ["hooks", "rules"], details: "ENOENT", actions: "Retry" }, shell: "sub-card", subjects: 2, details: 1, actions: 1 },
+    { name: "title only, raised", props: { surface: "raised" }, shell: ["card", "alert-card"], subjects: 0, details: 0, actions: 0 },
+    { name: "every slot, inset", props: { surface: "inset", subjects: ["hooks", "rules"], details: "ENOENT", actions: "Retry" }, shell: ["sub-card", "bg-sunken", "alert-card"], subjects: 2, details: 1, actions: 1 },
   ];
   for (const row of rows) {
     test(row.name, () => {
       const tree = render("AlertCard", { tone: "warn", title: "Harness drift", ...row.props });
       const [chips] = getByClass(tree, "alert-card-subjects");
 
-      assert.ok(String(getByClass(tree, "alert-card")[0].props.className).split(/\s+/).includes(row.shell), "shell");
+      // spec 44084 §3.2: the shell is exactly the picked surface's card classes plus alert-card — no modifier class of its own
+      assert.deepEqual(String(getByClass(tree, "alert-card")[0].props.className).trim().split(/\s+/), row.shell, "shell");
       assert.equal(chips ? chips.children.length : 0, row.subjects, "subject chips");
       assert.equal(findNodes(tree, (n) => n.type === "details").length, row.details, "details");
       assert.equal(getByClass(tree, "alert-card-actions").length, row.actions, "actions");
@@ -200,8 +253,40 @@ describe("an alert card renders each optional slot only when given, on the surfa
   }
 });
 
+// spec 44084 §3.2 — the hairline alarm row: tone on the bare glyph and a spoken severity word (WCAG 1.4.1), the title in medium,
+// a held reading's Last known in plain dim words after it, the detail on its own dim line, actions only when given
+describe("a hairline alarm row", () => {
+  const shared = ui.UI as { TONE_ICON: Record<string, string>; ALERT_SEVERITY_WORD: Record<string, string> };
+  const rows = [
+    { name: "a bare critical row", props: { tone: "crit", title: "1 harness part is down" }, text: "Critical: 1 harness part is down", held: 0, detail: 0, actions: 0 },
+    { name: "a held warning with a detail", props: { tone: "warn", title: "$1,790 so far today", detail: "1.3\u00d7 the 7-day average ($1,380/day)", isHeld: true },
+      text: "Warning: $1,790 so far today Last known 1.3\u00d7 the 7-day average ($1,380/day)", held: 1, detail: 1, actions: 0 },
+    { name: "a fresh row with a link action", props: { tone: "warn", title: "2 agents are on a failing streak", actions: "Agents" }, text: "Warning: 2 agents are on a failing streak Agents", held: 0, detail: 0, actions: 1 },
+  ];
+  for (const row of rows) {
+    test(row.name, () => {
+      const tree = render("AlarmRow", row.props);
+      const [glyph] = getByClass(tree, "alarm-row-glyph");
+      const [title] = getByClass(tree, "font-medium");
+      const held = findNodes(tree, (n) => collectText(n).trim() === "Last known" && /\btext-dim\b/.test(String(n.props.className ?? "")));
+
+      assert.equal(getByClass(tree, "alarm-row")[0].props["data-tone"], row.props.tone, "the tone rides on the row for its glyph");
+      assert.equal(glyph.props["aria-hidden"], "true", "the glyph is hidden from assistive tech");
+      assert.deepEqual(glyph.children, [render("Icon", { name: shared.TONE_ICON[row.props.tone], size: 16 })], "the tone's own glyph at the row size");
+      assert.equal(collectText(title).replace(/\s+/g, " ").trim(), `${shared.ALERT_SEVERITY_WORD[row.props.tone]}: ${row.props.title}`, "the severity word leads the title");
+      assert.equal(collectText(tree).replace(/\s+/g, " ").trim(), row.text, "title, then Last known, then the detail and actions");
+      assert.equal(held.length, row.held, "Last known only on a held row, outside the title's weight");
+      assert.equal(getByClass(tree, "alarm-row-detail").length, row.detail, "detail line");
+      for (const detail of getByClass(tree, "alarm-row-detail")) {
+        assert.ok(findNodes(detail, (n) => /nowrap/.test(String(n.props.className ?? "")) && collectText(n) === "7-day").length === 1, "the 7-day token stays whole");
+      }
+      assert.equal(getByClass(tree, "alarm-row-actions").length, row.actions, "actions slot");
+    });
+  }
+});
+
 const FAILURE_SENTENCE = /Couldn't load/g;
-const COVERED_NOTE = "Not loaded — see the notice above";
+const COVERED_NOTE = "Not loaded — see the notice above.";
 
 function renderPage(entries: FailureEntry[]): RenderedNode {
   const shared = getSharedFailure(entries);
@@ -258,7 +343,7 @@ test("each failed source speaks once however many regions it feeds; one surface 
   }
 });
 
-test("the first region a failed source feeds carries its card; the others name themselves and point at that source", () => {
+test("the first region a failed source feeds carries its card; the others point at that source's notice", () => {
   const tree = renderSourcePage([
     { source: "agent summary", region: "fleet KPIs", error: SERVER_ERROR },
     { source: "agent summary", region: "suspended agents", error: SERVER_ERROR },
@@ -266,14 +351,15 @@ test("the first region a failed source feeds carries its card; the others name t
   const [speaker, covered] = tree.children as RenderedNode[];
 
   assert.match(getVisibleText(speaker), /Couldn't load agent summary\./);
-  assert.equal(getVisibleText(covered).replace(/\s+/g, " ").trim(), "Suspended agents Not loaded — see the agent summary notice");
+  assert.equal(getVisibleText(covered).replace(/\s+/g, " ").trim(), "Not loaded — see the agent summary notice.");
   assert.equal(findNodes(covered, (n) => n.props["data-covered-card-id"] != null).length, 0);
 });
 
-test("a covered region names itself, reserves its slot height and carries no alert, Retry or Details", () => {
+test("a covered region is the one pointer line, no tile repeating its card's name; it reserves its slot height and carries no alert, Retry or Details", () => {
   const tree = render("RegionCovered", { source: "spend by model", minHeight: 218 });
 
-  assert.equal(getVisibleText(tree).replace(/\s+/g, " ").trim(), `Spend by model ${COVERED_NOTE}`);
+  assert.equal(getVisibleText(tree).replace(/\s+/g, " ").trim(), COVERED_NOTE);
+  assert.equal(getByClass(tree, "sub-card").length, 0, "no inset tile inside the region's own card");
   assert.equal(((tree.children[0] as RenderedNode).props.style as { minHeight: number }).minHeight, 218);
   assert.equal(findNodes(tree, (n) => n.type === "button" || n.type === "details" || n.props.role === "alert").length, 0);
 });
@@ -304,4 +390,29 @@ test("screens reach the shared Retry control through window.UI, so their own Ret
 
   assert.equal(typeof ui.RetryButton, "function");
   assert.equal(exposed.RetryButton, ui.RetryButton);
+});
+
+describe("the bare alert and the inline Retry", () => {
+  const classesOf = (node: RenderedNode) => String(node.props.className ?? "").split(/\s+/);
+
+  test("a bare alert drops the card and inset shells, keeping the alarm-row anatomy and its actions", () => {
+    const tree = render("AlertCard", { tone: "neutral", surface: "bare", title: "Couldn't refresh.", actions: "retry" });
+    const [shell] = findNodes(tree, (n) => n.props["data-tone"] === "neutral");
+    const classes = classesOf(shell);
+
+    assert.ok(classes.includes("alert-card--bare"), classes.join(" "));
+    for (const box of ["card", "sub-card", "bg-sunken"]) assert.ok(!classes.includes(box), `no ${box}`);
+    assert.equal(findNodes(tree, (n) => classesOf(n).includes("alert-card-actions")).length, 1);
+  });
+
+  test("an inline Retry is a quiet text action on the 24 hit area, busy and inert exactly like the boxed one", () => {
+    for (const isBusy of [false, true]) {
+      const [boxed] = findNodes(render("RetryButton", { isBusy, onRetry: () => {} }), (n) => n.type === "button");
+      const [inline] = findNodes(render("RetryButton", { isBusy, isInline: true, onRetry: () => {} }), (n) => n.type === "button");
+
+      assert.ok(classesOf(inline).includes("inline-target") && !classesOf(inline).includes("btn"), classesOf(inline).join(" "));
+      assert.equal(inline.props["aria-disabled"], boxed.props["aria-disabled"], `busy=${isBusy}`);
+      assert.equal(collectText(inline), collectText(boxed), `busy=${isBusy}`);
+    }
+  });
 });

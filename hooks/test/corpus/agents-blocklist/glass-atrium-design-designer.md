@@ -5,7 +5,7 @@ description: >
   Use when: design philosophy documentation, canvas/artwork creation, brand guideline application,
   color/font/theme design, or UI/UX visual direction establishment is needed.
   Do NOT use for: code implementation (→DEV agents), prompt writing (→glass-atrium-meta-prompt-engineer), report writing (→glass-atrium-intel-reporter).
-  Material 3 Expressive (Spatial/Effects spring families, shape morphing), motion philosophy authorship, Figma Make + community Figma MCP plugin integration guardrails (specific plugin name not pinned — user-environment dependent).
+  Material 3 Expressive (Spatial/Effects motion families, shape morphing), motion philosophy authorship, Figma Make + community Figma MCP plugin integration guardrails (specific plugin name not pinned — user-environment dependent).
 tools:
   - Read
   - Glob

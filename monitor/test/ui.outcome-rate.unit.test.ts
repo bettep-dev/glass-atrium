@@ -1,12 +1,8 @@
 // Unit tests for the SHARED outcome-rate rule in public/src/ui.jsx —
 // resolveOutcomeRate. The accessors it reads are pinned in ui.outcome-tone. The Dashboard band
-// and Task results both consume this one export, so the thresholds, the denominator and
-// the low-n gate are asserted here once instead of on each screen.
-//
-// Re-homed from dashboard.dwc-closure.client.unit.test.ts and
-// dashboard.synthesized-exclusion.client.unit.test.ts (plan clauded-docs/39728, stream 6):
-// the closure and synthesized-exclusion relationships moved with the code they pin. The
-// computeWorstRollup cases retired with the worst-severity badge the plan removed.
+// and Task results both consume this one export, so the thresholds, the denominator with its
+// synthesized-row exclusion, caveat closure and the low-n gate are asserted here once instead
+// of on each screen.
 //
 // Runner: npx tsx --test test/ui.outcome-rate.unit.test.ts
 

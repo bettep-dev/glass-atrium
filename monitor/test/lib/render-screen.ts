@@ -52,6 +52,62 @@ export function createReactStub(): Record<string, unknown> {
   };
 }
 
+type Effect = () => unknown;
+type Deps = unknown[] | undefined;
+
+/** Hook slots keyed by call order, reset per render (resetCursor) — state, refs and effects persist across renders as React keeps them. */
+export function createStatefulReact() {
+  const base = createReactStub();
+  const slots: unknown[] = [];
+  let cursor = 0;
+  let pending: Effect[] = [];
+  const claim = (init: () => unknown): number => {
+    const index = cursor++;
+    if (!(index in slots)) slots[index] = init();
+    return index;
+  };
+
+  // createReactStub is typed as a loose record; its createElement is the variadic factory
+  const createElement = base.createElement as (type: unknown, props: unknown, ...children: unknown[]) => unknown;
+  const react = {
+    ...base,
+    createElement,
+    useState: (initial: unknown) => {
+      const index = claim(() => (typeof initial === "function" ? (initial as () => unknown)() : initial));
+      const setter = (next: unknown) => {
+        slots[index] = typeof next === "function" ? (next as (p: unknown) => unknown)(slots[index]) : next;
+      };
+      return [slots[index], setter];
+    },
+    useRef: (initial: unknown) => slots[claim(() => ({ current: initial }))],
+    // memoized by deps like React → a stable callback keeps its effect from re-running every render
+    useCallback: (fn: unknown, deps: Deps) => {
+      const index = claim(() => ({ fn, deps }));
+      const memo = slots[index] as { fn: unknown; deps: Deps };
+      const changed = !deps || !memo.deps || deps.some((dep, i) => dep !== memo.deps?.[i]);
+      if (changed) slots[index] = { fn, deps };
+      return (slots[index] as { fn: unknown }).fn;
+    },
+    useEffect: (effect: Effect, deps: Deps) => {
+      const index = claim(() => undefined);
+      const prev = slots[index] as Deps;
+      const changed = !deps || !prev || deps.some((dep, i) => dep !== prev[i]);
+      if (!changed) return;
+      slots[index] = deps;
+      pending.push(effect);
+    },
+  };
+  const flushEffects = () => {
+    const run = pending;
+    pending = [];
+    for (const effect of run) effect();
+  };
+  const resetCursor = () => {
+    cursor = 0;
+  };
+  return { react, flushEffects, resetCursor };
+}
+
 type EffectCallback = () => void | (() => void);
 type RefAttach = (element: ElementNode) => unknown;
 
@@ -64,6 +120,7 @@ export interface EffectReact {
  * React stub that commits one render the way React does: host refs attach, then layout effects,
  * then passive effects, each in declaration order. Unmount runs layout cleanups, detaches refs,
  * then passive cleanups — also in declaration order.
+ * Nested function components render inside the same commit, parent before child — React runs a child's effects first.
  */
 export function createEffectReact(): EffectReact {
   let layout: EffectCallback[] = [];
@@ -77,7 +134,7 @@ export function createEffectReact(): EffectReact {
   function mount(render: () => unknown, attach: RefAttach) {
     layout = [];
     passive = [];
-    const tree = render();
+    const tree = getExpanded(render());
     const refs = putRefs(tree, attach, []);
     const layoutCleanups = layout.map((effect) => effect());
     const passiveCleanups = passive.map((effect) => effect());
@@ -90,6 +147,14 @@ export function createEffectReact(): EffectReact {
   }
 
   return { react, mount };
+}
+
+// function-component elements → their output, host elements kept as elements so their refs still attach
+function getExpanded(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(getExpanded);
+  if (!isElement(node)) return node;
+  if (typeof node.type === "function") return getExpanded((node.type as (p: unknown) => unknown)(node.props));
+  return { ...node, props: { ...node.props, children: getExpanded(node.props.children) } };
 }
 
 function putRefs(node: unknown, attach: RefAttach, refs: Array<{ current: unknown }>): Array<{ current: unknown }> {
@@ -177,6 +242,7 @@ export async function loadScreenModule(
   const context: Record<string, unknown> = {
     React: createReactStub(),
     console,
+    crypto: globalThis.crypto,
     fetch: async () => {
       throw new Error("fetch is not available in the render harness");
     },
@@ -231,6 +297,40 @@ export function renderScreen(node: unknown, depth = 0): RenderedNode | string | 
     props,
     children,
   };
+}
+
+const getKebabCase = (name: string): string => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+
+// React's unitless style properties (react-dom isUnitlessNumber, the subset a screen can set) → every other number takes px
+const UNITLESS_STYLES = new Set([
+  "animationIterationCount", "aspectRatio", "columnCount", "columns", "flex", "flexGrow", "flexShrink", "flexOrder", "fontWeight",
+  "gridColumn", "gridColumnEnd", "gridColumnStart", "gridRow", "gridRowEnd", "gridRowStart", "lineClamp", "lineHeight", "opacity",
+  "order", "orphans", "scale", "tabSize", "widows", "zIndex", "zoom", "fillOpacity", "floodOpacity", "stopOpacity", "strokeDasharray",
+  "strokeDashoffset", "strokeMiterlimit", "strokeOpacity", "strokeWidth", "WebkitLineClamp",
+]);
+const getStyleValue = (prop: string, value: unknown): string =>
+  typeof value === "number" && value !== 0 && !UNITLESS_STYLES.has(prop) ? `${value}px` : String(value);
+
+/**
+ * Host-element tree → HTML, so a browser suite lays out the shipped markup, not a hand copy of it.
+ * Component wrappers unwrap to their output; handlers, refs and false/null props drop; style objects and stroke props kebab-case,
+ * and a numeric style value takes px as react-dom writes it.
+ */
+export function getHtml(node: RenderedNode | string): string {
+  if (typeof node === "string") return node.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  if (!/^[a-z]/.test(node.type)) return node.children.map(getHtml).join("");
+  const attrs = Object.entries(node.props)
+    .filter(([key, value]) => key !== "children" && key !== "ref" && value != null && value !== false && typeof value !== "function")
+    .map(([key, value]) => {
+      const name = key === "className" ? "class" : key.startsWith("stroke") ? getKebabCase(key) : key;
+      const text =
+        key === "style"
+          ? Object.entries(value as Record<string, unknown>).map(([prop, v]) => `${getKebabCase(prop)}: ${getStyleValue(prop, v)}`).join("; ")
+          : String(value);
+      return ` ${name}="${text.replace(/"/g, "&quot;")}"`;
+    })
+    .join("");
+  return `<${node.type}${attrs}>${node.children.map(getHtml).join("")}</${node.type}>`;
 }
 
 export function findNodes(

@@ -1,4 +1,4 @@
-// Element-tree behaviour tests for the Documents screen header and stage pill,
+// Element-tree behaviour tests for the Documents screen header and stage status,
 // exercised through test/lib/render-screen.ts — no DOM, no react-dom, no DB.
 //
 // Runner: npx tsx --test test/clauded-docs.screen-render.client.test.ts
@@ -14,6 +14,7 @@ import {
   renderScreen,
   collectText,
 } from "./lib/render-screen.js";
+import { getRoleKeys, type RoleSection } from "./lib/role-keys.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DOCS_SRC = resolve(__dirname, "../public/src/screens/clauded-docs.jsx");
@@ -58,6 +59,10 @@ const SHIPPED_ATOMS = {
   getRegionView: shippedUi.getRegionView,
   TONE_GLYPH: shippedUi.TONE_GLYPH,
   TONE_ICON: shippedUi.TONE_ICON,
+  Card: shippedUi.Card,
+  Table: shippedUi.Table,
+  TableRow: shippedUi.TableRow,
+  TableCell: shippedUi.TableCell,
 };
 
 // in-memory Storage → the screen's group-expand hydrate reads an empty store instead of failing
@@ -79,6 +84,14 @@ function getScreenCss(screen: Record<string, unknown>): string {
   return findNodes(tree, (n) => n.type === "style").map((n) => collectText(n)).join("\n");
 }
 
+// a ledger header's floor rule, found by the header's position → the rule the browser applies to it
+function headerFloorRule(screen: Record<string, unknown>, tree: ReturnType<typeof renderScreen>, label: string): string {
+  const headers = findNodes(tree, (n) => n.type === "th" && n.props.scope === "col");
+  const position = headers.findIndex((th) => collectText(th) === label) + 1;
+  assert.ok(position > 0, `${label} header present`);
+  return cssRuleBody(getScreenCss(screen), `.doc-ledger:not(.tbl--stacked) thead th:nth-child(${position})`);
+}
+
 function cssRuleBody(source: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = source.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
@@ -86,38 +99,63 @@ function cssRuleBody(source: string, selector: string): string {
   return match[1];
 }
 
-test("a done stage reads in the neutral tone like every other stage, on the pill and on its filter chip", async () => {
+// a rule moved onto utilities has no body → nothing it could set
+function cssRuleBodyIfAny(source: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return source.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+}
+
+test("a done stage reads in the neutral tone like every other stage, on its status glyph and on its filter chip", async () => {
   const screen = await loadDocsScreen();
-  const source = getScreenCss(screen);
-  for (const selector of [".doc-stage-pill.is-terminal", ".doc-stage-glyph.is-terminal"]) {
-    const rule = source.match(new RegExp(`${selector.replace(/\./g, "\\.")}\\s*\\{([^}]*)\\}`));
-    assert.doesNotMatch(rule ? rule[1] : "", /--ok/, `${selector} carries no success tone`);
+  assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), ".doc-stage-glyph"), /--ok/, "the stage glyph carries no success tone");
+  for (const docStatus of ["done", "implementing"]) {
+    const glyph = findNodes(renderScreen((screen.DocStageCD as Component)({ docStatus })), (n) => n.props.atom === "Icon")[0];
+    assert.doesNotMatch(String(glyph.props.className), /\btext-(?!dim\b)[a-z]+/, `${docStatus} glyph takes no per-stage tone class`);
   }
 
-  const donePips = findNodes(renderScreen((screen.DocStagePillCD as Component)({ docStatus: "done" })),
-    (n) => String(n.props.className ?? "").includes("stage-pip"));
-  for (const pip of donePips) assert.doesNotMatch(String(pip.props.className), /is-terminal/, "done pips fill like any stage");
-
   const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
-  const stageGroup = findNodes(tree, (n) => n.props.atom === "ChipGroup" && n.props.label === "Stage filter")[0];
-  const doneChip = (stageGroup.props.chips as Array<Record<string, unknown>>).filter((c) => c.key === "done");
-  assert.equal(doneChip.length, 1);
-  assert.equal("style" in doneChip[0], false, "the shared pressed state draws the chip, never a per-stage tint");
+  const showTrigger = findNodes(tree, (n) => n.props.atom === "FilterTrigger" && n.props.axis === "Show")[0];
+  const doneOption = (showTrigger.props.options as Array<Record<string, unknown>>).filter((o) => o.key === "done");
+  assert.equal(doneOption.length, 1);
+  assert.equal("style" in doneOption[0], false, "the menu check marks the chosen stage, never a per-stage tint");
 });
 
-test("a done pill renders its check glyph inside the terminal glyph slot and its label outside it", async () => {
-  const screen = await loadDocsScreen();
-  const tree = renderScreen((screen.DocStagePillCD as Component)({ docStatus: "done" }));
+describe("a stage status is a glyph and its stage word inline, with no container", () => {
+  const rows = [
+    { name: "the terminal stage takes a check", docStatus: "done", glyph: "check", word: "Done", rank: "stage 5 of 5" },
+    { name: "a non-terminal stage takes an open circle", docStatus: "implementing", glyph: "circle", word: "Implementing", rank: "stage 2 of 5" },
+    { name: "the retired in-flight token reads as the first stage", docStatus: "progress", glyph: "circle", word: "Doc review", rank: "stage 1 of 5" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderScreen((screen.DocStageCD as Component)({ docStatus: row.docStatus, docTitle: "Plan" }));
+      const icons = findNodes(tree, (n) => n.props.atom === "Icon");
+      assert.deepEqual(icons.map((n) => n.props.name), [row.glyph]);
+      assert.deepEqual(findNodes(tree, (n) => n.props.className === "doc-stage-label").map((n) => collectText(n)), [row.word]);
+      assert.match(collectText(tree), new RegExp(`—\\s+${row.rank}\\s*$`), "the rank reaches assistive tech, not the face");
+      assert.equal(findNodes(tree, (n) => /\bpill\b|stage-pip/.test(String(n.props.className ?? ""))).length, 0, "no pill shell, no pip meter");
+    });
+  }
+});
 
-  const glyphSlots = findNodes(tree, (node) => node.props.className === "doc-stage-glyph is-terminal");
-  assert.equal(glyphSlots.length, 1);
-  const icons = findNodes(glyphSlots[0], (node) => node.props.atom === "Icon");
-  assert.equal(icons.length, 1);
-  assert.equal(icons[0].props.name, "check");
-
-  const labels = findNodes(tree, (node) => node.props.className === "doc-stage-label");
-  assert.equal(labels.length, 1);
-  assert.equal(findNodes(glyphSlots[0], (node) => node === labels[0]).length, 0);
+describe("a stage note rides the status tooltip and its screen-reader text, so the row keeps one line", () => {
+  const rows = [
+    { name: "a status with its stage menu", onPickStage: () => undefined },
+    { name: "a status without a menu", onPickStage: undefined },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderScreen((screen.DocStageCD as Component)({ docStatus: "doc_review", docTitle: "Plan", onPickStage: row.onPickStage, note: "members differ" }));
+      const [status] = findNodes(tree, hasClass("doc-stage"));
+      const spoken = findNodes(tree, hasClass("sr-only")).map((n) => collectText(n)).join(" ");
+      assert.deepEqual(
+        { tooltip: /members differ/.test(String(status?.props.title)), spoken: /members differ/.test(spoken), occurrences: collectText(tree).split("members differ").length - 1 },
+        { tooltip: true, spoken: true, occurrences: 1 },
+      );
+    });
+  }
 });
 
 const MARK_SYNTAX = /[#*`|>[\]~]/;
@@ -148,16 +186,20 @@ test("the snippet line clamps at two lines", async () => {
   assert.match(rule, /overflow\s*:\s*hidden/);
 });
 
-test("the snippet line starts at the title's x: indented by the lead slot plus the title row gap", async () => {
-  const source = getScreenCss(await loadDocsScreen());
-  const px = (rule: string, property: string) => {
-    const match = rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*(\\d+)px`));
-    assert.ok(match, `${property} is set in px`);
-    return Number(match[1]);
-  };
-  const leadWidth = px(cssRuleBody(source, ".doc-title-lead"), "width");
-  const rowGap = px(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
-  assert.equal(px(cssRuleBody(source, ".doc-snippet"), "margin-left"), leadWidth + rowGap);
+// the title x comes from the title row's own lead slot + gap → a line reusing that row shares it, no indent sum to drift
+test("the snippet line starts at the title's x: it follows an empty lead slot in a title row and sets no indent of its own", async () => {
+  const screen = await loadDocsScreen();
+  const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
+  const has = (n: RenderedNode, name: string) => String(n.props?.className ?? "").split(/\s+/).includes(name);
+  const tree = renderListCard(screen, { isSearchMode: true, rows: [row] });
+  const [line] = findNodes(tree, (n) => has(n, "doc-title-row") && findNodes(n, (c) => has(c, "doc-snippet")).length > 0);
+
+  assert.ok(line, "the snippet sits in a title row");
+  const parts = findNodes(line, (n) => has(n, "doc-title-lead") || has(n, "doc-snippet"));
+  assert.deepEqual(parts.map((n) => (has(n, "doc-title-lead") ? "lead" : "snippet")), ["lead", "snippet"]);
+  assert.equal(collectText(parts[0]), "", "the snippet's lead slot is empty");
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-snippet"), /(^|[;\s])margin(-left|-inline)?\s*:/);
 });
 
 test("the Tags column states the page's majority format once and prints only exceptions per row", async () => {
@@ -175,6 +217,35 @@ test("the Tags column states the page's majority format once and prints only exc
   assert.deepEqual(chips({ audience: "hidden", format: "html", commonFormat: "md" }), ["agent-only", "html"]);
   assert.deepEqual(chips({ audience: "hidden", format: "md", commonFormat: "md", commonAudience: "hidden" }), []);
   assert.deepEqual(chips({ audience: "exposed", format: "md", commonFormat: null }), ["md"]);
+});
+
+// a Tags cell is never blank → no chip of its own prints the faint None (design.md §12.6 Cells), so the stacked label always has a value
+const TAGS_CELL_ROWS = [
+  { name: "no exception", props: { audience: "exposed", format: "md", commonFormat: "md" }, isTagged: false },
+  { name: "audience shared by every row", props: { audience: "hidden", format: "md", commonFormat: "md", commonAudience: "hidden" }, isTagged: false },
+  { name: "format exception", props: { audience: "exposed", format: "html", commonFormat: "md" }, isTagged: true },
+  { name: "audience exception", props: { audience: "hidden", format: "md", commonFormat: "md" }, isTagged: true },
+];
+
+test("a Tags cell prints the faint None exactly when it carries no chip", async () => {
+  const screen = await loadDocsScreen();
+  const DocTagsCell = screen.DocTagsCellCD as Component;
+  for (const row of TAGS_CELL_ROWS) {
+    const tree = renderScreen(DocTagsCell(row.props));
+    const chipCount = findNodes(tree, (n) => n.props.atom === "Badge").length;
+    const absentKinds = findNodes(tree, isAtom("AbsentValue")).map((n) => n.props.kind);
+    assert.deepEqual({ hasChip: chipCount > 0, absentKinds }, { hasChip: row.isTagged, absentKinds: row.isTagged ? [] : ["none"] }, row.name);
+  }
+});
+
+test("a stacked Tags cell always prints its column label beside its chips or its None", async () => {
+  const screen = await loadDocsScreen();
+  const DocTagsCell = screen.DocTagsCellCD as Component;
+  const view = { isStacked: true, columnCount: 7 };
+  for (const row of TAGS_CELL_ROWS) {
+    const labels = findNodes(renderScreen(DocTagsCell({ view, ...row.props })), (n) => String(n.props.className).includes("tbl-cell-label")).map((n) => collectText(n));
+    assert.deepEqual(labels, ["Tags"], row.name);
+  }
 });
 
 function listCardProps(onSelect: (id: number) => void): Record<string, unknown> {
@@ -220,35 +291,13 @@ test("every control inside a ledger row leaves the Tab order as a row control, s
   const names = controls.map((n) => String(n.props["aria-label"] ?? n.props.className));
   assert.ok(names.some((name) => name.includes("doc-lineage")), "the lineage link is among the controls");
   assert.ok(names.some((name) => name.startsWith("Expand group")), "the group toggle is among the controls");
-  assert.ok(names.some((name) => name.includes("change stage")), "the stage pill is among the controls");
+  const stageMenus = rows.flatMap((tr) => findNodes(tr, (n) => n.props.atom === "RowActions"));
+  assert.ok(stageMenus.length > 0, "a stage menu is among the row controls");
+  for (const menu of stageMenus) assert.equal(menu.props.isRowControl, true, `${String(menu.props.label)} leaves the Tab order`);
   for (const control of controls) {
     assert.equal(control.props.tabIndex, -1, `${String(control.props["aria-label"] ?? control.props.className)} leaves the Tab order`);
     assert.equal(control.props["data-row-control"], "", "it is reachable by arrows from its row");
   }
-});
-
-// the shipped verdict, not the atom stub → the rendered words are what a reader sees
-async function renderVerdictText(state: Record<string, unknown>): Promise<string> {
-  const screen = await loadScreenModule(DOCS_SRC, {
-    UI: uiStub({ ...SHIPPED_ATOMS, PageVerdict: shippedUi.PageVerdict }),
-    React: createReactStub(),
-  });
-  const props = listCardProps(() => undefined);
-  const createdAt = new Date().toISOString();
-  props.rows = (props.rows as Array<Record<string, unknown>>).map((row) => ({ ...row, doc_status: "doc_review", created_at: createdAt }));
-  const tree = renderScreen((screen.DocListCardCD as Component)({ ...props, asOf: createdAt, state }));
-  const verdicts = findNodes(tree, (n) => String(n.props.className).includes("page-verdict "));
-  assert.equal(verdicts.length, 1, "the open list states one verdict");
-  return collectText(verdicts[0]);
-}
-
-test("a failed refresh over held rows turns the open verdict to Last known, and only the failure does", async () => {
-  const settled = await renderVerdictText({ status: "ready", data: {}, busy: false, error: null });
-  const warmError = await renderVerdictText({ status: "ready", data: {}, busy: false, error: "HTTP 500" });
-
-  assert.doesNotMatch(settled, /Last known/, "a settled read keeps its own verdict");
-  assert.match(warmError, /Last known/, "held rows under a failed read never read as the all-clear");
-  assert.doesNotMatch(warmError, /Healthy/);
 });
 
 test("a cold list error keeps its alert and shows no loader while its Retry is in flight", async () => {
@@ -303,33 +352,42 @@ describe("ledger keys walk rows and a row's controls, never leaving the ledger f
   }
 });
 
-test("the opened viewer settles focus on Close after the dialog's own first-control focus, never leaving it on Delete", async () => {
+// the viewer is a DetailSurface → it opens on its panel like every other; its actions bar moves focus nowhere
+test("mounting the viewer's actions bar focuses none of its controls, so the opened viewer stays on its panel", async () => {
   const effects: Array<() => void> = [];
   const react = { ...createReactStub(), useEffect: (fn: () => void) => { effects.push(fn); } };
   const screen = await loadDocsScreen(react);
   const tree = renderScreen((screen.ViewerActionsCD as Component)({
-    doc: { id: 9, title: "Doc 9" }, pendingDelete: null, onDelete: () => undefined, onClose: () => undefined, showToast: () => undefined,
+    doc: { id: 9, title: "Doc 9" }, onClose: () => undefined, showToast: () => undefined,
   }));
-  const close = findNodes(tree, (n) => n.props["aria-label"] === "Close viewer")[0];
   const focused: string[] = [];
-  (close.props.ref as { current: unknown }).current = { focus: () => focused.push("close") };
+  const refHolders = findNodes(tree, (n) => n.props.ref != null);
+  for (const node of refHolders) {
+    (node.props.ref as { current: unknown }).current = { focus: () => focused.push(String(node.props["aria-label"])) };
+  }
 
   for (const effect of effects) effect();
-  focused.push("dialog-first-control");
   await new Promise((settle) => setImmediate(settle));
 
-  assert.deepEqual(focused, ["dialog-first-control", "close"]);
+  assert.deepEqual(focused, []);
 });
 
-// the width at which Tags hides is owned by the e2e rail table → this pins only the column hook it hides by
-test("the Tags header and every row's Tags cell carry the doc-col-tags column class", async () => {
+// the width at which Tags hides is owned by the e2e ledger-columns table → this pins only the hooks it hides by
+test("the Tags header and every row's Tags cell are what the narrow-ledger rule hides", async () => {
   const screen = await loadDocsScreen();
   const props = listCardProps(() => undefined);
   (props.rows as Array<Record<string, unknown>>)[0].format = "html";
   const tree = renderScreen((screen.DocListCardCD as Component)(props));
 
-  const tagCells = findNodes(tree, (n) => (n.type === "th" || n.type === "td") && String(n.props.className).includes("doc-col-tags"));
-  assert.equal(tagCells.length, 3, "the Tags header and both row cells carry the column class");
+  const tagCells = findNodes(tree, (n) => n.type === "td" && String(n.props.className).includes("doc-col-tags"));
+  assert.equal(tagCells.length, 2, "both row cells carry the column class");
+  const [ledger] = findNodes(tree, (n) => n.type === "table");
+  assert.match(String(ledger.props.className), /\bdoc-ledger--tags\b/);
+  const headers = findNodes(tree, (n) => n.type === "th" && n.props.scope === "col");
+  const position = headers.findIndex((th) => collectText(th) === "Tags") + 1;
+  const hideRule = getScreenCss(screen).match(/@container doc-ledger \([^)]*\) \{ ([^{]*) \{ display: none; \} \}/);
+  assert.ok(hideRule, "one container rule hides the Tags column");
+  assert.deepEqual(hideRule[1].split(", "), [".doc-col-tags", `.doc-ledger--tags thead th:nth-child(${position})`]);
 });
 
 test("'rev of #N' is a control that opens the predecessor", async () => {
@@ -349,6 +407,20 @@ function renderListCard(screen: Record<string, unknown>, overrides: Record<strin
   return renderScreen((screen.DocListCardCD as Component)(props));
 }
 
+test("every cell of a ledger row renders through the shared cell atom", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderListCard(screen, { state: { status: "ready", data: {}, error: null, busy: false } });
+  const rowCells = findNodes(tree, (n) => n.type === "tr" && String(n.props.className).split(" ").includes("doc-row"))
+    .flatMap((row) => findNodes(row, (n) => n.type === "td"));
+
+  assert.ok(rowCells.length > 0, "the ledger renders its rows");
+  assert.deepEqual(
+    rowCells.filter((cell) => !String(cell.props.className).split(" ").includes("tbl-cell")).map((cell) => cell.props.className),
+    [],
+    "a raw cell bypasses the atom's cell classes",
+  );
+});
+
 test("a read in flight over held rows keeps them on screen, dimmed and busy, with the held count; only a search names itself inline", async () => {
   const screen = await loadDocsScreen();
   const rows = [
@@ -366,7 +438,8 @@ test("a read in flight over held rows keeps them on screen, dimmed and busy, wit
     });
     const tables = findNodes(tree, (n) => n.type === "table");
     assert.equal(tables.length, 1, `${row.name}: held rows stay`);
-    assert.equal(tables[0].props["aria-busy"], row.isDimmed ? "true" : undefined, row.name);
+    const [body] = findNodes(tables[0], (n) => n.type === "tbody");
+    assert.equal(body.props["aria-busy"], row.isDimmed ? "true" : undefined, row.name);
     assert.doesNotMatch(collectText(tree), /Refreshing/, `${row.name}: the ledger never repeats the header's busy word`);
     assert.match(collectText(tree), row.isSearchMode ? /2 matched/ : /2 documents/, `${row.name}: held count stays`);
 
@@ -400,11 +473,41 @@ test("a failed read announces one plain-sentence card with one Retry as an alert
     assert.equal(cards.length, 1, row.name);
     assert.equal(cards[0].props.error, error, row.name);
     assert.equal(typeof cards[0].props.onRetry, "function", row.name);
-    const alerts = findNodes(tree, (n) => n.props.role === "alert");
+    // a component node and the box it renders share their props → count boxes only
+    const alerts = findNodes(tree, (n) => n.props.role === "alert" && /^[a-z]/.test(n.type));
     assert.equal(alerts.length, 1, `${row.name}: one announced failure`);
     assert.equal(findNodes(alerts[0], (n) => n === cards[0]).length, 1, `${row.name}: the alert is the failure card`);
     assert.doesNotMatch(collectText(tree), /HTTP \d/, row.name);
     assert.equal(findNodes(tree, (n) => n.type === "table").length, row.tables, `${row.name}: held rows stay`);
+  }
+});
+
+// a component node is no box in the page → its output stands in its place
+function getBoxChildren(node: ReturnType<typeof renderScreen>): Array<Exclude<ReturnType<typeof renderScreen>, string | null>> {
+  if (node === null || typeof node === "string") return [];
+  return node.children.flatMap((child) => {
+    if (typeof child === "string") return [];
+    return /^[a-z]/.test(child.type) ? [child] : getBoxChildren(child);
+  });
+}
+
+// the flush card's inset rule matches only its direct body → the empty line and the failed row carry their own live role
+describe("an empty or failed list is the flush card body's direct box, announcing itself", () => {
+  const rows = [
+    { name: "an empty corpus", overrides: { state: { status: "ready", data: {}, error: null, busy: false }, rows: [], groupCounts: { open: 0, done: 0, total: 0 } }, atom: "EmptyState", role: "status" },
+    { name: "a filter matching nothing", overrides: { state: { status: "ready", data: {}, error: null, busy: false }, rows: [], inlineFilterProps: { keyword: "plan", docStatusFilter: "open", audienceFilter: "all" } }, atom: "EmptyState", role: "status" },
+    { name: "a failed read", overrides: { state: { status: "error", data: null, error: "HTTP 500", busy: false }, rows: [] }, atom: "RegionUnavailable", role: "alert" },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderListCard(screen, row.overrides);
+
+      const [body] = findNodes(tree, (n) => /(^|\s)card-body(\s|$)/.test(String(n.props.className ?? "")) && /(^|\s)flush(\s|$)/.test(String(n.props.className)));
+      const boxes = getBoxChildren(body).filter((n) => n.props.atom === row.atom);
+      assert.equal(boxes.length, 1, `${row.atom} is a direct box of the flush body`);
+      assert.equal(boxes[0].props.role, row.role);
+    });
   }
 });
 
@@ -425,7 +528,7 @@ test("a list error hands its Retry focus to the list card, so a successful Retry
     assert.equal(typeof targetId, "string", `${row.name}: Retry names a focus target`);
     const targets = findNodes(tree, (n) => n.props.id === targetId);
     assert.equal(targets.length, 1, `${row.name}: the target id is on the page`);
-    assert.match(String(targets[0].props.className), /\bcard\b/, `${row.name}: the target is the list card`);
+    assert.equal(findNodes(targets[0], (n) => /(^|\s)card(\s|$)/.test(String(n.props.className ?? ""))).length, 1, `${row.name}: the target wraps the list card`);
     assert.equal(findNodes(targets[0], (n) => n === card).length, 1, `${row.name}: the card holds the failed Retry`);
   }
 });
@@ -440,7 +543,7 @@ test("each stage group opens with a level-2 heading under the page H1, and the l
   const [ledger] = findNodes(tree, (n) => n.type === "table");
 
   const headings = findNodes(ledger, (n) => n.props.role === "heading" || /^h[1-6]$/.test(String(n.type)));
-  assert.deepEqual(headings.map((n) => collectText(n)), ["Doc review", "Implementing"]);
+  assert.deepEqual(headings.map((n) => collectText(n)), ["Doc review 1", "Implementing 1"], "stage name, then its section count");
   for (const heading of headings) assert.equal(heading.props["aria-level"], 2, "one level below the page H1");
 });
 
@@ -448,7 +551,8 @@ const HANGUL = /\p{Script=Hangul}/u;
 
 describe("the ledger names the Tags column only when a row differs, and states a shared value once", () => {
   const tagCellsOf = (tree: ReturnType<typeof renderScreen>) =>
-    findNodes(tree, (n) => (n.type === "th" || n.type === "td") && String(n.props.className).includes("doc-col-tags"));
+    [...findNodes(tree, (n) => n.type === "th" && collectText(n) === "Tags"),
+      ...findNodes(tree, (n) => n.type === "td" && String(n.props.className).includes("doc-col-tags"))];
   const rows = [
     { name: "every row agent-only md → no column, the audience said once in words", patch: [{ audience: "hidden" }, { audience: "hidden" }], cells: 0, onceText: "agent records" },
     { name: "one row in another format → the column stays", patch: [{ format: "html" }, {}], cells: 3, onceText: null },
@@ -483,22 +587,22 @@ test("the last stage actor reads one display name for a model id with or without
   assert.equal(actorText("claude-opus-5-5"), "Set by Opus 5.5");
 });
 
-test("the filter chips and the stage names speak the English of the rest of the screen", async () => {
+test("the filter menus and the stage names speak the English of the rest of the screen", async () => {
   const screen = await loadDocsScreen();
   const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
-  const chipGroups = findNodes(tree, (n) => n.props.atom === "ChipGroup");
-  assert.equal(chipGroups.length, 2);
-  for (const group of chipGroups) {
-    for (const chip of group.props.chips as Array<{ label: unknown }>) assert.doesNotMatch(collectText(renderScreen(chip.label)), HANGUL);
+  const triggers = findTriggers(tree);
+  assert.equal(triggers.length, 2);
+  for (const trigger of triggers) {
+    for (const option of trigger.props.options as Array<{ label: unknown }>) assert.doesNotMatch(collectText(renderScreen(option.label as never)), HANGUL);
   }
   assert.doesNotMatch(collectText(tree), HANGUL);
   for (const stage of ["doc_review", "implementing", "impl_review", "impl_done", "done"]) {
-    const pill = renderScreen((screen.DocStagePillCD as Component)({ docStatus: stage }));
-    assert.doesNotMatch(collectText(pill), HANGUL, stage);
+    const status = renderScreen((screen.DocStageCD as Component)({ docStatus: stage }));
+    assert.doesNotMatch(collectText(status), HANGUL, stage);
   }
 });
 
-test("every row pill names its stage in words, inside a stage section as in search", async () => {
+test("every row status names its stage in words, inside a stage section as in search", async () => {
   const screen = await loadDocsScreen();
   const labelsIn = (tree: ReturnType<typeof renderScreen>) => findNodes(tree, (n) => n.props.className === "doc-stage-label");
   const inReview = (props: Record<string, unknown>) => {
@@ -506,21 +610,41 @@ test("every row pill names its stage in words, inside a stage section as in sear
     return props;
   };
   const sectioned = renderScreen((screen.DocListCardCD as Component)(inReview(listCardProps(() => undefined))));
-  const rowPills = findNodes(sectioned, (n) => n.type === "button" && n.props["aria-haspopup"] === "menu");
-  assert.equal(rowPills.length, 2);
-  assert.deepEqual(labelsIn(sectioned).map((n) => collectText(n)), ["Doc review", "Doc review"], "no pill is a bare row of dots");
-  for (const pill of rowPills) assert.match(String(pill.props["aria-label"]), /^Doc review — stage 1 of 5/);
+  const rowMenus = findNodes(sectioned, (n) => n.props.atom === "RowActions");
+  assert.deepEqual(labelsIn(sectioned).map((n) => collectText(n)), ["Doc review", "Doc review"], "no status is a bare glyph");
+  const titles = (listCardProps(() => undefined).rows as Array<{ title: string }>).map((row) => `Change stage of ${row.title}`);
+  assert.deepEqual(rowMenus.map((n) => n.props.label), titles, "each stage menu names its own row");
 
   const searched = renderListCard(screen, { isSearchMode: true, rows: inReview(listCardProps(() => undefined)).rows });
   assert.equal(labelsIn(searched).length, 2);
 });
 
-test("a pill that changes the stage shows a menu caret, and a read-only pill does not", async () => {
-  const screen = await loadDocsScreen();
-  const carets = (props: Record<string, unknown>) =>
-    findNodes(renderScreen((screen.DocStagePillCD as Component)(props)), (n) => n.props.atom === "Icon" && n.props.name === "chevron-down").length;
-  assert.equal(carets({ docStatus: "implementing", onPickStage: () => undefined }), 1);
-  assert.equal(carets({ docStatus: "implementing" }), 0);
+describe("a status that can change its stage offers every other stage on its row menu", () => {
+  const stageMenu = async (props: Record<string, unknown>) => {
+    const screen = await loadDocsScreen();
+    return findNodes(renderScreen((screen.DocStageCD as Component)({ docStatus: "implementing", docTitle: "Plan", ...props })), (n) => n.props.atom === "RowActions")[0];
+  };
+  test("the menu lists the four other stages as moves, never the current one", async () => {
+    const menu = await stageMenu({ onPickStage: noop });
+    assert.equal(menu.props.label, "Change stage of Plan");
+    assert.deepEqual(Array.from(menu.props.items as Array<{ key: string; label: string }>, (item) => [item.key, item.label]),
+      [["doc_review", "Move to Doc review"], ["impl_review", "Move to Impl review"], ["impl_done", "Move to Impl done"], ["done", "Move to Done"]]);
+  });
+  const picks = [
+    { name: "a pick sends the chosen stage", isChanging: false, sent: ["done"] },
+    { name: "a pick while a change is in flight sends nothing", isChanging: true, sent: [] },
+  ];
+  for (const row of picks) {
+    test(row.name, async () => {
+      const sent: string[] = [];
+      const menu = await stageMenu({ onPickStage: (stage: string) => sent.push(stage), isChanging: row.isChanging });
+      (menu.props.onPick as (key: string) => void)("done");
+      assert.deepEqual(sent, row.sent);
+    });
+  }
+  test("a status with no stage handler has no menu", async () => {
+    assert.equal(await stageMenu({}), undefined);
+  });
 });
 
 test("Delete leaves the viewer's icon bar and sits apart in the metadata rail as a labelled button", async () => {
@@ -541,53 +665,91 @@ test("Delete leaves the viewer's icon bar and sits apart in the metadata rail as
   assert.deepEqual(deleted, [9]);
 });
 
-type Chip = { key: string; label: unknown; isPressed: boolean };
+function findTriggers(tree: ReturnType<typeof renderScreen>) {
+  return findNodes(tree, (n) => n.props.atom === "FilterTrigger");
+}
 
-test("stage and audience filters are two separately labelled pressed-chip groups, one chip pressed in each, with no radio role", async () => {
+test("stage and audience filters are two filter triggers on one labelled bar, each checking its current value", async () => {
   const screen = await loadDocsScreen();
   const picked: string[] = [];
   const props = listCardProps(() => undefined);
   (props.inlineFilterProps as Record<string, unknown>).onDocStatusChange = (value: string) => picked.push(value);
   const tree = renderScreen((screen.DocListCardCD as Component)(props));
 
-  const groups = findNodes(tree, (n) => n.props.atom === "ChipGroup");
-  assert.deepEqual(groups.map((g) => g.props.label), ["Stage filter", "Audience filter"]);
-  assert.deepEqual(groups.map((g) => Array.from((g.props.chips as Chip[]).filter((c) => c.isPressed), (c) => c.key)), [[""], ["all"]]);
-  assert.equal(findNodes(tree, (n) => n.props.role === "radio" || n.props.role === "radiogroup").length, 0);
-  assert.equal(findNodes(tree, (n) => n.props.className === "doc-filter-label").length, 2, "each group carries its own visible label");
+  const [bar] = findNodes(tree, (n) => n.props.atom === "FilterBar");
+  assert.equal(bar.props.label, "Document filters");
+  const triggers = findTriggers(bar);
+  assert.deepEqual(triggers.map((t) => t.props.axis), ["Show", "Audience"]);
+  assert.deepEqual(triggers.map((t) => [...(t.props.chosenKeys as string[])]), [[""], ["all"]]);
+  // every option sits in the value cell, so the widest one sizes the trigger; only the chosen one is seen and named
+  const values = triggers.map((t) => renderScreen(t.props.value) as Exclude<ReturnType<typeof renderScreen>, string>);
+  assert.deepEqual(values.map((value) => findNodes(value, (n) => n.type === "span" && !n.props.className).map(collectText)), [["All"], ["All"]]);
+  assert.deepEqual(values.map((value) => findNodes(value, (n) => n.props["aria-hidden"] === "true").length), [2, 2]);
 
-  (groups[0].props.onToggle as (key: string) => void)("done");
+  (triggers[0].props.onPick as (key: string) => void)("done");
   assert.deepEqual(picked, ["done"]);
 });
 
-test("the filter label reads Show, and the caption counts documents, naming revisions as their own unit", async () => {
+// a count of 0 repeats the empty state's own words → the caption shows only a count above 0
+test("the list caption renders exactly when its count is above 0, in list and search mode", async () => {
   const screen = await loadDocsScreen();
-  const filterLabel = (tree: ReturnType<typeof renderScreen>) =>
-    collectText(findNodes(tree, (n) => n.props.className === "doc-filter-label")[0]);
-
-  const counted = renderListCard(screen, { total: 3, docTotal: 5, groupCounts: { total: 3, open: 2, done: 1 } });
-  assert.equal(filterLabel(counted), "Show");
-  assert.match(collectText(counted), /\b3 documents · 5 with revisions\b/);
-  assert.doesNotMatch(collectText(counted), /\bgroups\b/, "no internal grouping unit in the caption");
-
-  assert.equal(filterLabel(renderListCard(screen, {})), "Show");
+  const rows = [
+    { name: "list, 0 documents", props: { rows: [], total: 0, docTotal: 0, visibleCount: 0 }, isShown: false },
+    { name: "list, 2 documents", props: {}, isShown: true },
+    { name: "search, 0 matched", props: { rows: [], isSearchMode: true, total: 0, docTotal: null, visibleCount: 0 }, isShown: false },
+    { name: "search, 2 matched", props: { isSearchMode: true, docTotal: null }, isShown: true },
+  ];
+  for (const row of rows) {
+    const counts = findNodes(renderListCard(screen, row.props), (n) => String(n.props?.className ?? "").includes("doc-list-count"));
+    assert.equal(counts.length, row.isShown ? 1 : 0, row.name);
+  }
 });
 
-describe("a stage pill draws the shared stage pip, filled up to its stage", () => {
+test("the Show menu counts each stage it has a count for, and the caption counts documents, naming versions as their own unit", async () => {
+  const screen = await loadDocsScreen();
+  const optionTexts = (tree: ReturnType<typeof renderScreen>) =>
+    Array.from(findTriggers(tree)[0].props.options as Array<{ label: unknown }>, (o) => collectText(renderScreen(o.label as never)).replace(/\s+/g, " ").trim()); // Array.from → a test-realm array for strict deep-equal
+
+  const counted = renderListCard(screen, { total: 3, docTotal: 5, groupCounts: { total: 3, open: 2, done: 1 } });
+  assert.deepEqual(optionTexts(counted), ["Open 2", "Done 1", "All 3"]);
+  assert.match(collectText(counted), /\b3 documents · 5 versions\b/);
+  assert.doesNotMatch(collectText(counted), /\bgroups\b/, "no internal grouping unit in the caption");
+
+  assert.deepEqual(optionTexts(renderListCard(screen, {})), ["Open", "Done", "All"], "a count the payload lacks renders as nothing, never 0");
+});
+
+describe("the filter bar's reset shows only off the entry view", () => {
+  const entry = { keyword: "", docStatusFilter: "open", audienceFilter: "all" };
   const rows = [
-    { name: "doc review fills one of five", stage: "doc_review", filled: 1 },
-    { name: "implementing fills two of five", stage: "implementing", filled: 2 },
-    { name: "done fills all five", stage: "done", filled: 5 },
+    { name: "the entry view is not applied", filters: entry, isApplied: false },
+    { name: "a blank search is not applied", filters: { ...entry, keyword: "  " }, isApplied: false },
+    { name: "a search applies", filters: { ...entry, keyword: "plan" }, isApplied: true },
+    { name: "another stage applies", filters: { ...entry, docStatusFilter: "done" }, isApplied: true },
+    { name: "every stage applies", filters: { ...entry, docStatusFilter: "" }, isApplied: true },
+    { name: "another audience applies", filters: { ...entry, audienceFilter: "visible" }, isApplied: true },
   ];
   for (const row of rows) {
     test(row.name, async () => {
       const screen = await loadDocsScreen();
-      const pips = findNodes(renderScreen((screen.DocStagePillCD as Component)({ docStatus: row.stage })),
-        (n) => String(n.props.className ?? "").split(" ").includes("stage-pip"));
-      assert.equal(pips.length, 5);
-      assert.equal(pips.filter((n) => String(n.props.className).includes("is-filled")).length, row.filled);
+      const filters = { ...(listCardProps(() => undefined).inlineFilterProps as Record<string, unknown>), ...row.filters };
+      const [bar] = findNodes(renderListCard(screen, { inlineFilterProps: filters }), (n) => n.props.atom === "FilterBar");
+      assert.equal(bar.props.isApplied, row.isApplied);
     });
   }
+
+  test("reset returns every axis to the entry view", async () => {
+    const screen = await loadDocsScreen();
+    const calls: Array<[string, string]> = [];
+    const filters = {
+      keyword: "plan", docStatusFilter: "done", audienceFilter: "visible",
+      onKeywordChange: (v: string) => calls.push(["keyword", v]),
+      onDocStatusChange: (v: string) => calls.push(["docStatusFilter", v]),
+      onAudienceChange: (v: string) => calls.push(["audienceFilter", v]),
+    };
+    const [bar] = findNodes(renderListCard(screen, { inlineFilterProps: filters }), (n) => n.props.atom === "FilterBar");
+    (bar.props.onReset as () => void)();
+    assert.deepEqual(Object.fromEntries(calls), entry);
+  });
 });
 
 test("the Documents style block and the rendered list card's size classes and inline sizes stay at or above the 13px meta floor", async () => {
@@ -710,19 +872,65 @@ test("a collapsed search row says how many older revisions it stands for", async
   assert.deepEqual(marks.map((n) => collectText(n)), ["+2 revisions"]);
 });
 
-test("while searching, the stage filter visibly steps aside for all stages, and the empty state does not claim it", async () => {
+test("while searching, a note says every stage is read, the stored stage stays chosen, and the empty state does not claim it", async () => {
   const screen = await loadDocsScreen();
   const props = listCardProps(() => undefined);
   const filters = { ...(props.inlineFilterProps as Record<string, unknown>), keyword: "plan", docStatusFilter: "open" };
   const searching = renderListCard(screen, { isSearchMode: true, inlineFilterProps: filters });
 
-  const groups = findNodes(searching, (n) => n.props.atom === "ChipGroup");
-  assert.deepEqual(groups.map((g) => g.props.label), ["Audience filter"], "no stage chip reads as pressed while it is not applied");
-  assert.match(collectText(searching), /All stages while searching/);
+  const findNote = (tree: ReturnType<typeof renderScreen>) => findNodes(tree, (n) => String(n.props.className ?? "").includes("doc-show-note"));
+  const [note] = findNote(searching);
+  assert.match(collectText(note), /All stages while searching/);
+  assert.doesNotMatch(String(note.props.className), /(^|\s)invisible(\s|$)/, "the note shows while searching");
+  assert.deepEqual([...(findTriggers(searching)[0].props.chosenKeys as string[])], ["open"], "the stored stage applies once the search clears");
+  const [listed] = findNote(renderListCard(screen, { inlineFilterProps: filters }));
+  assert.match(String(listed.props.className), /(^|\s)invisible(\s|$)/, "outside search mode the note keeps its slot, idle");
 
   const empty = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: true, inlineFilterProps: filters }));
-  assert.doesNotMatch(collectText(empty), /status:/);
-  assert.match(collectText(empty), /“plan”/);
+  const [state] = findNodes(empty, (n) => n.props.atom === "EmptyState");
+  assert.doesNotMatch(String(state.props.hint), /status:/);
+  assert.match(String(state.props.hint), /“plan”/);
+});
+
+// an empty corpus → first use in every view · else the bar's applied rule picks no-results + reset, off the entry view (open stage, all audiences, no query)
+describe("an empty list shows first use on an empty corpus, else no-results only while a filter is applied", () => {
+  const entry = { keyword: "", docStatusFilter: "open", audienceFilter: "all" };
+  const rows = [
+    { name: "the entry view on an empty corpus", filters: entry, groupCounts: { open: 0, done: 0, total: 0 }, kind: undefined, hasReset: false, isApplied: false, hint: /once an agent posts/ },
+    { name: "the entry view while done documents exist", filters: entry, groupCounts: { open: 0, done: 3, total: 3 }, kind: undefined, hasReset: false, isApplied: false, hint: /All in Show/ },
+    { name: "the all stage on an empty corpus", filters: { ...entry, docStatusFilter: "" }, groupCounts: { open: 0, done: 0, total: 0 }, kind: undefined, hasReset: false, isApplied: true, hint: /once an agent posts/ },
+    { name: "an audience", filters: { ...entry, audienceFilter: "agent-only" }, groupCounts: null, kind: "no-results", hasReset: true, isApplied: true, hint: /audience:/ },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const props = listCardProps(() => undefined);
+      const filters = { ...(props.inlineFilterProps as Record<string, unknown>), ...row.filters };
+      const tree = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: false, groupCounts: row.groupCounts, inlineFilterProps: filters }));
+
+      const states = findNodes(tree, (n) => n.props.atom === "EmptyState");
+      assert.equal(states.length, 1);
+      assert.equal(states[0].props.kind, row.kind);
+      assert.equal(typeof states[0].props.onReset === "function", row.hasReset);
+      assert.equal((screen.isFilterAppliedCD as (f: unknown) => boolean)(filters), row.isApplied, "the bar keeps its own applied rule");
+      if (row.hint) assert.match(String(states[0].props.hint), row.hint);
+    });
+  }
+});
+
+test("resetting an empty filtered list returns search, stage and audience to the entry view", async () => {
+  const screen = await loadDocsScreen();
+  const calls: string[] = [];
+  const filters = {
+    keyword: "plan", docStatusFilter: "open", audienceFilter: "exposed",
+    onKeywordChange: (v: string) => calls.push(`keyword=${v}`),
+    onDocStatusChange: (v: string) => calls.push(`stage=${v}`),
+    onAudienceChange: (v: string) => calls.push(`audience=${v}`),
+  };
+  const tree = renderScreen((screen.DocEmptyStateCD as Component)({ isSearchMode: false, inlineFilterProps: filters }));
+  const [state] = findNodes(tree, (n) => n.props.atom === "EmptyState");
+  (state.props.onReset as () => void)();
+  assert.deepEqual(calls, ["keyword=", "stage=open", "audience=all"]);
 });
 
 const DAY_MS = 86_400_000;
@@ -730,12 +938,6 @@ const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS).toISOStri
 // the screen runs in its own vm realm → compare its objects by value
 const plain = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 type DocAge = { days: number; label: string; bucket: string; isStale: boolean };
-type OpenSummary = {
-  stages: Array<{ value: string; label: string; count: number }>;
-  buckets: Record<string, number>;
-  oldest: { id: number; days: number } | null;
-  openCount: number;
-};
 
 describe("a document's age reads relative to now, buckets it, and past seven days marks it stale", () => {
   const rows = [
@@ -764,96 +966,6 @@ function pipelineRows() {
   ];
 }
 
-test("the open summary counts only open documents: stage counts and age buckets each add up to the open total", async () => {
-  const screen = await loadDocsScreen();
-  const summary = (screen.getOpenSummaryCD as (rows: unknown[], nowMs: number) => OpenSummary)(pipelineRows(), Date.now());
-
-  assert.equal(summary.openCount, 3, "the done document is not open");
-  assert.deepEqual(plain(summary.stages.map((s) => [s.label, s.count])), [["Doc review", 2], ["Implementing", 1]]);
-  assert.equal(summary.stages.reduce((sum, s) => sum + s.count, 0), summary.openCount);
-  assert.deepEqual(plain(summary.buckets), { fresh: 1, aging: 1, stale: 1 });
-  assert.deepEqual(plain(summary.oldest), { id: 11, days: 15 }, "the oldest open document, never the older done one");
-  assert.equal((screen.getOpenHeadlineCD as (s: OpenSummary) => string)(summary),
-    "2 awaiting doc review · 1 implementing · oldest open 15 days (#11)");
-});
-
-describe("the sectioned list leads with a headline verdict and an open summary; search and a single-stage filter do not", () => {
-  const rows = [
-    { name: "open filter → headline and summary", filter: "open", isSearchMode: false, shown: true },
-    { name: "all filter, every row loaded → headline and summary over the open rows", filter: "", isSearchMode: false, shown: true },
-    { name: "done filter → neither, nothing there is open", filter: "done", isSearchMode: false, shown: false },
-    { name: "search → neither, hits are not the pipeline", filter: "open", isSearchMode: true, shown: false },
-  ];
-  for (const row of rows) {
-    test(row.name, async () => {
-      const screen = await loadDocsScreen();
-      const props = listCardProps(() => undefined);
-      props.rows = pipelineRows();
-      props.isSearchMode = row.isSearchMode;
-      (props.inlineFilterProps as Record<string, unknown>).docStatusFilter = row.filter;
-      const tree = renderScreen((screen.DocListCardCD as Component)(props));
-
-      const verdicts = findNodes(tree, (n) => n.props.atom === "PageVerdict");
-      assert.equal(verdicts.length, row.shown ? 1 : 0);
-      assert.equal(findNodes(tree, (n) => String(n.props.className ?? "").split(" ").includes("doc-open-summary")).length, row.shown ? 1 : 0);
-      if (row.shown) {
-        assert.equal(verdicts[0].props.tone, "warn", "an open document past seven days needs attention");
-        assert.match(collectText(verdicts[0]), /2 awaiting doc review · 1 implementing · oldest open 15 days \(#11\)/);
-      }
-    });
-  }
-});
-
-describe("with more pages to load, the headline says it covers the loaded rows and names the open total the chip shows", () => {
-  const rows = [
-    { name: "all filter, open total known → loaded share of the open total", filter: "", groupCounts: { open: 20, done: 576, total: 596 }, lead: /^Loaded rows only — 3 of 20 open: / },
-    { name: "open filter, open total known → loaded share of the open total", filter: "open", groupCounts: { open: 20, done: 576, total: 596 }, lead: /^Loaded rows only — 3 of 20 open: / },
-    { name: "open total unknown → loaded-rows note without a total", filter: "", groupCounts: null, lead: /^Loaded rows only: / },
-  ];
-  for (const row of rows) {
-    test(row.name, async () => {
-      const screen = await loadDocsScreen();
-      const props = listCardProps(() => undefined);
-      props.rows = pipelineRows();
-      props.canLoadMore = true;
-      props.groupCounts = row.groupCounts;
-      (props.inlineFilterProps as Record<string, unknown>).docStatusFilter = row.filter;
-      const tree = renderScreen((screen.DocListCardCD as Component)(props));
-
-      const text = collectText(findNodes(tree, (n) => n.props.atom === "PageVerdict")[0]);
-      assert.match(text, row.lead);
-      assert.match(text, /2 awaiting doc review · 1 implementing · oldest open 15 days \(#11\)$/);
-    });
-  }
-});
-
-test("the ledger table scrolls inside its own column, so the open-summary rail beside it never covers a column", async () => {
-  const screen = await loadDocsScreen();
-  const props = listCardProps(() => undefined);
-  props.rows = pipelineRows();
-  const tree = renderScreen((screen.DocListCardCD as Component)(props));
-
-  const tableColumn = findNodes(tree, (n) => n.type === "div" && findNodes(n, (c) => c.type === "table").length > 0
-    && String(n.props.className ?? "").split(" ").includes("flex-1"));
-  assert.equal(tableColumn.length, 1);
-  const classes = String(tableColumn[0].props.className).split(" ");
-  assert.ok(classes.includes("min-w-0") && classes.includes("overflow-x-auto"), `table column classes: ${classes.join(" ")}`);
-});
-
-test("the summary's oldest-open link opens that document", async () => {
-  const screen = await loadDocsScreen();
-  const opened: number[] = [];
-  const props = listCardProps((id) => opened.push(id));
-  props.rows = pipelineRows();
-  const tree = renderScreen((screen.DocListCardCD as Component)(props));
-
-  const links = findNodes(tree, (n) => n.type === "button" && String(n.props.className ?? "").includes("doc-open-oldest"));
-  assert.equal(links.length, 1);
-  assert.match(collectText(links[0]), /#11/);
-  (links[0].props.onClick as () => void)();
-  assert.deepEqual(opened, [11]);
-});
-
 test("Created shows relative age with the date in a tooltip, and only an open row past seven days is marked stale with a glyph and a text label", async () => {
   const screen = await loadDocsScreen();
   const props = listCardProps(() => undefined);
@@ -871,21 +983,31 @@ test("Created shows relative age with the date in a tooltip, and only an open ro
   assert.ok(staleCell, "age is the primary value");
   assert.match(String(staleCell.props.title), /^Created date\(/);
   assert.match(collectText(staleCell), /stale/i, "stale is said in words, not colour alone");
+  // the Created floor holds the glyph only → the word is screen-reader text, and the glyph's tooltip says it too
+  const flag = findNodes(staleCell, (n) => n.type === "span" && String(n.props.className).split(/\s+/).includes("doc-age-flag"))[0];
+  assert.ok(flag, "the stale flag sits inline in the age line");
+  assert.match(String(flag.props.title), /stale/i);
+  assert.equal(collectText(findNodes(flag, (n) => n.props.className === "sr-only")[0]), "stale");
   assert.equal(findNodes(staleCell, (n) => n.props.atom === "Icon" && n.props.className === "text-warn").length, 1, "the warn tone rides a glyph");
   assert.equal(ageCells.filter((td) => /stale/i.test(collectText(td))).length, 1);
 });
 
 test("the Status column keeps room for the stage name inside stage sections as in a flat list", async () => {
   const screen = await loadDocsScreen();
-  const statusWidth = (overrides: Record<string, unknown>) => {
-    const tree = renderListCard(screen, overrides);
-    const th = findNodes(tree, (n) => n.type === "th" && collectText(n) === "Status")[0];
-    return (th.props.style as { width: number }).width;
-  };
-  const sectioned = statusWidth({});
-  const flat = statusWidth({ isSearchMode: true });
-  assert.equal(sectioned, flat);
+  const statusFloor = (overrides: Record<string, unknown>) => headerFloorRule(screen, renderListCard(screen, overrides), "Status");
+  const sectioned = statusFloor({});
+  assert.match(sectioned, /min-width: \d+px/);
+  assert.equal(sectioned, statusFloor({ isSearchMode: true }));
 });
+
+// the page header's freshness and refresh slots, rendered side by side the way PageHeader groups them
+function renderHeaderSlots(screen: Record<string, unknown>, props: Record<string, unknown>) {
+  return renderScreen({
+    __element: true,
+    type: "div",
+    props: { children: [(screen.DocHeaderFreshnessCD as Component)(props), (screen.DocHeaderRefreshCD as Component)(props)] },
+  });
+}
 
 describe("the header speaks about loading only after a first read; before it the list placeholder is the one loading label", () => {
   const rows = [
@@ -898,7 +1020,7 @@ describe("the header speaks about loading only after a first read; before it the
     test(row.name, async () => {
       const screen = await loadDocsScreen();
       const listState = { status: row.asOf ? "ready" : "loading", data: null, error: null, busy: row.busy };
-      const tree = renderScreen((screen.DocHeaderActionsCD as Component)({ asOf: row.asOf, listState, onRefresh: () => undefined }));
+      const tree = renderHeaderSlots(screen, { asOf: row.asOf, listState, onRefresh: () => undefined });
 
       assert.equal(findNodes(tree, (n) => n.props.atom === "FreshnessStamp").length, row.hasStamp ? 1 : 0);
       const buttons = findNodes(tree, (n) => n.props.atom === "RefreshButton");
@@ -908,141 +1030,488 @@ describe("the header speaks about loading only after a first read; before it the
   }
 });
 
-test("'rev of #N' trails the title as a pill that never wraps or shrinks, so the ID cell holds the id alone", async () => {
+test("'rev of #N' trails the title as an unboxed link that never wraps or shrinks, so the ID cell holds the id alone", async () => {
   const screen = await loadDocsScreen();
   const tree = renderListCard(screen, {});
   const [revisionRow] = findNodes(tree, (n) => n.type === "tr" && n.props["aria-label"] === "Doc 11");
 
-  const [titleMain] = findNodes(revisionRow, (n) => n.props.className === "doc-title-main");
+  const [titleMain] = findNodes(revisionRow, (n) => String(n.props.className ?? "").split(/\s+/).includes("doc-title-main"));
   const lineage = findNodes(titleMain, (n) => String(n.props.className ?? "").includes("doc-lineage"));
   assert.equal(lineage.length, 1);
   assert.match(collectText(lineage[0]), /^rev of #\s*7$/);
-  assert.match(String(lineage[0].props.className), /\bpill\b/);
+  assert.match(String(lineage[0].props.className), /\blink\b/);
+  assert.doesNotMatch(String(lineage[0].props.className), /\bpill/, "no pill box around the link");
   assert.match(cssRuleBody(getScreenCss(screen), ".doc-lineage"), /flex\s*:\s*none/);
 
-  const idCell = findNodes(revisionRow, (n) => n.type === "td" && String(n.props.className).includes("doc-meta-text-mono"))[0];
+  const idCell = findNodes(revisionRow, (n) => n.type === "td" && findNodes(n, (c) => c.props?.atom === "MachineString").length > 0)[0];
   assert.match(collectText(idCell), /^#\s*11$/);
 
   // a six-digit id in 13px mono (0.6em a glyph) plus the cell padding fits the ID column
-  const idHeader = findNodes(tree, (n) => n.type === "th" && collectText(n) === "ID")[0];
-  const width = (idHeader.props.style as { width: number }).width;
+  const width = Number(headerFloorRule(screen, tree, "ID").match(/min-width: (\d+)px/)?.[1]);
   assert.ok(width >= 28 + 13 * 0.6 * "#123456".length, `ID column ${width}px`);
 });
 
-test("the last stage actor rides the Status cell's tooltip, never a line under the pill", async () => {
+// mono marks machine strings only → the id is one, an age, a count or a note never is
+describe("the list sets only the document id in the machine-string face", () => {
+  test("a ledger row's one machine string is its id, and no list node carries a mono class", async () => {
+    const tree = renderListCard(await loadDocsScreen(), { totalLabel: "12 documents" });
+    const [row] = findNodes(tree, (n) => n.type === "tr" && n.props["aria-label"] === "Doc 11");
+    const machine = findNodes(row, (n) => n.props?.atom === "MachineString").map((n) => collectText(n).replace(/\s+/g, ""));
+    assert.deepEqual(machine, ["#11"]);
+    assert.equal(findNodes(tree, (n) => String(n.props?.className ?? "").includes("doc-list-count")).length, 1, "the count line renders");
+    const monoClassed = findNodes(tree, (n) => /\b(font-mono|doc-meta-text-mono)\b/.test(String(n.props?.className ?? "")));
+    assert.deepEqual(monoClassed.map((n) => n.props.className), []);
+  });
+
+  test("the viewer rail's one machine string is the id, and its labels read sentence case in the body face", async () => {
+    const screen = await loadDocsScreen();
+    const rail = renderScreen((screen.DocMetaPanelCD as Component)({
+      doc: { id: 9, title: "Doc 9", doc_status: "open", format: "md", author: "planner", created_at: "2026-11-09T10:15:42.318Z", supersedes_id: 7 },
+      pendingDelete: null, onDelete: () => undefined, togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+    }));
+    const machine = findNodes(rail, (n) => n.props?.atom === "MachineString").map((n) => collectText(n).replace(/\s+/g, ""));
+    assert.deepEqual(machine, ["#9"]);
+    const styled = findNodes(rail, (n) => /\b(font-mono|uppercase|tracking-\w+)\b/.test(String(n.props?.className ?? "")));
+    assert.deepEqual(styled.map((n) => n.props.className), []);
+    assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), ".doc-meta-label"), /text-transform|letter-spacing|font-family/);
+  });
+
+  const sansRules = [
+    { name: "a stage section's count", selector: ".doc-stage-section-count" },
+    { name: "the bulk bar selection count", selector: ".doc-group-action-bar .selection-count" },
+    { name: "a reorder rollback message", selector: ".doc-reorder-error" },
+  ];
+  for (const row of sansRules) {
+    test(`${row.name} keeps the sans face`, async () => {
+      assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(await loadDocsScreen()), row.selector), /monospace/);
+    });
+  }
+});
+
+// spacing reads the role-key ladder (index.html tailwind config) → a number or a px value in a list node or its rule is drift
+const NUMERIC_SPACING_CLASS = /(^|\s)-?(p|m|gap|space)(x|y|t|r|b|l|s|e)?-(\d|\[)/;
+
+describe("the bulk bar and the whole-word note space on role keys only", () => {
+  const nodes = [
+    {
+      name: "the bulk bar",
+      render: (screen: Record<string, unknown>) => renderScreen((screen.GroupActionBarCD as Component)({ selectionSize: 2, canGroup: true, canUngroup: true })),
+      pick: (n: RenderedNode) => n.props.role === "toolbar",
+      rule: ".doc-group-action-bar",
+      roleClass: "card-bar",
+    },
+    {
+      name: "the whole-word search note",
+      render: (screen: Record<string, unknown>) => renderListCard(screen, { isSearchMode: true, state: { status: "ready", data: { bigmEnabled: false } } }),
+      pick: (n: RenderedNode) => n.props.role === "note" && /Whole-word/.test(collectText(n)),
+      rule: null,
+      roleClass: "px-card-pad",
+    },
+  ];
+  for (const row of nodes) {
+    test(`${row.name} carries role-key spacing and no number`, async () => {
+      const screen = await loadDocsScreen();
+      const [container] = findNodes(row.render(screen), row.pick);
+      assert.ok(container, `${row.name} renders`);
+      assert.match(String(container.props.className ?? ""), new RegExp(`(^|\\s)${row.roleClass}(\\s|$)`), row.name);
+      const classes = findNodes(container, () => true).map((n) => String(n.props?.className ?? ""));
+      assert.deepEqual(classes.filter((c) => NUMERIC_SPACING_CLASS.test(c)), [], row.name);
+      if (row.rule) assert.doesNotMatch(cssRuleBody(getScreenCss(screen), row.rule), /(^|[;\s])(padding|gap)\s*:/, row.rule);
+    });
+  }
+});
+
+// every list-card state → role keys and atom slots space it, never a number or an inline px
+describe("the list card spaces on role keys in every state", () => {
+  const rows = [
+    { name: "ready with Load More", overrides: { canLoadMore: true, loadMoreRemaining: 40, rows: undefined } },
+    { name: "a failed read", overrides: { state: { status: "error", data: null, error: new Error("down"), busy: false }, rows: [] } },
+    { name: "an empty filtered list", overrides: { rows: [], inlineFilterProps: undefined } },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const overrides = Object.fromEntries(Object.entries(row.overrides).filter(([, v]) => v !== undefined));
+      const nodes = findNodes(renderListCard(screen, overrides), () => true);
+      assert.deepEqual(nodes.map((n) => String(n.props?.className ?? "")).filter((c) => NUMERIC_SPACING_CLASS.test(c)), [], row.name);
+      assert.deepEqual(nodes.filter((n) => n.props?.style && /(min|max)?(width|height|padding|margin)/i.test(Object.keys(n.props.style as object).join(" ")) && n.type === "button"), [], `${row.name}: no sized button`);
+    });
+  }
+});
+
+test("Load More sits in the card foot and keeps one label cell for both states", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderListCard(screen, { canLoadMore: true, loadMoreRemaining: 1200, isLoadingMore: true });
+  const [foot] = findNodes(tree, (n) => n.props.className === "card-foot");
+  assert.ok(foot, "the Card renders a foot");
+  const [button] = findNodes(foot, (n) => n.type === "button");
+  assert.equal(button.props["aria-label"], "Loading more");
+  assert.match(collectText(button), /Show 1200 more/, "the idle label holds the width while loading");
+});
+
+// content inside a ledger cell → its inline gap is the label-inline role; the cell padding stays the table's
+describe("a ledger head count and a group toggle space their content on the label-inline role", () => {
+  const groupRoot = { id: 21, title: "Doc 21", doc_status: "open", format: "md", audience: "exposed", author: "glass-atrium-intel-planner",
+    created_at: "2026-09-01T00:00:00Z", member_count: 3, folder_id: 5 };
+  const nodes = [
+    { name: "a stage section's count", rule: ".doc-stage-section-count", property: "margin", roleClass: "ml-label-inline" },
+    { name: "a group root's member toggle", rule: ".doc-group-toggle", property: "gap", roleClass: "gap-label-inline" },
+    { name: "a group root's member toggle hit area", rule: ".doc-group-toggle", property: "padding", roleClass: "inline-target" },
+    { name: "a group root's member toggle label", rule: ".doc-group-toggle", property: "font-size", roleClass: "fs-meta" },
+    { name: "a ledger title line", rule: ".doc-title-main", property: "gap", roleClass: "gap-label-inline" },
+    { name: "a stage section's count size", rule: ".doc-stage-section-count", property: "font-size", roleClass: "fs-meta" },
+  ];
+  for (const row of nodes) {
+    test(`${row.name} takes ${row.roleClass} and its rule sets no ${row.property}`, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderListCard(screen, { rows: [groupRoot] });
+      const className = row.rule.slice(1);
+      const [node] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes(className));
+      assert.ok(node, `${row.name} renders`);
+      assert.match(String(node.props.className), new RegExp(`(^|\\s)${row.roleClass}(\\s|$)`), row.name);
+      assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), row.rule), new RegExp(`(^|[;\\s])${row.property}(-left)?\\s*:`), row.rule);
+    });
+  }
+});
+
+// the filter bar and its count line lay out and tone on house utilities → the screen style block holds no rule a utility already ships
+describe("the filter bar and its count line take their layout and tone from utilities, not the screen style block", () => {
+  const rows = [
+    { name: "the count line", find: (n: RenderedNode) => hasClass(n, "doc-list-meta"), hook: ".doc-list-meta",
+      utilities: ["ml-auto", "flex", "flex-wrap", "justify-end", "items-center", "gap-x-list"] },
+    { name: "the document count", find: (n: RenderedNode) => hasClass(n, "doc-list-count"), hook: ".doc-list-count",
+      utilities: ["whitespace-nowrap", "text-dim", "fs-meta", "tabular-nums"] },
+    { name: "the search note", find: (n: RenderedNode) => hasClass(n, "doc-show-note"), hook: ".doc-show-note",
+      utilities: ["text-dim", "whitespace-nowrap", "fs-meta"] },
+    { name: "the filter bar", find: (n: RenderedNode) => n.props?.atom === "FilterBar", hook: ".doc-filter-bar",
+      utilities: ["min-w-0"] },
+  ];
+  const hasClass = (n: RenderedNode, name: string) => String(n.props?.className ?? "").split(/\s+/).includes(name);
+  for (const row of rows) {
+    test(`${row.name} carries its utilities, no inline style, and no screen rule`, async () => {
+      const screen = await loadDocsScreen();
+      const tree = renderListCard(screen, { state: { status: "ready", data: {}, error: null, busy: false }, total: 3, docTotal: 3 });
+      const [node] = findNodes(tree, row.find);
+      assert.ok(node, `${row.name} renders`);
+      const classes = String(node.props.className ?? "").split(/\s+/);
+      assert.deepEqual(row.utilities.filter((utility) => !classes.includes(utility)), [], row.name);
+      assert.equal(node.props.style, undefined, `${row.name} has no inline style`);
+      assert.doesNotMatch(getScreenCss(screen), new RegExp(`${row.hook.replace(".", "\\.")}[\\s,.:{]`), `${row.hook} has no screen rule`);
+    });
+  }
+});
+
+// a ledger text node's tone and inline layout read utilities → a screen rule restating them is a second declaration
+describe("ledger text nodes take their tone and inline layout from utilities, not the screen style block", () => {
+  const groupRoot = { id: 21, title: "Doc 21", doc_status: "open", format: "md", audience: "exposed", author: "glass-atrium-intel-planner",
+    created_at: "2026-09-01T00:00:00Z", member_count: 3, folder_id: 5 };
+  const ledger = (screen: Record<string, unknown>) => renderListCard(screen, { rows: [groupRoot] });
+  const bulkBar = (screen: Record<string, unknown>) =>
+    renderScreen((screen.GroupActionBarCD as Component)({ selectionSize: 2, canGroup: true, canUngroup: true }));
+  const staleAgeCell = (screen: Record<string, unknown>) =>
+    renderScreen((screen.DocAgeCellCD as Component)({ createdAt: "2026-10-04T00:00:00Z", age: { label: "15d" }, isStale: true }));
+  const rows = [
+    { name: "a Created cell's age line", render: staleAgeCell, hook: "doc-age-line", rule: ".doc-age-line",
+      utilities: ["flex", "justify-end", "items-center", "gap-label-inline"] },
+    { name: "a Created cell's age value", render: staleAgeCell, hook: "doc-age-value", rule: ".doc-age-value",
+      utilities: ["flex-none"] },
+    { name: "a Created cell's stale flag", render: staleAgeCell, hook: "doc-age-flag", rule: ".doc-age-flag",
+      utilities: ["relative", "inline-flex", "items-center", "flex-none", "text-dim"] },
+    { name: "a stage section's count", render: ledger, hook: "doc-stage-section-count", rule: ".doc-stage-section-count",
+      utilities: ["text-faint", "fs-meta", "tabular-nums", "ml-label-inline"] },
+    { name: "a ledger title line", render: ledger, hook: "doc-title-main", rule: ".doc-title-main",
+      utilities: ["flex", "flex-auto", "min-w-0", "items-center", "flex-nowrap", "gap-label-inline"] },
+    { name: "the bulk bar selection count", render: bulkBar, hook: "selection-count", rule: ".doc-group-action-bar .selection-count",
+      utilities: ["text-ink", "fs-body", "font-semibold", "tabular-nums"] },
+  ];
+  for (const row of rows) {
+    test(`${row.name} carries its utilities, no inline style, and no screen rule`, async () => {
+      const screen = await loadDocsScreen();
+      const [node] = findNodes(row.render(screen), (n) => String(n.props?.className ?? "").split(/\s+/).includes(row.hook));
+      assert.ok(node, `${row.name} renders`);
+      const classes = String(node.props.className).split(/\s+/);
+      assert.deepEqual(row.utilities.filter((utility) => !classes.includes(utility)), [], row.name);
+      assert.equal(node.props.style, undefined, `${row.name} has no inline style`);
+      assert.equal(cssRuleBodyIfAny(getScreenCss(screen), row.rule), "", `${row.rule} has no screen rule`);
+    });
+  }
+
+  // a grouped selector (".doc-age-value, .doc-age-flag") escapes the per-row rule lookup → match any selector naming the hook
+  test("a Created cell's age line, value and stale flag have no screen rule", async () => {
+    assert.doesNotMatch(getScreenCss(await loadDocsScreen()), /\.doc-age-(line|value|flag)[\s,.:{]/);
+  });
+
+  test("a reorder rollback message has no screen rule", async () => {
+    assert.doesNotMatch(getScreenCss(await loadDocsScreen()), /\.doc-reorder-error[\s,.:{]/);
+  });
+});
+
+// a ledger text tone is the house utility on its node → an inline color is a second declaration of the same token
+describe("ledger meta cells, title lines, the search snippet and the Show counts tone through utilities, never an inline color", () => {
+  const member = { id: 21, title: "Member", doc_status: "open", format: "md", audience: "exposed", author: "glass-atrium-intel-planner",
+    created_at: "2026-09-01T00:00:00Z" };
+  // a factory: the shared noop stub is declared further down the file
+  const memberProps = () => ({
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  });
+  const classOf = (n: RenderedNode) => String(n.props?.className ?? "").split(/\s+/);
+  const rootLedger = async () =>
+    renderListCard(await loadDocsScreen(), { isSearchMode: true, rows: [{ ...member, id: 31, snippet: "the <mark>auth</mark> gate ships" }] });
+  const memberRows = async () => {
+    const screen = await loadDocsScreen(stubbedStateReact({ status: "ready", data: [member, { ...member, id: 22 }], error: null }));
+    return renderScreen(inTbody((screen.GroupMembersRowsCD as Component)(memberProps())));
+  };
+  const showCounts = async () => {
+    const react = createReactStub();
+    const screen = await loadDocsScreen(react);
+    const options = (screen.getStageOptionsCD as (counts: Record<string, number>) => Array<{ label: unknown }>)({ open: 3, done: 1, total: 4 });
+    return renderScreen((react.createElement as (...args: unknown[]) => unknown)("div", null, ...options.map((option) => option.label)));
+  };
+  const rows = [
+    { name: "a root row's Author, ID and Created cells", render: rootLedger, utility: "text-dim", count: 3,
+      find: (n: RenderedNode) => n.type === "td" && classOf(n).includes("tbl-cell--meta") },
+    { name: "a member row's Author, ID and Created cells", render: memberRows, utility: "text-dim", count: 6,
+      find: (n: RenderedNode) => n.type === "td" && classOf(n).includes("tbl-cell--meta") },
+    { name: "a root row's search snippet", render: rootLedger, utility: "text-dim", count: 1,
+      find: (n: RenderedNode) => classOf(n).includes("doc-snippet") },
+    { name: "each Show option's document count", render: showCounts, utility: "text-dim", count: 3,
+      find: (n: RenderedNode) => n.type === "span" && classOf(n).includes("tabular-nums") },
+    { name: "a root row's title line", render: rootLedger, utility: "text-ink", count: 1,
+      find: (n: RenderedNode) => classOf(n).includes("doc-title-row") && classOf(n).includes("font-medium") },
+    { name: "a member row's title line", render: memberRows, utility: "text-ink", count: 2,
+      find: (n: RenderedNode) => classOf(n).includes("doc-title-row") && classOf(n).includes("font-medium") },
+  ];
+  for (const row of rows) {
+    test(`${row.name} take ${row.utility} and carry no inline color`, async () => {
+      const nodes = findNodes(await row.render(), row.find);
+      assert.equal(nodes.length, row.count, `${row.name} render`);
+      for (const node of nodes) {
+        assert.ok(classOf(node).includes(row.utility), `${row.name}: ${classOf(node).join(" ")}`);
+        assert.equal((node.props.style as { color?: string } | undefined)?.color, undefined, `${row.name}: no inline color`);
+      }
+    });
+  }
+});
+
+// a section head is the shared group-header cell → its face is the table's, so the screen keeps no rule for it
+test("a stage section head is a group-header cell and the screen keeps no rule for it", async () => {
+  const screen = await loadDocsScreen();
+  const [section] = findNodes(renderListCard(screen, {}), (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-stage-section"));
+  assert.ok(section, "a stage section renders");
+  assert.deepEqual(findNodes(section, (n) => n.props?.kind === "group-header").length, 1);
+  assert.doesNotMatch(getScreenCss(screen), /\.doc-stage-section\s*>\s*th/);
+});
+
+// a title row lays out on the house inline label gap → the lead slot and the title part by one role step
+test("every ledger title row, its snippet line and the Title header part the lead slot from the title on the label-inline gap", async () => {
+  const screen = await loadDocsScreen();
+  const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
+  const rows = findNodes(renderListCard(screen, { isSearchMode: true, rows: [row] }), (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-title-row"));
+  assert.equal(rows.length, 3, "header, title line and snippet line");
+  for (const node of rows) assert.match(String(node.props.className), /(^|\s)gap-label-inline(\s|$)/);
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-title-row"), /(^|[;\s])gap\s*:/);
+});
+
+// a role utility the Tailwind config has no key for emits no CSS → the node silently keeps its UA spacing
+test("every spacing utility on the ledger names a key its Tailwind config section holds", async () => {
+  const sectionOf: Record<string, RoleSection> = {
+    p: "padding", px: "padding", py: "padding", pt: "padding", pr: "padding", pb: "padding", pl: "padding",
+    gap: "gap", "gap-x": "gap", "gap-y": "gap",
+    m: "margin", mx: "margin", my: "margin", mt: "margin", mr: "margin", mb: "margin", ml: "margin",
+    "space-x": "space", "space-y": "space",
+  };
+  const keys = getRoleKeys();
+  const screen = await loadDocsScreen();
+  const groupRoot = { id: 21, title: "Doc 21", snippet: "the <mark>auth</mark> gate", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z", member_count: 3, folder_id: 5 };
+  const tree = renderListCard(screen, { isSearchMode: true, rows: [groupRoot] });
+  const utilities = findNodes(tree, (n) => typeof n.props?.className === "string")
+    .flatMap((n) => String(n.props.className).split(/\s+/))
+    .map((cls) => /^(p[xytrbl]?|gap(?:-[xy])?|m[xytrbl]?|space-[xy])-(.+)$/.exec(cls))
+    .filter((match): match is RegExpExecArray => match !== null);
+  assert.ok(utilities.length > 0, "the ledger renders spacing utilities");
+  // margin auto → Tailwind's core centring value, never a spacing step
+  const isMarginAuto = (prefix: string, key: string) => sectionOf[prefix] === "margin" && key === "auto";
+  const unknown = utilities
+    .filter(([, prefix, key]) => !isMarginAuto(prefix, key) && !(key in keys[sectionOf[prefix]]))
+    .map(([cls]) => cls);
+  assert.deepEqual([...new Set(unknown)], []);
+});
+
+// a highlight is a selection fill with weight as its non-colour cue → no accent, no inline padding
+test("a search snippet's highlight takes font-medium on the select tint, never the accent", async () => {
+  const screen = await loadDocsScreen();
+  const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
+  const marks = findNodes(renderListCard(screen, { isSearchMode: true, rows: [row] }), (n) => n.type === "mark");
+  assert.deepEqual(marks.map((n) => [collectText(n), n.props.className]), [["auth", "font-medium"]]);
+  const rule = cssRuleBody(getScreenCss(screen), ".doc-snippet mark");
+  assert.match(rule, /background:\s*var\(--tint-select\)/);
+  assert.doesNotMatch(rule, /--accent|padding/);
+});
+
+// an older revision quiets on the faint tone class, never on opacity
+test("a loaded previous revision reads in text-faint and the screen sets no opacity on it", async () => {
+  const react = stubbedStateReact({ status: "ready", data: { id: 7, title: "Plan v1", doc_status: "done", format: "md", created_at: "2026-09-01T00:00:00Z" }, error: null });
+  const screen = await loadDocsScreen(react);
+  const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));
+  const [panel] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-revision-predecessor"));
+  assert.ok(panel, "the previous revision renders");
+  assert.match(String(panel.props.className), /(^|\s)text-faint(\s|$)/);
+  assert.doesNotMatch(getScreenCss(screen), /\.doc-revision-predecessor[\s,.:{]/);
+});
+
+test("a search snippet sits under its title on the stack role, with no number in its class or its rule", async () => {
+  const screen = await loadDocsScreen();
+  const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
+  const tree = renderListCard(screen, { isSearchMode: true, rows: [row] });
+  const has = (n: RenderedNode, name: string) => String(n.props?.className ?? "").split(/\s+/).includes(name);
+  const [line] = findNodes(tree, (n) => has(n, "doc-title-row") && findNodes(n, (c) => has(c, "doc-snippet")).length > 0);
+
+  assert.ok(line, "the snippet line renders");
+  assert.match(String(line.props.className), /(^|\s)mt-stack(\s|$)/);
+  for (const node of [line, ...findNodes(line, (n) => has(n, "doc-snippet"))]) {
+    assert.doesNotMatch(String(node.props.className), /(^|\s)-?m[trblxy]?-(\d|\[)/);
+  }
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-snippet"), /(^|[;\s])margin-top\s*:/);
+});
+
+// a list type size is the type-scale class on its node → no screen rule restates it
+test("a ledger row's meta cells and its search snippet take fs-meta, and no screen rule sets their size", async () => {
+  const screen = await loadDocsScreen();
+  const row = { id: 31, title: "Auth rollout plan", snippet: "the <mark>auth</mark> gate ships", doc_status: "open", format: "md",
+    audience: "exposed", author: "glass-atrium-intel-planner", created_at: "2026-09-01T00:00:00Z" };
+  const tree = renderListCard(screen, { isSearchMode: true, rows: [row] });
+  const classOf = (n: RenderedNode) => String(n.props?.className ?? "");
+  const metaCells = findNodes(tree, (n) => n.type === "td" && /(^|\s)tbl-cell--meta(\s|$)/.test(classOf(n)));
+  const [snippet] = findNodes(tree, (n) => classOf(n).split(/\s+/).includes("doc-snippet"));
+
+  assert.equal(metaCells.length, 3, "Author, ID and Created render as meta cells");
+  for (const node of [...metaCells, snippet]) assert.match(classOf(node), /(^|\s)fs-meta(\s|$)/, classOf(node));
+  assert.doesNotMatch(getScreenCss(screen), /\.doc-meta-text\s*\{/);
+});
+
+test("the bulk bar selection count takes fs-body and its rule sets no size or weight", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.GroupActionBarCD as Component)({ selectionSize: 2, canGroup: true, canUngroup: true }));
+  const [count] = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("selection-count"));
+
+  assert.match(String(count.props.className), /(^|\s)fs-body(\s|$)/);
+  assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), ".doc-group-action-bar .selection-count"), /(^|[;\s])font-(size|weight)\s*:/);
+});
+
+test("the last stage actor rides the Status cell's tooltip, never a line under the status", async () => {
   const screen = await loadDocsScreen();
   const base = listCardProps(() => undefined);
   const [first, second] = base.rows as Array<Record<string, unknown>>;
   const tree = renderListCard(screen, { rows: [{ ...first, last_status_model: "operator" }, second] });
 
   assert.equal(findNodes(tree, (n) => String(n.props.className ?? "").includes("doc-stage-actor")).length, 0);
-  const statusCells = findNodes(tree, (n) => n.type === "td" && findNodes(n, (c) => c.type === "DocStagePillCD").length > 0);
+  const statusCells = findNodes(tree, (n) => n.type === "td" && findNodes(n, (c) => c.type === "DocStageCD").length > 0);
   assert.deepEqual(statusCells.map((td) => td.props.title), ["Set by operator", undefined]);
 });
 
-test("the Title header starts at the title text's x: indented by the lead slot plus the title row gap", async () => {
+test("the Title header starts at the title text's x: its label follows an empty lead slot in a title row and no rule indents it", async () => {
   const screen = await loadDocsScreen();
-  const source = getScreenCss(screen);
-  const px = (rule: string, property: string) => Number(rule.match(new RegExp(`(?:^|[;\\s])${property}\\s*:\\s*(\\d+)px`))?.[1]);
-  const indent = px(cssRuleBody(source, ".doc-title-lead"), "width") + px(cssRuleBody(source, ".title-cell .doc-title-row"), "gap");
+  const has = (n: RenderedNode, name: string) => String(n.props?.className ?? "").split(/\s+/).includes(name);
+  const titleHeader = findNodes(renderListCard(screen, {}), (n) => n.type === "th" && collectText(n).trim() === "Title")[0];
+  assert.ok(titleHeader, "the Title header renders");
+  const [line] = findNodes(titleHeader, (n) => has(n, "doc-title-row"));
 
-  const titleHeader = findNodes(renderListCard(screen, {}), (n) => n.type === "th" && collectText(n) === "Title")[0];
-  const label = findNodes(titleHeader, (n) => n.type === "span" && n.props.className === "doc-col-title-text");
-  assert.equal(label.length, 1);
-  assert.equal(px(cssRuleBody(source, ".doc-col-title-text"), "margin-left"), indent);
-});
-
-function renderPipelineCard(screen: Record<string, unknown>, state: Record<string, unknown>) {
-  const props = listCardProps(() => undefined);
-  props.rows = pipelineRows();
-  return renderScreen((screen.DocListCardCD as Component)({ ...props, asOf: "2026-09-30T00:00:00Z", state }));
-}
-
-const SETTLED_LIST = { status: "ready", data: {}, error: null, busy: false };
-const WARM_ERROR_LIST = { status: "ready", data: {}, error: "HTTP 500", busy: false };
-
-test("the open-summary rail titles each group with a level-2 heading and pairs every label with its own count", async () => {
-  const screen = await loadDocsScreen();
-  const [rail] = findNodes(renderPipelineCard(screen, SETTLED_LIST), (n) => n.type === "aside");
-
-  assert.deepEqual(findNodes(rail, (n) => n.type === "h2").map((n) => collectText(n)), ["Open by stage", "Age"]);
-  for (const list of findNodes(rail, (n) => n.type === "dl")) {
-    const cells = findNodes(list, (n) => n.type === "dt" || n.type === "dd").map((n) => n.type);
-    assert.equal(cells.length % 2, 0, "every label has a count");
-    cells.forEach((type, i) => assert.equal(type, i % 2 === 0 ? "dt" : "dd", `cell ${i} alternates label then count`));
-  }
-  const ageTerms = findNodes(rail, (n) => n.type === "dt").map((n) => collectText(n).trim());
-  assert.ok(ageTerms.includes("Over 7 days"), `age labels stand alone: ${ageTerms.join(" | ")}`);
-});
-
-test("a warm list error marks the rail counts Last known, and a settled read does not", async () => {
-  const screen = await loadDocsScreen();
-  const railText = (state: Record<string, unknown>) =>
-    collectText(findNodes(renderPipelineCard(screen, state), (n) => n.type === "aside")[0]);
-
-  assert.doesNotMatch(railText(SETTLED_LIST), /Last known/);
-  assert.match(railText(WARM_ERROR_LIST), /Last known/);
-});
-
-describe("the header hands its read state to the shell exactly once, with or without a first read", () => {
-  const rows = [
-    { name: "a failed first read reaches the shell directly", asOf: null, state: { status: "error", data: null, error: "HTTP 500", busy: false }, direct: 1 },
-    { name: "a first read in flight reaches the shell directly", asOf: null, state: { status: "loading", data: null, error: null, busy: true }, direct: 1 },
-    { name: "after a read the stamp reaches the shell, so the page does not", asOf: "2026-09-30T00:00:00Z", state: SETTLED_LIST, direct: 0 },
-  ];
-
-  for (const row of rows) {
-    test(row.name, async () => {
-      const calls: unknown[] = [];
-      const screen = await loadScreenModule(DOCS_SRC, {
-        UI: uiStub({ ...SHIPPED_ATOMS, useShellPageState: (input: unknown) => calls.push(input) }),
-        React: createReactStub(),
-      });
-      const tree = renderScreen((screen.DocHeaderActionsCD as Component)({ asOf: row.asOf, listState: row.state, onRefresh: () => undefined }));
-
-      const stamps = findNodes(tree, (n) => n.props.atom === "FreshnessStamp").length;
-      assert.equal(calls.length + stamps, 1, "one shell caller");
-      assert.equal(calls.length, row.direct);
-      if (row.direct) assert.deepEqual(plain(calls[0]), { at: null, regions: [row.state] });
-    });
-  }
+  assert.ok(line, "the header label sits in a title row");
+  const parts = findNodes(line, (n) => has(n, "doc-title-lead") || (n.type === "span" && n !== line && collectText(n).trim() === "Title"));
+  assert.deepEqual(parts.map((n) => (has(n, "doc-title-lead") ? "lead" : "label")), ["lead", "label"]);
+  assert.equal(collectText(parts[0]), "", "the header's lead slot is empty");
+  assert.doesNotMatch(getScreenCss(screen), /\.doc-col-title-text\s*\{/);
 });
 
 const noop = () => undefined;
-const isDarkScope = (n: RenderedNode) => n.props["data-theme"] === "dark";
 const hasClass = (name: string) => (n: RenderedNode) => String(n.props.className ?? "").split(/\s+/).includes(name);
 const isAtom = (atom: string) => (n: RenderedNode) => n.props.atom === atom;
 type RenderedNode = ReturnType<typeof findNodes>[number];
-
-function isInDarkScope(tree: ReturnType<typeof renderScreen>, predicate: (n: RenderedNode) => boolean): boolean {
-  return findNodes(tree, isDarkScope).some((scope) => findNodes(scope, predicate).length > 0);
-}
 
 function viewerDoc(extra: Record<string, unknown> = {}) {
   return { id: 9, title: "Doc 9", format: "txt", body: "probe", doc_status: "open", supersedes_id: null, superseded_by_id: null, ...extra };
 }
 
-function renderViewerPanel(screen: Record<string, unknown>, state: Record<string, unknown>) {
+function renderViewerPanel(screen: Record<string, unknown>, state: Record<string, unknown>, extra: Record<string, unknown> = {}) {
   return renderScreen((screen.ViewerPanelCD as Component)({
     state, pendingDelete: null, onDelete: noop, onClose: noop, onPickStage: noop, togglingIds: new Set(),
-    optimisticStatusOverrides: new Map(), onNavigate: noop, showToast: noop,
+    optimisticStatusOverrides: new Map(), onNavigate: noop, onRetry: noop, showToast: noop, ...extra,
   }));
 }
 
-test("the viewer chrome resolves the dark theme in either app theme, and the rendered document never takes that scope", async () => {
-  const screen = await loadDocsScreen();
-  const tree = renderViewerPanel(screen, { status: "ready", data: viewerDoc({ superseded_by_id: 10 }) });
-
-  assert.ok(isInDarkScope(tree, isAtom("CardHead")), "the viewer head");
-  assert.ok(isInDarkScope(tree, isAtom("AlertCard")), "the newer-version notice");
-  assert.ok(isInDarkScope(tree, (n) => n.type === "aside" && n.props["aria-label"] === "Document metadata"), "the metadata rail");
-  assert.equal(findNodes(tree, hasClass("doc-body-isolation")).length, 1);
-  assert.equal(isInDarkScope(tree, hasClass("doc-body-isolation")), false, "the rendered document keeps its own canvas");
+describe("the viewer head names its state, keeps its close button in every state, and offers download only on a ready document", () => {
+  const rows = [
+    { name: "loading", state: { status: "loading" }, title: "Document viewer", controls: ["Close viewer"] },
+    { name: "failed read", state: { status: "error", error: "HTTP 500" }, title: "Document viewer", controls: ["Close viewer"] },
+    { name: "ready", state: { status: "ready", data: viewerDoc() }, title: viewerDoc().title, controls: ["Download as HTML", "Close viewer"] },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen();
+      const [head] = findNodes(renderViewerPanel(screen, row.state), isAtom("CardHead"));
+      const right = head.props.right == null ? null : renderScreen(head.props.right);
+      const controls = right == null ? [] : findNodes(right, (n) => n.type === "button").map((n) => n.props["aria-label"]);
+      assert.deepEqual({ title: head.props.title, controls }, { title: row.title, controls: row.controls });
+    });
+  }
 });
 
-describe("a viewer with no rendered document shows its state inside the dark chrome scope", () => {
+test("a failed document read offers a Retry that reads the document again", async () => {
+  const screen = await loadDocsScreen();
+  let reads = 0;
+  const tree = renderViewerPanel(screen, { status: "error", error: "HTTP 500" }, { onRetry: () => { reads += 1; } });
+  const [notice] = findNodes(tree, isAtom("RegionUnavailable"));
+  (notice.props.onRetry as () => void)();
+  assert.equal(reads, 1);
+});
+
+test("a ready viewer renders its head, the metadata rail and exactly one document body", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderViewerPanel(screen, { status: "ready", data: viewerDoc() });
+
+  const heads = findNodes(tree, isAtom("CardHead"));
+  assert.equal(heads.length, 1, "the viewer head");
+  assert.equal(heads[0].props.isCompact, true, "the viewer head is the compact head, so the reading area keeps the width");
+  assert.equal(findNodes(tree, (n) => n.type === "aside" && n.props["aria-label"] === "Document metadata").length, 1, "the metadata rail");
+  assert.equal(findNodes(tree, hasClass("doc-body-isolation")).length, 1, "one document body");
+});
+
+test("the viewer's reading column centres on mx-auto, and its screen rule sets no margin", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderViewerPanel(screen, { status: "ready", data: viewerDoc() });
+  const [column] = findNodes(tree, hasClass("doc-fs-body-inner"));
+  assert.ok(column, "the reading column renders");
+  assert.ok(hasClass("mx-auto")(column), String(column.props.className));
+  assert.doesNotMatch(cssRuleBody(getScreenCss(screen), ".doc-fs-body-inner"), /(^|[;\s])margin(-inline)?\s*:/);
+});
+
+test("the list card's bar adds no inset of its own, since its full-bleed strips own theirs", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
+  const cards = findNodes(tree, (n) => n.type === "div" && hasClass("doc-list-card")(n));
+  assert.equal(cards.filter(hasClass("card--bar-flush")).length, 1);
+});
+
+test("the opened row's title alone takes the heavier weight, beside its aria-current cue", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.DocListCardCD as Component)(listCardProps(() => undefined)));
+  const rows = findNodes(tree, (n) => n.type === "tr" && hasClass("doc-row")(n));
+  const titleWeights = rows.map((row) => ({
+    isOpened: row.props["aria-current"] === "true",
+    isHeavy: findNodes(row, hasClass("doc-title-text")).every(hasClass("font-semibold")),
+  }));
+  assert.deepEqual(titleWeights, [{ isOpened: false, isHeavy: false }, { isOpened: true, isHeavy: true }]);
+});
+
+describe("a viewer with no rendered document shows its state in place of the body", () => {
   const rows = [
-    { name: "idle", state: { status: "idle" }, shown: hasClass("doc-empty") },
+    { name: "idle", state: { status: "idle" }, shown: isAtom("EmptyState") },
     { name: "loading", state: { status: "loading" }, shown: isAtom("LoadingPlaceholder") },
     { name: "failed read", state: { status: "error", error: "HTTP 500" }, shown: isAtom("RegionUnavailable") },
     { name: "body that cannot render", state: { status: "ready", data: viewerDoc({ format: "md", body: "# x" }) }, shown: isAtom("AlertCard") },
@@ -1051,7 +1520,8 @@ describe("a viewer with no rendered document shows its state inside the dark chr
     test(row.name, async () => {
       const screen = await loadDocsScreen();
       const tree = renderViewerPanel(screen, row.state);
-      assert.ok(isInDarkScope(tree, row.shown), `${row.name}: state shown in the dark scope`);
+      assert.equal(findNodes(tree, row.shown).length, 1, `${row.name}: its state is shown`);
+      assert.equal(findNodes(tree, hasClass("doc-body-isolation")).length, 0, `${row.name}: no document body renders`);
     });
   }
 });
@@ -1152,13 +1622,6 @@ describe("a tone in the Documents screen rides a leading glyph while its words s
       render: (s: Record<string, unknown>) => (s.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }),
       react: () => stubbedStateReact({ status: "error", data: null, error: "HTTP 404" }),
     },
-    {
-      name: "the stale age bucket in the open summary", tone: "warn", text: /Over 7 days/,
-      render: (s: Record<string, unknown>) => (s.DocOpenSummaryCD as Component)({
-        summary: { stages: [], buckets: { fresh: 0, aging: 0, stale: 2 }, oldest: null, openCount: 2 }, isPartial: false, onSelect: noop,
-      }),
-      react: () => createReactStub(),
-    },
   ];
   for (const row of rows) {
     test(row.name, async () => {
@@ -1171,14 +1634,202 @@ describe("a tone in the Documents screen rides a leading glyph while its words s
       assert.deepEqual(tonedInline.map((n) => collectText(n)), [], `${row.name}: no word painted in a tone`);
     });
   }
+  // the glyph → words gap is the label-inline role on the alert line, never a number in the screen rule
+  for (const row of rows.filter((r) => r.tone === "crit")) {
+    test(`${row.name} spaces its glyph and words on the label-inline role`, async () => {
+      const screen = await loadDocsScreen(row.react());
+      const [alert] = findNodes(renderScreen(row.render(screen)), (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-inline-alert"));
+      assert.ok(alert, `${row.name}: the alert line renders`);
+      const classes = String(alert.props.className).split(/\s+/);
+      assert.deepEqual(["inline-flex", "items-center", "gap-label-inline"].filter((utility) => !classes.includes(utility)), []);
+      assert.doesNotMatch(getScreenCss(screen), /\.doc-inline-alert[\s,.:{]/, "the alert line has no screen rule");
+    });
+  }
+});
+
+// a member nests by one empty lead slot in its title row → the cell keeps the table's padding in both table modes
+test("a group member's title row opens on an indent slot before its lead, and no rule pads its title cell", async () => {
+  const member = { id: 21, title: "Member", doc_status: "open", format: "md", audience: "exposed", author: "a", created_at: "2026-09-01T00:00:00Z" };
+  const screen = await loadDocsScreen(stubbedStateReact({ status: "ready", data: [member, { ...member, id: 22 }], error: null }));
+  const tree = renderScreen(inTbody((screen.GroupMembersRowsCD as Component)({
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  })));
+  const titleRows = findNodes(tree, (n) => String(n.props?.className ?? "").split(/\s+/).includes("doc-title-row"));
+  assert.equal(titleRows.length, 2);
+  for (const titleRow of titleRows) {
+    const slots = (titleRow.children as RenderedNode[]).filter((c) => typeof c === "object" && c !== null).map((c) => String(c.props?.className ?? ""));
+    assert.deepEqual(slots.slice(0, 2), ["doc-title-lead is-spacer is-indent", "doc-title-lead"]);
+  }
+  assert.doesNotMatch(getScreenCss(screen), /td\.title-cell\s*\{[^}]*padding/);
+});
+
+// table cells are atom-owned padding (plan S3 role tokens) → a member state line restates no inset and takes its colour from a class
+describe("a group member state line keeps the cell atom's padding and colours its words on a class", () => {
+  const member = { id: 21, title: "Member", doc_status: "open", format: "md", audience: "exposed", author: "a", created_at: "2026-09-01T00:00:00Z" };
+  const memberProps = {
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  };
+  const rows = [
+    { name: "loading members", state: { status: "loading", data: null, error: null }, nullAs: null, wordsClass: "text-faint" },
+    { name: "a failed member load", state: { status: "error", data: null, error: "HTTP 500" }, nullAs: null, wordsClass: "text-ink" },
+    { name: "an empty group", state: { status: "ready", data: [], error: null }, nullAs: null, wordsClass: "text-faint" },
+    {
+      name: "a reorder that did not save", state: { status: "ready", data: [member, { ...member, id: 22 }], error: null },
+      nullAs: "Order not saved — reverted", wordsClass: "text-ink",
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadDocsScreen(stubbedStateReact(row.state, row.nullAs));
+      const tree = renderScreen(inTbody((screen.GroupMembersRowsCD as Component)(memberProps)));
+      const [spanCell] = findNodes(tree, (n) => n.type === "td" && String(n.props.className ?? "").split(/\s+/).includes("tbl-cell--span"));
+      assert.ok(spanCell, `${row.name}: the state line renders in a span cell`);
+      assert.equal(spanCell.props.style, undefined, `${row.name}: no inline style on the span cell`);
+      const classed = findNodes(spanCell, (n) => String(n.props?.className ?? "").split(/\s+/).includes(row.wordsClass));
+      assert.equal(classed.length, 1, `${row.name}: words coloured by ${row.wordsClass}`);
+    });
+  }
+});
+
+describe("a group member row draws its title and Created in the root row's face", () => {
+  const memberProps = {
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  };
+  const createdAt = new Date(Date.now() - 12 * 86_400_000).toISOString();
+  const rows = [
+    { name: "an open member past seven days", doc_status: "implementing", isStale: true },
+    { name: "a done member past seven days", doc_status: "done", isStale: false },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const member = { id: 21, title: "Member", doc_status: row.doc_status, format: "md", audience: "exposed", author: "a", created_at: createdAt };
+      const state = { status: "ready", data: [member, { ...member, id: 22 }], error: null };
+      const screen = await loadDocsScreen(stubbedStateReact(state));
+      const tree = renderScreen(inTbody((screen.GroupMembersRowsCD as Component)(memberProps)));
+      const [titleRow] = findNodes(tree, hasClass("doc-title-row"));
+      const [ageCell] = findNodes(tree, (n) => n.type === "DocAgeCellCD");
+      // the age prop is getDocAgeCD's result object → its label is the drawn age
+      const age = ageCell?.props.age as { label: string } | undefined;
+      assert.deepEqual(
+        { face: String(titleRow.props.className).split(/\s+/).filter((c) => c.startsWith("fs-")), age: age?.label, isStale: ageCell?.props.isStale },
+        { face: ["fs-body"], age: "12d", isStale: row.isStale },
+      );
+    });
+  }
+});
+
+// design.md §12.6 Cells: an empty ledger cell reads None in faint ink → the shared absent atom, never a dash
+describe("an absent ledger value reads None through the shared absent atom, never a dash", () => {
+  const memberProps = {
+    folderId: 5, representativeId: 21, memberCount: 2, onReorder: noop, isSearchMode: false, hasTagsColumn: false,
+    selectedId: null, selectedIds: new Set(), pendingDelete: null, onSelect: noop, onToggleSelection: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  };
+  const rows = [
+    {
+      name: "a Created cell whose date does not parse", absentCount: 1,
+      render: async () => {
+        const screen = await loadDocsScreen();
+        const rowAge = (screen.getRowAgeCD as (row: unknown, nowMs: number) => Record<string, unknown>)({ created_at: "", doc_status: "open" }, Date.now());
+        return renderScreen((screen.DocAgeCellCD as Component)({ createdAt: "", ...rowAge }));
+      },
+    },
+    {
+      name: "a group member with no stage", absentCount: 2,
+      render: async () => {
+        const member = { id: 21, title: "Member", doc_status: null, format: "md", audience: "exposed", author: "a", created_at: "2026-09-01T00:00:00Z" };
+        const screen = await loadDocsScreen(stubbedStateReact({ status: "ready", data: [member, { ...member, id: 22 }], error: null }));
+        return renderScreen(inTbody((screen.GroupMembersRowsCD as Component)(memberProps)));
+      },
+    },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const tree = await row.render();
+      const kinds = findNodes(tree, (n) => n.props?.atom === "AbsentValue").map((n) => n.props.kind);
+      assert.deepEqual(kinds, Array(row.absentCount).fill("none"), `${row.name}: each absent value is the None atom`);
+      assert.doesNotMatch(collectText(tree), /—/, `${row.name}: no dash stands in for the value`);
+    });
+  }
 });
 
 test("the version history names the current revision in ink, never in a severity tone", async () => {
   const screen = await loadDocsScreen();
   const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));
   const [label] = findNodes(tree, (n) => n.type === "span" && collectText(n).trim() === "Current revision");
-  assert.equal((label.props.style as { color: string }).color, "rgb(var(--ink))");
+  const classes = String(label.props.className ?? "").split(/\s+/);
+  assert.ok(classes.includes("text-ink"), "ink utility");
+  assert.equal(classes.some((c) => /^text-(crit|warn|ok|info)$/.test(c)), false, "no severity tone");
+  assert.equal(label.props.style, undefined, "no inline colour");
 });
+
+// the viewer rail's spacing and type ride role utilities → the screen style block keeps only its grid templates
+describe("the viewer rail spaces and sets type on role utilities, not the screen style block", () => {
+  const nodes = [
+    { name: "a fact row's label-to-value gap", hook: "doc-meta-row", rule: ".doc-meta-row", property: "gap", roleClass: "gap-x-label-inline" },
+    { name: "a fact row's grid", hook: "doc-meta-row", rule: ".doc-meta-row", property: "display", roleClass: "grid" },
+    { name: "a fact row's size", hook: "doc-meta-row", rule: ".doc-meta-row", property: "font-size", roleClass: "fs-meta" },
+    { name: "a fact label's tone", hook: "doc-meta-label", rule: ".doc-meta-label", property: "color", roleClass: "text-faint" },
+    { name: "a fact value's tone", hook: "doc-meta-value", rule: ".doc-meta-value", property: "color", roleClass: "text-ink" },
+    { name: "the stage's glyph-to-word gap", hook: "doc-stage", rule: ".doc-stage", property: "gap", roleClass: "gap-label-inline" },
+    { name: "the stage word's face", hook: "doc-stage", rule: ".doc-stage-label", property: "font-family", roleClass: "font-sans" },
+    { name: "the stage glyph's tone", hook: "doc-stage-glyph", rule: ".doc-stage-glyph", property: "color", roleClass: "text-dim" },
+    { name: "the stage-to-menu gap", hook: "doc-stage-cell", rule: ".doc-stage-cell", property: "column-gap", roleClass: "gap-x-label-inline" },
+  ];
+  for (const row of nodes) {
+    test(`${row.name} takes ${row.roleClass} and ${row.rule} sets no ${row.property}`, async () => {
+      const screen = await loadDocsScreen();
+      // the rail mounts its stage as an element → the stage renders on its own
+      const tree = row.hook.startsWith("doc-stage")
+        ? renderScreen((screen.DocStageCD as Component)({ docStatus: "implementing", docTitle: "Plan", onPickStage: noop }))
+        : renderScreen((screen.DocMetaPanelCD as Component)({
+          doc: viewerDoc(), pendingDelete: null, onDelete: noop, onPickStage: noop,
+          togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+        }));
+      const [node] = findNodes(tree, hasClass(row.hook));
+      assert.ok(node, `${row.hook} renders`);
+      assert.ok(hasClass(row.roleClass)(node), row.name);
+      assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), row.rule), new RegExp(`(^|[;\\s])${row.property}[\\w-]*\\s*:`), row.rule);
+    });
+  }
+});
+
+// a flex child's margin adds to its Stack's gap → one sub-block margin turns the 16 block gap into 24, no role value
+test("the viewer rail parts its sub-blocks by one block gap and its facts by one list gap, and no sub-block adds a margin or rule of its own", async () => {
+  const screen = await loadDocsScreen();
+  const tree = renderScreen((screen.DocMetaPanelCD as Component)({
+    doc: viewerDoc({ supersedes_id: 7 }), pendingDelete: null, onDelete: noop, onPickStage: noop,
+    togglingIds: new Set(), optimisticStatusOverrides: new Map(),
+  }));
+  const [rail, ...innerStacks] = findNodes(tree, isAtom("Stack"));
+  assert.equal(rail?.props.gap, "block", "the rail is a block Stack");
+  const facts = innerStacks.find((n) => findNodes(n, hasClass("doc-meta-row")).length > 0);
+  assert.ok(facts, "the facts sit in a Stack");
+  assert.equal(facts.props.gap, "list", "a list Stack");
+  assert.equal(findNodes(facts, hasClass("doc-meta-row")).length, findNodes(tree, hasClass("doc-meta-row")).length, "every fact row is in it");
+  const subBlocks = rail.children.filter((c): c is RenderedNode => typeof c !== "string").map(getHostNode);
+  assert.equal(subBlocks.length, 4, "facts, stage, version history, delete");
+  for (const block of subBlocks) {
+    assert.doesNotMatch(String(block.props.className ?? ""), /(^|\s)m[tbylrx]?-/, `${block.type} margin class`);
+    assert.equal(block.props.style, undefined, `${block.type} inline style`);
+  }
+  for (const rule of [".doc-meta-row", ".doc-meta-danger", ".doc-version-history"]) {
+    assert.doesNotMatch(cssRuleBodyIfAny(getScreenCss(screen), rule), /(^|[;\s])(margin|padding|border)[\w-]*\s*:/, rule);
+  }
+});
+
+// a component node wraps the element it renders → the element that takes the layout classes
+function getHostNode(node: RenderedNode): RenderedNode {
+  const [only] = node.children;
+  const isWrapper = node.type !== "ui-atom" && /^[A-Z]/.test(node.type) && node.children.length === 1;
+  return isWrapper && only !== undefined && typeof only !== "string" ? getHostNode(only) : node;
+}
 
 test("the viewer row and a pending delete each carry a non-colour cue: the open row is current, a pending row is busy behind a crit glyph", async () => {
   const screen = await loadDocsScreen();
@@ -1198,42 +1849,6 @@ test("the Documents style block draws shadows only from the shadow tokens, a 1px
   const shadows = [...css.matchAll(/box-shadow\s*:\s*([^;}]+)/g)].map((m) => m[1].trim());
   const allowed = (value: string) => value === "none" || /^var\(--shadow-[\w-]+\)$/.test(value) || /^inset 0 0 0 1px /.test(value);
   assert.deepEqual(shadows.filter((value) => !allowed(value)), []);
-  assert.match(cssRuleBody(css, ".doc-stage-menu"), /border-radius\s*:\s*var\(--radius-card\)/);
-});
-
-test("the stage menu floats on the opaque overlay surface, ringed by the line token under the overlay shadow", async () => {
-  const menu = cssRuleBody(getScreenCss(await loadDocsScreen()), ".doc-stage-menu");
-  assert.match(menu, /background\s*:\s*rgb\(var\(--overlay-surface\)\)/);
-  assert.match(menu, /border\s*:\s*1px solid rgb\(var\(--line\)\)/);
-  assert.match(menu, /box-shadow\s*:\s*var\(--shadow-overlay\)/);
-});
-
-test("the checked stage-menu item draws the one filled selected state at rest and on hover, never the user-picked accent", async () => {
-  const css = getScreenCss(await loadDocsScreen());
-  const checked = cssRuleBody(css, '.doc-stage-menu-item[aria-checked="true"], .doc-stage-menu-item[aria-checked="true"]:hover');
-  assert.match(checked, /background\s*:\s*rgb\(var\(--selected-fill\)\)/);
-  assert.match(checked, /color\s*:\s*rgb\(var\(--selected-ink\)\)/);
-  assert.doesNotMatch(checked, /--accent/);
-  assert.match(cssRuleBody(css, '.doc-stage-menu-item[aria-checked="true"] .doc-stage-menu-rank'), /color\s*:\s*inherit/);
-});
-
-test("a ledger checkbox draws on theme tokens: neutral at rest, the one selected state when checked or mixed, and no transition", async () => {
-  const screen = await loadDocsScreen();
-  const css = getScreenCss(screen);
-  for (const props of [{ checked: false }, { checked: true }, { checked: false, indeterminate: true }]) {
-    const tree = renderScreen((screen.DocCheckboxCD as Component)({ ...props, onChange: noop, ariaLabel: "Select" }));
-    const [input] = findNodes(tree, (n) => n.type === "input");
-    const classes = String(input.props.className);
-    assert.ok(hasClass("doc-checkbox")(input), "token-drawn class");
-    assert.doesNotMatch(classes, /zinc-|emerald-|transition|duration-/);
-    const marks = findNodes(tree, (n) => n.props.atom === "Icon");
-    assert.equal(marks.length, props.checked || props.indeterminate ? 1 : 0);
-    for (const mark of marks) assert.ok(String(mark.props.className).includes("doc-checkbox-mark"));
-  }
-  assert.match(cssRuleBody(css, ".doc-checkbox"), /background\s*:\s*rgb\(var\(--elev\)\)/);
-  assert.match(cssRuleBody(css, ".doc-checkbox"), /border\s*:\s*1\.5px solid rgb\(var\(--faint\)\)/);
-  assert.match(cssRuleBody(css, ".doc-checkbox:checked, .doc-checkbox:indeterminate"), /background\s*:\s*rgb\(var\(--selected-fill\)\)/);
-  assert.match(cssRuleBody(css, ".doc-checkbox-mark"), /color\s*:\s*rgb\(var\(--selected-ink\)\)/);
 });
 
 function getReduceBlocks(css: string): { inside: string; outside: string } {
@@ -1269,4 +1884,20 @@ test("a loading previous revision shows the shared loading placeholder, never an
   const tree = renderScreen((screen.PredecessorPanelCD as Component)({ predecessorId: 7, currentDoc: viewerDoc(), onNavigate: noop }));
   assert.equal(findNodes(tree, isAtom("LoadingPlaceholder")).length, 1);
   assert.deepEqual(findNodes(tree, (n) => (n.props.style as { animation?: unknown } | undefined)?.animation != null), []);
+});
+
+describe("a #clauded-docs?doc=<id> link opens that document in the viewer", () => {
+  const rows = [
+    { name: "a doc id in the hash query", hash: "#clauded-docs?doc=43944", expected: 43944 },
+    { name: "the doc id beside another query key", hash: "#clauded-docs?q=plan&doc=12", expected: 12 },
+    { name: "no doc key", hash: "#clauded-docs?q=plan", expected: null },
+    { name: "a non-numeric doc value", hash: "#clauded-docs?doc=abc", expected: null },
+    { name: "a zero id", hash: "#clauded-docs?doc=0", expected: null },
+  ];
+  for (const row of rows) {
+    test(row.name, async () => {
+      const screen = await loadScreenModule(DOCS_SRC, { UI: uiStub(SHIPPED_ATOMS), React: createReactStub(), location: { hash: row.hash } });
+      assert.equal((screen.getHashDocIdCD as () => number | null)(), row.expected);
+    });
+  }
 });

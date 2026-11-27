@@ -85,11 +85,11 @@ case "${FILE_PATH}" in
     ;;
 esac
 
-# V7: no sanctioned Edit flow exists (legacy-envelope backfill is forbidden) → any Edit blocks; correction = delete + Write.
+# V7: no sanctioned Edit flow exists (Edit-based envelope backfill included) → any Edit blocks; correction = full-content Write over the file.
 if [[ "${TOOL_NAME}" = "Edit" ]]; then
   emit_error "SCOPE-007" "block" \
     "Raw store is immutable — Edit forbidden" \
-    "Delete the raw file and re-save the corrected full content via Write (V1-V6 re-validated)" \
+    "Write the full corrected content over the file — a re-save, V1-V6 re-validated" \
     "{\"file\":\"${FILE_PATH}\"}"
   exit 2
 fi
@@ -182,7 +182,7 @@ for v in "${VIOLATIONS[@]}"; do
     # SCOPE-003 and SCOPE-004 are retired, never reassigned.
     V5:*) emit_error "SCOPE-005" "block" \
       "Raw file exceeds 50KB size limit" \
-      "Split content into smaller files or trim unnecessary sections" \
+      "Skip the source and report it — never split or trim" \
       "{\"file\":\"${FILE_PATH}\"}" ;;
     V6:*) emit_error "SCOPE-006" "block" \
       "Raw file body-resident provenance envelope missing or malformed" \

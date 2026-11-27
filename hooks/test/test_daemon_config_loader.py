@@ -50,6 +50,8 @@ from contextlib import redirect_stderr
 from pathlib import Path
 
 _HOOKS_ROOT = Path(__file__).resolve().parent.parent
+# monitor module that writes daemon-config.json + words its rejected values
+_MONITOR_CONSTS_PATH = _HOOKS_ROOT.parent / "monitor" / "src" / "server" / "model-config-consts.ts"
 
 # daemon_config lives in the hooks dir under a plain (non-dashed) name — direct
 # import once the hooks dir is on sys.path, matching the daemon's own insert.
@@ -550,22 +552,37 @@ class TierKnobTest(unittest.TestCase):
     )
 
     def test_a_rejection_reason_reads_exactly_as_the_monitor_row_reason(self) -> None:
-        tier_tail = "tier (allowed: low, medium, high, xhigh, max)"
-        cap_tail = "output cap (allowed: a positive integer string, 1-999999)"
+        # oracle = the monitor's wording (model-config-consts.ts) → a one-sided reword fails
+        consts = _MONITOR_CONSTS_PATH.read_text(encoding="utf-8")
+        levels = re.search(r"export const EFFORT_LEVELS = \[([^\]]*)\] as const;", consts)
+        tails = re.search(r"const TIER_FILE_REJECT_TAIL\b[^{]*\{(.*?)^\};", consts, re.M | re.S)
+        infix = re.search(
+            r"reason: `\$\{JSON\.stringify\(raw\)\}([^`$]*)\$\{TIER_FILE_REJECT_TAIL\[def\.kind\]\}`",
+            consts,
+        )
+        self.assertIsNotNone(levels, "EFFORT_LEVELS literal not found in model-config-consts.ts")
+        self.assertIsNotNone(tails, "TIER_FILE_REJECT_TAIL not found in model-config-consts.ts")
+        self.assertIsNotNone(infix, "getTierFileValue reason template not found")
+        joined = ", ".join(re.findall(r'"([^"]*)"', levels.group(1)))
+        tail_of = {
+            kind: (template or plain).replace('${EFFORT_LEVELS.join(", ")}', joined)
+            for kind, template, plain in re.findall(
+                r'^\s*"?([\w-]+)"?: (?:`([^`]*)`|"([^"]*)"),$', tails.group(1), re.M
+            )
+        }
+        self.assertEqual(set(tail_of), {"effort", "output-cap"})
         for name, key, raw, quoted in self._MONITOR_QUOTED_ROWS:
             with self.subTest(name, key=key):
                 dc.load_daemon_config(path=_write_config({key: raw}), warn=False)
-                tail = cap_tail if key.endswith("_max_output_tokens") else tier_tail
-                self.assertEqual(dc.KNOB_ERRORS[key], f"{quoted} is not a valid {tail}")
+                kind = "output-cap" if key.endswith("_max_output_tokens") else "effort"
+                self.assertEqual(dc.KNOB_ERRORS[key], f"{quoted}{infix.group(1)}{tail_of[kind]}")
 
     def test_the_monitor_accepts_exactly_the_levels_and_cap_shape_the_loader_accepts(
         self,
     ) -> None:
         # The monitor writes the file this loader reads, so a value one side accepts
         # and the other rejects stops every daemon cycle (or hides a usable tier).
-        consts = (
-            _HOOKS_ROOT.parent / "monitor" / "src" / "server" / "model-config-consts.ts"
-        ).read_text(encoding="utf-8")
+        consts = _MONITOR_CONSTS_PATH.read_text(encoding="utf-8")
         levels = re.search(r"export const EFFORT_LEVELS = \[([^\]]*)\] as const;", consts)
         cap = re.search(r"export const OUTPUT_CAP_PATTERN = /\^(.*)\$/;", consts)
         self.assertIsNotNone(levels, "EFFORT_LEVELS literal not found in model-config-consts.ts")
@@ -579,9 +596,11 @@ class CostTierRuleTextTest(unittest.TestCase):
     """T13 AC1 — the Cost-Tier rule text is labeled a judgment heuristic and cites
     the daemon's configuration-read mechanism."""
 
-    _RULE_PATH = _HOOKS_ROOT.parent / "rules" / "glass-atrium" / "orchestrator-role.md"
+    _RULE_PATH = _HOOKS_ROOT.parent / "skills" / "glass-atrium-ops-orchestrator-role.md"
 
-    @unittest.skipUnless(_RULE_PATH.exists(), "orchestrator-role.md not present in this tree")
+    @unittest.skipUnless(
+        _RULE_PATH.exists(), "glass-atrium-ops-orchestrator-role.md not present in this tree"
+    )
     def test_cost_tier_section_labeled_heuristic_and_cites_mechanism(self) -> None:
         rule = self._RULE_PATH.read_text(encoding="utf-8")
         self.assertIn("### Cost-Tier Selection", rule)

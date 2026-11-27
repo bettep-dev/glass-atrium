@@ -1,5 +1,5 @@
 // E2E chromium DENSITY harness for the Dashboard (screens/dashboard.jsx): where the content ends
-// against the viewport, and how much blank band each status tile holds above its drill link.
+// against the viewport, and where the status card and its four stats sit.
 // Payloads: test/fixtures/dashboard-payloads.json — one served day per Dashboard endpoint, synthetic values of served magnitudes.
 //
 // Runner: npx tsx --test test/dashboard.render-density.e2e.test.ts
@@ -24,9 +24,7 @@ const PAYLOADS: Record<string, unknown> = JSON.parse(
   readFileSync(resolve(HERE, "fixtures", "dashboard-payloads.json"), "utf8"),
 );
 
-const TILE_IDS = ["harness", "outcomes", "fleet", "spend"];
-// A blank band is dead space once it could hold a line of meta text plus its gap.
-const TILE_BAND_MAX_PX = 24;
+const STAT_COUNT = 4;
 
 interface Viewport {
   width: number;
@@ -36,9 +34,10 @@ interface Viewport {
 interface DensityProbe {
   contentBottom: number;
   statusBandHeight: number;
-  // blank px between a tile's last fact and its drill link, keyed by tile id
-  tileBands: Record<string, number>;
 }
+
+// a describe that needs another payload sets it here for its own page and clears it after
+const overrides: Record<string, unknown> = {};
 
 let app: FastifyInstance;
 let browser: Browser;
@@ -47,7 +46,7 @@ let serverUrl: string;
 before(async () => {
   app = Fastify({ logger: false });
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
-  for (const [path, payload] of Object.entries(PAYLOADS)) app.get(path, async () => payload);
+  for (const [path, payload] of Object.entries(PAYLOADS)) app.get(path, async () => overrides[path] ?? payload);
   // endpoints no Dashboard region owns → quiet empty payloads, never a 404 banner
   app.get("/api/*", async () => ({ rows: [] }));
   await app.ready();
@@ -65,9 +64,9 @@ async function openDashboard(viewport: Viewport): Promise<Page> {
   await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
   await page.waitForFunction(
     () => {
-      const harness = document.querySelector("#dash-tile-harness")?.textContent ?? "";
+      const harness = document.querySelector("#dash-status .stat")?.textContent ?? "";
       const hasStrip = document.querySelector("#dash-week-spend ol") !== null;
-      const hasResults = (document.querySelector("#dash-week-results")?.textContent ?? "").includes("reported outcomes");
+      const hasResults = (document.querySelector("#dash-week-results")?.textContent ?? "").includes(" task results");
       const hasHours = document.querySelector("#dash-week-hours [role=img]") !== null;
       return / (up|down)/.test(harness) && hasStrip && hasResults && hasHours;
     },
@@ -78,21 +77,13 @@ async function openDashboard(viewport: Viewport): Promise<Page> {
 }
 
 async function getDensity(page: Page): Promise<DensityProbe> {
-  return page.evaluate((tileIds) => {
+  return page.evaluate(() => {
     const sections = document.querySelector("#dash-status")?.parentElement;
     const children = sections ? Array.from(sections.children) : [];
     const contentBottom = Math.max(...children.map((el) => el.getBoundingClientRect().bottom + window.scrollY));
     const statusBandHeight = document.querySelector("#dash-status")?.getBoundingClientRect().height ?? 0;
-    const tileBands: Record<string, number> = {};
-    for (const id of tileIds) {
-      const card = document.querySelector(`#dash-tile-${id}`);
-      const drill = card?.lastElementChild;
-      const fact = drill?.previousElementSibling;
-      if (!card || !drill || !fact) continue;
-      tileBands[id] = Math.round(drill.getBoundingClientRect().top - fact.getBoundingClientRect().bottom);
-    }
-    return { contentBottom: Math.round(contentBottom), statusBandHeight: Math.round(statusBandHeight), tileBands };
-  }, TILE_IDS);
+    return { contentBottom: Math.round(contentBottom), statusBandHeight: Math.round(statusBandHeight) };
+  });
 }
 
 describe("Dashboard density at 1440×900", () => {
@@ -111,12 +102,6 @@ describe("Dashboard density at 1440×900", () => {
       `content ends at ${probe.contentBottom}, leaving more than one ${probe.statusBandHeight}px row blank`);
   });
 
-  // todo → a known-unmet target: runs and reports, never fails the suite until the tiles close their bands
-  test("no status tile holds a blank band above its drill link", { todo: "Harness and Fleet still keep a band after their facts moved" }, () => {
-    for (const [id, band] of Object.entries(probe.tileBands)) {
-      assert.ok(band <= TILE_BAND_MAX_PX, `${id} tile keeps a ${band}px blank band`);
-    }
-  });
 });
 
 describe("Dashboard density at 1024", () => {
@@ -130,50 +115,316 @@ describe("Dashboard density at 1024", () => {
   });
 });
 
-// A data hint clamps its data, never the authored words around it: each part stays inside the hint box,
-// and the data keeps a visible fragment even when the tile column is narrow.
-interface HintSpan {
-  text: string;
-  isData: boolean;
-  left: number;
-  right: number;
-  width: number;
+// One card of four stats (spec 44084 §9): the stats share one line, the first screen keeps Spend per day,
+// and every stacked card starts on one left edge.
+interface StatusLayout {
+  statTops: number[];
+  spendTop: number;
+  cardLefts: Record<string, number>;
 }
 
-async function getDataHints(page: Page): Promise<Array<{ box: { left: number; right: number }; spans: HintSpan[] }>> {
-  return page.evaluate(() =>
-    [...document.querySelectorAll<HTMLElement>(".dash-tile-hint-line")].map((line) => {
-      const box = line.getBoundingClientRect();
-      const spans = [...line.querySelectorAll<HTMLElement>(".dash-tile-hint-fixed, .dash-tile-hint-data")]
-        .filter((span) => (span.textContent ?? "").trim() !== "")
-        .map((span) => {
-          const rect = span.getBoundingClientRect();
-          const isData = span.classList.contains("dash-tile-hint-data");
-          return { text: span.textContent ?? "", isData, left: rect.left, right: rect.right, width: rect.width };
-        });
-      return { box: { left: box.left, right: box.right }, spans };
-    }),
-  );
+async function getStatusLayout(page: Page): Promise<StatusLayout> {
+  return page.evaluate(() => {
+    const statTops = Array.from(document.querySelectorAll("#dash-status .stat")).map((el) => Math.round(el.getBoundingClientRect().top));
+    const spendTop = document.querySelector("#dash-week-spend")?.getBoundingClientRect().top ?? NaN;
+    const cardLefts: Record<string, number> = {};
+    for (const id of ["dash-status", "dash-week-results", "dash-week-spend"]) {
+      const card = document.querySelector(`#${id} .card`);
+      if (card) cardLefts[id] = card.getBoundingClientRect().left;
+    }
+    return { statTops, spendTop, cardLefts };
+  });
 }
 
-describe("Data hints at narrow tile widths", () => {
-  for (const width of [1024, 1200]) {
-    test(`every data hint part stays inside its box and the data stays visible at ${width}`, async () => {
-      const page = await openDashboard({ width, height: 768 });
-      await page.evaluate(() => document.fonts.ready);
-      const hints = await getDataHints(page);
+describe("The status card at 1440×900", () => {
+  let layout: StatusLayout;
+
+  before(async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    await page.evaluate(() => document.fonts.ready);
+    layout = await getStatusLayout(page);
+    console.log(`status layout 1440x900: ${JSON.stringify(layout)}`);
+    await page.close();
+  });
+
+  test("its four stats share one line", () => {
+    assert.equal(layout.statTops.length, STAT_COUNT, "every stat renders");
+    assert.equal(new Set(layout.statTops).size, 1, `stat tops ${layout.statTops.join(" / ")}`);
+  });
+
+  test("Spend per day starts on the first screen", () => {
+    assert.ok(layout.spendTop < 900, `Spend per day starts at ${layout.spendTop}`);
+  });
+
+  test("the status card and the week cards start on one left edge", () => {
+    const lefts = Object.values(layout.cardLefts);
+    assert.equal(lefts.length, 3, JSON.stringify(layout.cardLefts));
+    assert.ok(Math.max(...lefts) - Math.min(...lefts) < 0.5, JSON.stringify(layout.cardLefts));
+  });
+});
+
+// The status card holds its settled height (design.md §3.3) through a first load, a held refresh and a lone failure:
+// the cards below never move when a stat's read lands or fails
+const STATUS_CARD_STATES: Array<{ name: string; open: () => Promise<Page> }> = [
+  {
+    name: "while its stats load",
+    open: async () => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      // never answered → every stat stays on its placeholder (the shell's harness fold reads these too)
+      await page.route(/\/api\/(cost\/kpi|agents\/summary|outcomes\/cross-analysis)/, () => {});
+      await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+      await page.waitForFunction(() => document.querySelectorAll("#dash-status .stat-value [role=status]").length === 4, undefined, { timeout: 30_000 });
+      return page;
+    },
+  },
+  {
+    // a held all-clear reads the unknown glyph (sr "Unknown: ") before its Last known
+    name: "when two stats are held over failed refreshes on two causes, each with its own Retry",
+    open: async () => {
+      const page = await openDashboard({ width: 1440, height: 900 });
+      await page.route(/\/api\/agents\/summary/, (route) => route.fulfill({ status: 500, json: {} }));
+      await page.route(/\/api\/cost\/kpi/, (route) => route.fulfill({ status: 502, json: {} }));
+      await page.getByRole("button", { name: "Refresh dashboard" }).click();
+      await page.waitForFunction(
+        () => Array.from(document.querySelectorAll("#dash-status .stat-context")).filter((el) => /^Unknown: Last known/.test(el.textContent ?? "")).length >= 2,
+        undefined,
+        { timeout: 30_000 },
+      );
+      return page;
+    },
+  },
+  {
+    name: "when open caveats and a failing streak trip the context lines, each naming its count",
+    open: async () => {
+      const outcomes = PAYLOADS["/api/outcomes/cross-analysis"] as { by_result: Array<{ result: string }> };
+      const agents = PAYLOADS["/api/agents/summary"] as { meta: { circuit_breaker: object } };
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      // 500 of 4,656 writer results open → over the 10% caveat line, breakage under its own; 3 on a streak, none suspended
+      await page.route(/\/api\/outcomes\/cross-analysis/, (route) => route.fulfill({ json: {
+        ...outcomes,
+        by_result: outcomes.by_result.map((row) => (row.result === "done_with_concerns" ? { ...row, writer_open_count: 500 } : row)),
+      } }));
+      await page.route(/\/api\/agents\/summary/, (route) => route.fulfill({ json: {
+        ...agents,
+        meta: { ...agents.meta, circuit_breaker: { ...agents.meta.circuit_breaker, streak_count: 3 } },
+      } }));
+      await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+      await page.waitForFunction(
+        () => Array.from(document.querySelectorAll("#dash-status .stat-context")).map((el) => el.textContent ?? "")
+          .filter((text) => /with open caveats$|on a failing streak$/.test(text)).length === 2,
+        undefined,
+        { timeout: 30_000 },
+      );
+      return page;
+    },
+  },
+  {
+    name: "when open caveats and a failing streak trip the context lines, each naming its count",
+    open: async () => {
+      const outcomes = PAYLOADS["/api/outcomes/cross-analysis"] as { by_result: Array<{ result: string }> };
+      const agents = PAYLOADS["/api/agents/summary"] as { meta: { circuit_breaker: object } };
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      // 500 of 4,656 writer results open → over the 10% caveat line, breakage under its own; 3 on a streak, none suspended
+      await page.route(/\/api\/outcomes\/cross-analysis/, (route) => route.fulfill({ json: {
+        ...outcomes,
+        by_result: outcomes.by_result.map((row) => (row.result === "done_with_concerns" ? { ...row, writer_open_count: 500 } : row)),
+      } }));
+      await page.route(/\/api\/agents\/summary/, (route) => route.fulfill({ json: {
+        ...agents,
+        meta: { ...agents.meta, circuit_breaker: { ...agents.meta.circuit_breaker, streak_count: 3 } },
+      } }));
+      await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+      await page.waitForFunction(
+        () => Array.from(document.querySelectorAll("#dash-status .stat-context")).map((el) => el.textContent ?? "")
+          .filter((text) => /with open caveats$|on a failing streak$/.test(text)).length === 2,
+        undefined,
+        { timeout: 30_000 },
+      );
+      return page;
+    },
+  },
+  {
+    name: "when one stat failed alone and keeps its own Retry",
+    open: async () => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      await page.route(/\/api\/agents\/summary/, (route) => route.fulfill({ status: 500, json: {} }));
+      await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+      await page.waitForFunction(() => (document.querySelector("#dash-status")?.textContent ?? "").includes("Couldn't load agents."), undefined, { timeout: 30_000 });
+      return page;
+    },
+  },
+];
+
+async function getStatusCardHeight(page: Page): Promise<number> {
+  await page.evaluate(() => document.fonts.ready);
+  return page.evaluate(() => document.querySelector("#dash-status")?.getBoundingClientRect().height ?? NaN);
+}
+
+describe("The status card at 1440×900 keeps its settled height", () => {
+  let settled: number;
+
+  before(async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    try {
+      settled = await getStatusCardHeight(page);
+    } finally {
       await page.close();
-      assert.ok(hints.length > 0, "the fixture renders a data hint");
-      for (const hint of hints) {
-        for (const span of hint.spans) {
-          assert.ok(span.left >= hint.box.left - 0.5 && span.right <= hint.box.right + 0.5,
-            `"${span.text}" spans ${span.left}–${span.right}, outside its box ${hint.box.left}–${hint.box.right}`);
-        }
-        const data = hint.spans.find((span) => span.isData);
-        assert.ok(data && data.width > 0, `the data is not visible: ${JSON.stringify(hint.spans)}`);
+    }
+  });
+
+  for (const state of STATUS_CARD_STATES) {
+    test(state.name, async () => {
+      const page = await state.open();
+      try {
+        const height = await getStatusCardHeight(page);
+        console.log(`status card ${state.name} 1440x900: ${height} (settled ${settled})`);
+        assert.ok(Math.abs(height - settled) < 0.5, `${height}px, settled ${settled}px`);
+      } finally {
+        await page.close();
       }
     });
   }
+});
+
+describe("The status card while its stats load at 1440×900", () => {
+  test("a stat's loading placeholder reads at the regular weight, as the panel placeholder does", async () => {
+    const page = await STATUS_CARD_STATES[0].open();
+    try {
+      const weights = await page.$$eval("#dash-status .stat-value [role=status]", (els) => els.map((el) => getComputedStyle(el).fontWeight));
+      assert.deepEqual(weights, ["400", "400", "400", "400"]);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+// The alarm row (spec 44084 §3.2): a 32 first line between 8 paddings → one line 48, the card-head height;
+// a detail line under the title adds 4 + 18.2 → about 70
+const ALARM_ROW_PX = { ONE_LINE: 48, WITH_DETAIL: 70 };
+// spend at 3× its 7-day average (a detail line) + an update ready to apply (no detail) → two warn rows
+const ALARM_PAYLOADS: Record<string, unknown> = {
+  "/api/cost/kpi": { ...(PAYLOADS["/api/cost/kpi"] as object), today_cost_usd: 30, window_7d_cost_usd: 70, burn_rate_3h_usd_per_hour: 0.1 },
+  "/api/dashboard/update-status": { ...(PAYLOADS["/api/dashboard/update-status"] as object), status: "update-available", latest_version: "1.0.2" },
+  "/api/dashboard/update-job": { status: "none" },
+};
+
+describe("Alarm rows at 1440×900", () => {
+  let rows: Array<{ height: number; hasDetail: boolean }>;
+
+  before(async () => {
+    Object.assign(overrides, ALARM_PAYLOADS);
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+      await page.waitForFunction(() => document.querySelectorAll(".dash-alarm-list .alarm-row").length === 2, undefined, { timeout: 30_000 });
+      await page.evaluate(() => document.fonts.ready);
+      // the hairline between rows is the list's, not the row's → border-box height less the bottom border
+      rows = await page.$$eval(".dash-alarm-list .alarm-row", (els) => els.map((el) => ({
+        height: el.getBoundingClientRect().height - parseFloat(getComputedStyle(el).borderBottomWidth),
+        hasDetail: el.querySelector(".alarm-row-detail") !== null,
+      })));
+      console.log(`alarm rows 1440x900: ${JSON.stringify(rows)}`);
+    } finally {
+      await page.close();
+      for (const path of Object.keys(ALARM_PAYLOADS)) delete overrides[path];
+    }
+  });
+
+  test("a row with a detail line is about 70 tall and a one-line row 48, the card-head height", () => {
+    assert.deepEqual(rows.map((row) => row.hasDetail), [true, false], "the spend row carries a detail, the install row none");
+    for (const row of rows) {
+      const expected = row.hasDetail ? ALARM_ROW_PX.WITH_DETAIL : ALARM_ROW_PX.ONE_LINE;
+      assert.ok(Math.abs(row.height - expected) < 1, `row ${row.height}px, expected ${expected}`);
+    }
+  });
+});
+
+// A result row spaces its label, bar and count by the inline label role key (design.md §12.1), never a ladder step
+describe("The results panel rows at 1440×900", () => {
+  test("space their label, bar and count by --gap-label-inline", async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    try {
+      const gaps = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.style.columnGap = "var(--gap-label-inline)";
+        document.body.append(probe);
+        const token = getComputedStyle(probe).columnGap;
+        probe.remove();
+        const rows = Array.from(document.querySelectorAll("#dash-week-results .dash-result-row")).map((el) => getComputedStyle(el).columnGap);
+        return { token, rows };
+      });
+      assert.ok(gaps.rows.length > 0, "the panel renders its rows");
+      for (const gap of gaps.rows) assert.equal(gap, gaps.token, `row gap ${gap}, role key ${gaps.token}`);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("The results panel counts at 1440×900", () => {
+  // the breakage rows' arrow takes its own column → both lists' counts end on one edge
+  test("every count in the card ends on one right edge", async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    try {
+      // anonymous callbacks only → tsx's keepNames helper does not exist inside the page
+      const edges = await page.evaluate(() => {
+        const [results, agents] = ["#dash-week-results .dash-result-row > .tabular-nums", "#dash-week-results li .link .tabular-nums"]
+          .map((selector) => Array.from(document.querySelectorAll(selector)).map((el) => el.getBoundingClientRect().right));
+        return { results, agents };
+      });
+      assert.ok(edges.results.length > 0 && edges.agents.length > 0, JSON.stringify(edges));
+      for (const right of edges.agents) assert.ok(Math.abs(right - edges.results[0]) < 0.5, JSON.stringify(edges));
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("the Most failed or blocked head opens a group one --gap-block below the result rows", async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    try {
+      const gap = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.style.rowGap = "var(--gap-block)";
+        document.body.append(probe);
+        const token = Number.parseFloat(getComputedStyle(probe).rowGap);
+        probe.remove();
+        const rows = document.querySelectorAll("#dash-week-results .dash-result-row");
+        const head = document.querySelector("#dash-week-results h3");
+        const above = rows[rows.length - 1]?.closest("ul")?.getBoundingClientRect().bottom ?? NaN;
+        return { token, measured: (head?.getBoundingClientRect().top ?? NaN) - above };
+      });
+      assert.ok(Math.abs(gap.measured - gap.token) < 0.5, JSON.stringify(gap));
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("Runs by hour day labels at 1440×900", () => {
+  const HEATMAP = "/api/outcomes/heatmap";
+  const heatmap = PAYLOADS[HEATMAP] as { meta: Record<string, unknown> };
+  const firstCellLeft = async (): Promise<number> => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    try {
+      return await page.evaluate(() => document.querySelector("#dash-week-hours .dash-hour-cell")?.getBoundingClientRect().left ?? NaN);
+    } finally {
+      await page.close();
+    }
+  };
+
+  // a folded "Wed ×2" never widens the label track → the grid starts at one x in every state
+  // the served 8-date window folds Wed; a payload with no window dates folds nothing
+  test("the first hour cell starts at one x with or without a folded weekday", async () => {
+    const folded = await firstCellLeft();
+    const { bucket_dates: _dates, ...undated } = heatmap.meta;
+    overrides[HEATMAP] = { ...heatmap, meta: undated };
+    try {
+      const unfolded = await firstCellLeft();
+      assert.ok(Number.isFinite(folded) && Math.abs(folded - unfolded) < 0.5, `folded ${folded}, unfolded ${unfolded}`);
+    } finally {
+      delete overrides[HEATMAP];
+    }
+  });
 });
 
 // Runs by hour reads as a grid of squares: no cell outgrows the cap, and the panel sits beside the results from xl
@@ -228,6 +479,25 @@ describe("Runs by hour layout", () => {
     assertSquareCells(layout.cells);
   });
 
+  test("at 1920 the Runs by hour card is as wide as its grid, and the task results take the rest of the row", async () => {
+    const page = await openDashboard({ width: 1920, height: 1080 });
+    const fit = await page.evaluate(() => {
+      const card = document.querySelector("#dash-week-hours .card") as HTMLElement;
+      const grid = document.querySelector("#dash-week-hours .dash-hour-grid") as HTMLElement;
+      const style = getComputedStyle(card);
+      const inner = card.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const body = card.querySelector(".card-body") as HTMLElement | null;
+      const bodyStyle = body ? getComputedStyle(body) : null;
+      const bodyInset = bodyStyle ? parseFloat(bodyStyle.paddingLeft) + parseFloat(bodyStyle.paddingRight) : 0;
+      return { inner: inner - bodyInset, grid: grid.getBoundingClientRect().width };
+    });
+    const layout = await getWeekLayout(page);
+    await page.close();
+    assert.ok(Math.abs(fit.inner - fit.grid) < 1, `card content ${fit.inner}px vs grid ${fit.grid}px`);
+    assert.ok(layout.results.width > layout.hours.width, "the task results take the rest");
+    assertSquareCells(layout.cells);
+  });
+
   test("at 1024 it stacks Results, Runs by hour, Spend in one column with square capped cells", async () => {
     const page = await openDashboard({ width: 1024, height: 768 });
     const layout = await getWeekLayout(page);
@@ -239,6 +509,42 @@ describe("Runs by hour layout", () => {
   });
 });
 
+describe("Runs by hour ramp", () => {
+  test("a zero hour is an outlined empty cell and every run hour paints one of the four heat tokens at full opacity", async () => {
+    const page = await openDashboard({ width: 1440, height: 900 });
+    const paint = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      document.body.append(probe);
+      const heats = ["--heat-1", "--heat-2", "--heat-3", "--heat-4"].map((token) => {
+        probe.style.background = `var(${token})`;
+        return getComputedStyle(probe).backgroundColor;
+      });
+      probe.remove();
+      const cells = Array.from(document.querySelectorAll("#dash-week-hours [role=img] .dash-hour-cell")).map((el) => {
+        const style = getComputedStyle(el);
+        return { title: el.getAttribute("title") ?? "", background: style.backgroundColor, shadow: style.boxShadow, opacity: style.opacity };
+      });
+      const key = document.querySelector("#dash-week-hours .dash-hour-key")?.textContent ?? "";
+      return { heats, cells, key };
+    });
+    await page.close();
+    const peak = Math.max(...(PAYLOADS["/api/outcomes/heatmap"] as { data: number[][] }).data.flat());
+    assert.match(paint.key, new RegExp(`^01${peak} runs per hour · ×2 = two dates summed$`), "the key states the grid's peak, then the served window's fold");
+    const isZero = (title: string) => / — 0 runs$/.test(title);
+    const zeros = paint.cells.filter((cell) => isZero(cell.title));
+    const filled = paint.cells.filter((cell) => !isZero(cell.title));
+    assert.ok(zeros.length > 0 && filled.length > 0, "the fixture holds zero and run hours");
+    for (const cell of zeros) {
+      assert.equal(cell.background, "rgba(0, 0, 0, 0)", `${cell.title}: no fill`);
+      assert.match(cell.shadow, /0px 0px 0px 1px inset$/, `${cell.title}: a 1px inset outline`);
+    }
+    for (const cell of filled) {
+      assert.ok(paint.heats.includes(cell.background), `${cell.title}: ${cell.background} is not a heat token`);
+      assert.equal(cell.opacity, "1", `${cell.title}: never quieted by opacity`);
+    }
+  });
+});
+
 async function openDashboardWithTweaks(viewport: Viewport): Promise<Page> {
   const page = await openDashboard(viewport);
   await page.evaluate(() => window.postMessage({ type: "__activate_edit_mode" }, window.location.origin));
@@ -246,7 +552,7 @@ async function openDashboardWithTweaks(viewport: Viewport): Promise<Page> {
   return page;
 }
 
-// The 13px meta floor covers every rendered text node: the page, the shell's nav rail and footer,
+// The 13px meta floor covers every rendered text node: the page, the shell's nav rail,
 // and the Tweaks panel the shell mounts in edit mode.
 describe("Type floor on the Dashboard page, shell and Tweaks panel included", () => {
   for (const viewport of [{ width: 1024, height: 768 }, { width: 1440, height: 900 }]) {
@@ -263,10 +569,49 @@ describe("Type floor on the Dashboard page, shell and Tweaks panel included", ()
     const sizes = await page.evaluate(() => {
       const control = getComputedStyle(document.documentElement).getPropertyValue("--fs-control").trim();
       const labels = Array.from(document.querySelectorAll(".nav-item .rail-hide")).map((el) => getComputedStyle(el).fontSize);
-      return { control, labels };
+      return { control, labels, itemCount: document.querySelectorAll(".nav-item").length };
     });
     await page.close();
-    assert.equal(sizes.labels.length, 9, "one label per nav item");
+    assert.ok(sizes.itemCount > 0, "the nav rendered its items");
+    assert.equal(sizes.labels.length, sizes.itemCount, "one label per nav item");
     for (const size of sizes.labels) assert.equal(size, sizes.control, `a nav label draws at ${size}, not ${sizes.control}`);
+  });
+});
+
+// At the icon rail a count must never cover its row's icon: two rows told apart only by the icon would read alike.
+describe("Nav counts at the icon rail", () => {
+  test("at 1024 every visible count leaves its icon whole and stays inside its row, and a two-count row keeps its crit count", async () => {
+    const page = await browser.newPage({ viewport: { width: 1024, height: 768 } });
+    const kpi = { ...(PAYLOADS["/api/dashboard/kpi"] as Record<string, unknown>), last_1h_fail_count: 3 };
+    const live = PAYLOADS["/api/architecture/live"] as { daemons: Record<string, unknown>[] };
+    const downLive = { ...live, daemons: live.daemons.map((d, i) => (i === 0 ? { ...d, effective_status: "error" } : d)) };
+    await page.route("**/api/dashboard/kpi", (route) => route.fulfill({ json: kpi }));
+    await page.route("**/api/architecture/live", (route) => route.fulfill({ json: downLive }));
+    await page.goto(`${serverUrl}/#dashboard`, { waitUntil: "load" });
+    await page.locator(".nav-item .nav-count").nth(1).waitFor({ state: "attached", timeout: 30_000 });
+    const rows = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll(".nav-item")).filter((item) => item.querySelector(".nav-count")).map((item) => {
+        const icon = (item.querySelector("svg") as Element).getBoundingClientRect();
+        const row = item.getBoundingClientRect();
+        const visible = Array.from(item.querySelectorAll(".nav-count")).filter((c) => getComputedStyle(c).clip === "auto"); // the rail clips extra counts, it does not unbox them
+        return {
+          label: item.getAttribute("title"),
+          counts: item.querySelectorAll(".nav-count").length,
+          visibleText: visible.map((c) => (c.textContent ?? "").trim()),
+          // overlap area of each visible count with the icon box — inline: a named helper here gains an esbuild __name the page lacks
+          coveredPx: Math.round(visible.map((c) => c.getBoundingClientRect()).reduce((sum, r) => sum + Math.max(0, Math.min(r.right, icon.right) - Math.max(r.left, icon.left)) * Math.max(0, Math.min(r.bottom, icon.bottom) - Math.max(r.top, icon.top)), 0)),
+          isInside: visible.every((c) => { const r = c.getBoundingClientRect(); return r.left >= row.left && r.right <= row.right && r.top >= row.top && r.bottom <= row.bottom; }),
+        };
+      });
+    });
+    await page.close();
+    const map = rows.find((r) => r.label === "System map");
+    assert.equal(map?.counts, 2, "precondition: System map carries a warn and a crit count");
+    assert.match(map?.visibleText.join("|") ?? "", /^✕/, "the rail keeps the crit count");
+    for (const row of rows) {
+      assert.equal(row.visibleText.length, 1, `${row.label}: the rail shows one count`);
+      assert.equal(row.coveredPx, 0, `${row.label}: the count covers ${row.coveredPx} px² of the icon`);
+      assert.ok(row.isInside, `${row.label}: the count stays inside its row`);
+    }
   });
 });

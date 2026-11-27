@@ -38,6 +38,9 @@
 HOOKS_DIR="${BATS_TEST_DIRNAME}/.."
 HOOK_SH="${HOOKS_DIR}/enforce-workflow-verify-stage.sh"
 SKILL_MD="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-orchestrator.md"
+# The Analysis-Track copy-verbatim skeleton moved out of the skill into this reference; the floors
+# harvest both files so it stays covered.
+ANALYSIS_REF="${BATS_TEST_DIRNAME}/../../skills/glass-atrium-ops-delegation-contracts/references/delegation-size-discipline.md"
 # shellcheck source-path=SCRIPTDIR source=../../scripts/lib/path-guard.sh
 source "${BATS_TEST_DIRNAME}/../../scripts/lib/path-guard.sh"
 
@@ -45,7 +48,7 @@ setup() {
   [[ -f "${HOOK_SH}" ]] || skip "enforce-workflow-verify-stage.sh not found: ${HOOK_SH}"
   command -v python3 >/dev/null 2>&1 || skip "python3 not on PATH"
   TRACE_LOG="${BATS_TEST_TMPDIR}/workflow-gate-fired.log"
-  # Refused loopback port → the PASS arm's monitor reads fail open; no fixture reaches the live monitor.
+  # Refused loopback port → the trailing advisories' monitor reads fail open; no fixture reaches the live monitor.
   export WORKFLOW_GATE_MONITOR_URL="http://127.0.0.1:9/api/clauded-docs"
   # The rollback marker's own override, pointed at a per-test temp path that does NOT exist: every row
   # therefore runs with the lever disarmed and none of them reads live-install state (the marker rows
@@ -361,9 +364,9 @@ agent('b', { schema: { properties: { completion_block: { type: 'string' } } } })
   # catch, and `skip` is exactly the wrong answer to it: bats scores a skip as `ok` and the run
   # still exits 0, so a deleted or moved pin target would make this suite go quiet and green.
   # Every path below is one the repository always ships, so its absence is drift and FAILS.
-  [[ -f "${SKILL_MD}" ]] || {
-    printf 'skill file absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
-      "${SKILL_MD}" >&2
+  [[ -f "${SKILL_MD}" && -f "${ANALYSIS_REF}" ]] || {
+    printf 'skeleton file absent: %s or %s — the repository always ships both, so this is drift, not an optional dependency\n' \
+      "${SKILL_MD}" "${ANALYSIS_REF}" >&2
     return 1
   }
   local outdir="${BATS_TEST_TMPDIR}/skill-fences"
@@ -375,7 +378,7 @@ agent('b', { schema: { properties: { completion_block: { type: 'string' } } } })
       next
     }
     infence { buf = buf $0 "\n" }
-  ' "${SKILL_MD}"
+  ' "${SKILL_MD}" "${ANALYSIS_REF}"
   local fails="" fence name body
   # Absence of a fence is itself a failure: a floor over nothing is vacuous green.
   [[ -f "${outdir}/fence_1.js" ]] || {
@@ -507,33 +510,33 @@ const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema:
 # PRECEDENCE SPLIT — a DEV script blocked BEFORE the terminal emit carries no tag (the block is the
 # louder signal), while one blocked AT the terminal emit carries it. The counterfactual is what proves
 # the advisory decides nothing: the same script with the property declared blocks identically.
-@test "completion-channel(precedence): a DEV script blocked before the terminal emit carries no tag" {
+@test "completion-channel(precedence): a DEV script warned before the terminal emit carries no tag" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   run_hook_exec "const s = { schema: {} };
 agent('glass-atrium-dev-shell', { goal: 'x' });"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "${output}" == *"missing composition declaration"* ]] || return 1
   [[ "$(last_advisory)" != *"completion-channel"* ]] || {
-    echo "pre-empted block still tagged: $(last_advisory)" >&2
+    echo "pre-empted warning still tagged: $(last_advisory)" >&2
     return 1
   }
 }
 
-@test "completion-channel(precedence): a terminal-emit block keeps its exit with and without the nudge" {
+@test "completion-channel(precedence): a terminal-emit warning keeps its verdict with and without the nudge" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
   run_hook_exec "${DECL_TEAM}
 ${SCHEMA_SITE}"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "${output}" == *"size-attestation miss"* ]] || return 1
   [[ "${output}" == *"${NUDGE_PHRASE}"* ]] || {
-    echo "the nudge must ride a terminal-emit block -- ${output}" >&2
+    echo "the nudge must ride a terminal-emit warning -- ${output}" >&2
     return 1
   }
   # Counterfactual: property declared → same verdict, same exit, no nudge → the advisory decided nothing.
   run_hook_exec "${DECL_TEAM}
 const S = { completion_block: 'string' };
 const r = await agent('glass-atrium-intel-researcher', { goal: 'survey', schema: S });"
-  [[ "${status}" -eq 2 ]] || return 1
+  [[ "${status}" -eq 0 && "${output}" == *"] WARNING ("* ]] || return 1
   [[ "${output}" == *"size-attestation miss"* ]] || return 1
   [[ "${output}" != *"${NUDGE_PHRASE}"* ]] || {
     echo "nudged despite the declared property -- ${output}" >&2
@@ -689,9 +692,9 @@ PYX
 # author would paste it.
 @test "schema-absent(floor): no skill JS skeleton fires the nudge" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"
-  [[ -f "${SKILL_MD}" ]] || {
-    printf 'skill file absent: %s — the repository always ships it, so this is drift, not an optional dependency\n' \
-      "${SKILL_MD}" >&2
+  [[ -f "${SKILL_MD}" && -f "${ANALYSIS_REF}" ]] || {
+    printf 'skeleton file absent: %s or %s — the repository always ships both, so this is drift, not an optional dependency\n' \
+      "${SKILL_MD}" "${ANALYSIS_REF}" >&2
     return 1
   }
   local outdir="${BATS_TEST_TMPDIR}/absent-fences"
@@ -703,7 +706,7 @@ PYX
       next
     }
     infence { buf = buf $0 "\n" }
-  ' "${SKILL_MD}"
+  ' "${SKILL_MD}" "${ANALYSIS_REF}"
   local fails="" fence name
   # Absence of a fence is itself a failure: a floor over nothing is vacuous green.
   [[ -f "${outdir}/fence_1.js" ]] || {
@@ -813,8 +816,8 @@ const b = await agent('glass-atrium-intel-planner', { goal: 'plan', schema: { pr
 #
 # The lever exists so an operator can silence ONE cause mid-session without waiting for a release. Its
 # scope is what these rows pin: the property-absent MESSAGE goes quiet, and nothing else moves — not the
-# exit code, not the sibling advisories, and above all not the trace, because the promotion window is
-# adjudicated from the firing log and a rollback period that stopped recording would read as clean.
+# exit code, not the sibling advisories, and above all not the trace, because firings are adjudicated
+# from the firing log and a rollback period that stopped recording would read as clean.
 
 @test "rollback(marker): the marker demotes the property-absent message and never its trace line" {
   command -v jq >/dev/null 2>&1 || skip "jq not on PATH"

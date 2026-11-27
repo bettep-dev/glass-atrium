@@ -1,0 +1,348 @@
+// Remote route classes: every live route has exactly one reviewer class, and no class changes without a new sign-off.
+// Runner: MONITOR_TEST_DATABASE_URL=… npx tsx --import ./test/lib/select-test-db.ts --test test/remote-route-classes.unit.test.ts
+
+import test, { after, describe } from "node:test";
+import assert from "node:assert/strict";
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import Fastify, { type RouteOptions } from "fastify";
+
+import { registerSurface } from "../src/server/app.js";
+import { disconnectPrisma } from "../src/server/db.js";
+import { type RemoteAccessActs, registerRemoteAdminRoutes } from "../src/server/remote/admin-routes.js";
+import { registerRemoteCliRoutes } from "../src/server/remote/cli-routes.js";
+import { DeviceConnections } from "../src/server/remote/connections.js";
+import { RegistrationCodes } from "../src/server/remote/registration-code.js";
+import { registerRemoteDeviceRoutes } from "../src/server/remote/routes.js";
+import {
+  REMOTE_PRE_AUTH_ROUTES,
+  REVIEWED_ROUTES,
+  ROUTE_CLASS_SIGNOFFS,
+  getRouteClass,
+  getRouteClassDigest,
+} from "../src/server/remote/route-classes.js";
+
+after(() => disconnectPrisma());
+
+// the reviewer's signed lines past the first 94 rows, verbatim and in order
+const FIRST_SIGNED_ROW_COUNT = 94;
+const SIGNED_CLI_LINES = [
+  "GET /api/remote/cli/devices remote-cli",
+  "DELETE /api/remote/cli/devices/:id remote-cli",
+  "POST /api/remote/cli/devices/revoke-all remote-cli",
+];
+const SIGNED_SIGN_IN_LINES = ["GET /sign-in.html remote-pre-auth", "GET /sign-in.js remote-pre-auth", "GET /sign-in.css remote-pre-auth"];
+const SIGNED_REMOTE_LINES = [
+  "POST /api/remote/registration remote-admin",
+  "GET /api/remote/devices remote-admin",
+  "DELETE /api/remote/devices/:id remote-admin",
+  "POST /api/remote/devices/revoke-all remote-admin",
+  "POST /api/remote/register remote-pre-auth",
+  "GET /api/remote/session remote-device",
+  "POST /api/remote/logout remote-device",
+  "POST /api/remote/off remote-device",
+  ...SIGNED_CLI_LINES,
+  ...SIGNED_SIGN_IN_LINES,
+];
+
+// the whole-table re-sign: the five verdicts that changed classes inside the first 94 rows and replaced reasons
+const RESIGN_CIDS = [
+  "2026-11-15T0140_lan-signin-routes_c18e",
+  "2026-11-15T0215_lan-unread-writes_a2f7",
+  "2026-11-15T0216_lan-unread-reads_d90b",
+  "2026-11-15T0240_lan-unread-reads-b_3fa6",
+  "2026-11-15T0241_lan-unread-reads-c_7b29",
+];
+// verdicts whose rows 95-105 sit unchanged under the re-sign's digest
+const CARRIED_CIDS = ["2026-11-14T1640_lan-route-classes_a93f", "2026-11-14T2145_lan-cli-channel_5f0c"];
+// the devices row re-signed in place: its reason only, so the whole-table digest stays the re-sign's
+const DEVICES_RESIGN_CID = "2026-11-16T2200_lan-close_2f8b";
+// the pending-count row appended as row 109, every earlier row carried
+const PENDING_COUNT_CID = "2026-11-16T2025_deploy65-prep_a9e3";
+const SIGNED_PENDING_COUNT_LINE = "POST /api/queue/pending/count agent";
+// seven queue-owner rows' reasons re-signed in place: route, class and order kept, so the 109-row digest stays
+const OWNER_ROWS_CID = "2026-11-16T2215_owner-rows-verdict_e6b0";
+// the Mac page's six access, setup and certificate rows appended as rows 110-115, four remote-admin reasons re-signed
+const ONBOARDING_CID = "2026-11-17T0850_onboarding-build_3f9a";
+const SIGNED_ACCESS_LINES = [
+  "POST /api/remote/access/on remote-admin",
+  "POST /api/remote/access/off remote-admin",
+  "POST /api/remote/access/trust remote-admin",
+  "GET /api/remote/access/network remote-admin",
+  "GET /api/remote/setup remote-admin",
+  "GET /api/remote/certificate remote-admin",
+];
+// the peers, relay, relay-signal and redact rows appended after the access rows, six reasons re-signed in place
+const RELAY_ROWS_CID = "2026-11-17T1135_queue-mcp-2_e5f8";
+const SIGNED_RELAY_LINES = [
+  "POST /api/queue/peers agent",
+  "POST /api/queue/relay agent",
+  "POST /api/queue/owner/items/:id/redact page",
+];
+// the relay verdict's own 113-row table: rows 1-109 then the four relay rows → not a prefix of the live table
+const RELAY_TABLE = { rowCount: 113, sha256: "795839947a232258b4eef1ddda2792ab252f8b300c7e63ba416af17b849924c4" };
+// the access, setup and certificate reasons re-signed in place: route, class and order kept, so the 115-row digest stays
+const CLOSE_CID = "2026-11-19T0700_onboarding-close_8e2d";
+// the on, trust, network-read and single html-export reasons re-signed in place: route, class and order kept, so the 115-row digest stays
+const SIGN_LAST_CID = "2026-11-19T0945_onboarding-close2_5b7c";
+// the confirm, frame-deny and page-words points of the last re-sign read and met: comment facts only, no row changed
+const UNCONDITIONAL_CID = "2026-11-19T1305_sign-unconditional_2a9e";
+// the merged table: the relay rows appended after the access rows, the relay-signal and redact reasons re-signed as they stand
+const MERGE_CID = "2026-11-19T1325_deploy69-prep_a6e3";
+// the sign-in.js reason re-signed in place for its fragment read: route, class and order kept, so the 115-row digest stays
+const FRAGMENT_READ_CID = "2026-11-19T1520_steps-finish_d9a2";
+// the built sign-in.js read for the fragment read, read and met: comment facts only, no row changed
+const BUILT_READ_CID = "2026-11-19T1640_steps-close_a1c7";
+// the merged 119-row table signed with the fragment-read sign-in.js reason: no row changed
+const FULL_TABLE_CID = "2026-11-19T1755_deploy70-prep_f1a8";
+// the orders reason re-signed in place for the item thread: route, class and order kept, so the 119-row digest stays
+const ITEM_THREAD_CID = "2026-11-19T2050_queue-tidy_d81b";
+// the owner-list and orders reasons re-signed in place for the relay row: route, class and order kept, so the 119-row digest stays
+const RELAY_ROW_CID = "2026-11-19T2050_queue-tidy_d81b";
+// the changed sign-in.css re-read and the relay row's page rendering read on the merged tree: no row changed
+const MERGED_TREE_CID = "2026-11-20T0000_deploy71-prep_c47e";
+// the model-config GET and PUT reasons re-signed in place and the agent pin write row appended after row 119
+const MODELS_SERVER_CID = "2026-11-20T1030_models-server_9c2e";
+// the agent pin write row re-classed agent → page in place once the Models screen calls it: route and order kept
+const MODELS_SCREEN_CID = "2026-11-20T1255_models-screen2_7e41";
+// the answer and image-upload reasons re-signed in place for images on a decision's answer: route, class and order kept, so the 120-row digest stays
+const ANSWER_IMAGES_CID = "2026-11-23T1845_queue-batch2-server_6e0b";
+// the session item-read reason re-signed in place for its absolute image paths: route, class and order kept, so the 120-row digest stays
+const IMAGE_PATH_ROWS_CID = "2026-11-23T2100_queue-batch2-page_4a7c";
+// the relay-signal row removed with its route and the orders reason re-signed for its Done-part callers: every other row's route, class and order kept
+const SIGNAL_REMOVAL_CID = "2026-11-25T1530_qb3-server_5e2a";
+// the scan-approval register, consume and owner-read rows appended after row 119, the answer and session item-post reasons re-signed in place (two reads, parts A and B)
+const SCAN_APPROVAL_CIDS = ["2026-11-26T1135_sa-verdict-a_1c7e", "2026-11-26T1135_sa-verdict-b_9a02"];
+// five queue reasons re-signed in place for the scan-approval facts, caps and link removal: route, class and order kept, so the 122-row digest stays
+const SCAN_REASONS_CID = "2026-11-27T0140_q-signoff_9b2d";
+const SIGNED_SCAN_APPROVAL_LINES = [
+  "POST /api/queue/scan-approvals agent",
+  "POST /api/queue/scan-approvals/consume agent",
+  "GET /api/queue/owner/items/:id/scan-approval page",
+];
+const SIGNED_AGENT_PIN_LINE = "PUT /api/model-config/agents page";
+// the 108-row table of the re-sign and the devices re-sign
+const SIGN_IN_TABLE = { rowCount: 108, sha256: "781679bf68d4da01f2dc28118715f374e40e11bf6c856ee3b2b2409f672b36f8" };
+// the 109-row table the access rows extend → its digest still verifies over the live table's leading rows
+const SUPERSEDED_TABLE = { rowCount: 109, sha256: "e3287f49fab0043a549327d6f83955c559bbcb8a5d4636b6c264c1705ee1ba0a" };
+// the 115-row table the relay rows extend → its digest still verifies over the live table's leading rows
+const ACCESS_TABLE = { rowCount: 115, sha256: "7d37fe46bdd516c51cc2a9c1e0083619ff326af0e69e7c322d90fc0addade351" };
+// the merged 119-row table with the relay-signal row → not a prefix of the live table
+const MERGED_TABLE = { rowCount: 119, sha256: "2cc9a6d9344907ac72b66d563d028258452a6c2b9a857ed00893d131a3dbc8a6" };
+// the 120-row table with the agent pin row still class agent → not a prefix of the live table
+const AGENT_PIN_TABLE = { rowCount: 120, sha256: "38fd87db9eea6512dbedfc059638dfa49224b5632aa0fd6214b77b8a18a7547f" };
+// the 119-row table the scan-approval rows extend → its digest still verifies over the live table's leading rows
+const SIGNAL_REMOVAL_TABLE = { rowCount: 119, sha256: "a67d39760625054c89ca4100a4e50e016dc7794ddb5d9ecc97d28e27afc68719" };
+// the signed table, held here → any class change in route-classes.ts also needs a test edit naming its verdict
+const SIGNED_TABLE = { rowCount: 122, sha256: "b5ddf7d330dc063e9a379869de99f0c2558e063c45a0b4517a55fa64052039dd" };
+// the 120-row table of the models-screen, answer-images and image-path sign-offs → not a prefix of the live table
+const IMAGE_PATH_TABLE = { rowCount: 120, sha256: "d1fd15c26c6a43165056170d9c596c7bd6ec930f1b2b60340bdd484469829db4" };
+
+// class changes the re-sign carries, each a verdict's exact line → a class edited back without a new sign-off fails
+const RESIGNED_CLASS_CHANGES = [
+  "DELETE /api/agents/:name page",
+  "POST /api/clauded-docs/group page",
+  "POST /api/clauded-docs/ungroup page",
+  "PATCH /api/clauded-docs/group/:rootId/reorder page",
+  "POST /api/clauded-docs/html-export page",
+  "GET /api/clauded-docs/:id/html-export page",
+  "PUT /api/clauded-docs/:id page",
+  "DELETE /api/clauded-docs/:id page",
+  "PATCH /api/outcomes/:id/close page",
+  "POST /api/improvement/:id/approve page",
+  "POST /api/improvement/:id/reject page",
+];
+
+/** Every `METHOD path` the loopback and remote assemblies register, HEAD included as Fastify exposes it. */
+async function collectLiveRoutes(): Promise<Set<string>> {
+  const app = Fastify({ logger: false });
+  const routes = new Set<string>();
+  app.addHook("onRoute", (route: RouteOptions): void => {
+    const methods = Array.isArray(route.method) ? route.method : [route.method];
+    for (const method of methods) routes.add(`${String(method).toUpperCase()} ${route.url}`);
+  });
+  try {
+    await registerSurface(app);
+    const devices = { list: async () => [], revoke: async () => false, revokeAll: async () => [] };
+    const audit = { insertEvent: async () => undefined };
+    const access: RemoteAccessActs = {
+      getConfirmFacts: async () => {
+        throw new Error("the confirm read is not part of this test");
+      },
+      turnOn: async () => ({ outcome: "write_failed", trustedCount: null, trust: null }),
+      trust: async () => ({ outcome: "write_failed", trustedCount: null }),
+      setOff: async () => "write_failed",
+      close: async () => undefined,
+      getSetupFacts: async () => {
+        throw new Error("the setup read is not part of this test");
+      },
+      readCertificate: async () => null,
+    };
+    await registerRemoteAdminRoutes(app, {
+      codes: new RegistrationCodes(),
+      devices,
+      connections: new DeviceConnections(),
+      audit,
+      access,
+    });
+    await registerRemoteCliRoutes(app, { devices, connections: new DeviceConnections(), audit });
+    await registerRemoteDeviceRoutes(app, {
+      preAuthRoutes: REMOTE_PRE_AUTH_ROUTES,
+      registration: { codes: new RegistrationCodes(), createDevice: async () => ({ outcome: "cap_reached" }) },
+      device: { revoke: async () => false, revokeAll: async () => [], turnOff: () => undefined },
+      connections: new DeviceConnections(),
+      audit: { insertIntent: async () => 1n, setResult: async () => undefined, insertEvent: async () => undefined },
+    });
+    await app.ready();
+  } finally {
+    await app.close();
+  }
+  return routes;
+}
+
+test("every live route, HEAD included, has a reviewer class", async () => {
+  const live = await collectLiveRoutes();
+  const unclassified = [...live].filter((key) => {
+    const [method, ...path] = key.split(" ");
+    return getRouteClass(method ?? "", path.join(" ")) === null;
+  });
+  assert.deepEqual(unclassified, [], "classify these routes in remote/route-classes.ts with a reviewer sign-off");
+});
+
+test("every classified route is still registered, so a removed route leaves no stale class", async () => {
+  const live = await collectLiveRoutes();
+  const stale = REVIEWED_ROUTES.map((entry) => entry.route).filter((route) => !live.has(route));
+  assert.deepEqual(stale, []);
+});
+
+describe("reviewer sign-offs", () => {
+  test("the live table is the signed table, so a class change made in route-classes.ts alone fails", () => {
+    assert.deepEqual({ rowCount: REVIEWED_ROUTES.length, sha256: getRouteClassDigest(REVIEWED_ROUTES) }, SIGNED_TABLE);
+  });
+
+  test("the latest sign-off records the signed table and is not superseded", () => {
+    const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
+    assert.deepEqual({ rowCount: latest?.rowCount, sha256: latest?.sha256, supersededBy: latest?.supersededBy }, { ...SIGNED_TABLE, supersededBy: undefined });
+  });
+
+  test("the latest sign-off names the reviewer and the scan-reasons verdict", () => {
+    const latest = ROUTE_CLASS_SIGNOFFS.at(-1);
+    assert.deepEqual({ reviewer: latest?.reviewer, cids: latest?.cids }, { reviewer: "glass-atrium-sec-guard", cids: [SCAN_REASONS_CID] });
+  });
+
+  test("every superseded table an append extended and no removal cut still verifies over the live table's leading rows, so new rows were appended, not inserted", () => {
+    const rows = [
+      { name: "before the pending-count append", table: SIGN_IN_TABLE },
+      { name: "before the access and relay appends", table: SUPERSEDED_TABLE },
+      { name: "before the relay append", table: ACCESS_TABLE },
+      { name: "before the scan-approval append", table: SIGNAL_REMOVAL_TABLE },
+    ];
+    for (const row of rows) assert.equal(getRouteClassDigest(REVIEWED_ROUTES.slice(0, row.table.rowCount)), row.table.sha256, row.name);
+  });
+
+  test("every earlier sign-off is kept as history, marked superseded by the sign-off after it re-signed its rows, with its row count and digest", () => {
+    assert.deepEqual(
+      ROUTE_CLASS_SIGNOFFS.slice(0, -1).map((signoff) => [signoff.cids, signoff.rowCount, signoff.sha256, signoff.supersededBy]),
+      [
+        [["2026-11-14T1420_lan-build_c5b9"], 94, "b76036b059ce1c7e0e5f860d94c8afcc678e1b98b8212d21854a7a72d24179fc", RESIGN_CIDS[0]],
+        [["2026-11-14T1640_lan-route-classes_a93f"], 102, "3d234a90e3476fabcf110784cedbfbc535753e1bde142da98578bc95dbcfc61a", RESIGN_CIDS[0]],
+        [["2026-11-14T2145_lan-cli-channel_5f0c"], 105, "7801ce43f3335b0f6fe0aad59b39425b951fe49ad60116cb601f5dc66ccc9e32", RESIGN_CIDS[0]],
+        [[...RESIGN_CIDS, ...CARRIED_CIDS], SIGN_IN_TABLE.rowCount, SIGN_IN_TABLE.sha256, DEVICES_RESIGN_CID],
+        [[DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SIGN_IN_TABLE.rowCount, SIGN_IN_TABLE.sha256, PENDING_COUNT_CID],
+        [[PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SUPERSEDED_TABLE.rowCount, SUPERSEDED_TABLE.sha256, OWNER_ROWS_CID],
+        [[OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], SUPERSEDED_TABLE.rowCount, SUPERSEDED_TABLE.sha256, ONBOARDING_CID],
+        [[RELAY_ROWS_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], RELAY_TABLE.rowCount, RELAY_TABLE.sha256, MERGE_CID],
+        [[ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], ACCESS_TABLE.rowCount, ACCESS_TABLE.sha256, CLOSE_CID],
+        [[CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], ACCESS_TABLE.rowCount, ACCESS_TABLE.sha256, SIGN_LAST_CID],
+        [[SIGN_LAST_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], ACCESS_TABLE.rowCount, ACCESS_TABLE.sha256, MERGE_CID],
+        [[MERGE_CID, UNCONDITIONAL_CID, SIGN_LAST_CID, RELAY_ROWS_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], MERGED_TABLE.rowCount, MERGED_TABLE.sha256, FRAGMENT_READ_CID],
+        [[FRAGMENT_READ_CID, SIGN_LAST_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], ACCESS_TABLE.rowCount, ACCESS_TABLE.sha256, FULL_TABLE_CID],
+        [[FULL_TABLE_CID, FRAGMENT_READ_CID, BUILT_READ_CID, MERGE_CID, UNCONDITIONAL_CID, SIGN_LAST_CID, RELAY_ROWS_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], MERGED_TABLE.rowCount, MERGED_TABLE.sha256, ITEM_THREAD_CID],
+        [[ITEM_THREAD_CID, FULL_TABLE_CID, FRAGMENT_READ_CID, BUILT_READ_CID, MERGE_CID, UNCONDITIONAL_CID, SIGN_LAST_CID, RELAY_ROWS_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], MERGED_TABLE.rowCount, MERGED_TABLE.sha256, RELAY_ROW_CID],
+        [[RELAY_ROW_CID, ITEM_THREAD_CID, FULL_TABLE_CID, FRAGMENT_READ_CID, BUILT_READ_CID, MERGE_CID, UNCONDITIONAL_CID, SIGN_LAST_CID, RELAY_ROWS_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], MERGED_TABLE.rowCount, MERGED_TABLE.sha256, MERGED_TREE_CID],
+        [[MERGED_TREE_CID, RELAY_ROW_CID, ITEM_THREAD_CID, FULL_TABLE_CID, FRAGMENT_READ_CID, BUILT_READ_CID, MERGE_CID, UNCONDITIONAL_CID, SIGN_LAST_CID, RELAY_ROWS_CID, CLOSE_CID, ONBOARDING_CID, OWNER_ROWS_CID, PENDING_COUNT_CID, DEVICES_RESIGN_CID, ...RESIGN_CIDS, ...CARRIED_CIDS], MERGED_TABLE.rowCount, MERGED_TABLE.sha256, MODELS_SERVER_CID],
+        [[MODELS_SERVER_CID], AGENT_PIN_TABLE.rowCount, AGENT_PIN_TABLE.sha256, MODELS_SCREEN_CID],
+        [[MODELS_SCREEN_CID], IMAGE_PATH_TABLE.rowCount, IMAGE_PATH_TABLE.sha256, ANSWER_IMAGES_CID],
+        [[ANSWER_IMAGES_CID], IMAGE_PATH_TABLE.rowCount, IMAGE_PATH_TABLE.sha256, IMAGE_PATH_ROWS_CID],
+        [[IMAGE_PATH_ROWS_CID], IMAGE_PATH_TABLE.rowCount, IMAGE_PATH_TABLE.sha256, SIGNAL_REMOVAL_CID],
+        [[SIGNAL_REMOVAL_CID], SIGNAL_REMOVAL_TABLE.rowCount, SIGNAL_REMOVAL_TABLE.sha256, SCAN_APPROVAL_CIDS[0]],
+        [SCAN_APPROVAL_CIDS, SIGNED_TABLE.rowCount, SIGNED_TABLE.sha256, SCAN_REASONS_CID],
+      ],
+    );
+  });
+
+  test("every row past the first 94 is the reviewer's signed line at its place", () => {
+    const added = REVIEWED_ROUTES.slice(FIRST_SIGNED_ROW_COUNT).map((entry) => `${entry.route} ${entry.cls}`);
+    assert.deepEqual(added, [...SIGNED_REMOTE_LINES, SIGNED_PENDING_COUNT_LINE, ...SIGNED_ACCESS_LINES, ...SIGNED_RELAY_LINES, SIGNED_AGENT_PIN_LINE, ...SIGNED_SCAN_APPROVAL_LINES]);
+  });
+
+  test("the re-sign's class changes are in the table as signed", () => {
+    const lines = new Set(REVIEWED_ROUTES.map((entry) => `${entry.route} ${entry.cls}`));
+    assert.deepEqual(RESIGNED_CLASS_CHANGES.filter((line) => !lines.has(line)), []);
+  });
+});
+
+test("the pre-auth set is exactly the three sign-in files and the code POST", () => {
+  assert.deepEqual([...REMOTE_PRE_AUTH_ROUTES].sort(), ["GET /sign-in.css", "GET /sign-in.html", "GET /sign-in.js", "POST /api/remote/register"]);
+});
+
+test("the remote-cli class holds exactly the three signed lines, so a fourth cli route fails", () => {
+  const cli = REVIEWED_ROUTES.filter((entry) => entry.cls === "remote-cli").map((entry) => `${entry.route} ${entry.cls}`);
+  assert.deepEqual(cli, SIGNED_CLI_LINES);
+});
+
+test("each route has exactly one class entry", () => {
+  const routes = REVIEWED_ROUTES.map((entry) => entry.route);
+  assert.equal(new Set(routes).size, routes.length);
+});
+
+test("an unknown route has no class and HEAD reads its GET class", () => {
+  const rows = [
+    { name: "unknown path", method: "GET", path: "/api/not-a-route", expected: null },
+    { name: "known path under another method", method: "POST", path: "/api/health", expected: null },
+    { name: "HEAD of a page GET", method: "HEAD", path: "/api/health", expected: "page" },
+    { name: "HEAD of an agent GET", method: "HEAD", path: "/api/dashboard/daemon-status", expected: "agent" },
+    { name: "agent mutation", method: "POST", path: "/api/queue/items", expected: "agent" },
+    { name: "loopback admin route", method: "DELETE", path: "/api/remote/devices/:id", expected: "remote-admin" },
+  ] as const;
+  for (const row of rows) assert.equal(getRouteClass(row.method, row.path), row.expected, row.name);
+});
+
+const PUBLIC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
+// a base the page appends a computed sub-path to (queue.jsx → sendOwnerRequestQ) → covered when a class sits under it
+const PAGE_API_BASES = new Set(["/api/queue/owner"]);
+const API_LITERAL = /(["'`])(\/api\/[^"'`]*?)\1/g;
+
+/** Every `/api/` path literal in the page sources, query dropped and `${…}` segments read as a route parameter. */
+async function collectPageApiPaths(): Promise<Set<string>> {
+  const entries = await readdir(path.join(PUBLIC_ROOT, "src"), { recursive: true });
+  const files = [...entries.filter((entry) => /\.jsx?$/.test(entry)).map((entry) => path.join("src", entry)), "sign-in.js"];
+  const sources = await Promise.all(files.map((file) => readFile(path.join(PUBLIC_ROOT, file), "utf8")));
+  const paths = new Set<string>();
+  for (const source of sources) {
+    for (const match of source.matchAll(API_LITERAL)) {
+      const pathPart = (match[2] ?? "").split("?")[0] ?? "";
+      paths.add(pathPart.replace(/\$\{[^}]*\}/g, ":param"));
+    }
+  }
+  return paths;
+}
+
+function isClassedPath(pagePath: string, classedPaths: readonly string[]): boolean {
+  if (PAGE_API_BASES.has(pagePath)) return classedPaths.some((route) => route.startsWith(`${pagePath}/`));
+  const segments = pagePath.split("/");
+  return classedPaths.some((route) => {
+    const routeSegments = route.split("/");
+    return routeSegments.length === segments.length && routeSegments.every((part, index) => part === segments[index] || part.startsWith(":") || segments[index] === ":param");
+  });
+}
+
+test("every API path the page calls has a route class, so a new page call cannot fail unseen on a phone", async () => {
+  const classedPaths = REVIEWED_ROUTES.map((entry) => entry.route.split(" ")[1] ?? "");
+  const pagePaths = await collectPageApiPaths();
+  const unclassed = [...pagePaths].filter((pagePath) => !isClassedPath(pagePath, classedPaths));
+  assert.ok(pagePaths.size > 50, `page API literals found: ${pagePaths.size}`);
+  assert.deepEqual(unclassed, [], "classify these page calls in remote/route-classes.ts with a reviewer sign-off");
+});

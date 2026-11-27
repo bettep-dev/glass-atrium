@@ -485,9 +485,10 @@ build_step_plan() {
   STEP_SUPPRESS=()
   case "${action}" in
     install)
-      # run_install body (doctor gate → stale-daemon retirement → render → farm → wire → migrate → DB →
-      # repoint → post-check → baseline capture) then run_bootstrap's build + health gate, THEN the
-      # 14th step that registers the active launchd roster (menu_load_launchd_jobs, opt-out
+      # run_install body (doctor gate → stale-daemon retirement → render → farm → wire → migrate → DB → monitor env →
+      # repoint → post-check → baseline capture; its queue MCP question is asked after the plan, by
+      # tui_queue_mcp_gate) then run_bootstrap's build + health gate, THEN the
+      # last step that registers the active launchd roster (menu_load_launchd_jobs, opt-out
       # GA_NO_LOAD_LAUNCHD=1 / --no-load-launchd).
       # The load step runs LAST — post-health-gate by position, so a loaded job always tracks
       # a verified build. baseline capture is run_install's final body step (capture_install_
@@ -495,7 +496,7 @@ build_step_plan() {
       # TUI plan must include it or a menu install never anchors its first editable_merge.
       # dry-run/repoint/etc. honour the lib flag vars (load + baseline capture are dry-run
       # reports under --dry-run). The three arrays are a PARALLEL-array contract — they MUST
-      # stay equal-length (14 each) and in this order; run_plan iterates [0, #STEP_FN).
+      # stay equal-length (INSTALL_PLAN_LEN each) and in this order; run_plan iterates [0, #STEP_FN).
       STEP_LABEL=(
         "Doctor preflight"
         "Retire stale daemon jobs"
@@ -505,6 +506,7 @@ build_step_plan() {
         "Wire hooks (settings.json)"
         "Migrate legacy layout"
         "Database bootstrap"
+        "Render monitor env"
         "launchd repoint"
         "claude liveness (advisory)"
         "Capture install baseline"
@@ -521,6 +523,7 @@ build_step_plan() {
         "Wiring hooks…"
         "Migrating legacy layout…"
         "Bootstrapping database…"
+        "Rendering monitor env…"
         "Repointing launchd…"
         "Checking claude liveness…"
         "Capturing install baseline…"
@@ -537,6 +540,7 @@ build_step_plan() {
         "wire_hooks"
         "migrate_layout"
         "setup_database"
+        "render_monitor_env"
         "repoint_launchd"
         "doctor_postcheck"
         "capture_install_baseline"
@@ -546,9 +550,11 @@ build_step_plan() {
       )
       ;;
     uninstall)
-      # run_uninstall body: manifest containment gate → launchd teardown → detached-daemon stop → DB drop →
+      # run_uninstall body: manifest containment gate → launchd teardown → detached-daemon stop →
+      # remote access keys + device rows → DB drop →
       # node_modules removal → manifest-link removal → orphan sweep → empty-dir
-      # cleanup → update-state teardown → hook un-wire → shell-rc PATH-line removal.
+      # cleanup → update-state teardown → hook un-wire → shell-rc PATH-line removal. The engine's queue MCP
+      # unregistration asks at a terminal, so the menu asks it after this plan (tui_queue_mcp_gate).
       # launchd teardown runs FIRST, then the detached-daemon stop reaches the tmux
       # daemon sessions launchctl bootout does NOT, so all connections drain before
       # the DB is dropped and before their symlinked files are removed. The DB drop is BACKUP-BEFORE-DROP,
@@ -564,6 +570,7 @@ build_step_plan() {
         "Check manifest containment"
         "Tear down launchd jobs"
         "Stop detached daemons"
+        "Remove remote access keys"
         "Drop databases"
         "Remove node_modules"
         "Remove manifest symlinks"
@@ -577,6 +584,7 @@ build_step_plan() {
         "Checking manifest containment…"
         "Tearing down launchd jobs…"
         "Stopping detached daemons…"
+        "Removing remote access keys…"
         "Dropping databases…"
         "Removing node_modules…"
         "Removing manifest symlinks…"
@@ -590,6 +598,7 @@ build_step_plan() {
         "require_contained_manifest_keys"
         "unload_launchd_jobs"
         "stop_detached_daemons"
+        "ga_remote_uninstall"
         "drop_databases"
         "remove_node_modules"
         "remove_manifest_links"

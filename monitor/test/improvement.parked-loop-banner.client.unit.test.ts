@@ -21,6 +21,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { buildScreenSandbox } from "./client-sandbox.js";
+import { loadScreenModule, renderScreen, type RenderedNode } from "./lib/render-screen.js";
+import { getRoleKeys } from "./lib/role-keys.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const IMPROVEMENT_SRC = resolve(__dirname, "../public/src/screens/improvement.jsx");
@@ -39,11 +41,7 @@ interface BannerSandbox {
   window: { UI: Record<string, unknown> };
   ParkedLoopBannerI: (props: { applyCap: unknown }) => RecordedElement | null;
   AlarmLaneI: (props: { applyCap: unknown }) => RecordedElement | null;
-  LedgerFooterI: (props: {
-    total: number;
-    declined: number;
-    suppression: unknown;
-  }) => RecordedElement | null;
+  LedgerFooterI: (props: { total: number }) => RecordedElement | null;
   BucketRowI: (props: { state: unknown; buckets: unknown }) => RecordedElement | null;
   CycleDecompositionRowI: (props: { stats: unknown }) => RecordedElement | null;
   TrendCardI: (props: { state: unknown; aggregate: unknown }) => RecordedElement | null;
@@ -120,11 +118,15 @@ test("the warning is not hidden behind a hover-only tooltip", () => {
 
 // ----- The alarm lane: shared alert cards, no tint of its own, and the spine order ---
 //
-// Tone rides on a glyph or a severity bar and NEVER on text — severity hue as text
-// fails AA on the light theme. Every banner on the screen is the shared AlertCard,
-// whose glyph well alone carries the tone; the lane is a plain stack of them.
+// Tone rides on a glyph or a severity bar and NEVER on text. Every banner on the screen is the shared AlertCard,
+// whose bare glyph alone carries the tone; the lane is a plain stack of them.
 
-const SEVERITY_TEXT_CLASS = /\btext-(warn|crit|ok)\b/;
+const TEXT_CLASS = {
+  SEVERITY: /\btext-(warn|crit|ok)\b/,
+  // Loop output cards name a status in a label → `info` counts as a tone too, the neutral ℹ glyph beside it already says it
+  TONE: /\btext-(warn|crit|ok|info)\b/,
+  NEUTRAL: /\btext-(ink|dim|faint)\b/,
+};
 
 function collectElements(node: unknown, out: RecordedElement[]): RecordedElement[] {
   if (!isElement(node)) return out;
@@ -135,12 +137,12 @@ function collectElements(node: unknown, out: RecordedElement[]): RecordedElement
   return out;
 }
 
-test("the parked-loop banner is the shared alert card, its warn tone on the glyph well alone", () => {
+test("the parked-loop banner is the shared alert card, its warn tone on the glyph alone", () => {
   assert.ok(isElement(banner), "a populated cap must render the banner");
   assert.equal(banner.type, sandbox.window.UI.AlertCard, "a screen-local banner shell duplicates the alert card");
   assert.equal(banner.props.tone, "warn");
   const tintedText = collectElements(rendered, [])
-    .filter((el) => SEVERITY_TEXT_CLASS.test(String(el.props.className ?? "")))
+    .filter((el) => TEXT_CLASS.SEVERITY.test(String(el.props.className ?? "")))
     .filter((el) => el.props.s === undefined);
   assert.deepEqual(tintedText, [], "severity hue on a text node of the banner");
 });
@@ -151,7 +153,8 @@ test("the alarm lane stacks alert cards and paints nothing of its own", () => {
   });
   assert.ok(isElement(lane), "a populated cap must render the lane");
   const laneClasses = String(lane.props.className ?? "").split(/\s+/).filter(Boolean);
-  const paintClasses = laneClasses.filter((name) => !/^(flex|flex-col|gap-\d+)$/.test(name));
+  const layoutClasses = new Set(["flex", "flex-col", ...Object.keys(getRoleKeys().gap).map((key) => `gap-${key}`)]);
+  const paintClasses = laneClasses.filter((name) => !layoutClasses.has(name));
   assert.deepEqual(paintClasses, [], "the lane carries layout only — a tint or border on it frames the alarms twice");
   const alarms = ([] as unknown[]).concat(lane.props.children).filter(isElement);
   assert.ok(alarms.length > 0, "the lane renders its alarms");
@@ -160,43 +163,66 @@ test("the alarm lane stacks alert cards and paints nothing of its own", () => {
   }
 });
 
-// Source-order pin, deliberately NOT a render assertion: the operator view is the
-// whole screen, and rendering it would mock more than it proves. Its limit is that
-// it pins the order the five surfaces are WRITTEN in, which is the order they
-// render in only because they are siblings in one block.
-test("the operator view keeps the five-surface spine order", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const src = await readFile(IMPROVEMENT_SRC, "utf8");
-  const spine = [
-    "<AlarmLaneI",
-    "<StatusBandI",
-    "<KanbanCardI",
-    "<PatternLedgerCardI",
-    "<LoopOutputGroupI",
-  ];
-  const positions = spine.map((tag) => {
-    const at = src.indexOf(tag);
-    assert.notEqual(at, -1, `${tag} is missing from the operator view`);
-    return at;
-  });
-  for (let i = 1; i < positions.length; i += 1) {
-    assert.ok(
-      positions[i - 1] < positions[i],
-      `${spine[i - 1]} must precede ${spine[i]} — alarms above the band, the board above the ledger`,
-    );
-  }
+// document order of the screen's own components → the order the operator reads them in
+function listComponentOrder(node: RenderedNode | string | null, out: string[] = []): string[] {
+  if (node === null || typeof node === "string") return out;
+  out.push(node.type);
+  for (const child of node.children) listComponentOrder(child, out);
+  return out;
+}
+
+test("the view switch is a tab row under the page header, never a control in its action slot", async () => {
+  const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
+  const screen = await loadScreenModule(IMPROVEMENT_SRC, { UI: ui.UI });
+  const rendered = renderScreen((screen.ScreenImprovement as (props: unknown) => unknown)({})) as RenderedNode;
+  const nodes: RenderedNode[] = [];
+  const walk = (node: RenderedNode | string) => {
+    if (typeof node === "string") return;
+    nodes.push(node);
+    for (const child of node.children) walk(child);
+  };
+  walk(rendered);
+  const headAt = nodes.findIndex((n) => n.type === "PageHeader");
+  const tabsAt = nodes.findIndex((n) => n.type === "Tabs");
+  const panel = nodes.find((n) => n.props.role === "tabpanel");
+
+  assert.equal(nodes[headAt]?.props.actions, undefined, "the page head's action slot holds no view switch");
+  assert.ok(tabsAt > headAt, "the tab row sits under the header");
+  assert.deepEqual(Array.from(nodes[tabsAt].props.tabs as Array<{ label: string }>, (t) => t.label), ["Operator", "Instrumentation"]);
+  assert.equal(panel?.props["aria-labelledby"], `${nodes[tabsAt].props.id}-tab-operator`, "the open view is the panel of its tab");
 });
+
+test("the operator view keeps the five-surface spine order", async () => {
+  const ui = await loadScreenModule(resolve(__dirname, "../public/src/ui.jsx"));
+  const screen = await loadScreenModule(IMPROVEMENT_SRC, { UI: ui.UI });
+  const spine = ["AlarmLaneI", "StatusBandI", "KanbanCardI", "PatternLedgerCardI", "LoopOutputGroupI"];
+  const rendered = listComponentOrder(renderScreen((screen.ScreenImprovement as (props: unknown) => unknown)({})));
+  const order = rendered.filter((name, at) => spine.includes(name) && rendered.indexOf(name) === at);
+  assert.deepEqual(order, spine, "alarms above the band, the board above the ledger, the loop output last");
+});
+
+const COLOUR = {
+  FN: /\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix)\([^)]*\)/g,
+  // a colour prop or attribute set to a bare word: `color: 'red'`, `fill="white"`
+  PROPERTY_WORD: /\b(?:color|background(?:Color)?|border(?:Top|Right|Bottom|Left)?Color|fill|stroke|outlineColor|accentColor|caretColor)\s*[:=]\s*\{?\s*["'`]([A-Za-z]+)["'`]/g,
+  NON_COLOUR_WORDS: new Set(["none", "transparent", "currentColor", "currentcolor", "inherit", "initial", "unset"]),
+};
 
 // Colour reaches this screen through tokens only — `var(--name)` directly, or an
 // interpolated token name. Shadows included: depth comes from the --shadow-* tokens.
-test("colour is consumed through design tokens, never a raw literal", async () => {
+// Limit: a named colour inside a composite string (`border: '1px solid red'`) is not seen.
+test("colour reaches the screen through design tokens: no hex, no colour function over raw values, no named colour on a colour property", async () => {
   const { readFile } = await import("node:fs/promises");
   for (const path of [IMPROVEMENT_SRC, INSTRUMENTATION_SRC]) {
     const src = await readFile(path, "utf8");
     const hex = src.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
     assert.deepEqual(hex, [], `hex colour literals bypass the token layer in ${path}`);
-    const rawFns = (src.match(/rgba?\([^)]*\)/g) ?? []).filter((decl) => !decl.includes("var("));
+    const rawFns = (src.match(COLOUR.FN) ?? []).filter((decl) => !decl.includes("var("));
     assert.deepEqual(rawFns, [], `a colour function names a raw value instead of a token in ${path}`);
+    const namedColours = Array.from(src.matchAll(COLOUR.PROPERTY_WORD))
+      .filter(([, word]) => !COLOUR.NON_COLOUR_WORDS.has(word))
+      .map(([decl]) => decl);
+    assert.deepEqual(namedColours, [], `a colour property names a colour keyword instead of a token in ${path}`);
   }
 });
 
@@ -209,17 +235,13 @@ test("colour is consumed through design tokens, never a raw literal", async () =
 
 function tintedTextNodes(tree: unknown): string[] {
   return collectElements(tree, [])
-    .filter((el) => SEVERITY_TEXT_CLASS.test(String(el.props.className ?? "")))
+    .filter((el) => TEXT_CLASS.SEVERITY.test(String(el.props.className ?? "")))
     .filter((el) => el.props.s === undefined)
     .map((el) => String(el.props.className));
 }
 
-test("the ledger footer reports its worst figures with no hue on text", () => {
-  const footer = sandbox.LedgerFooterI({
-    total: 40,
-    declined: 9,
-    suppression: { pending_total: 12, pending_unpromptable: 7, off_registry_parked: 3 },
-  });
+test("the ledger footer reports its pattern count with no hue on text", () => {
+  const footer = sandbox.LedgerFooterI({ total: 40 });
   assert.deepEqual(
     tintedTextNodes(footer),
     [],
@@ -239,6 +261,35 @@ test("the CTM/EPM row leaves its tone on the glyph", () => {
   );
 });
 
+// a tone glyph marks a figure over a stated line, and no run-breakdown chip has one → the chip words name each category
+describe("the run breakdown chips carry no tone glyph at any count", () => {
+  const rows = [
+    { name: "run breakdown at zero", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 0, cycles_generated_not_applied_7d: 0, cycles_nothing_generated_7d: 0 } }), glyphs: 0 },
+    { name: "run breakdown with counts", tree: () => sandbox.CycleDecompositionRowI({ stats: { cycles_generated_applied_7d: 3, cycles_generated_not_applied_7d: 4, cycles_nothing_generated_7d: 5 } }), glyphs: 0 },
+  ];
+  const labels = ["Suggested and applied", "Suggested, not applied", "No suggestion"];
+  for (const row of rows) {
+    test(row.name, () => {
+      const counts = collect(row.tree(), (el) => Array.isArray(el.props.children) && el.props.children.some((c: unknown) => isElement(c) && labels.includes(c.props.children as string)), [sandbox.SymI]);
+      assert.ok(counts.length >= 2, "every count renders");
+      for (const count of counts) {
+        const glyphs = (count.props.children as unknown[]).filter((c) => isElement(c) && c.type === sandbox.SymI);
+        assert.equal(glyphs.length, row.glyphs, String(count.props.key ?? count.props.children));
+      }
+    });
+  }
+});
+
+// a tone glyph marks a figure over a stated line, and neither tally has one
+describe("the learning memory tallies carry no tone glyph at any count", () => {
+  for (const ctm of [0, 4]) {
+    test(`${ctm} confirmed wins`, () => {
+      const tallies = collect(sandbox.BucketRowI({ state: { status: "ready" }, buckets: { ctm, epm: 2 } }), (el) => el.type === sandbox.SymI, [sandbox.SymI]);
+      assert.equal(tallies.length, 0);
+    });
+  }
+});
+
 test("the cycle decomposition chips leave their tone on the glyph", () => {
   const row = sandbox.CycleDecompositionRowI({
     stats: {
@@ -255,13 +306,9 @@ test("the cycle decomposition chips leave their tone on the glyph", () => {
   );
 });
 
-// The Loop output cards name a status in a label, so `info` counts as a tone here
-// too — the neutral ℹ glyph beside the label already says it.
-const TONE_TEXT_CLASS = /\btext-(warn|crit|ok|info)\b/;
-
 function toneTextNodes(tree: unknown): string[] {
   return collectElements(tree, [])
-    .filter((el) => TONE_TEXT_CLASS.test(String(el.props.className ?? "")))
+    .filter((el) => TEXT_CLASS.TONE.test(String(el.props.className ?? "")))
     .filter((el) => el.props.s === undefined)
     .map((el) => String(el.props.className));
 }
@@ -301,7 +348,12 @@ test("every held row renders under exactly one cause group", () => {
       : isElement(node)
         ? [node, ...walk(node.props.children)]
         : [];
-  const groups = walk(section).filter((el) => el.props.bucket !== undefined);
+  // the section hands its rows to the held table, which splits them per cause row
+  const table = walk(section).find((el) => el.type === (sandbox as unknown as Record<string, unknown>).HeldCauseTableI)!;
+  const render = table.type as (props: Record<string, unknown>) => RecordedElement;
+  // the house Table builds each body's rows for its view → build them for a wide one
+  const bodies = render(table.props).props.bodies as Array<{ rows: (view: unknown) => unknown }>;
+  const groups = walk(Array.from(bodies, (body) => body.rows({ isStacked: false, columnCount: 3 }))).filter((el) => el.props.bucket !== undefined);
   const ids = groups.flatMap((g) => (g.props.rows as { id: number }[]).map((r) => r.id));
   assert.deepEqual(ids, [7], "a rejected row is counted under its cause and again under a second group");
 });
@@ -325,19 +377,40 @@ function collect(node: unknown, pick: (el: RecordedElement) => boolean, stopAt: 
   return out;
 }
 
-test("report surfaces keep neutral chrome — no tinted border, no hued diff chip", async () => {
-  const row = sandbox.BucketRowI({
+const HUE = {
+  // any utility naming a theme tone or a Tailwind palette step: text-crit, bg-crit/70, hover:border-ok, bg-red-500 — a palette name runs 3+ letters, so min-w-16 and gap-x-100 stay layout
+  CLASS: /\b[a-z]+-(crit|warn|ok|info|accent|[a-z]{3,}-(?:50|[1-9]00|950))\b/,
+  // judged on the value, so any style key counts → raw hex, colour functions and named colours on a colour property belong to the design-token test; a named colour inside a composite string is read by neither
+  STYLE_TOKEN: /var\(--(?:crit|warn|ok|info|accent|cat)\b/,
+};
+const GLYPH_TONE: Record<string, RegExp> = { added: /\btext-ok\b/, removed: /\btext-crit\b/ };
+
+function getLineCountChips(): RecordedElement[] {
+  Object.assign(sandbox.window.UI, { formatPctWithDenominator: (count: number, total: number) => `${count}/${total}` });
+  const card = sandbox.ChangeSummaryCardI({
     state: { status: "ready" },
-    buckets: { ctm: 4, epm: 2, outcome: {}, joinMeta: { linked_agent_count: 3 } },
+    aggregate: { added: 4, removed: 2, eventCount: 6, failBefore: { count: 5, total: 10 }, failAfter: { count: 1, total: 10 } },
   });
-  const tinted = collect(row, (el) => {
-    const style = el.props.style as Record<string, unknown> | undefined;
-    return Boolean(style && ("borderLeft" in style || "borderColor" in style));
-  });
-  assert.deepEqual(tinted, [], "the learning-memory tiles carry no tone border");
-  const { readFile } = await import("node:fs/promises");
-  const src = await readFile(IMPROVEMENT_SRC, "utf8");
-  assert.doesNotMatch(src, /diff-line--(add|del)/, "the added/removed chips must not hue their text");
+  return collect(card, (el) => el.type === screenFns.LineCountI, [screenFns.LineCountI]);
+}
+
+test("the change summary's line counts keep their hue on the sign glyph, ok for added and crit for removed, with neutral text and no hue class or inline tone token on the chip or its text", () => {
+  const chips = getLineCountChips();
+  assert.deepEqual(chips.map((chip) => chip.props.word), ["added", "removed"]);
+  for (const chip of chips) {
+    const nodes = collectElements(screenFns.LineCountI(chip.props), []);
+    const [glyph] = nodes.filter((el) => el.props.s !== undefined);
+    assert.match(String(glyph?.props.className), GLYPH_TONE[String(chip.props.word)], `${chip.props.word}: the sign glyph holds its own tone`);
+    const plain = nodes.filter((el) => el.props.s === undefined);
+    const inlineHues = plain.flatMap((el) => Object.entries(Object(el.props.style)).filter(([, value]) => HUE.STYLE_TOKEN.test(String(value))).map(([key]) => key));
+    assert.deepEqual(inlineHues, [], `${chip.props.word}: an inline style names a tone token on the chip`);
+    assert.deepEqual(plain.map((el) => String(el.props.className)).filter((className) => HUE.CLASS.test(className)), [], `${chip.props.word}: a hue class on the chip root or its text`);
+    const textClasses = plain.filter((el) => !isElement(el.props.children) && !Array.isArray(el.props.children)).map((el) => String(el.props.className));
+    assert.equal(textClasses.length, 2, `${chip.props.word}: numeral and word`);
+    for (const textClass of textClasses) {
+      assert.match(textClass, TEXT_CLASS.NEUTRAL, `${chip.props.word}: the text keeps a neutral ink`);
+    }
+  }
 });
 
 test("a failed stats payload raises one banner at the loop output group", () => {
@@ -363,18 +436,17 @@ test("the status band never announces a failure the owning group already announc
     learningLogState: failed,
     suppression: null,
     awaiting: 0,
-    onRetry: () => {},
   });
   const buttons = collect(band, (el) => el.type === "button");
-  assert.equal(buttons.length, 0, "a retry per tile repeats the group's banner");
+  assert.equal(buttons.length, 0, "a retry per stat repeats the group's banner");
   const pointers = collect(band, (el) => {
     const kids = ([] as unknown[]).concat(el.props.children);
-    return kids.some((k) => typeof k === "string" && k.includes("Not read — see the"));
+    return kids.some((k) => typeof k === "string" && /^See the .+ below\.$/.test(k));
   });
-  assert.equal(pointers.length, 4, "each tile points at its owning group");
+  assert.equal(pointers.length, 3, "each stat points at its owning group");
 });
 
-// ----- Board headers, proposal actions and tiles: tone on the glyph, tiles on the sub-card ---
+// ----- Board headers and proposal actions: tone on the glyph ---
 
 type ScreenComponent = (props: Record<string, unknown>) => unknown;
 
@@ -421,8 +493,12 @@ describe("board and action surfaces leave their tone on the glyph", () => {
       render: () => component("ProposalActionsI")({ row: PROPOSAL, isSafety: true, onAction: () => {}, isPending: false }),
     },
     {
-      name: "the awaiting-approval banner",
-      render: () => component("AwaitingBannerI")({ rows: [PROPOSAL], onRowClick: () => {}, onAction: () => {}, pendingActionId: null }),
+      name: "the awaiting-approval list",
+      render: () => component("AwaitingListI")({ rows: [PROPOSAL], onRowClick: () => {}, onAction: () => {}, pendingActionId: null }),
+    },
+    {
+      name: "the board head's awaiting status",
+      render: () => component("HeadStatusI")({ count: 2, words: "awaiting" }),
     },
     {
       name: "the operations-view instrumentation strip",
@@ -431,11 +507,11 @@ describe("board and action surfaces leave their tone on the glyph", () => {
           styleRefGradeBadgeI: () => ({ symbol: "⚠", tone: "text-warn", label: "warn", hint: "emission below the gate" }),
           getCorpusGrowthVerdictI: () => ({ symbol: "✕", tone: "text-crit", label: "Growth alert", hint: "corpus grew past the cap" }),
         };
-        return component("InstrumentationStripI")({
+        const chips = component("getDeviationChipsI")({
           styleRef: { overall_emission_rate: 0.3, overall_uncorroborated_rate: 0.2 },
           corpusAuditState: { status: "ready", data: { audits: [{}] } },
-          onOpen: () => {},
         });
+        return component("InstrumentationStripI")({ chips, onOpen: () => {} });
       },
     },
     {
@@ -458,57 +534,42 @@ describe("board and action surfaces leave their tone on the glyph", () => {
   }
 });
 
-test("the awaiting banner announces through its live zone as the shared warn alert card", () => {
-  const tree = screenTree(
-    component("AwaitingBannerI")({ rows: [PROPOSAL], onRowClick: () => {}, onAction: () => {}, pendingActionId: null }),
-    [sandbox.ProposalCardI],
-  );
-  const cards = tree.filter((el) => el.type === sandbox.window.UI.AlertCard);
-  assert.equal(cards.length, 1, "one alert card heads the awaiting list");
-  assert.equal(cards[0].props.tone, "warn");
-  assert.equal(cards[0].props.hasLiveHost, true, "the zone around it is already the live region");
-});
-
-test("approve and reject are shared buttons: approve keeps a neutral label, reject is the destructive outline", () => {
-  const tree = screenTree(component("ProposalActionsI")({ row: PROPOSAL, isSafety: false, onAction: () => {}, isPending: false }));
-  const [approve, reject] = tree.filter((el) => el.type === "button");
-  assert.ok(approve && reject, "both actions render");
-  for (const button of [approve, reject]) {
-    assert.match(String(button.props.className), /\bbtn\b.*\bsm\b|\bsm\b.*\bbtn\b/, "an action outside the shared .btn family");
-  }
-  const approveGlyph = screenTree(approve.props.children).find((el) => el.props.s === "✓");
-  assert.match(String(approveGlyph?.props.className ?? ""), /\btext-ok\b/, "the approve glyph carries the ok tone");
-  const style = (reject.props.style ?? {}) as Record<string, unknown>;
-  assert.equal(style.color, "rgb(var(--crit))", "the destructive label is crit");
-  assert.equal(style.borderColor, "rgb(var(--crit))", "the destructive outline is crit");
-  assert.equal(style.background, undefined, "the destructive outline carries no fill");
-});
-
-describe("tiles rest on the shared sub-card, and only an interactive tile answers hover", () => {
+// spec 44084 §3.1 — the board's rows carry the detail → the head carries the count, once, as Status
+describe("the awaiting count is the board head's warn status, announced live, never an alert card", () => {
+  const renderBoardHead = (safety: unknown[]) => {
+    const tree = screenTree(
+      component("KanbanCardI")({
+        state: { status: "ready", data: {} },
+        columnRows: { safety, applied: [{ ...PROPOSAL, id: 9, status: "applied" }] },
+        loopAggregate: null,
+        onRowClick: () => {},
+        onAction: () => {},
+        pendingActionId: null,
+        onRetry: () => {},
+        failures: [],
+      }),
+      [sandbox.ProposalCardI, sandbox.KanbanColumnI],
+    );
+    const head = tree.find((el) => el.type === sandbox.window.UI.CardHead);
+    assert.ok(head, "the board keeps its card head");
+    // the card sub slot, as on the System map's Part health head (spec 44084 §3.1) → the lane window rides the ⓘ
+    assert.equal(head.props.right, undefined, "the status sits beside the title, never at the head's right end");
+    return { tree, headTree: screenTree(head.props.sub) };
+  };
   const rows = [
-    {
-      name: "a loading metric tile",
-      isInteractive: false,
-      render: () => component("TilePlaceholderI")({ status: "loading", label: "Applied", owner: "x", onRetry: () => {} }),
-    },
-    {
-      name: "a live candidate row",
-      isInteractive: true,
-      render: () =>
-        component("CandidateRowI")({
-          rank: 1,
-          pattern: { frequency: 3, status: "pending", pattern_signature: "size overrun", agent: "glass-atrium-dev-node" },
-          maxFreq: 5,
-          onClick: () => {},
-        }),
-    },
+    { name: "two awaiting → a warn status naming the count", safety: [PROPOSAL, { ...PROPOSAL, id: 8 }], status: "2 awaiting" },
+    { name: "none awaiting → no status at all", safety: [], status: null },
   ];
   for (const row of rows) {
     test(row.name, () => {
-      const root = row.render() as RecordedElement;
-      const className = String(root.props.className ?? "");
-      assert.match(className, /\bsub-card\b/, "a tile drawing its own ring or shadow");
-      assert.equal(/\bi-tile-hover\b/.test(className), row.isInteractive, "hover affordance on a tile that does nothing");
+      const { tree, headTree } = renderBoardHead(row.safety);
+      const statuses = headTree.filter((el) => el.type === sandbox.window.UI.HeadStatus);
+      assert.equal(tree.filter((el) => el.type === sandbox.window.UI.AlertCard).length, 0, "no alert card on the board");
+      assert.ok(headTree.some((el) => el.props["aria-live"] === "polite"), "the head keeps one live region mounted");
+      if (row.status === null) return assert.equal(statuses.length, 0);
+      assert.equal(statuses.length, 1, "the head draws the shared head Status");
+      assert.equal(statuses[0].props.tone, "warn");
+      assert.equal(statuses[0].props.children, row.status);
     });
   }
 });

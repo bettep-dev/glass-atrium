@@ -4,7 +4,9 @@
 
 window.TOKEN_RATES = {
   // claude-fable-5 family — 검증된 DB cost vector 와 일치 (F28)
+  // 5-2: vendor-quoted on all four fields
   // 5-1 은 litellm overlay 가 물어온 값 · 벤더 견적 아님 — cache_read 가 fable-5 가족가(1.00)와 다른 유일한 필드
+  'claude-fable-5-2':   { input:  8.00, output: 40.00, cache_read: 0.20,  cache_creation: 10.00 },
   'claude-fable-5-1':   { input: 10.00, output: 50.00, cache_read: 0.25,  cache_creation: 12.50 },
   'claude-fable-5':     { input: 10.00, output: 50.00, cache_read: 1.00,  cache_creation: 12.50 },
 
@@ -34,6 +36,9 @@ window.TOKEN_RATES = {
   'claude-sonnet-4-6':  { input:  3.00, output: 15.00, cache_read: 0.30,  cache_creation:  3.75 },
   'claude-sonnet-4-5':  { input:  3.00, output: 15.00, cache_read: 0.30,  cache_creation:  3.75 },
   'claude-sonnet-4':    { input:  3.00, output: 15.00, cache_read: 0.30,  cache_creation:  3.75 },
+
+  // claude-haiku-5 — prompt-length limit of this rate: hooks/pricing.json _comment
+  'claude-haiku-5-5':   { input:  0.10, output:  0.50, cache_read: 0.01,  cache_creation:  0.125 },
 
   // claude-haiku-4-x family — date-suffixed key aligns to the haiku family rate
   'claude-haiku-4-5-20251001': { input: 1.00, output: 5.00, cache_read: 0.10, cache_creation: 1.25 },
