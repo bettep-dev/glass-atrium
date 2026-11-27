@@ -758,8 +758,8 @@ Parser: `monitor/public/src/ui.jsx` → `getProseBlocks`, for a report or decisi
 | bold | `**` each side |
 | document link | `clauded-docs/<id>`, or a bare id the post lists in `linkedDocIds` |
 
-- Shown as typed, never drawn: italic, strikethrough, checkboxes, images, HTML, tab indents, and web addresses, which are not clickable.
-- `[label](target)` shows as `label (target)`: only a document address inside it links.
+- Shown as typed, never drawn: italic, strikethrough, checkboxes, HTML, tab indents, and web addresses, which are not clickable.
+- `[label](target)` shows as `label (target)`, and an image `![alt](src)` as `alt (src)` with no image drawn: only a document address inside it links.
 
 ### Worked pair
 
