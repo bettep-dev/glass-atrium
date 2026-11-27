@@ -175,8 +175,10 @@ test("success-rate: truncated 플래그 — boolean 상시 emit + live 그룹 �
   );
 });
 
-// One outcome on each side of both 7-day window edges, at 00:10 bucket-tz wall clock (still the previous UTC day).
-const EDGE_OFFSETS = [-7, -6, 0, 1];
+// Outcomes on each side of both 7-day window edges, at 00:10 bucket-tz wall clock (still the previous UTC day).
+// Two on the lower edge day → a UTC-instant cut, which trades the -6 seeds for the +1 seed, changes the count.
+const EDGE_OFFSETS = [-7, -6, -6, 0, 1];
+const EDGE_INSIDE_COUNT = 3;
 // 00:30 in Seoul, still the previous day in UTC → the bucket-tz today and the UTC CURRENT_DATE differ
 const EDGE_NOW = Date.parse("2026-07-17T15:30:00Z");
 const EDGE_TODAY = computeBucketTzToday(new Date(EDGE_NOW));
@@ -194,7 +196,7 @@ async function seedEdgeOutcomes(): Promise<void> {
       INSERT INTO core.outcomes (record_ts, agent, task_type, result, summary, cid)
       VALUES ((${addDays(EDGE_TODAY, offset)}::date + TIME '00:10') AT TIME ZONE ${DAY_BUCKET_TIMEZONE}::text,
               ${BOUNDARY_AGENT}, ${TASK_TYPES[index]}::core."TaskType", 'fail'::core."OutcomeResult",
-              'window edge seed', ${`${SUITE_MARKER}-edge${offset}`})
+              'window edge seed', ${`${SUITE_MARKER}-edge${index}`})
     `;
   }
 }
@@ -249,7 +251,7 @@ for (const row of [
     await seedEdgeOutcomes();
     t.after(clearEdgeOutcomes);
     const body = await getAtEdgeNow(t, `/api/agents/${row.name}?days=7`);
-    assert.strictEqual(row.getSeededCount(body), 2);
+    assert.strictEqual(row.getSeededCount(body), EDGE_INSIDE_COUNT);
   });
 }
 
@@ -260,11 +262,10 @@ test("GET /api/agents/review-flag-timeseries spans the bucket-tz today and the 6
     rows: Array<{ event_date: string; total_count: number }>;
   };
   assert.deepStrictEqual(
-    body.rows.map((day) => day.event_date),
-    [-6, -5, -4, -3, -2, -1, 0].map((offset) => addDays(EDGE_TODAY, offset)),
+    body.rows.map((day) => [day.event_date, day.total_count]),
+    [-6, -5, -4, -3, -2, -1, 0].map((offset) => [
+      addDays(EDGE_TODAY, offset),
+      EDGE_OFFSETS.filter((seedOffset) => seedOffset === offset).length,
+    ]),
   );
-  for (const edgeDay of EDGE_DAYS_INSIDE) {
-    const total = body.rows.find((day) => day.event_date === edgeDay)?.total_count ?? 0;
-    assert.ok(total >= 1, `the ${edgeDay} seed counts on ${edgeDay}`);
-  }
 });
