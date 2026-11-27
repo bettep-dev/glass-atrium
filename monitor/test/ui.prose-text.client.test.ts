@@ -48,9 +48,16 @@ const getTableLine = (count: number, cell: (index: number) => string) => `| ${Ar
 const getTableText = (count: number) => `${getTableLine(count, (index) => `c${index + 1}`)}\n${getTableLine(count, () => "---")}\n| 1 |`;
 const getTextContent = (node: RenderedNode | string): string => (typeof node === "string" ? node : node.children.map(getTextContent).join(""));
 
+// rows a renderer table and the owner-queue notation pin both assert → one copy, so the two cannot drift apart
+const NOTATION_ROW = {
+  paragraph: { text: "첫 줄\n둘째 줄", html: "<p>첫 줄<br></br>둘째 줄</p>" },
+  bold: { text: "**중요** 확인", html: "<p><strong>중요</strong> 확인</p>" },
+  wideTable: { text: getTableText(13), html: `<p>${getTableText(13).split("\n").join("<br></br>")}</p>` },
+};
+
 describe("source text → rendered blocks", () => {
   const rows = [
-    { name: "consecutive lines stay one paragraph, broken by line breaks", text: "첫 줄\n둘째 줄", html: "<p>첫 줄<br></br>둘째 줄</p>" },
+    { name: "consecutive lines stay one paragraph, broken by line breaks", ...NOTATION_ROW.paragraph },
     { name: "a blank line, or several, starts a new block", text: "a\n\n\nb", html: "<p>a</p><p>b</p>" },
     { name: "a CRLF text breaks lines like an LF text", text: "a\r\nb\r\n\r\nc", html: "<p>a<br></br>b</p><p>c</p>" },
     { name: "dash, star and bullet markers make one unordered list", text: "- one\n* two\n• three", html: "<ul><li>one</li><li>two</li><li>three</li></ul>" },
@@ -70,7 +77,7 @@ describe("source text → rendered blocks", () => {
     { name: "a heading takes the inline rules", text: "## **x** `y`", html: `<h4><strong>x</strong> ${code("y")}</h4>` },
     { name: "a seven-hash line is not a heading", text: "####### x", html: "<p>####### x</p>" },
     { name: "a code span renders as a machine string", text: "run `npm test` now", html: `<p>run ${code("npm test")} now</p>` },
-    { name: "a double-star run renders in weight 600", text: "**중요** 확인", html: "<p><strong>중요</strong> 확인</p>" },
+    { name: "a double-star run renders in weight 600", ...NOTATION_ROW.bold },
     { name: "a fenced block is preformatted and its content literal, the info string dropped",
       text: "```ts\nconst a = 1;\n\n**b** 44060\n```\nafter", html: '<pre class="prose-pre">const a = 1;\n\n**b** 44060</pre><p>after</p>' },
     { name: "a fence with no closing line runs to the end of the text", text: "x\n```\n- y\n**z**", html: '<p>x</p><pre class="prose-pre">- y\n**z**</pre>' },
@@ -129,8 +136,7 @@ describe("a table — a header line with a delimiter line under it, then its bod
     { name: "a table starts under an open paragraph and ends at a line with no bar", ids: [], text: "before\n| a |\n|---|\n| 1 |\nafter",
       html: `<p>before</p>${table(th("a"), [td("1")])}<p>after</p>` },
     { name: "a blank line ends a table", ids: [], text: "| a |\n|---|\n\n| 1 |", html: `${table(th("a"), [])}<p>| 1 |</p>` },
-    { name: "a header of more than 12 cells makes no table: its lines stay paragraph text, as typed", ids: [], text: getTableText(13),
-      html: `<p>${getTableText(13).split("\n").join("<br></br>")}</p>` },
+    { name: "a header of more than 12 cells makes no table: its lines stay paragraph text, as typed", ids: [], ...NOTATION_ROW.wideTable },
     { name: "a delimiter line whose cell count differs from the header's makes no table", ids: [], text: "| a | b |\n|---|",
       html: "<p>| a | b |<br></br>|---|</p>" },
     { name: "a line of dashes with no bar under a line stays a rule", ids: [], text: "a\n---", html: "<p>a</p><hr></hr>" },
@@ -422,7 +428,7 @@ describe("the owner-queue body notation: drawn forms render, every other form sh
   const tableCells = (count: number, cell: (index: number) => string) => Array.from({ length: count }, (_, index) => cell(index)).join("");
   const LINKED_DOC_IDS = [44071];
   const rows = [
-    { name: "a paragraph keeps a single line break", text: "첫 줄\n둘째 줄", html: "<p>첫 줄<br></br>둘째 줄</p>" },
+    { name: "a paragraph keeps a single line break", ...NOTATION_ROW.paragraph },
     { name: "one or two hashes draw the larger heading, three to six the smaller", text: "# 큰 제목\n## 큰 제목 둘\n### 작은 제목\n###### 작은 제목 여섯",
       html: "<h4>큰 제목</h4><h4>큰 제목 둘</h4><h5>작은 제목</h5><h5>작은 제목 여섯</h5>" },
     { name: "dash, star and bullet markers draw a bullet list", text: "- 하나\n* 둘\n• 셋", html: "<ul><li>하나</li><li>둘</li><li>셋</li></ul>" },
@@ -431,13 +437,13 @@ describe("the owner-queue body notation: drawn forms render, every other form sh
       html: "<ul><li>1단<ul><li>2단<ul><li>3단</li><li>4단</li></ul></li></ul></li></ul>" },
     { name: "a header row over a delimiter row draws a table of up to 12 columns", text: getTableText(12),
       html: table(tableCells(12, (index) => th(`c${index + 1}`)), [td("1") + tableCells(11, () => td(""))]) },
-    { name: "a 13-column header draws no table", text: getTableText(13), html: `<p>${getTableText(13).split("\n").join("<br></br>")}</p>` },
+    { name: "a 13-column header draws no table", ...NOTATION_ROW.wideTable },
     { name: "quote lines draw a quote holding lines only", text: "> 전달할 글\n> - 목록 아님", html: "<blockquote>전달할 글<br></br>- 목록 아님</blockquote>" },
     { name: "three dashes alone on a line draw a divider", text: "---", html: "<hr></hr>" },
     { name: "three backticks above and below draw a code block, every line where the fold is off", text: getFence(21),
       html: `<pre class="prose-pre">${getFenceText(21)}</pre>` },
     { name: "one backtick each side draws inline code", text: "실행 `npm test` 후", html: `<p>실행 ${code("npm test")} 후</p>` },
-    { name: "two stars each side draw bold", text: "**중요** 확인", html: "<p><strong>중요</strong> 확인</p>" },
+    { name: "two stars each side draw bold", ...NOTATION_ROW.bold },
     { name: "a document address, or a bare id the post declares, draws a document link", text: "clauded-docs/44060 · 문서 44071",
       html: `<p>clauded-docs/${link("44060")} · 문서 ${link("44071")}</p>` },
     { name: "italic shows as typed", text: "*기울임* _기울임_", html: typed("*기울임* _기울임_") },
@@ -448,6 +454,8 @@ describe("the owner-queue body notation: drawn forms render, every other form sh
     { name: "a web address shows as typed, never clickable", text: "https://example.com/a?b=1&c=2", html: typed("https://example.com/a?b=1&c=2") },
     { name: "link syntax shows as label (target), only a document address inside it linking",
       text: "[가이드](https://example.com/g) · [명세](clauded-docs/44060)", html: `<p>가이드 (https://example.com/g) · 명세 (clauded-docs/${link("44060")})</p>` },
+    { name: "image syntax shows as alt (src) and draws no image, only a document address inside it linking",
+      text: "![구성도](https://example.com/a.png) · ![도면](clauded-docs/44060)", html: `<p>구성도 (https://example.com/a.png) · 도면 (clauded-docs/${link("44060")})</p>` },
   ];
   const BODY = rows.map((row) => row.text).join("\n\n");
   const markup = innerMarkup(BODY, LINKED_DOC_IDS);
