@@ -10,7 +10,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
-import { type AgentFileList, type AgentFileParts, getAgentFileParts, listAgentFiles, loadAgentRegistry } from "../agents/registry.js";
+import { AGENT_OUTSIDE_FOLDER_REASON, type AgentFileList, type AgentFileParts, getAgentFileParts, listAgentFiles, loadAgentRegistry } from "../agents/registry.js";
 import { getPrisma } from "../db.js";
 import { respondDbFailure } from "../db-failure.js";
 import { type AuditChangeCarrier, setAuditTarget } from "../middleware/audit-log.js";
@@ -643,7 +643,7 @@ async function readAgentPinSource(linkPath: string, target: AgentPinTarget): Pro
     return { result: { name: target.name, status: "gone" }, old: null };
   }
   if (read === "outside") {
-    return refused("File is outside the agents folder");
+    return refused(AGENT_OUTSIDE_FOLDER_REASON);
   }
   const { resolved, text } = read;
   const fm = locateFrontmatter(text);
