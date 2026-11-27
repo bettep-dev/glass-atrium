@@ -68,6 +68,9 @@ const ROLE_LINE_DANGLING_TAIL = /(?:[\s,;:/–—-]+|\s+(?:and|or|of|for|to|into
 // Lowercase kebab name + `.md` → GLASS_ATRIUM_GLOBAL_RULES.md, references/ and templates/ never match.
 const AGENT_FILE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*\.md$/;
 
+// Refusal shown for a file whose realpath leaves the agents folder → the listing and the pin writer show the same words.
+export const AGENT_OUTSIDE_FOLDER_REASON = "File is outside the agents folder";
+
 // Raw JSON shape — unknown before validation.
 interface RawRegistryRoot {
   agents?: Record<string, unknown>;
@@ -355,7 +358,7 @@ async function readAgentFile(dir: string, realDir: string, file: string): Promis
   try {
     const resolved = await realpath(join(dir, file));
     if (dirname(resolved) !== realDir) {
-      return { file, reason: "File is outside the agents folder" };
+      return { file, reason: AGENT_OUTSIDE_FOLDER_REASON };
     }
     raw = await readFile(resolved, "utf8");
   } catch {
