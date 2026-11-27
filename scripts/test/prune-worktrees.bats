@@ -155,6 +155,16 @@ is_registered() {
   is_registered "${wt}" || { echo "dry run unregistered the worktree"; return 1; }
 }
 
+@test "a passing dry run prints no ERROR line for the checks it handled" {
+  local wt
+  wt="$(add_worktree feat)"
+
+  run bash "${PRUNE_SH}" "${wt}"
+  [ "${status}" -eq 0 ] || { echo "exit ${status}: ${output}"; return 1; }
+
+  [[ $'\n'"${output}" != *$'\n'ERROR* ]] || { echo "ERROR line on a passing run: ${output}"; return 1; }
+}
+
 @test "--apply removes a passing worktree with its ignored build output and keeps its branch" {
   local wt
   wt="$(add_worktree feat)"

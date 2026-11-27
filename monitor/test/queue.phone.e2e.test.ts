@@ -64,8 +64,18 @@ function getWidths(page: Page): Promise<Widths> {
   }));
 }
 
+function getRouteMark(page: Page, label: string): Locator {
+  return page.locator(`${SIDEBAR} .nav-item[aria-current="page"][title="${label}"]`);
+}
+
 function waitForRoute(page: Page, label: string): Promise<void> {
-  return page.locator(`${SIDEBAR} .nav-item[aria-current="page"][title="${label}"]`).waitFor({ state: "attached", timeout: READY_TIMEOUT_MS });
+  return getRouteMark(page, label).waitFor({ state: "attached", timeout: READY_TIMEOUT_MS });
+}
+
+// no busy region left in the screen → its first reads have rendered, so a screen that throws on its data has unmounted the shell by now
+async function waitForRouteRead(page: Page, label: string): Promise<void> {
+  await waitForRoute(page, label);
+  await page.locator('#main-content [aria-busy="true"]').first().waitFor({ state: "detached", timeout: READY_TIMEOUT_MS });
 }
 
 async function openRoute(harness: Harness, viewport: Viewport, hash: string, label: string): Promise<Page> {
@@ -146,15 +156,16 @@ describe("the Queue page on a phone", () => {
       test(`every other route on a ${viewport.width}-wide phone still lays out at 1280`, async () => {
         const page = await openRoute(harness, viewport, "dashboard", "Dashboard");
         const labels = (await page.locator(`${SIDEBAR} .nav-item`).evaluateAll((items) => items.map((item) => item.getAttribute("title") ?? ""))).filter((label) => label !== "Queue");
-        const layoutByRoute: Record<string, number> = {};
+        const layoutByRoute: Record<string, { layout: number; isShown: boolean }> = {};
         for (const label of labels) {
           await page.locator(`${SIDEBAR} .nav-item[title="${label}"]`).tap();
-          await waitForRoute(page, label);
-          layoutByRoute[label] = (await getWidths(page)).layout;
+          await waitForRouteRead(page, label);
+          const { layout } = await getWidths(page);
+          layoutByRoute[label] = { layout, isShown: (await getRouteMark(page, label).count()) === 1 };
         }
         await page.close();
 
-        assert.deepEqual(layoutByRoute, Object.fromEntries(labels.map((label) => [label, DESKTOP_LAYOUT_WIDTH])));
+        assert.deepEqual(layoutByRoute, Object.fromEntries(labels.map((label) => [label, { layout: DESKTOP_LAYOUT_WIDTH, isShown: true }])));
       });
     }
 

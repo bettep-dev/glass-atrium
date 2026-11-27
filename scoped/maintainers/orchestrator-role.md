@@ -291,6 +291,8 @@ Maintainer-facing material for that rule file and its full text. Nothing here bi
   - `### Wait or listener` is a split point of the same H3 and the single site of the wait-or-listener rule.
     - Its pointers: the wait table's two `next` rows · `## Owner Queue Listener` · the interactive bullet of `### On a wait's exit`.
     - It stays under `## Owner Queue`: the core's trigger line names that heading alone, so a rule under a split reaches no session the trigger sends.
+  - `## Owner Queue Body` is a split point holding `## Owner Queue` under the 8 KB H2 cap: the `post` bullet of `### Posting and registering` points to it, and so does the `post` tool's `body` description (`scripts/atrium-queue-mcp.sh` → `TOOLS`).
+    - Its notation table mirrors `monitor/public/src/ui.jsx` → `getProseBlocks`, canonical there: change a row with the parser, and each quoted limit with its constant — `PROSE_LIST_DEPTH` · `PROSE_TABLE_COLUMNS_MAX` · `PROSE_FOLD_LINES`.
   - The section names the listener's lifetime, never quotes it: its value lives in `scripts/atrium-queue.sh` → `LISTEN_LIFETIME_S`.
   - The section's announce bound mirrors constants of `scripts/atrium-queue.sh`, canonical there: change each literal with its constant.
     - `twice` and `a further two`: `LISTEN_ANNOUNCE_MAX`.

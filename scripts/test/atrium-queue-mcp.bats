@@ -144,6 +144,16 @@ PING='{"jsonrpc":"2.0","id":90,"method":"ping"}'
   done
 }
 
+@test "the post tool's body description points at the body-form section the role file holds" {
+  run_adapter '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+  get_response 2 | jq -e '.result.tools[] | select(.name == "post") | .inputSchema.properties.body.description
+    | contains("the `## Owner Queue Body` section of ~/.glass-atrium/skills/glass-atrium-ops-orchestrator-role.md")' >/dev/null \
+    && grep -qx '## Owner Queue Body' "${GA}/skills/glass-atrium-ops-orchestrator-role.md" || {
+    echo "the body description points at no section the role file holds"
+    return 1
+  }
+}
+
 @test "a session that does not face the owner gets no instructions, lists no tools and has every call refused before the monitor" {
   export CLAUDE_CODE_ENTRYPOINT=sdk-cli
   start_stub

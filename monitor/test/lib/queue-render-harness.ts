@@ -29,6 +29,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SHOTS_PREFIX = "queue-shots-";
 const PUBLIC_ROOT = resolve(HERE, "..", "..", "public");
 const QUEUE_API_PREFIX = "/api/queue/";
+const REMOTE_API_PREFIX = "/api/remote/";
+const SHELL_PAYLOADS_PATH = resolve(HERE, "..", "fixtures", "app-shell-data-payloads.json");
 export const READY_TIMEOUT_MS = 30_000;
 
 /** The owner's desktop sizes the captures are compared at (spec 44063 §18.4). */
@@ -563,6 +565,7 @@ export async function openHarness(): Promise<Harness> {
   };
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   registerFixtureRoutes(app, harness);
+  await registerRemoteRoutes(app);
   app.all("/api/*", async (request, reply) => {
     if (!request.url.startsWith(QUEUE_API_PREFIX)) return { rows: [] };
     harness.missedReads.push(`${request.method} ${request.url}`);
@@ -576,6 +579,14 @@ export async function openHarness(): Promise<Harness> {
 export async function closeHarness(harness: Harness | undefined): Promise<void> {
   await harness?.browser?.close();
   await harness?.app?.close();
+}
+
+// the Mac server's setup and devices replies, shared with app-shell.csp.e2e → the Remote access screen throws on `{ rows: [] }` and unmounts the shell
+async function registerRemoteRoutes(app: FastifyInstance): Promise<void> {
+  const payloads: Record<string, unknown> = JSON.parse(await readFile(SHELL_PAYLOADS_PATH, "utf8"));
+  for (const [path, payload] of Object.entries(payloads)) {
+    if (path.startsWith(REMOTE_API_PREFIX)) app.get(path, async () => payload);
+  }
 }
 
 // the owner reads, the count and the image routes, each answering in the server's response shape

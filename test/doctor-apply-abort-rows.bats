@@ -92,8 +92,8 @@ run_doctor_seam() {
 }
 
 # Drive the REAL daemon into its root-absence preflight abort so the abort row under test is
-# producer-authored. $1 = the applied-log date to write under (the daemon keys on the UTC date, so a
-# non-today date is produced by writing today's file then renaming it).
+# producer-authored. TODAY becomes the date the daemon's own clock named the log by, so a run
+# crossing UTC midnight still finds the file.
 emit_abort_row() {
   local sandbox="${WORK}/real"
   mkdir -p -- "${sandbox}/autoagent/lib" "${sandbox}/scripts/lib"
@@ -108,7 +108,10 @@ emit_abort_row() {
     HOME="${WORK}/home" GA_DATA_ROOT="${WORK}/home/.glass-atrium" AUTOAGENT_REPORTS_DIR="${REPORTS}" \
     bash "${sandbox}/autoagent/daemon-apply.sh" \
     --report "${WORK}/report.json" --agents-dir "${WORK}/agents" >/dev/null 2>&1 || true
-  [[ -s "${REPORTS}/autoagent-applied-${TODAY}.jsonl" ]] || return 1
+  local -a logs=("${REPORTS}"/autoagent-applied-*.jsonl)
+  [[ "${#logs[@]}" -eq 1 && -s "${logs[0]}" ]] || return 1
+  TODAY="${logs[0]##*/autoagent-applied-}"
+  TODAY="${TODAY%.jsonl}"
 }
 
 # Append one non-abort row ($2 = its status literal) under the date $1. Hand-written: reaching the
@@ -121,10 +124,10 @@ append_non_abort_row() {
     >>"${REPORTS}/autoagent-applied-${date_key}.jsonl"
 }
 
-# Rename today's applied log to a date $1 days back, so the whole file falls outside the window.
+# Rename TODAY's applied log to a date $1 days before TODAY, so the whole file falls outside the window.
 age_applied_log() {
   local days="$1" old
-  old="$(date -u -v-"${days}"d +%Y-%m-%d 2>/dev/null || date -u -d "${days} days ago" +%Y-%m-%d)"
+  old="$(date -u -j -f %Y-%m-%d -v-"${days}"d "${TODAY}" +%Y-%m-%d 2>/dev/null || date -u -d "${TODAY} ${days} days ago" +%Y-%m-%d)"
   mv -f "${REPORTS}/autoagent-applied-${TODAY}.jsonl" "${REPORTS}/autoagent-applied-${old}.jsonl"
   printf '%s\n' "${old}"
 }
