@@ -17,6 +17,8 @@ import "dotenv/config";
 
 import Fastify, { type FastifyInstance } from "fastify";
 
+// first local import → the zone is set before timezone.ts resolves it
+import { PINNED_BUCKET_TIMEZONE } from "./lib/pin-bucket-timezone.js";
 import { disconnectPrisma, getPrisma } from "../src/server/db.js";
 import { resetAgentRegistryCache } from "../src/server/agents/registry.js";
 import {
@@ -206,6 +208,8 @@ async function clearEdgeOutcomes(): Promise<void> {
 }
 
 async function getAtEdgeNow(t: TestContext, url: string): Promise<unknown> {
+  assert.strictEqual(DAY_BUCKET_TIMEZONE, PINNED_BUCKET_TIMEZONE, "edge rows run under the pinned bucket zone");
+  assert.notStrictEqual(EDGE_TODAY, new Date(EDGE_NOW).toISOString().slice(0, 10), "bucket-tz today differs from the UTC day");
   t.mock.timers.enable({ apis: ["Date"], now: EDGE_NOW });
   try {
     const res = await app.inject({ method: "GET", url });
