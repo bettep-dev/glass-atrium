@@ -1808,8 +1808,12 @@ label.ctl-checkbox-hit {
 	.queue-sheet .queue-compose-row {
 		display: contents;
 	}
+	/* one row where the face fits it; a wider face wraps it end-aligned onto a second line, never past the foot's inset */
 	.queue-sheet .queue-compose-buttons {
 		order: 1;
+		flex: 0 1 auto;
+		flex-wrap: wrap;
+		justify-content: flex-end;
 		margin-top: var(--space-2);
 	}
 	.queue-sheet .queue-note {

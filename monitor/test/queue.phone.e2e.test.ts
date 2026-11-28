@@ -8,8 +8,9 @@
 import test, { after, before, beforeEach, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { type Browser, chromium, type Locator, type Page } from "playwright";
+import { type Browser, type Locator, type Page } from "playwright";
 
+import { createBrowser } from "./lib/house-face.js";
 import {
   closeHarness, getRestReadyText, getSelfNamedFixture, type Harness, MIN_WINDOW, openHarness, openQueuePage, openShellPage, READY_TIMEOUT_MS, tickSessions, type Viewport, waitForDoneBands,
 } from "./lib/queue-render-harness.js";
@@ -710,7 +711,7 @@ describe("the Queue page on a phone", () => {
 
     before(async () => {
       hiddenBarBrowser = harness.browser;
-      harness.browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ["--hide-scrollbars"] });
+      harness.browser = await createBrowser({ ignoreDefaultArgs: ["--hide-scrollbars"] });
     });
 
     after(async () => {
@@ -1010,6 +1011,34 @@ describe("the Queue page on a phone", () => {
           assert.deepEqual(foot, {
             boxWidth: viewport.width - 32, isNoteUnderBox: true, labels: row.labels, heights: row.labels.map(() => 44), sizes: 1, isOneRowUnderNote: true, endGap: 16,
           });
+        });
+      }
+    }
+
+    // a face wider than one row holds → the row wraps: every line end-aligned 16 inside the edge, every button whole and 44 tall
+    const getWrappedRow = (page: Page) => page.locator(".queue-sheet .queue-compose-buttons").evaluate((row) => {
+      const buttons = [...row.querySelectorAll<HTMLElement>(":scope > button")].filter((button) => button.getClientRects().length > 0);
+      const boxes = buttons.map((button) => button.getBoundingClientRect());
+      const tops = [...new Set(boxes.map((box) => Math.round(box.top)))];
+      return {
+        isWrapped: tops.length > 1,
+        lineEndGaps: [...new Set(tops.map((top) => Math.round(window.innerWidth - Math.max(...boxes.filter((box) => Math.round(box.top) === top).map((box) => box.right)))))],
+        heights: boxes.map((box) => box.height),
+        isEachInside: boxes.every((box) => box.left >= 16 && box.right <= window.innerWidth - 16),
+        isEachWhole: buttons.every((button) => [button, ...button.querySelectorAll<HTMLElement>("*")].every((node) => node.scrollWidth <= node.clientWidth)),
+      };
+    });
+    for (const viewport of PHONES) {
+      for (const row of ROWS.filter((each) => each.labels.length === 3)) {
+        test(`at ${viewport.width} on ${row.name} set too wide for one row, the buttons wrap onto further 44 lines, each line ending 16 from the edge`, async () => {
+          harness.fixture = row.getFixture();
+          const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+          await openSheet(page, row.id, row.ready);
+          await page.addStyleTag({ content: ".queue-sheet .queue-compose-buttons > .btn { letter-spacing: 6px; }" });
+          const wrapped = await getWrappedRow(page);
+          await page.close();
+
+          assert.deepEqual(wrapped, { isWrapped: true, lineEndGaps: [16], heights: [44, 44, 44], isEachInside: true, isEachWhole: true });
         });
       }
     }
