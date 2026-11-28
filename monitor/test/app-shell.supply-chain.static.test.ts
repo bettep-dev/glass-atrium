@@ -30,10 +30,14 @@ interface FontStylesheetCapture {
   file: string;
 }
 
-// one recorded read of each external font stylesheet the shell links; Google Fonts answers per user agent → recorded as desktop Chrome (woff2)
+const JETBRAINS_MONO_HREF = "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap";
+
+// one read of each external font stylesheet the shell links; Google Fonts answers per user agent → recorded as desktop Chrome (woff2)
+// Google also answers the same link with /l/font?kit= faces → that form beside it, built by hand from the recording
 const FONT_STYLESHEET_CAPTURES: FontStylesheetCapture[] = [
   { name: "Pretendard", href: "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css", file: "pretendard.min.css" },
-  { name: "JetBrains Mono", href: "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap", file: "jetbrains-mono.css" },
+  { name: "JetBrains Mono", href: JETBRAINS_MONO_HREF, file: "jetbrains-mono.css" },
+  { name: "JetBrains Mono (kit URL form)", href: JETBRAINS_MONO_HREF, file: "jetbrains-mono.kit.css" },
 ];
 
 // below this the "every external script" loop could pass on a page that lost its CDN tags

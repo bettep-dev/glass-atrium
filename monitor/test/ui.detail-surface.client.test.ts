@@ -87,10 +87,11 @@ describe("DetailSurface chrome", () => {
     return button;
   };
 
-  test("the close button is the square icon-only control, as every other icon-only close", () => {
+  test("the close button is the square icon-only control, its tooltip its name, as every other icon-only close", () => {
     const close = getButton(renderSurface({ title: "Session cost" }), "Close details");
 
     for (const name of ["btn", "ghost", "sm", "icon"]) assert.ok(classesOf(close).includes(name), `close lacks .${name}: ${close.props.className}`);
+    assert.equal(close.props.title, close.props["aria-label"]);
   });
 
   test("record nav reads Previous / Next on the ghost-small button", () => {

@@ -472,6 +472,7 @@ function cardHeadStubMc(p: Record<string, unknown>): McElement {
     { className: "card-head" },
     hMc("h2", { className: "card-title" }, p.title),
     p.sub ? hMc("span", { className: "card-sub", title: p.sub }, p.sub) : null,
+    p.mark,
     p.info ? hMc("div", { "data-slot": "card-info", "data-info-label": p.infoLabel ?? "How this is counted" }, p.info) : null,
     p.right,
   );
@@ -537,7 +538,7 @@ async function loadMcScreens(
       hMc(
         "div",
         { className: "card", "data-atom": "Card", "data-size": p.size },
-        p.title ? hMc(cardHeadStubMc, { title: p.title, sub: p.sub, info: p.info, infoLabel: p.infoLabel, right: p.right }) : null,
+        p.title ? hMc(cardHeadStubMc, { title: p.title, sub: p.sub, mark: p.mark, info: p.info, infoLabel: p.infoLabel, right: p.right }) : null,
         hMc("div", { className: "card-body" }, p.children),
         p.foot ? hMc("div", { className: "card-foot" }, p.foot) : null,
       ),

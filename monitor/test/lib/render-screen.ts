@@ -19,6 +19,19 @@ interface ElementNode {
 }
 
 const FRAGMENT = Symbol("Fragment");
+
+// React.Component for a stubbed render: holds props, expands render(); no error catching — that is real React's
+class StubComponent {
+  props: Record<string, unknown>;
+  constructor(props: Record<string, unknown>) {
+    this.props = props;
+  }
+}
+const isClassComponent = (type: unknown): type is new (props: Record<string, unknown>) => { render: () => unknown } =>
+  typeof type === "function" && type.prototype instanceof StubComponent;
+// a class returning this.props.children returns the stub's children array → a fragment of it, as React draws it
+const getClassOutput = (output: unknown): unknown =>
+  Array.isArray(output) ? { __element: true, type: FRAGMENT, props: { children: output } } : output;
 const MAX_DEPTH = 60;
 const IIFE_OPEN = "(() => {";
 const IIFE_CLOSE = "})();";
@@ -37,6 +50,7 @@ export function createReactStub(): Record<string, unknown> {
   return {
     createElement,
     Fragment: FRAGMENT,
+    Component: StubComponent,
     useState: (initial: unknown) => [
       typeof initial === "function" ? (initial as () => unknown)() : initial,
       () => undefined,
@@ -282,7 +296,7 @@ export function renderScreen(node: unknown, depth = 0): RenderedNode | string | 
       : [props.children];
 
   if (typeof type === "function") {
-    const rendered = (type as (p: unknown) => unknown)(props);
+    const rendered = isClassComponent(type) ? getClassOutput(new type(props).render()) : (type as (p: unknown) => unknown)(props);
     const child = renderScreen(rendered, depth + 1);
     const name = (type as { name?: string }).name || "Anonymous";
     return { type: name, props, children: child === null ? [] : [child] };

@@ -811,7 +811,7 @@ function QueueHeaderQ({ queue, onOpenMenu }) {
 function QueueFreshnessQ({ list, failedChecks = 0 }) {
 	const { TONE_GLYPH, formatKstTime, formatKstFull } = window.UI;
 	const title = list.readAt ? `Last read ${formatKstFull(list.readAt)}` : undefined;
-	if (list.data === null || list.error === null) return <span className="fs-meta text-dim" role="status" title={title}>{`Checks every ${POLL_Q.MS / 1000}s`}</span>;
+	if (list.data === null || list.error === null) return <span className="fs-meta text-dim queue-cadence" role="status" title={title}>{`Checks every ${POLL_Q.MS / 1000}s`}</span>;
 	return (
 		<span className="fs-meta" role="status" title={title}>
 			<span aria-hidden="true" className="text-warn">{`${TONE_GLYPH.warn} `}</span>
@@ -987,7 +987,7 @@ function setReadStatusQ(read, setStatus) {
 	else if (read.arrived.length > 0) setStatus(getArrivalNoteQ(read.arrived));
 }
 
-// `⚠ yoaida has not received an order` · several sessions named together
+// `⚠ meadow has not received an order` · several sessions named together
 function getNotReceivedNoteQ(turned) {
 	const names = [...new Set(turned.map((item) => item.session.name))];
 	const what = getKindWordQ(turned[0]) === "Answer" ? "an answer" : "an order";
@@ -1215,7 +1215,7 @@ function getKeptSelectionQ(ids, sessions) {
 	return ids.filter((id) => selectable.has(id));
 }
 
-// ticks on listed sessions that no longer take a message → `⚠ yoaida no longer takes orders and was unticked.`; none → null
+// ticks on listed sessions that no longer take a message → `⚠ meadow no longer takes orders and was unticked.`; none → null
 function getDroppedNoteQ(ids, sessions) {
 	const names = sessions.filter((row) => !row.isSelectable && ids.includes(row.id)).map((row) => row.name);
 	if (names.length === 0) return null;
@@ -1615,7 +1615,7 @@ function QueueFailureQ({ failure, onRetry }) {
 }
 
 /**
- * The list card: head = the scope and its open count, bar = the account filter while it tells items apart, body = the one list, foot = the status line.
+ * The list card: head = the scope and its open count, bar = the account filter while it tells items apart (a phone: its head glyph instead), body = the one list, foot = the status line.
  * One list (spec §4.6): the open bands, then the Done bands — every handled item in scope, with no control to find.
  */
 function QueueListQ({ queue }) {
@@ -1630,7 +1630,7 @@ function QueueListQ({ queue }) {
 		<Card className="queue-pane queue-list" title={<ScopeTitleQ scope={scope} onOpen={() => queue.setView("sessions")} />}
 			sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
 			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts" infoTitle="Keyboard shortcuts"
-			right={<button type="button" className="btn ghost queue-orders-open" onClick={() => queue.setView("orders")}>Orders</button>}
+			right={<ListHeadEndQ queue={queue} items={loaded} />}
 			bar={<><NamesNoteQ />{isAccountAxisShownQ(loaded, queue.filter) && <QueueFilterBarQ items={loaded} filter={queue.filter} onFilter={queue.setFilter} />}</>}
 			foot={<ListFootQ queue={queue} offView={offView} onShowNew={putNewRowInViewQ} />} isFlush>
 			<ListBodyQ queue={queue} items={items} />
@@ -1717,6 +1717,20 @@ function ScopeTitleQ({ scope, onOpen }) {
 			<button type="button" className="btn ghost queue-scope-trigger" aria-label={`Sessions: ${scope}`} title={scope} onClick={onOpen}>
 				<span className="queue-scope-words" data-words={scope} />
 				<Icon name="chevron-right" size={16} />
+			</button>
+		</>
+	);
+}
+
+// the list head's end on a phone (base.css draws both under 640 alone): the bar's Account trigger as its glyph while the bar would draw it, then Orders
+function ListHeadEndQ({ queue, items }) {
+	const { Icon } = window.UI;
+	const { filter, setFilter } = queue;
+	return (
+		<>
+			{isAccountAxisShownQ(items, filter) && <FilterAxisTriggerQ axis="Account" options={getFilterOptionsQ(items, filter).profile} value={filter.profile} onPick={(profile) => setFilter({ ...filter, profile })} glyph={{ icon: "filter", isApplied: Boolean(filter.profile), className: "queue-account-open" }} />}
+			<button type="button" className="btn ghost icon queue-orders-open" aria-label="Orders" title="Orders" onClick={() => queue.setView("orders")}>
+				<Icon name="messages-square" size={16} />
 			</button>
 		</>
 	);
@@ -1966,7 +1980,7 @@ function BandCountQ({ count, hasMore }) {
 // who, then what (spec §4.2): one line on its band's columns (`cols`), an empty cell of a drawn column keeping its width; an arrival paints no mark (§4.4)
 // a refused relay's row (layout §1) the same, `names` resolving its id prefixes
 function QueueRowQ({ row, names = null, isSelected, isNew = false, cols, view, onSelect, onOrder, onSeen }) {
-	const { Icon, formatKstDateTime } = window.UI;
+	const { Icon, MachineString, formatKstDateTime } = window.UI;
 	const { item } = row;
 	const cells = getRowCellsQ(row, view.isAccountShown);
 	const tip = [cells.fact, ...cells.extras].filter(Boolean).join(" · ");
@@ -1975,6 +1989,8 @@ function QueueRowQ({ row, names = null, isSelected, isNew = false, cols, view, o
 		<div id={`${ROW_ID_PREFIX_Q}${row.id}`} role="option" aria-selected={isSelected} tabIndex={row.id === view.tabStopId ? 0 : -1}
 			aria-label={getRowLabelQ(row, cells, view.isNameShown, names)} title={tip || undefined} className={row.isDone ? "queue-row queue-row--done" : "queue-row"}
 			onFocus={isNew ? () => onSeen?.(row.id) : undefined} onClick={() => (getRowKindQ(row) === "Order" ? onOrder(row) : onSelect(row.id))}>
+			{/* a refusal has no item → its cell drawn empty, the column kept */}
+			<span className="queue-row-id">{item && <MachineString>{getItemNumberQ(item)}</MachineString>}</span>
 			{view.isNameShown && <span className="queue-row-who"><RowWhoQ row={row} names={names} /></span>}
 			{getRowTitleQ(row, view.isNameShown, names)}
 			{cols.includes("tag") && <span className="queue-row-tag"><RowTagsQ tags={cells.tags} /></span>}
@@ -1984,6 +2000,11 @@ function QueueRowQ({ row, names = null, isSelected, isNew = false, cols, view, o
 			<Icon name="chevR" size={16} className="queue-row-chevron block" />
 		</div>
 	);
+}
+
+// the queue item's number as the terminal speaks it → `#839`
+function getItemNumberQ(item) {
+	return `#${item.id}`;
 }
 
 // a refusal's sender and recipients by name where `names` holds one, else by id prefix; `reason` the reason's name alone, its sentence the sheet's
@@ -1999,7 +2020,7 @@ function getPrefixWhoQ(prefix, names) {
 	return names.get(prefix) ?? { name: prefix, isSelfNamed: false };
 }
 
-// `yoaida`, `3 sessions`, or with none resolved `1 unknown recipient` — only one session's own name can be self-named
+// `meadow`, `3 sessions`, or with none resolved `1 unknown recipient` — only one session's own name can be self-named
 function getRefusalToQ(refusal, names) {
 	const [first, ...rest] = refusal.recipientIdPrefixes;
 	if (first === undefined) return { name: `${refusal.unresolvedCount ?? 0} unknown ${refusal.unresolvedCount === 1 ? "recipient" : "recipients"}`, isSelfNamed: false };
@@ -2042,7 +2063,7 @@ function getCopiesNameQ(copies) {
 }
 
 /**
- * The title cell, one cut line: a relay's leads with its mark — `→ yoaida`, or `gersona → yoaida` with the name column left out (spec §4.2);
+ * The title cell, one cut line: a relay's leads with its mark — `→ meadow`, or `harbor → meadow` with the name column left out (spec §4.2);
  * a redacted relay's reads `Text redacted`, never its stored title, and a refusal's the reason's name, the queue storing no text (layout §1).
  * An element, not a component → the cell stays a direct child of the row's grid.
  */
@@ -2236,10 +2257,10 @@ function getReceiptQ(item) {
 	return "notYet";
 }
 
-// kind + session + title + tag + fact + extras + age → `Decision from gersona: <title>, Approval, 3 options, posted 9m ago`
-// a done row's tag is its kind, already said first → `Report from atrium: <title>, Read, ended 1h ago`
-// a relay names both ends whatever the ticks → `Relay from aidl to yoaida: <title>, sent 2m ago` (spec §9.9)
-// a refusal its two ends and the reason's name → `Refused relay from gersona to yoaida: Too many to one session, 3m ago` (layout §1)
+// number + kind + session + title + tag + fact + extras + age → `#839, Decision from harbor: <title>, Approval, 3 options, posted 9m ago`
+// a done row's tag is its kind, already said first → `#802, Report from atrium: <title>, Read, ended 1h ago`
+// a relay names both ends whatever the ticks → `#412, Relay from quartz to meadow: <title>, sent 2m ago` (spec §9.9)
+// a refusal its two ends and the reason's name → `Refused relay from harbor to meadow: Too many to one session, 3m ago` (layout §1)
 function getRowLabelQ(row, cells, isNameShown, names) {
 	if (row.refusal) {
 		const { sender, to, reason } = getRefusalEndsQ(row.refusal, names);
@@ -2251,7 +2272,7 @@ function getRowLabelQ(row, cells, isNameShown, names) {
 	const age = `${getAgeVerbQ(row)} ${window.UI.formatRelativeTime(getRowAtQ(row))}`;
 	const title = item.kind === "relay" ? getRelayTitleQ(item) : item.title;
 	const cellWords = [...tags, cells.fact].filter((word) => word !== kind);
-	const parts = [`${kind}${getLabelEndsQ(row, isNameShown, names)}: ${title}`, ...cellWords, ...cells.extras, age].filter(Boolean);
+	const parts = [getItemNumberQ(item), `${kind}${getLabelEndsQ(row, isNameShown, names)}: ${title}`, ...cellWords, ...cells.extras, age].filter(Boolean);
 	return parts.join(", ");
 }
 
@@ -2325,10 +2346,10 @@ function QueueFilterBarQ({ items, filter, onFilter }) {
 	);
 }
 
-// One radio axis — "" (All) is a real option, so the trigger always names the value in force
-function FilterAxisTriggerQ({ axis, options, value, onPick }) {
+// One radio axis — "" (All) is a real option, so the trigger always names the value in force; `glyph` → FilterTrigger's icon form
+function FilterAxisTriggerQ({ axis, options, value, onPick, glyph }) {
 	const label = options.find((option) => option.key === value)?.label ?? value;
-	return <window.UI.FilterTrigger axis={axis} value={label} options={options} chosenKeys={[value]} onPick={onPick} />;
+	return <window.UI.FilterTrigger axis={axis} value={label} options={options} chosenKeys={[value]} onPick={onPick} {...glyph} />;
 }
 
 /** The opened row's sheet in the list's place: the item as a one-page report, or the item that just left the queue; nothing opened → nothing. */
@@ -2357,7 +2378,7 @@ function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, is
 	const foot = getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone });
 	return (
 		<div className="card queue-pane queue-sheet">
-			<SheetHeadQ queue={queue}><LetterheadQ item={item} copies={copies} kind={kind} note={getNameNoteQ(item.session, queue, names)} names={names} /></SheetHeadQ>
+			<SheetHeadQ queue={queue} item={item}><LetterheadQ item={item} copies={copies} kind={kind} note={getNameNoteQ(item.session, queue, names)} names={names} /></SheetHeadQ>
 			<div className="card-bar"><NamesNoteQ /></div>
 			<div className="card-body" tabIndex={-1}>
 				<SheetBodyQ item={item} copies={copies} rails={queue.sessions?.region.data?.sessions ?? []} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} scanRead={scanRead} />
@@ -2422,11 +2443,12 @@ function getRelayEndAtQ(copies) {
 }
 
 /**
- * The way back (its arrival count in its name, painted beside the glyph-only square) · the h2 (`children`) · the position and previous / next (spec §4.3, §12.5);
+ * The way back (its arrival count in its name, painted beside the glyph-only square) · the item's queue number · the h2 (`children`) · the position and previous / next (spec §4.3, §12.5);
  * a relay that left the list draws its arrows aria-disabled.
+ * @param item - the sheet's item; a refusal has none → no number
  */
-function SheetHeadQ({ queue, children }) {
-	const { Badge, Icon } = window.UI;
+function SheetHeadQ({ queue, item = null, children }) {
+	const { Badge, Icon, MachineString } = window.UI;
 	const { steps } = queue;
 	const arrived = queue.list.newIds.length;
 	const isStepless = isRelayLeftQ(queue.sheet);
@@ -2439,6 +2461,7 @@ function SheetHeadQ({ queue, children }) {
 				</button>
 				{arrived > 0 && <span aria-hidden="true"><Badge fill="solid">{arrived}</Badge></span>}
 			</span>
+			{item !== null && <span className="queue-sheet-id"><MachineString>{getItemNumberQ(item)}</MachineString></span>}
 			<h2 className="card-title">{children}</h2>
 			<span className="queue-steps">
 				{steps.index >= 0 && <span className="fs-meta text-dim tabular-nums">{`${steps.index + 1} of ${steps.count}`}</span>}
@@ -2456,8 +2479,8 @@ function getNameNoteQ(session, queue, names) {
 	return { idPrefix: getPageIdQ(session.sessionIdPrefix, names), account: (isManyAccounts && session.profileLabel) || undefined };
 }
 
-// the head's h2 content: read as `Decision from gersona`; the session's account, directory and id ride its title ·
-// a relay's two ends, read as `Relay from aidl to yoaida`: the sheet's Who lines carry their facts (spec §9.9)
+// the head's h2 content: read as `Decision from harbor`; the session's account, directory and id ride its title ·
+// a relay's two ends, read as `Relay from quartz to meadow`: the sheet's Who lines carry their facts (spec §9.9)
 function LetterheadQ({ item, copies = [item], kind, note = {}, names = null }) {
 	const { Badge } = window.UI;
 	const { session } = item;
@@ -2467,7 +2490,7 @@ function LetterheadQ({ item, copies = [item], kind, note = {}, names = null }) {
 	}
 	const where = [session.profileLabel, session.cwd, session.id].filter(Boolean).join(" · ");
 	return (
-		<span className="queue-letter">
+		<span className={`queue-letter${note.idPrefix !== undefined ? " has-id" : ""}`}>
 			<Badge fill="tag">{kind}</Badge>
 			<span className="sr-only">{" from "}</span>
 			<span className="queue-letter-name" title={where}>
@@ -2483,7 +2506,7 @@ function LetterheadQ({ item, copies = [item], kind, note = {}, names = null }) {
 // a relay's two ends, sent or refused: each `who` its name, the page's mark, then its id where the page's names hold one
 function RelayLetterheadQ({ kind, from, to }) {
 	return (
-		<span className="queue-letter">
+		<span className={`queue-letter${from.idPrefix !== undefined || to.idPrefix !== undefined ? " has-id" : ""}`}>
 			<window.UI.Badge fill="tag">{kind}</window.UI.Badge>
 			<span className="sr-only">{" from "}</span>
 			<span className="queue-letter-name">
@@ -2743,7 +2766,7 @@ function ScanFactsQ({ item, read, isPending = false }) {
 	const rows = [
 		isHeld && ["File", <MachineString>{request.path}</MachineString>],
 		isHeld && ["Rule", <><MachineString>{request.rule}</MachineString>{SCAN_Q.RULE[request.rule] && <span className="text-dim">{` ${SCAN_Q.RULE[request.rule]}`}</span>}</>],
-		["Session", <><span className="font-semibold">{item.session.name}</span>{" "}<MachineString>{item.session.id}</MachineString></>],
+		["Session", <><MachineString>{item.session.id}</MachineString>{" "}<span className="font-semibold">{item.session.name}</span></>],
 		isHeld && ["Agent", request.agentType ? <MachineString>{request.agentType}</MachineString> : "Main session"],
 		facts.requestId && ["Request", <MachineString>{facts.requestId}</MachineString>],
 		["Approval", isPending ? getApprovalWindowQ(item.body) : `Once, until ${window.UI.formatKstTime(facts.expiresAt)}`],
@@ -2835,7 +2858,7 @@ function RelayWhoQ({ sender, copies, rails = [], isDone = false }) {
 				<React.Fragment key={copy.id}>
 					<span className="queue-label">{index === 0 ? "To" : ""}</span>
 					<span className="queue-relay-to">
-						<span><span className="font-semibold">{copy.session.name}</span>{" · "}<MachineString>{copy.session.sessionIdPrefix}</MachineString>{" "}<MachineString>{`#${copy.id}`}</MachineString>{" · "}</span>
+						<span><span className="font-semibold">{copy.session.name}</span>{" · "}<MachineString>{copy.session.sessionIdPrefix}</MachineString>{" "}<MachineString>{getItemNumberQ(copy)}</MachineString>{" · "}</span>
 						<span className="queue-relay-place" title={getSessionPlaceQ(copy.session)}>{getSessionPlaceQ(copy.session)}</span>
 						<span>
 							{" · "}<RecipientStateQ mark={getRecipientMarkQ(copy, rails)} />
@@ -3062,7 +3085,7 @@ function SheetFootQ({ item, draft, queue, isBusy, error }) {
 	if (item.status === "open" && item.kind === "report") return <ReportComposerQ item={item} draft={draft} queue={queue} isBusy={isBusy} error={error} />;
 	const label = item.kind === "decision" ? "Resend answer" : "Resend";
 	const buttons = item.canResend ? [{ label, onPress: () => queue.send(item.id, "resend") }] : [];
-	return <ComposerQ buttons={buttons} isBusy={isBusy} note={error ? <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ> : null} />;
+	return <ComposerQ buttons={buttons} isBusy={isBusy} isInSheet note={error ? <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ> : null} />;
 }
 
 // the report's tray on the box, its lines on a tray line of their own → the note line keeps the answer's words (spec §6 → Foot lines)
@@ -3070,7 +3093,7 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 	const fieldId = `queue-text-${item.id}`;
 	const box = getDraftBoxQ(queue, item.id, draft, "imageError");
 	const { zone, tray } = useTrayZoneQ(fieldId, box, "answer");
-	const lines = getDecisionLinesQ(item, draft, item.isFreeTextAllowed ? tray : null, fieldId);
+	const lines = getDecisionLinesQ(item, draft, item.isFreeTextAllowed ? tray : null, fieldId, usePhoneQ());
 	const resend = item.canResend ? [{ label: "Resend", onPress: () => queue.send(item.id, "resend") }] : [];
 	const rest = <>{`${draft.code ? `${draft.code} picked` : "No option picked"}. Goes to `}<window.UI.NoWrap>{item.session.name}</window.UI.NoWrap>{"."}</>;
 	return (
@@ -3078,17 +3101,21 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 			head={lines.head} trayNote={lines.trayNote} text={box.text} onText={box.setText} isBusy={isBusy || Boolean(draft.isWaiting)}
 			buttons={[...resend, { label: "Send answer", isInk: getAnswerBodyQ(draft) !== null, keyName: "send", describedBy: lines.approvalId, onPress: () => sendAnswerQ(queue, item, draft, box) }]}
 			note={<ComposerNoteQ error={error ?? draft.error} rest={rest} />}
-			later={{ label: "Answer later", keyName: "l", onPress: () => queue.later(item.id) }} />
+			later={{ label: "Answer later", keyName: "l", onPress: () => queue.later(item.id) }} isInSheet />
 	);
 }
 
-/** A decision's own foot lines `{ head, trayNote, approvalId, tray }`: the approval line on an approval, the tray line wherever the box takes images. */
-function getDecisionLinesQ(item, draft, tray, fieldId) {
+/**
+ * A decision's own foot lines `{ head, trayNote, approvalId, tray }`: the approval line on an approval, the tray line wherever the box takes images.
+ * @param isPhone - the tray line only while it has a line to say → no empty band between a phone's box and its note; wider, the line stays reserved
+ */
+function getDecisionLinesQ(item, draft, tray, fieldId, isPhone) {
 	const approvalId = item.isApprovalClass ? `queue-approval-${item.id}` : undefined;
 	const reference = item.isApprovalClass && (tray?.shots.length ?? 0) > 0 ? <span className="text-dim">{REFERENCE_LINE_Q}</span> : null;
+	const hasLine = Boolean(draft.imageError) || reference !== null || (tray !== null && getImageNoteQ(tray.shots, tray.isOver) !== null);
 	return {
 		head: approvalId ? <ApprovalLineQ id={approvalId} name={item.session.name} /> : null,
-		trayNote: tray ? <ComposerNoteQ error={draft.imageError} tray={tray} fieldId={fieldId} rest={reference} /> : null,
+		trayNote: tray && (hasLine || !isPhone) ? <ComposerNoteQ error={draft.imageError} tray={tray} fieldId={fieldId} rest={reference} /> : null,
 		approvalId,
 		tray,
 	};
@@ -3130,7 +3157,7 @@ function ReportComposerQ({ item, draft, queue, isBusy, error }) {
 			text={box.text} onText={box.setText} isBusy={isBusy || Boolean(draft.isWaiting)}
 			buttons={[{ label: "Mark as read", isInk: !hasContent, keyName: "e", onPress: markRead }, ...order]}
 			note={<ComposerNoteQ error={error ?? draft.error} tray={tray} fieldId={fieldId} rest={rest} />}
-			later={{ label: "Read later", keyName: "l", onPress: () => queue.later(item.id) }} />
+			later={{ label: "Read later", keyName: "l", onPress: () => queue.later(item.id) }} isInSheet />
 	);
 }
 
@@ -3162,10 +3189,10 @@ function putInvalidQ(queue, id, message, targetId) {
  * @param field - `{ id, label }` of the box; null → buttons alone
  * @param buttons - `{ label, isInk, keyName, onPress, parts, describedBy }` in order, the ink one last; `keyName` = the desk key that presses it (getDeskKeyQ): a letter, or `send` for Cmd / Ctrl + Enter;
  *   `parts` (getSendPartsQ) → the label may be cut to its row, the whole label in the button's title
- * @param later - the quiet button at the end of the note line, `{ label, keyName, onPress }`
+ * @param later - the quiet button at the end of the note line, first in the button row on a phone, `{ label, keyName, onPress }`
  * @param head - a line above the label (a decision's approval line); `trayNote` - the image lines' own line under the field row (a decision's tray line)
  */
-function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later, tray = null, zone = null, head = null, trayNote = null }) {
+function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later, tray = null, zone = null, head = null, trayNote = null, isInSheet = false }) {
 	const ink = buttons.find((button) => button.isInk);
 	// the send key presses the button keyed `send` where there is one, else the ink one
 	const keyed = buttons.find((button) => button.keyName === "send") ?? ink;
@@ -3174,27 +3201,66 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 		event.preventDefault();
 		keyed.onPress();
 	};
+	// a phone's sheet draws the button row last, later first in it (base.css) → the tree holds it there too, so focus walks the foot as drawn
+	const isRowLast = usePhoneQ() && isInSheet;
+	const row = <ComposeButtonsQ buttons={buttons} isBusy={isBusy} later={isRowLast ? later : null} />;
 	return (
 		<div className="queue-composer" {...(tray ? zone : null)}>
 			{head}
 			{field && getFieldLabelQ(field)}
 			<div className="queue-compose-row">
 				{field && <ComposeBoxQ field={field} text={text} onText={onText} onKeyDown={onKeyDown} tray={tray} />}
-				<div className="queue-compose-buttons">
-					{buttons.map((button) => (
-						<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} data-key={button.keyName} aria-disabled={isBusy || undefined} aria-describedby={button.describedBy}
-							aria-busy={(isBusy && button.isInk) || undefined} title={button.parts ? button.label : undefined} onClick={isBusy ? undefined : button.onPress}>
-							{isBusy && button.isInk ? "Sending…" : getButtonTextQ(button)}
-						</button>
-					))}
-				</div>
+				{!isRowLast && row}
 			</div>
 			{trayNote && <div className="queue-tray-line">{trayNote}</div>}
 			<div className="queue-note">
 				<div className="queue-note-text">{note}</div>
-				{later && <button type="button" className="btn ghost sm" data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>{later.label}</button>}
+				{later && !isRowLast && <LaterButtonQ later={later} isBusy={isBusy} />}
 			</div>
+			{isRowLast && row}
 		</div>
+	);
+}
+
+/** Whether the screen is base.css's phone width, followed across a resize or a turn of the device; no media query to ask (the client sandbox) → false. */
+function usePhoneQ() {
+	const [isPhone, setPhone] = useStateQ(() => getPhoneMediaQ()?.matches === true);
+	useEffectQ(() => {
+		const media = getPhoneMediaQ();
+		if (!media) return undefined;
+		const onChange = () => setPhone(media.matches);
+		media.addEventListener("change", onChange);
+		return () => media.removeEventListener("change", onChange);
+	}, []);
+	return isPhone;
+}
+
+function getPhoneMediaQ() {
+	return typeof window.matchMedia === "function" ? window.matchMedia(`(max-width: ${PHONE_Q.BELOW_PX}px)`) : null;
+}
+
+function ComposeButtonsQ({ buttons, isBusy, later }) {
+	return (
+		<div className="queue-compose-buttons">
+			{later && <LaterButtonQ later={later} isBusy={isBusy} isInRow />}
+			{buttons.map((button) => (
+				<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} data-key={button.keyName} aria-disabled={isBusy || undefined} aria-describedby={button.describedBy}
+					aria-busy={(isBusy && button.isInk) || undefined} title={button.parts ? button.label : undefined} onClick={isBusy ? undefined : button.onPress}>
+					{isBusy && button.isInk ? "Sending…" : getButtonTextQ(button)}
+				</button>
+			))}
+		</div>
+	);
+}
+
+// the note line's end in words; first in a phone sheet's button row as the clock glyph, named and titled by its words → the commits keep one row at 360
+function LaterButtonQ({ later, isBusy, isInRow = false }) {
+	if (!isInRow) return <button type="button" className="btn ghost sm queue-later" data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>{later.label}</button>;
+	const { Icon } = window.UI;
+	return (
+		<button type="button" className="btn ghost icon queue-later" aria-label={later.label} title={`${later.label} (L)`} data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>
+			<Icon name="clock" size={16} />
+		</button>
 	);
 }
 
@@ -3892,7 +3958,7 @@ function useRecipientsNoteQ(targets, box, isReady) {
 	return [note, setNote];
 }
 
-// `New order to gersona, yoaida` — every name, an ended, not reachable or next-turn one with its bare mark after it, the comma after the mark; none → said in dim (spec §9.2 → Label line)
+// `New order to harbor, meadow` — every name, an ended, not reachable or next-turn one with its bare mark after it, the comma after the mark; none → said in dim (spec §9.2 → Label line)
 function OrderLabelQ({ rows }) {
 	if (rows.length === 0) return <>New order · no session ticked</>;
 	return (
@@ -4358,7 +4424,7 @@ function RefusedWhoQ({ refusal, names }) {
 	);
 }
 
-// `yoaida · 5e55a000`, or the bare id no loaded session names: the line draws the id once, so the name adds none
+// `meadow · 5e55a000`, or the bare id no loaded session names: the line draws the id once, so the name adds none
 function SessionPrefixQ({ prefix, names }) {
 	const who = names.get(prefix);
 	return <>{who !== undefined && <><WhoNameQ who={who} className="font-semibold" />{" · "}</>}<window.UI.MachineString>{prefix}</window.UI.MachineString></>;
@@ -4370,7 +4436,7 @@ function getUnresolvedTextQ(count) {
 
 /**
  * Only a relay passed on (hop 1 or 2): one short line, `Hop 1 · passed on from #398 · atrium (self-named) · 17:02`, so a time never wraps alone;
- * spec §12.7's sentence (`Hop 1 · sent after aidl (self-named) received relay #398 from atrium (self-named) at 17:02`) in its title and to a reader.
+ * spec §12.7's sentence (`Hop 1 · sent after quartz (self-named) received relay #398 from atrium (self-named) at 17:02`) in its title and to a reader.
  */
 function RelayHopLineQ({ relay, at }) {
 	const { MachineString } = window.UI;

@@ -141,6 +141,22 @@ describe("card header", () => {
     });
   }
 
+  // the mark qualifies the card's content → it leads the right group, so ⓘ stays beside the actions
+  describe("a head mark is the first item of the right group", () => {
+    const mark = React.createElement("span", null, "1 file not readable");
+    const link = React.createElement("a", { href: "#cost" }, "Cost & usage");
+    const rows = [
+      { name: "beside the info trigger and an action, it comes before both", props: { mark, info: "Counted once per model.", right: link }, expected: ["span", "button", "a"] },
+      { name: "with neither, it still draws", props: { mark }, expected: ["span"] },
+    ];
+    for (const row of rows) {
+      test(row.name, () => {
+        const [group] = findNodes(headOf({ title: "Agent models", ...row.props }), (n) => classesOf(n).includes("ml-auto"));
+        assert.deepEqual(findNodes(group, (n) => ["span", "button", "a"].includes(String(n.type))).map((n) => n.type), row.expected);
+      });
+    }
+  });
+
   test("a header with no info renders no trigger", () => {
     assert.equal(findNodes(headOf({ title: "Spend by model" }), (n) => n.type === "button").length, 0);
   });

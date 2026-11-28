@@ -326,7 +326,7 @@ function RemoteBanner() {
 			.then((state) => setAct({ pending: null, failed: null, state }))
 			.catch(() => setAct({ pending: null, failed: name, state: "open" }));
 	};
-	const barClass = "remote-banner flex items-center gap-control px-6 py-2 border-b border-line bg-sunken";
+	const barClass = "remote-banner flex items-center gap-control border-b border-line bg-sunken";
 	if (act.state === "closed") {
 		return (
 			<aside aria-label="Remote access" role="status" className={barClass} style={META_TEXT_STYLE}>
@@ -337,7 +337,9 @@ function RemoteBanner() {
 	return (
 		<aside aria-label="Remote access" className={barClass} style={META_TEXT_STYLE}>
 			<Icon name="smartphone" size={14} className="text-dim" />
-			<span className="text-dim">Remote device{label ? ` · ${label}` : ""}</span>
+			<span className="text-dim remote-banner-device" title={label || undefined}>
+				<span className="remote-banner-kind">{label ? "Remote device · " : "Remote device"}</span>{label}
+			</span>
 			{act.failed !== null && (
 				<span role="alert" className="text-dim">
 					<span className="text-crit" aria-hidden="true">{TONE_GLYPH.crit}</span> {REMOTE_ACT_COPY[act.failed].failed}
@@ -352,6 +354,22 @@ function RemoteBanner() {
 			))}
 		</aside>
 	);
+}
+
+// a screen that throws while rendering → only the screen area falls back, in fixed words; the error never reaches the page
+class ScreenBoundary extends React.Component {
+	state = { hasFailed: false };
+
+	static getDerivedStateFromError() {
+		return { hasFailed: true };
+	}
+
+	render() {
+		if (!this.state.hasFailed) return this.props.children;
+		const { EmptyState } = window.UI;
+		const reload = <button type="button" className="btn sm" onClick={() => window.location.reload()}>Reload</button>;
+		return <EmptyState message="This screen could not be shown." action={reload} />;
+	}
 }
 
 function App() {
@@ -517,12 +535,15 @@ function App() {
 			<div className="flex-1 min-w-0 flex flex-col">
 				{IS_REMOTE_PAGE && <RemoteBanner />}
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-page flex flex-col min-h-0">
-					{Screen ? (
-						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} onReadQueueCount={readQueueCount}
-							onOpenMenu={() => setMenuOpen(true)} />
-					) : (
-						<div className="placeholder">Coming soon — '{active}'</div>
-					)}
+					{/* keyed by route → a route change starts the boundary fresh */}
+					<ScreenBoundary key={active}>
+						{Screen ? (
+							<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} onReadQueueCount={readQueueCount}
+								onOpenMenu={() => setMenuOpen(true)} />
+						) : (
+							<div className="placeholder">Coming soon — '{active}'</div>
+						)}
+					</ScreenBoundary>
 				</main>
 			</div>
 			<TweaksUI tweaks={tweaks} setTweak={setTweak} />

@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, type Browser, type LaunchOptions, type Page } from "playwright";
 
 const INDEX_HTML = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "public", "index.html");
 
@@ -13,9 +13,9 @@ const FONT_ARGS = ["--font-render-hinting=none"];
 
 const HOUSE_FACE_URL = getHouseFaceUrl();
 
-/** A headless chromium that sets text with the font's own advances on every host. */
-export function createBrowser(): Promise<Browser> {
-  return chromium.launch({ headless: true, args: FONT_ARGS });
+/** A headless chromium that sets text with the font's own advances on every host; `options` adds to the launch, its `args` after the font's. */
+export function createBrowser(options: LaunchOptions = {}): Promise<Browser> {
+  return chromium.launch({ headless: true, ...options, args: [...FONT_ARGS, ...(options.args ?? [])] });
 }
 
 /** Links the app's house face into a hand-built page and resolves once every face its laid-out text uses has loaded. */
