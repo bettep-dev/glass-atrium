@@ -531,8 +531,7 @@ describe("the Queue page on a phone", () => {
     });
   });
 
-  // every view and every sheet states once, under its head, that names are unchecked — the rail the full sentence, every other view and every sheet the short one
-  // design note G3.6: what a glyph can say is a glyph on the phone, its words its name and tooltip; statements, the self mark and tags keep their words
+  // what a glyph can say is a glyph on the phone, its words its name and tooltip; statements, the self mark and tags keep their words
   describe("draws a glyph for each control a glyph can say, named and titled by its words", () => {
     const ACCOUNT = { name: /^Account: / };
     const PLACES = [
@@ -583,29 +582,42 @@ describe("the Queue page on a phone", () => {
       });
     }
 
-    test("an applied account draws its word beside the glyph, and picking All puts the glyph back alone", async () => {
-      harness.fixture = getTwoAccountFixture();
-      const page = await openShellPage(harness, PHONE, `queue?profile=${SECOND_ACCOUNT}`);
-      await page.getByText(getRestReadyText()).first().waitFor({ timeout: READY_TIMEOUT_MS });
-      const getAccount = () => page.locator(".queue-list > .card-head").getByRole("button", ACCOUNT).evaluate((node) => {
-        const box = node.getBoundingClientRect();
-        return { name: node.getAttribute("aria-label"), title: (node as HTMLElement).title, words: (node as HTMLElement).innerText.trim(), width: Math.round(box.width), height: Math.round(box.height) };
-      });
-      const applied = await getAccount();
-      await page.locator(".queue-list > .card-head").getByRole("button", ACCOUNT).tap();
-      await page.getByRole("menuitemradio", { name: "All" }).tap();
-      await page.locator(".queue-list > .card-head").getByRole("button", { name: "Account: All" }).waitFor();
-      const reset = await getAccount();
-      await page.close();
+    for (const viewport of PHONES) {
+      test(`at ${viewport.width} an applied account draws its word beside the glyph, picking All puts the glyph back alone, and its menu opens inside the screen from either`, async () => {
+        harness.fixture = getTwoAccountFixture();
+        const page = await openShellPage(harness, viewport, `queue?profile=${SECOND_ACCOUNT}`);
+        await page.getByText(getRestReadyText()).first().waitFor({ timeout: READY_TIMEOUT_MS });
+        const getAccount = () => page.locator(".queue-list > .card-head").getByRole("button", ACCOUNT).evaluate((node) => {
+          const box = node.getBoundingClientRect();
+          return { name: node.getAttribute("aria-label"), title: (node as HTMLElement).title, words: (node as HTMLElement).innerText.trim(), width: Math.round(box.width), height: Math.round(box.height) };
+        });
+        // the menu opened from the trigger as it stands: wide with its word, or the bare glyph at the head's end
+        const getMenuInside = async () => {
+          await page.locator(".queue-list > .card-head").getByRole("button", ACCOUNT).tap();
+          return page.getByRole("menu", { name: "Account" }).evaluate((node) => {
+            const box = node.getBoundingClientRect();
+            return box.left >= 0 && box.top >= 0 && box.right <= window.innerWidth && box.bottom <= window.innerHeight;
+          });
+        };
+        const applied = await getAccount();
+        const isMenuInside = [await getMenuInside()];
+        await page.getByRole("menuitemradio", { name: "All" }).tap();
+        await page.locator(".queue-list > .card-head").getByRole("button", { name: "Account: All" }).waitFor();
+        const reset = await getAccount();
+        isMenuInside.push(await getMenuInside());
+        await page.close();
 
-      const name = `Account: ${SECOND_ACCOUNT}`;
-      assert.deepEqual({ applied: { ...applied, width: applied.width > 44 }, reset }, {
-        applied: { name, title: name, words: SECOND_ACCOUNT, width: true, height: 44 },
-        reset: { name: "Account: All", title: "Account: All", words: "", width: 44, height: 44 },
+        const name = `Account: ${SECOND_ACCOUNT}`;
+        assert.deepEqual({ applied: { ...applied, width: applied.width > 44 }, isMenuInside, reset }, {
+          applied: { name, title: name, words: SECOND_ACCOUNT, width: true, height: 44 },
+          isMenuInside: [true, true],
+          reset: { name: "Account: All", title: "Account: All", words: "", width: 44, height: 44 },
+        });
       });
-    });
+    }
   });
 
+  // every view and every sheet states once, under its head, that names are unchecked — the rail the full sentence, every other view and every sheet the short one
   describe("states once in each view and each sheet that names are unchecked, under its head", () => {
     const CLOSE_SHEET = ".queue-sheet-head .queue-back button";
     const PLACES = [
