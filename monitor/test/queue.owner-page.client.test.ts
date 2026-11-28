@@ -4789,17 +4789,25 @@ describe("the secret-approval card", () => {
     const facts = (agentType: string) => Object.fromEntries(factRows(renderCard(scanItem(), READY([getLine("hello")], agentType))));
     const shown = facts("glass-atrium-dev-front");
     assert.deepEqual(shown, {
-      File: SCAN_PATH, Rule: "SEC-013 credential assignment", Session: `glass-atrium ${SESSION_ID}`, Agent: "glass-atrium-dev-front", Request: REQUEST_ID,
+      File: SCAN_PATH, Rule: "SEC-013 credential assignment", Session: `${SESSION_ID} glass-atrium`, Agent: "glass-atrium-dev-front", Request: REQUEST_ID,
       Approval: "Once, within 10 minutes of your yes", Waits: `Until ${call<string>("getEndTimeQ", FAR)}`,
     });
     assert.deepEqual([Object.values(shown).some((value) => String(value).includes("…")), facts("").Agent], [false, "Main session"]);
+  });
+
+  // the id tells two sessions apart, a name can repeat → the whole id leads as the row's machine string, the name after it
+  test("the Session fact draws the whole session id first, then the session name", () => {
+    const cells = findNodes(byClass(renderCard(scanItem()), "scan-facts")[0] as RenderedNode, (node) => node.type === "dt" || node.type === "dd");
+    const session = cells[cells.findIndex((cell) => textOf(cell) === "Session") + 1] as RenderedNode;
+    const [first, second] = hostChildren(session);
+    assert.deepEqual([first?.props.atom, textOf(first), textOf(second)], ["MachineString", SESSION_ID, "glass-atrium"]);
   });
 
   // the scan read answers only while the request waits → the list facts carry what an approval binds; a gone request carries none
   describe("without the scan read the facts come from the list while the store holds the request", () => {
     const UNTIL = "2099-11-26T06:04:00.000Z";
     const approved = (facts: unknown) => scanItem({ status: "answered", answeredAt: "2026-11-26T05:54:00.000Z", answer: { code: "R1", text: null }, scanApproval: facts });
-    const session = ["Session", `glass-atrium ${SESSION_ID}`];
+    const session = ["Session", `${SESSION_ID} glass-atrium`];
     const rows = [
       {
         name: "approved, window open", item: approved(getHeldFacts("approved", UNTIL)),

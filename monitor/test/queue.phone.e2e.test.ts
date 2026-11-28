@@ -1029,6 +1029,23 @@ describe("the Queue page on a phone", () => {
 
         assert.deepEqual(heads, Array.from({ length: 3 }, () => ({ isLengthBesideCue: true, isClassesBelow: true })));
       });
+
+      test(`at ${viewport.width} the Session fact starts with the whole session id and its text ends inside the screen's 16 inset`, async () => {
+        harness.fixture = getScanApprovalFixture();
+        const { session } = harness.fixture.items.find((item) => item.id === SCAN_IDS.long)!;
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        await openSheet(page, SCAN_IDS.long, LONG_SCAN_READY);
+        const fact = await page.evaluate(() => {
+          const label = [...document.querySelectorAll(".queue-sheet .scan-facts > dt")].find((dt) => dt.textContent === "Session")!;
+          const value = label.nextElementSibling as HTMLElement;
+          const range = document.createRange();
+          range.selectNodeContents(value);
+          return { first: value.firstElementChild?.matches("code.machine") ? value.firstElementChild.textContent : null, text: value.textContent, isInside: range.getBoundingClientRect().right <= document.documentElement.clientWidth - 16 };
+        });
+        await page.close();
+
+        assert.deepEqual(fact, { first: session.id, text: `${session.id} ${session.name}`, isInside: true });
+      });
     }
   });
 

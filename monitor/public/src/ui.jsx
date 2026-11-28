@@ -972,8 +972,9 @@ let cardTitleSeq = 0;
  * @param infoLabel - trigger name and drawer title
  * @param infoTitle - the trigger's tooltip; unset → no tooltip
  * @param isCompact - a viewer's thin header: the title at the control size
+ * @param mark - a warn mark about the card's content; leads the right group, before ⓘ
  */
-function CardHead({ title, sub, info, infoLabel = 'How this is counted', infoTitle, right, isCompact = false }) {
+function CardHead({ title, sub, mark, info, infoLabel = 'How this is counted', infoTitle, right, isCompact = false }) {
   const titleIdRef = useRef(null);
   if (titleIdRef.current === null) titleIdRef.current = `card-title-${++cardTitleSeq}`;
 
@@ -982,7 +983,8 @@ function CardHead({ title, sub, info, infoLabel = 'How this is counted', infoTit
       <h2 id={titleIdRef.current} className="card-title">{title}</h2>
       {sub && <span className="card-sub" title={window.UI.titleOf(sub)}>{sub}</span>}
     </div>
-    {(info || right) && <div className="ml-auto flex items-center gap-2 shrink-0">
+    {(mark || info || right) && <div className="ml-auto flex items-center gap-2 shrink-0">
+      {mark}
       {info && <CardInfo label={infoLabel} title={infoTitle} describedBy={titleIdRef.current}>{info}</CardInfo>}
       {right}
     </div>}
@@ -1021,11 +1023,11 @@ function getSlotRows(items, size = 'M') {
  * @param bar - filter bar or toolbar between the head and the body
  * @param foot - "Show all N" / "Other" / one footnote
  */
-function Card({ size, title, sub, info, infoLabel, infoTitle, right, bar, foot, isFlush = false, children, className = '' }) {
+function Card({ size, title, sub, mark, info, infoLabel, infoTitle, right, bar, foot, isFlush = false, children, className = '' }) {
   const sizeClass = CARD_SLOTS[size] ? `card--${size.toLowerCase()}` : '';
 
   return <div className={`card ${sizeClass} ${className}`.replace(/\s+/g, ' ').trim()}>
-    {title && <CardHead title={title} sub={sub} info={info} infoLabel={infoLabel} infoTitle={infoTitle} right={right} />}
+    {title && <CardHead title={title} sub={sub} mark={mark} info={info} infoLabel={infoLabel} infoTitle={infoTitle} right={right} />}
     {bar && <div className="card-bar">{bar}</div>}
     <div className={`card-body ${isFlush ? 'flush' : ''}`.trim()}>{children}</div>
     {foot && <div className="card-foot">{foot}</div>}

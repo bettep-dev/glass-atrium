@@ -1996,6 +1996,20 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(hovered.radio, rest.radio, "hover changes nothing on a closed option");
     });
 
+    test("at 1440 the Session fact holds the whole session id, then the name, on one line", async () => {
+      const page = await openScanPage(VIEWPORTS[0]);
+      const { session } = harness.fixture.items.find((item) => item.id === SCAN_IDS.one)!;
+      await openScanSheet(page, SCAN_IDS.one, "The line assigns a literal value.");
+      const fact = await page.evaluate(() => {
+        const label = [...document.querySelectorAll(".queue-sheet .scan-facts > dt")].find((dt) => dt.textContent === "Session")!;
+        const value = label.nextElementSibling as HTMLElement;
+        return { first: value.firstElementChild?.textContent, text: value.textContent, isOneLine: value.getBoundingClientRect().height <= parseFloat(getComputedStyle(value).lineHeight) + 0.5 };
+      });
+      await page.close();
+
+      assert.deepEqual(fact, { first: session.id, text: `${session.id} ${session.name}`, isOneLine: true });
+    });
+
     test("the warning line sits 24 under the facts and 12 above the Options heading", async () => {
       const page = await openScanPage(MIN_WINDOW);
       await openScanSheet(page, SCAN_IDS.one, "The line assigns a literal value.");

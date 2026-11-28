@@ -336,10 +336,14 @@ for (const width of [1280, 1568]) {
       const layout = await page.evaluate(() => {
         const agent = document.querySelector("#mc-models .card")!.getBoundingClientRect();
         const split = document.querySelector(".split-row")!.getBoundingClientRect();
-        const link = [...document.querySelectorAll("#mc-models .card-head a")].find((a) => a.textContent?.includes("Cost"))!;
-        const markRight = link.previousElementSibling!.getBoundingClientRect().right;
-        const groupGap = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--gap-control-group"));
-        return { agentWidth: agent.width, splitWidth: split.width, agentBottom: agent.bottom, splitTop: split.top, markGap: link.getBoundingClientRect().left - markRight, groupGap };
+        const head = document.querySelector("#mc-models .card-head")!;
+        const link = [...head.querySelectorAll("a")].find((a) => a.textContent?.includes("Cost"))!;
+        const info = head.querySelector("button[aria-haspopup=dialog]")!;
+        const marks = [...head.querySelectorAll("span")].filter((span) => span.textContent === "1 file not readable");
+        const [markBox, infoBox, linkBox] = [marks[0], info, link].map((node) => node?.getBoundingClientRect());
+        // drawn head items whose box lies between ⓘ and the link
+        const between = [...head.querySelectorAll("*")].filter((node) => node.getClientRects().length > 0 && node.getBoundingClientRect().left > infoBox!.right && node.getBoundingClientRect().right < linkBox!.left && !node.contains(link));
+        return { agentWidth: agent.width, splitWidth: split.width, agentBottom: agent.bottom, splitTop: split.top, headOrder: { marks: marks.length, isMarkFirst: markBox !== undefined && markBox.left < infoBox!.left && infoBox!.left < linkBox!.left, between: between.length } };
       });
       const before = await readRows();
       // the role cell of the first agent with a box — the unreadable file sorts first and has none
@@ -350,7 +354,7 @@ for (const width of [1280, 1568]) {
       assert.ok(Math.abs(layout.agentWidth - layout.splitWidth) <= 1, `${width}px: agent card ${layout.agentWidth} vs split row ${layout.splitWidth}`);
       assert.ok(layout.agentBottom <= layout.splitTop, `${width}px: the agent card ends above the split row`);
       assert.deepStrictEqual(after, before, `${width}px: ticking a row moved the rows`);
-      assert.ok(Math.abs(layout.markGap - layout.groupGap) <= 1, `${width}px: the head mark sits ${layout.markGap} from Cost & usage, the group gap is ${layout.groupGap}`);
+      assert.deepStrictEqual(layout.headOrder, { marks: 1, isMarkFirst: true, between: 0 }, `${width}px: the head reads the mark, then ⓘ, then Cost & usage`);
     } finally {
       await browser.close();
       await app.close();

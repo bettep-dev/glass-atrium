@@ -2757,7 +2757,7 @@ function ScanFactsQ({ item, read, isPending = false }) {
 	const rows = [
 		isHeld && ["File", <MachineString>{request.path}</MachineString>],
 		isHeld && ["Rule", <><MachineString>{request.rule}</MachineString>{SCAN_Q.RULE[request.rule] && <span className="text-dim">{` ${SCAN_Q.RULE[request.rule]}`}</span>}</>],
-		["Session", <><span className="font-semibold">{item.session.name}</span>{" "}<MachineString>{item.session.id}</MachineString></>],
+		["Session", <><MachineString>{item.session.id}</MachineString>{" "}<span className="font-semibold">{item.session.name}</span></>],
 		isHeld && ["Agent", request.agentType ? <MachineString>{request.agentType}</MachineString> : "Main session"],
 		facts.requestId && ["Request", <MachineString>{facts.requestId}</MachineString>],
 		["Approval", isPending ? getApprovalWindowQ(item.body) : `Once, until ${window.UI.formatKstTime(facts.expiresAt)}`],
