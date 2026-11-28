@@ -15,7 +15,7 @@ import {
   closeHarness, getImageFile, getRestReadyText, getSelfNamedFixture, type Harness, MIN_WINDOW, openHarness, openQueuePage, openShellPage, READY_TIMEOUT_MS, setFiles, tickSessions, type Viewport, waitForDoneBands,
 } from "./lib/queue-render-harness.js";
 import {
-  EDGE_IDS, EDGE_SESSION_IDS, getAnswerNotReceivedFixture, getEdgeFixture, getOffViewFixture, getProseFixture, getRelayListFixture, getRelayRowFixture, getRelayThreadFixture, getRestFixture, getScanApprovalFixture, type QueueFixture, RELAY_ROW_IDS, SCAN_IDS, SCAN_MARK_POINTS,
+  EDGE_IDS, EDGE_SESSION_IDS, getAnswerNotReceivedFixture, getArrivalFixture, getEdgeFixture, getOffViewFixture, getProseFixture, getRelayListFixture, getRelayRowFixture, getRelayThreadFixture, getRestFixture, getScanApprovalFixture, type QueueFixture, RELAY_ROW_IDS, SCAN_IDS, SCAN_MARK_POINTS,
 } from "./lib/queue-render-fixtures.js";
 
 const PHONES: Viewport[] = [{ width: 360, height: 740, isMobile: true }, { width: 412, height: 915, isMobile: true }];
@@ -343,22 +343,28 @@ describe("the Queue page on a phone", () => {
     const STATUS = ".queue-screen .page-head [role=status]";
 
     for (const viewport of PHONES) {
-      test(`at ${viewport.width} the remote banner is one 45 line: the device label in it, both acts 44 tall on one top, nothing past the screen`, async () => {
+      // each act drawn 32 with 6 of air above and below; its tap still reaches the banner's top and bottom
+      test(`at ${viewport.width} the remote banner is one 45 line: the device label in it, both acts drawn 32 at 6 from its top and taking a tap at its top and bottom, nothing past the screen`, async () => {
         const page = await openRemoteQueuePage(viewport);
         const banner = page.getByRole("complementary", { name: "Remote access" });
         const facts = await banner.evaluate((node) => {
-          const acts = [...node.querySelectorAll("button")].map((button) => button.getBoundingClientRect());
+          const bar = node.getBoundingClientRect();
+          const acts = [...node.querySelectorAll("button")].map((button) => {
+            const box = button.getBoundingClientRect();
+            const isHit = (y: number) => document.elementFromPoint(box.left + box.width / 2, y)?.closest("button") === button;
+            return { height: Math.round(box.height), air: Math.round(box.top - bar.top), isTapped: [isHit(bar.top + 1), isHit(bar.bottom - 2)] };
+          });
           return {
-            height: Math.round(node.getBoundingClientRect().height),
-            acts: acts.map((box) => box.height),
-            isOneTop: Math.max(...acts.map((box) => box.top)) - Math.min(...acts.map((box) => box.top)) <= 1,
+            height: Math.round(bar.height),
+            acts,
             isInside: [...node.querySelectorAll("*")].every((child) => child.getBoundingClientRect().right <= window.innerWidth + 0.5),
           };
         });
         const tree = await banner.ariaSnapshot();
         await page.close();
 
-        assert.deepEqual({ ...facts, isNamed: tree.includes(`Remote device · ${DEVICE_LABEL}`) }, { height: 45, acts: [44, 44], isOneTop: true, isInside: true, isNamed: true });
+        const act = { height: 32, air: 6, isTapped: [true, true] };
+        assert.deepEqual({ ...facts, isNamed: tree.includes(`Remote device · ${DEVICE_LABEL}`) }, { height: 45, acts: [act, act], isInside: true, isNamed: true });
       });
 
       // the owner's case: the Account filter in the list head, so the bar under it is the statement's line alone
@@ -771,6 +777,38 @@ describe("the Queue page on a phone", () => {
       await page.close();
 
       assert.deepEqual({ isScrolling: widths.isScrolling, bar: widths.offset - widths.client }, { isScrolling: true, bar: 10 });
+    });
+  });
+
+  describe("draws the list's foot band only while it holds a line", () => {
+    const getFoot = (page: Page) => page.evaluate(() => {
+      const [foot, body] = [".queue-list > .card-foot", ".queue-list > .card-body"].map((selector) => document.querySelector(selector)!.getBoundingClientRect());
+      return { foot: Math.round(foot!.height), isBodyToBottom: Math.abs(body!.bottom - window.innerHeight) <= 1, hasStatus: document.querySelector('.queue-list > .card-foot [role="status"]') !== null };
+    });
+
+    for (const viewport of PHONES) {
+      test(`at ${viewport.width} the empty foot takes no height, the list running to the screen's bottom with the status node kept, and a status line brings the 40 band back`, async () => {
+        const page = await openQueuePage(harness, viewport, getRestReadyText(), true);
+        try {
+          const atRest = await getFoot(page);
+          harness.fixture = getArrivalFixture();
+          await page.clock.fastForward(15_000);
+          await page.locator(".queue-list .queue-status").filter({ hasText: "New report" }).waitFor({ timeout: READY_TIMEOUT_MS });
+          const said = await getFoot(page);
+
+          assert.deepEqual({ atRest, said: said.foot }, { atRest: { foot: 0, isBodyToBottom: true, hasStatus: true }, said: 40 });
+        } finally {
+          await page.close();
+        }
+      });
+    }
+
+    test("at 1440 the empty foot keeps its 40 band", async () => {
+      const page = await openQueuePage(harness, WIDE_WINDOW, getRestReadyText());
+      const { foot } = await getFoot(page);
+      await page.close();
+
+      assert.equal(foot, 40);
     });
   });
 

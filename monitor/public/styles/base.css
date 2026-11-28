@@ -526,7 +526,7 @@ label.ctl-checkbox-hit {
 @media (min-width: 2560px) {
 	.queue-desk { --queue-rail-w: 280px; }
 }
-/* the remote page's banner (app.jsx → RemoteBanner); here, not in utilities, so the phone's one 44 line can take its padding back */
+/* the remote page's banner (app.jsx → RemoteBanner); here, not in utilities, so the phone's one 45 line can set its own padding */
 .remote-banner {
 	padding: var(--space-2) var(--space-6);
 }
@@ -630,11 +630,11 @@ label.ctl-checkbox-hit {
 		border-inline-width: 0;
 		border-block-end-width: 0;
 	}
-	/* one 44 line: the device label gives way and ellipsizes (whole in its title), the two acts keep their words; beside a failure alert
-	   the acts drop under it, the spacer's own row gap taken back */
+	/* one 45 line, the two 32 acts with 6 of air above and below: the device label gives way and ellipsizes (whole in its title), the acts
+	   keep their words; beside a failure alert the acts drop under it, the spacer's own row gap taken back */
 	.remote-banner {
 		flex-wrap: nowrap;
-		padding-block: 0;
+		padding-block: var(--space-1_5);
 		padding-inline: var(--gap-page);
 	}
 	.remote-banner:has(> [role="alert"]) {
@@ -648,8 +648,14 @@ label.ctl-checkbox-hit {
 		flex: none;
 	}
 	.remote-banner > .btn {
-		min-height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+		position: relative;
 		white-space: nowrap;
+	}
+	/* the tap 44: the drawn 32 (its edge inline, TURN_OFF_STYLE) reaches over the 6 of air each side; the press tint stays on the 32 */
+	.remote-banner > .btn::after {
+		content: "";
+		position: absolute;
+		inset: calc(-1 * (var(--space-1_5) + 1px)) 0;
 	}
 	.remote-banner-device {
 		min-width: 0;
@@ -686,6 +692,11 @@ label.ctl-checkbox-hit {
 	:is(.queue-list, .queue-sessions, .queue-orders-card) > .card-head {
 		min-height: calc(var(--ctl-min-h) + 2 * var(--space-1_5) + 1px);
 		padding-block: 0;
+	}
+	/* the list's foot takes height only while it holds a line; the empty status node stays mounted → its next line is still announced */
+	.queue-list > .card-foot:has(.queue-status:empty):not(:has(.queue-status-new)) {
+		min-height: 0;
+		border-top-width: 0;
 	}
 }
 /* the Sessions rail (spec §9.1): the All sessions band, a row per session, each one 44 line on fixed columns — box · state mark ·
