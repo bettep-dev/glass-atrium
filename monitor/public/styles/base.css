@@ -1536,6 +1536,18 @@ label.ctl-checkbox-hit {
 			order: 1;
 			flex-basis: 100%;
 		}
+		/* an ordinary head on the 1280 sheet gives up the position text before the name; the position is still read */
+		.queue-sheet-head:not(:has(.queue-letter.has-id)) > .queue-steps > .tabular-nums {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip: rect(0 0 0 0);
+			white-space: nowrap;
+		}
+		.queue-sheet-head:not(:has(.queue-letter.has-id)) > .queue-back {
+			margin-inline-end: 0;
+		}
 	}
 }
 .queue-date-facts {
