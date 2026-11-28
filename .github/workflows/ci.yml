@@ -112,9 +112,10 @@ jobs:
   # monitor's db:generate:offline script (shared with local lanes) produces it
   # with placeholder connection values. This keeps the fast-gate service-free.
   # Sequence is load-bearing:
-  #   npm ci  →  npm run db:generate:offline  →  npm run typecheck
+  #   npm ci  →  npm run db:generate:offline  →  typecheck  →  typecheck:test
   # npm ci first so the prisma CLI + generated-client deps exist; generate lands
-  # the client at src/generated/prisma; then tsc consumes it.
+  # the client at src/generated/prisma; then tsc consumes it. Both programs run
+  # here once, so no test-monitor shard repeats them.
   # ---------------------------------------------------------------------------
   gate-typecheck:
     name: "gate: monitor typecheck (no DB)"
@@ -144,6 +145,12 @@ jobs:
       - name: Typecheck
         working-directory: monitor
         run: npm run typecheck
+
+      # Separate program (tsconfig.test.json) — tsconfig.json includes src/**/* only,
+      # so the step above never reads a single test file.
+      - name: Typecheck (tests)
+        working-directory: monitor
+        run: npm run typecheck:test
 
   # ---------------------------------------------------------------------------
   # Installer read-only preflight. `glass-atrium doctor` is mutation-free: it
@@ -865,22 +872,38 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
   # ---------------------------------------------------------------------------
-  # Monitor: typecheck + node:test. Both need a LIVE peer-auth Postgres on the
-  # /tmp socket (Prisma $queryRaw oracles) AND real chromium (browser-pool /
-  # html/pdf export tests use Playwright with no mock — see browser-pool.ts).
-  # This is the ONLY stage-2 job that provisions Postgres + chromium.
-  # oss-db-setup.sh runs `npm ci` + renders .env + createdb (main + shadow) +
-  # `prisma generate` + `prisma migrate deploy`, so the full DB path lives here
-  # (the fast-gate typecheck job runs only the offline generate).
+  # Monitor: node:test. It needs a LIVE peer-auth Postgres on the /tmp socket
+  # (Prisma $queryRaw oracles) AND real chromium (browser-pool / html/pdf export
+  # tests use Playwright with no mock — see browser-pool.ts). This is the ONLY
+  # stage-2 job that provisions Postgres + chromium; both typechecks run once in
+  # gate-typecheck. oss-db-setup.sh runs `npm ci` + renders .env + createdb
+  # (main + shadow) + `prisma generate` + `prisma migrate deploy`, so the full DB
+  # path lives here (the fast-gate typecheck job runs only the offline generate).
+  #
+  # Sharded across a matrix, each leg on its own runner with its own Postgres +
+  # chromium: node:test's --test-shard keeps every test/*.test.ts file in exactly
+  # one leg by construction, so no hand-kept file list can drop a file. The shard
+  # total is strategy.job-total, so the leg count is the matrix list's length
+  # alone, and the job index picks the leg's part. An unsharded run is bound by
+  # its slowest browser files contending for one runner (the Queue captures file
+  # is the floor); the legs spread them apart.
+  # A matrix job is a SINGLE node in the `needs` graph, so ci-pass and test-e2e
+  # observe every leg through `test-monitor`.
   # ---------------------------------------------------------------------------
   test-monitor:
-    name: "test: monitor typecheck + tests (test-only DB)"
+    name: "test: monitor tests (test-only DB, shard ${{ matrix.shard }}/${{ strategy.job-total }})"
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
     needs: [gate-lint, gate-typecheck, gate-doctor, detect-changes]
     if: needs.detect-changes.outputs.monitor == 'true'
+    strategy:
+      # fail-fast:false so a red leg does NOT cancel the others — each leg
+      # reports independently and ci-pass still observes the aggregate result.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7]
     steps:
       # STAGED egress hardening. AUDIT mode only — it INSTRUMENTS (never blocks)
       # outbound network so a first real CI run produces a StepSecurity egress
@@ -944,22 +967,17 @@ jobs:
           # the peer-auth role always matches the runner's actual OS user.
           echo "MONITOR_TEST_DATABASE_URL=$TEST_DB_URL" >>"$GITHUB_ENV"
 
-      - name: Typecheck (src)
-        working-directory: monitor
-        run: npm run typecheck
-
-      # Separate program (tsconfig.test.json) — tsconfig.json includes src/**/* only,
-      # so the step above never reads a single test file.
-      - name: Typecheck (tests)
-        working-directory: monitor
-        run: npm run typecheck:test
-
       # MONITOR_TEST_DATABASE_URL (published into GITHUB_ENV by the create step) is the
       # only sanctioned way to point the suite at a database; test/lib/select-test-db.ts
       # fails the run loudly when it is absent rather than falling through to .env.
-      - name: Test (node:test via tsx, test-only DB + chromium)
+      # NODE_OPTIONS, not `npm test -- --test-shard`: node reads no option after the
+      # file list, so that form would run the whole suite on every leg.
+      - name: Test (node:test via tsx, test-only DB + chromium, shard ${{ matrix.shard }})
         working-directory: monitor
-        run: npm test
+        env:
+          SHARD_INDEX: ${{ strategy.job-index }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
+        run: NODE_OPTIONS="--test-shard=$((SHARD_INDEX + 1))/${SHARD_TOTAL}" npm test
 
   # ---------------------------------------------------------------------------
   # macOS install path. install.sh is macOS-ONLY by hard gate (preflight kills a
