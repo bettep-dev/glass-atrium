@@ -75,7 +75,7 @@ interface CloseUpState extends QueueState {
 
 const NOTE_TEXT = "R2로 가되, 비교 평가 결과는 다음 보고에 붙여 주세요.";
 const REPLY_TEXT = "README 안내까지 끝나면 PR 병합 단계로 넘어가 주세요.";
-export const ORDER_TO = ["gersona", "yoaida"];
+export const ORDER_TO = ["harbor", "meadow"];
 
 const DESK_STATES: QueueState[] = [
   { nn: "01", name: "rest", viewports: [...VIEWPORTS, OWNER_WINDOW, MIN_WINDOW] },
@@ -86,7 +86,7 @@ const DESK_STATES: QueueState[] = [
     nn: "04", name: "rail-ticked",
     setUp: async (page) => {
       await tickSessions(page, ORDER_TO);
-      await page.getByLabel("Select yoaida").scrollIntoViewIfNeeded();
+      await page.getByLabel("Select meadow").scrollIntoViewIfNeeded();
     },
   },
   { nn: "11a", name: "back-before", setUp: (page) => scrollList(page) },
@@ -162,9 +162,9 @@ const ORDER_STATES: QueueState[] = [
   {
     nn: "12", name: "recipients-changed",
     setUp: async (page) => {
-      await tickOrdersTo(page, ["gersona"]);
+      await tickOrdersTo(page, ["harbor"]);
       await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
-      await tickSessions(page, ["yoaida"]);
+      await tickSessions(page, ["meadow"]);
       await page.locator(".queue-orders").getByText("Recipients changed").waitFor();
     },
   },
@@ -195,7 +195,7 @@ const ORDER_STATES: QueueState[] = [
       await typeReportOrder(page);
       await page.locator(".queue-sheet").getByRole("button", { name: "Send order" }).click();
       // the next item takes the sheet and the list is put away → the line is read from the pane's status region
-      await page.locator('[role="status"]', { hasText: "Order sent to yoaida" }).first().waitFor({ state: "attached" });
+      await page.locator('[role="status"]', { hasText: "Order sent to meadow" }).first().waitFor({ state: "attached" });
     },
   },
   { nn: "16", name: "atrium-ticked", setUp: (page) => tickOrdersTo(page, ["atrium"]) },
@@ -207,7 +207,7 @@ const ORDER_STATES: QueueState[] = [
       await page.locator(".queue-orders").getByText("Tick at least one session").waitFor();
     },
   },
-  { nn: "21c", name: "empty-thread", getFixture: getEmptyFixture, setUp: (page) => tickOrdersTo(page, ["aidl"]) },
+  { nn: "21c", name: "empty-thread", getFixture: getEmptyFixture, setUp: (page) => tickOrdersTo(page, ["quartz"]) },
 ];
 
 const REFUSAL_STATES: QueueState[] = [
@@ -249,7 +249,7 @@ const REFUSAL_STATES: QueueState[] = [
 
 const LOOK_STATES: QueueState[] = [
   { nn: "25a", name: "focus-master-box", setUp: (page) => focusByKeyboard(page, page.getByLabel("Select all live sessions")) },
-  { nn: "25g", name: "focus-rail-box", setUp: (page) => focusByKeyboard(page, page.getByLabel("Select gersona")) },
+  { nn: "25g", name: "focus-rail-box", setUp: (page) => focusByKeyboard(page, page.getByLabel("Select harbor")) },
   {
     nn: "25h", name: "focus-back",
     setUp: async (page) => {
@@ -320,12 +320,12 @@ function getRankCloseUps({ rank, closeUp, target, isPicked = false }: { rank: st
 
 // spec §18.4 29's other close-ups
 const PARTS: CloseUpState[] = [
-  { nn: "29", name: "rail-ticked", closeUp: ".queue-sessions", setUp: (page) => tickSessions(page, ["gersona"]) },
+  { nn: "29", name: "rail-ticked", closeUp: ".queue-sessions", setUp: (page) => tickSessions(page, ["harbor"]) },
   // §18.4 29's live and ended rows on one rail: a ticked live row and the ended rows under the open Ended band
   {
     nn: "29", name: "rail-ended-open", closeUp: ".queue-sessions",
     setUp: async (page) => {
-      await tickSessions(page, ["gersona"]);
+      await tickSessions(page, ["harbor"]);
       await openEndedBand(page);
     },
   },
@@ -367,13 +367,13 @@ export const CLOSE_UP_STATES: CloseUpState[] = [...BUTTON_STATES, ...PARTS, ...N
 const TWIN_VIEWPORTS = [MIN_WINDOW, VIEWPORTS[0], VIEWPORTS[2]] as const;
 const TWIN_STATES: QueueState[] = [
   { nn: "35a", name: "not-listening-desk", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => showNotListeningDesk(page) },
-  { nn: "35b", name: "not-listening-composer", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => tickOrdersTo(page, ["gersona", "nightly"]) },
+  { nn: "35b", name: "not-listening-composer", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => tickOrdersTo(page, ["harbor", "nightly"]) },
   { nn: "35c", name: "not-listening-sheet", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => selectRow(page, NOT_LISTENING_IDS.answeredDecision) },
   { nn: "35d", name: "listening-sheet", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => selectRow(page, 108) },
   { nn: "35e", name: "two-badge-row", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningEdgeFixture, setUp: (page) => page.locator(`#queue-row-${NOT_LISTENING_IDS.twoBadgeOrder}`).scrollIntoViewIfNeeded() },
   { nn: "35f", name: "roll-up-not-listening", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningEdgeFixture, setUp: (page) => page.locator(`#queue-order-${NOT_LISTENING_IDS.rollUpOrder}`).scrollIntoViewIfNeeded() },
   { nn: "35g", name: "composer-one-not-listening", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => tickOrdersTo(page, ["nightly"]) },
-  { nn: "35h", name: "composer-not-listening-first", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => tickOrdersTo(page, ["sixmon", "nightly"]) },
+  { nn: "35h", name: "composer-not-listening-first", viewports: TWIN_VIEWPORTS, getFixture: getNotListeningFixture, setUp: (page) => tickOrdersTo(page, ["lumen", "nightly"]) },
   { nn: "35i", name: "none-listening", viewports: TWIN_VIEWPORTS, getFixture: getNoneListeningFixture, setUp: (page) => showNotListeningDesk(page) },
   { nn: "36", name: "approval-note", viewports: TWIN_VIEWPORTS, getFixture: getEdgeFixture, setUp: (page) => selectRow(page, EDGE_IDS.approval) },
 ];
@@ -902,10 +902,10 @@ export async function tickOrdersTo(page: Page, names: string[]): Promise<void> {
   await waitForImages(page);
 }
 
-// gersona and the edge fixture's ended portfolio, ticked once the Ended band is open
+// harbor and the edge fixture's ended portfolio, ticked once the Ended band is open
 async function tickEndedOrdersTo(page: Page): Promise<void> {
   await openEndedBand(page);
-  await tickOrdersTo(page, ["gersona", "portfolio"]);
+  await tickOrdersTo(page, ["harbor", "portfolio"]);
 }
 
 // the Ended band opened → its rows on the rail
@@ -929,7 +929,7 @@ export async function setFiles(page: Page, fieldId: string, files: Array<{ name:
 }
 
 export async function addOrderFiles(page: Page, files: Array<{ name: string; mimeType: string; buffer: Buffer }>): Promise<void> {
-  await tickOrdersTo(page, ["gersona"]);
+  await tickOrdersTo(page, ["harbor"]);
   await setFiles(page, ORDER_BOX_ID, files);
 }
 
@@ -948,7 +948,7 @@ async function sendOrderWithImages(page: Page): Promise<void> {
   await waitForImages(page);
 }
 
-// the 15 s re-read finds a report yoaida posted since the first read
+// the 15 s re-read finds a report meadow posted since the first read
 export async function arriveItem(page: Page, harness: Harness, rest = getRestFixture()): Promise<void> {
   harness.fixture = getArrivalFixture(rest);
   await page.clock.fastForward(15_000);
@@ -996,7 +996,7 @@ async function typeReportOrder(page: Page): Promise<void> {
 
 // a file dragged over the order box, not yet dropped → the box's drop state
 async function hangFileOverComposer(page: Page): Promise<void> {
-  await tickOrdersTo(page, ["gersona"]);
+  await tickOrdersTo(page, ["harbor"]);
   const transfer = await page.evaluateHandle(() => {
     const data = new DataTransfer();
     data.items.add(new File(["png"], "queue-01.png", { type: "image/png" }));

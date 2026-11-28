@@ -378,15 +378,15 @@ describe("the Queue page on a phone", () => {
     test("a tick in Sessions keeps the reader there, and back on the list the trigger names that session and the rows are its own", async () => {
       const page = await openPhoneQueue(harness);
       await VIEWS[1]!.open(page);
-      await tickSessions(page, ["gersona"]);
+      await tickSessions(page, ["harbor"]);
       const isStillInSessions = await page.locator(".queue-sessions").isVisible();
       await page.locator(".queue-sessions").getByRole("button", BACK).tap();
       const trigger = await page.getByRole("button", { name: SCOPE_TRIGGER }).getAttribute("aria-label");
       const rowIds = await page.locator(".queue-list .queue-row").evaluateAll((rows) => rows.map((row) => Number(row.id.replace("queue-row-", ""))));
       await page.close();
 
-      const gersonaIds = getRestFixture().items.filter((item) => item.status === "open" && item.session.name === "gersona").map((item) => item.id);
-      assert.deepEqual({ isStillInSessions, trigger, rowIds: rowIds.sort((a, b) => a - b) }, { isStillInSessions: true, trigger: "Sessions: gersona", rowIds: gersonaIds.sort((a, b) => a - b) });
+      const harborIds = getRestFixture().items.filter((item) => item.status === "open" && item.session.name === "harbor").map((item) => item.id);
+      assert.deepEqual({ isStillInSessions, trigger, rowIds: rowIds.sort((a, b) => a - b) }, { isStillInSessions: true, trigger: "Sessions: harbor", rowIds: harborIds.sort((a, b) => a - b) });
     });
   });
 
@@ -517,7 +517,7 @@ describe("the Queue page on a phone", () => {
         name: "with its session ticked",
         scope: async (page: Page) => {
           await VIEWS[1]!.open(page);
-          await tickSessions(page, ["gersona"]);
+          await tickSessions(page, ["harbor"]);
           await page.locator(".queue-sessions").getByRole("button", BACK).tap();
         },
       },

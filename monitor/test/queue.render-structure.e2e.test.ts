@@ -96,7 +96,7 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.deepEqual(found, {
-      count: 1, nodes: ["#text"], text: relay?.body, type: ["pre-wrap", "15px", "24px", "auto"], parsed: 0, label: "What aidl wrote · shown as sent",
+      count: 1, nodes: ["#text"], text: relay?.body, type: ["pre-wrap", "15px", "24px", "auto"], parsed: 0, label: "What quartz wrote · shown as sent",
     });
   });
 
@@ -288,7 +288,7 @@ describe("queue page on the mockup fixtures", () => {
 
     assert.deepEqual(
       { ...found, title: title.replace(/\s+/g, " ").trim() },
-      { focused: "Message from aidl to 2 sessions", foot: "✓ Text redacted.", texts: 0, line: true, marker: false, title: "→ 2 sessions Text redacted" },
+      { focused: "Message from quartz to 2 sessions", foot: "✓ Text redacted.", texts: 0, line: true, marker: false, title: "→ 2 sessions Text redacted" },
     );
   });
 
@@ -316,13 +316,13 @@ describe("queue page on the mockup fixtures", () => {
 
   test("the history read pages by order and returns every copy of an order one ticked session received", async () => {
     harness.fixture = getRestFixture();
-    const first = await harness.app.inject({ url: `/api/queue/owner/orders?sessionIds=${FIXTURE_SESSION_IDS.aidl}&limit=1` });
+    const first = await harness.app.inject({ url: `/api/queue/owner/orders?sessionIds=${FIXTURE_SESSION_IDS.quartz}&limit=1` });
     const all = await harness.app.inject({ url: "/api/queue/owner/orders?limit=2" });
     const { nextCursor } = all.json<{ nextCursor: string }>();
     const rest = await harness.app.inject({ url: `/api/queue/owner/orders?limit=30&before=${nextCursor}` });
     const getSendIds = (body: { items: Array<{ sendId: string }> }) => [...new Set(body.items.map((item) => item.sendId))];
 
-    assert.deepEqual(first.json<{ items: Array<{ session: { name: string } }> }>().items.map((item) => item.session.name), ["gersona", "aidl"], "both recipients of the order to aidl");
+    assert.deepEqual(first.json<{ items: Array<{ session: { name: string } }> }>().items.map((item) => item.session.name), ["harbor", "quartz"], "both recipients of the order to quartz");
     const pages = [...getSendIds(all.json()), ...getSendIds(rest.json())];
     assert.equal(new Set(pages).size, pages.length, "no order on two pages");
     assert.equal(pages.length, new Set(getRestFixture().orders.map((order) => order.sendId)).size, "every order on some page");
@@ -457,7 +457,7 @@ describe("queue page on the mockup fixtures", () => {
   // one sender reads as one name on every row; a name the session wrote takes the mark whole beside it, outside the cut, its words in the tooltips;
   // the fixture's longest name, nine letters, self-named on relay 421 → name and mark still whole in the name column, every title on one x
   test("a sender's name paints the same on its decision, refused and relay rows at 1280, 1440 and 1568, and every self-named row of any kind adds the whole self mark, a nine-letter name whole beside it and every title on one x", async () => {
-    harness.fixture = getStartDirectoryFixture(getSelfNamedFixture(getRelayListFixture(true), RELAY_ROW_IDS.one, "dashboard"), "aidl");
+    harness.fixture = getStartDirectoryFixture(getSelfNamedFixture(getRelayListFixture(true), RELAY_ROW_IDS.one, "dashboard"), "quartz");
     const shown = [];
     for (const viewport of [MIN_WINDOW, VIEWPORTS[0], OWNER_WINDOW]) {
       const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
@@ -480,7 +480,7 @@ describe("queue page on the mockup fixtures", () => {
     }
 
     const byName = shown.flatMap(({ width, rows }) => [...new Set(rows.map((row) => row.name))].map((name) => ({ width, name, painted: [...new Set(rows.filter((row) => row.name === name).map((row) => row.painted))] })));
-    assert.ok(shown.every(({ rows }) => rows.some((row) => row.name === "dashboard" && row.isSelfNamed) && rows.some((row) => row.name === "aidl" && !row.isSelfNamed)), "each width paints the self-named nine-letter name and a start-directory name");
+    assert.ok(shown.every(({ rows }) => rows.some((row) => row.name === "dashboard" && row.isSelfNamed) && rows.some((row) => row.name === "quartz" && !row.isSelfNamed)), "each width paints the self-named nine-letter name and a start-directory name");
     assert.deepEqual(shown.map(({ width, rows }) => ({ width, titleAts: new Set(rows.map((row) => row.titleAt)).size })), shown.map(({ width }) => ({ width, titleAts: 1 })), "every title on one x");
     assert.deepEqual(byName.filter(({ painted }) => painted.length > 1 || painted[0] === "cut"), [], "a sender's name paints whole and alike on every row");
     assert.deepEqual(
@@ -493,7 +493,7 @@ describe("queue page on the mockup fixtures", () => {
   test("with exactly one session ticked no row paints a name, and every title starts where the band labels start", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
-    await tickSessions(page, ["gersona"]);
+    await tickSessions(page, ["harbor"]);
     const facts = await page.evaluate(() => {
       const band = document.querySelector(".queue-listbox .queue-band") as HTMLElement;
       const labelStart = Math.round(band.getBoundingClientRect().left + parseFloat(getComputedStyle(band).paddingLeft));
@@ -510,7 +510,7 @@ describe("queue page on the mockup fixtures", () => {
   test("with one session ticked a relay's title cell at 1280 cuts a long self-declared sender name and keeps its self mark whole before the recipient", async () => {
     harness.fixture = getSelfNamedFixture(getRelayRowFixture(), RELAY_ROW_IDS.one, EDGE_LONG_SESSION_NAME);
     const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
-    await tickSessions(page, ["yoaida"]);
+    await tickSessions(page, ["meadow"]);
     await page.locator(".queue-row-title .queue-row-mark").first().waitFor();
     const cell = await page.evaluate((named) => {
       const name = [...document.querySelectorAll<HTMLElement>(".queue-row-title .queue-row-name")].find((one) => one.title === named)!;
@@ -521,8 +521,8 @@ describe("queue page on the mockup fixtures", () => {
       return {
         isNameCut: getComputedStyle(name).textOverflow === "ellipsis" && name.scrollWidth > name.clientWidth,
         mark: { text: mark.textContent, isOutsideName: !name.contains(mark), isWhole: mark.scrollWidth <= mark.clientWidth && markBox.left >= nameBox.right - 0.5 && markBox.right <= title.right + 0.5 },
-        ends: { text: ends.textContent?.startsWith("→ yoaida "), isAfterMark: ends.getBoundingClientRect().left >= markBox.right && ends.getBoundingClientRect().width > 0 },
-        label: name.closest(".queue-row")!.getAttribute("aria-label")?.startsWith(`Relay from ${named} to yoaida: `),
+        ends: { text: ends.textContent?.startsWith("→ meadow "), isAfterMark: ends.getBoundingClientRect().left >= markBox.right && ends.getBoundingClientRect().width > 0 },
+        label: name.closest(".queue-row")!.getAttribute("aria-label")?.startsWith(`Relay from ${named} to meadow: `),
       };
     }, `${EDGE_LONG_SESSION_NAME} (self-named)`);
     await page.close();
@@ -709,17 +709,17 @@ describe("queue page on the mockup fixtures", () => {
     const order = await read();
     await page.close();
 
-    assert.deepEqual(before.boxes.filter((box) => box.endsWith("=true")), ["Select gersona=true", "Select yoaida=true"]);
-    assert.equal(before.label, "New order to gersona, yoaida");
+    assert.deepEqual(before.boxes.filter((box) => box.endsWith("=true")), ["Select harbor=true", "Select meadow=true"]);
+    assert.equal(before.label, "New order to harbor, meadow");
     assert.deepEqual({ opened, stepped, back, order }, { opened: before, stepped: before, back: before, order: before });
   });
 
-  // spec §9.1, §14.4 (the fixture: gersona and yoaida ticked while atrium has a report; an order to gersona and the unticked aidl)
+  // spec §9.1, §14.4 (the fixture: harbor and meadow ticked while atrium has a report; an order to harbor and the unticked quartz)
   test("with sessions ticked, the list holds their items alone, the thread their orders, the list head and the composer label name exactly them, and the hash holds them in to=", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     await tickOrdersTo(page, ORDER_TO);
-    await page.locator(".queue-order", { hasText: "aidl" }).first().waitFor();
+    await page.locator(".queue-order", { hasText: "quartz" }).first().waitFor();
     const shown = await page.evaluate(() => ({
       rowIds: [...document.querySelectorAll(".queue-row")].map((row) => Number(row.id.slice("queue-row-".length))),
       recipients: [...document.querySelectorAll(".queue-order")].map((entry) => [...entry.querySelectorAll(".queue-recipient-name")].map((name) => name.textContent)),
@@ -732,8 +732,8 @@ describe("queue page on the mockup fixtures", () => {
     const sessionOf = (id: number) => harness.fixture.items.find((item) => item.id === id)?.session.name;
     assert.ok(shown.rowIds.length > 0 && shown.rowIds.every((id) => ORDER_TO.includes(sessionOf(id) ?? "")), JSON.stringify(shown.rowIds.map(sessionOf)));
     assert.ok(shown.recipients.every((names) => names.some((name) => ORDER_TO.includes(name ?? ""))), JSON.stringify(shown.recipients));
-    assert.ok(shown.recipients.some((names) => names.includes("gersona") && names.includes("aidl")), "an order to a ticked and an unticked session is one entry with both");
-    assert.deepEqual([shown.head, shown.label, shown.hash], ["gersona, yoaida", "New order to gersona, yoaida", `#queue?to=${FIXTURE_SESSION_IDS.gersona}%2C${FIXTURE_SESSION_IDS.yoaida}`]);
+    assert.ok(shown.recipients.some((names) => names.includes("harbor") && names.includes("quartz")), "an order to a ticked and an unticked session is one entry with both");
+    assert.deepEqual([shown.head, shown.label, shown.hash], ["harbor, meadow", "New order to harbor, meadow", `#queue?to=${FIXTURE_SESSION_IDS.harbor}%2C${FIXTURE_SESSION_IDS.meadow}`]);
   });
 
   // spec §9.2: nothing ticked → everything shown, no one addressed: a send press makes no request
@@ -773,12 +773,12 @@ describe("queue page on the mockup fixtures", () => {
     const all = { boxes: await checked(), send: await page.locator(".queue-orders .queue-compose-buttons .btn").textContent() };
     await master.click();
     const cleared = await checked();
-    await tickSessions(page, ["aidl"]);
+    await tickSessions(page, ["quartz"]);
     await master.click();
     const fromOne = await checked();
     await page.close();
 
-    assert.deepEqual(all, { boxes: ["Select gersona", "Select atrium", "Select aidl", "Select yoaida"], send: "Send to 4 sessions" });
+    assert.deepEqual(all, { boxes: ["Select harbor", "Select atrium", "Select quartz", "Select meadow"], send: "Send to 4 sessions" });
     assert.deepEqual({ cleared, fromOne }, { cleared: [], fromOne: [] });
   });
 
@@ -786,13 +786,13 @@ describe("queue page on the mockup fixtures", () => {
   test("an order typed with one image survives a tick, an untick of every box and a reload, and the tick's Recipients changed note is said once", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
-    await tickSessions(page, ["gersona"]);
+    await tickSessions(page, ["harbor"]);
     await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
     await addOrderFiles(page, [getImageFile(0)]);
     await waitForImages(page);
     const draft = () => page.evaluate((id) => [(document.getElementById(id) as HTMLTextAreaElement).value, document.querySelectorAll(".queue-orders .queue-thumb").length], ORDER_BOX_ID);
     const note = () => page.locator(".queue-orders .queue-note-text").textContent();
-    await tickSessions(page, ["yoaida"]);
+    await tickSessions(page, ["meadow"]);
     // the note follows the tick's render → wait on it, and read what stands should it never come
     const changed = await page.locator(".queue-orders .queue-note-text", { hasText: "Recipients changed" }).textContent({ timeout: 3_000 }).catch(() => note());
     const ticked = { draft: await draft(), note: changed };
@@ -806,7 +806,7 @@ describe("queue page on the mockup fixtures", () => {
     const reloaded = await draft();
     await page.close();
 
-    assert.deepEqual(ticked, { draft: [FIXTURE_ORDER_TEXT, 1], note: "ℹ Recipients changed: now gersona and yoaida." });
+    assert.deepEqual(ticked, { draft: [FIXTURE_ORDER_TEXT, 1], note: "ℹ Recipients changed: now harbor and meadow." });
     assert.doesNotMatch(typed ?? "", /Recipients changed/);
     assert.deepEqual(untickedAll, { draft: [`${FIXTURE_ORDER_TEXT} `, 1], label: "New order · no session ticked" });
     assert.deepEqual(reloaded, [`${FIXTURE_ORDER_TEXT} `, 1]);
@@ -818,15 +818,15 @@ describe("queue page on the mockup fixtures", () => {
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     const posts: string[] = [];
     page.on("request", (request) => { if (request.method() === "POST") posts.push(new URL(request.url()).pathname); });
-    await tickSessions(page, ["gersona"]);
+    await tickSessions(page, ["harbor"]);
     await page.locator(`#${ORDER_BOX_ID}`).fill(FIXTURE_ORDER_TEXT);
     await pickWithNote(page);
     const primaries = await page.evaluate(() => [".queue-sheet", ".queue-orders"].map((pane) => document.querySelectorAll(`${pane} .btn.primary`).length));
     await page.locator(`#${ORDER_BOX_ID}`).press("ControlOrMeta+Enter");
-    await page.getByText("Order sent to gersona").first().waitFor({ state: "attached" });
+    await page.getByText("Order sent to harbor").first().waitFor({ state: "attached" });
     const fromOrders = [...posts];
     await page.locator("#queue-text-103").press("ControlOrMeta+Enter");
-    await page.getByText("Answer sent to gersona").first().waitFor({ state: "attached" });
+    await page.getByText("Answer sent to harbor").first().waitFor({ state: "attached" });
     await page.close();
 
     assert.deepEqual(primaries, [1, 1]);
@@ -839,12 +839,12 @@ describe("queue page on the mockup fixtures", () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(), true);
     try {
-      await tickSessions(page, ["yoaida"]);
+      await tickSessions(page, ["meadow"]);
       harness.fixture = getStoppedFixture();
       await page.clock.fastForward(16_000);
-      await page.getByText("yoaida no longer takes orders and was unticked.").waitFor({ state: "attached" });
+      await page.getByText("meadow no longer takes orders and was unticked.").waitFor({ state: "attached" });
       const shown = await page.evaluate(() => ({
-        box: document.querySelector('[aria-label="Select yoaida"]') !== null,
+        box: document.querySelector('[aria-label="Select meadow"]') !== null,
         label: document.querySelector(".queue-orders .field-label")?.textContent,
         hash: window.location.hash,
       }));
@@ -858,8 +858,8 @@ describe("queue page on the mockup fixtures", () => {
   test("the empty thread's line starts on the Orders column, where the Orders title starts", async () => {
     harness.fixture = getEmptyFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(getEmptyFixture()));
-    await tickOrdersTo(page, ["aidl"]);
-    await page.getByText("No orders to aidl yet").waitFor();
+    await tickOrdersTo(page, ["quartz"]);
+    await page.getByText("No orders to quartz yet").waitFor();
     const lefts = await page.evaluate(() => [".queue-orders-card > .card-head .card-title", ".queue-thread > .placeholder > div"]
       .map((selector) => Math.round((document.querySelector(selector) as HTMLElement).getBoundingClientRect().left)));
     await page.close();
@@ -876,8 +876,8 @@ describe("queue page on the mockup fixtures", () => {
       harness.fixture = getArrivalFixture();
       await page.clock.fastForward(15_000);
       await page.locator("#queue-row-150").waitFor({ state: "attached", timeout: READY_TIMEOUT_MS });
-      const rail = page.locator(`[data-session="${FIXTURE_SESSION_IDS.yoaida}"] .queue-rail-count .pill`);
-      await assert.doesNotReject(rail.filter({ hasText: /^2$/ }).waitFor({ timeout: READY_TIMEOUT_MS }), "yoaida's rail count reads 2");
+      const rail = page.locator(`[data-session="${FIXTURE_SESSION_IDS.meadow}"] .queue-rail-count .pill`);
+      await assert.doesNotReject(rail.filter({ hasText: /^2$/ }).waitFor({ timeout: READY_TIMEOUT_MS }), "meadow's rail count reads 2");
       await assert.doesNotReject(page.locator(".nav-item", { hasText: "Queue" }).locator(".nav-count").filter({ hasText: "8" }).waitFor({ timeout: READY_TIMEOUT_MS }), "the nav count reads 8");
       const back = page.getByRole("button", { name: "Back to the list, 1 new in the list" });
       assert.deepEqual([await back.count(), await page.evaluate(() => window.location.hash)], [1, "#queue?item=101"], "the sheet unmoved, the arrival counted on the way back");
@@ -1338,7 +1338,7 @@ describe("queue page on the mockup fixtures", () => {
   test("the Orders send label stays inside its row and leaves the box 220 beside it or the whole row under it, a 100-character name cut with the whole label in the title, from 1440 to 1920", async () => {
     const ticks = [
       { names: [EDGE_LONG_SESSION_NAME], label: `Send to ${EDGE_LONG_SESSION_NAME}`, isCut: true },
-      { names: ["gersona", "portfolio"], label: "Send to 2 sessions · resumes 1 ended", isCut: false },
+      { names: ["harbor", "portfolio"], label: "Send to 2 sessions · resumes 1 ended", isCut: false },
     ];
     const rows = [];
     for (const width of [1440, 1568, 1605, 1645, 1728, 1920]) {
@@ -1379,7 +1379,7 @@ describe("queue page on the mockup fixtures", () => {
   // the 220 box beside it, the whole row under it) holds it beside the head and the name at its 3ch floor, and a dropped tail
   // leaves no width behind → the button ends where its shown label ends. portfolio is the edge fixture's ended session
   test("the Orders send button holds the label it shows: the resume tail whole where the button's room holds it beside the name at its floor, else dropped with no blank left, and the head whole, from 1440 to 1920", async () => {
-    const ticks = [["portfolio"], ["gersona", "portfolio"]];
+    const ticks = [["portfolio"], ["harbor", "portfolio"]];
     const rows = [];
     for (const width of [1440, 1568, 1605, 1645, 1690, 1728, 1920]) {
       for (const names of ticks) {
@@ -1628,8 +1628,8 @@ describe("queue page on the mockup fixtures", () => {
         .map(({ band, kinds, relays }) => (String(band).startsWith("Done") ? { band, kinds, relays } : { band, relays }));
       assert.deepEqual(bands, [
         { band: "In delivery", relays: [{ to: "atrium", tag: "on its way", pills: 0 }] },
-        { band: "Done, Today", kinds: ["Decision", "Report", "Relay", "Relay"], relays: [{ to: "yoaida", tag: "Refused", pills: 0 }, { to: "2 sessions", tag: "1 lapsed", pills: 0 }] },
-        { band: "Done, Yesterday", kinds: ["Decision", "Relay", "Report"], relays: [{ to: "gersona", tag: "Received", pills: 0 }] },
+        { band: "Done, Today", kinds: ["Decision", "Report", "Relay", "Relay"], relays: [{ to: "meadow", tag: "Refused", pills: 0 }, { to: "2 sessions", tag: "1 lapsed", pills: 0 }] },
+        { band: "Done, Yesterday", kinds: ["Decision", "Relay", "Report"], relays: [{ to: "harbor", tag: "Received", pills: 0 }] },
         { band: "Done, Nov 9", kinds: ["Decision"], relays: [] },
       ]);
       assert.deepEqual(redacted, ["In delivery", "→ atrium Text redacted"]);
@@ -1770,8 +1770,8 @@ describe("queue page on the mockup fixtures", () => {
       await page.close();
 
       assert.deepEqual(rows.map(({ background: _background, ...row }) => row), [
-        { name: "gersona", word: "Not yet", isGlyphDrawn: false, isGlyphSolid: false, title: null, isSentencePainted: false },
-        { name: "sixmon", word: "Next turn", isGlyphDrawn: true, isGlyphSolid: true, title: SENTENCE, isSentencePainted: false },
+        { name: "harbor", word: "Not yet", isGlyphDrawn: false, isGlyphSolid: false, title: null, isSentencePainted: false },
+        { name: "lumen", word: "Next turn", isGlyphDrawn: true, isGlyphSolid: true, title: SENTENCE, isSentencePainted: false },
       ]);
       assert.equal(rows[0]?.background, rows[1]?.background, "one tag fill for both");
     });
@@ -1782,7 +1782,7 @@ describe("queue page on the mockup fixtures", () => {
       const mark = await tagOf(NOT_LISTENING_SESSION_IDS.nightly).getByRole("img", { name: "Next turn" }).evaluate((node) => ({
         glyph: node.querySelectorAll("svg rect").length, shell: getComputedStyle(node).borderTopWidth, width: Math.round(node.getBoundingClientRect().width),
       }));
-      const listening = await tagOf(FIXTURE_SESSION_IDS.gersona).count();
+      const listening = await tagOf(FIXTURE_SESSION_IDS.harbor).count();
       await page.keyboard.press("Tab");
       await page.getByLabel("Select nightly", { exact: true }).focus();
       const focused = await page.evaluate(() => {
@@ -1821,7 +1821,7 @@ describe("queue page on the mockup fixtures", () => {
     test("in the composer's label each ticked name stays on one line with its mark, and the comma between names follows the mark, at 1280 and 1440", async () => {
       const shown: Array<{ at: number; text: string; lines: number }> = [];
       for (const viewport of [MIN_WINDOW, VIEWPORTS[0]]) {
-        for (const names of [["gersona", "nightly"], ["sixmon", "nightly"]]) {
+        for (const names of [["harbor", "nightly"], ["lumen", "nightly"]]) {
           harness.fixture = getNotListeningFixture();
           const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
           await tickOrdersTo(page, names);
@@ -1840,7 +1840,7 @@ describe("queue page on the mockup fixtures", () => {
       }
 
       assert.deepEqual(shown.filter((to) => to.lines !== 1), [], "one line per name and its mark");
-      assert.deepEqual(shown.filter((to) => to.at === MIN_WINDOW.width).map((to) => to.text).slice(2), ["sixmon [Next turn],", "nightly [Next turn]"]);
+      assert.deepEqual(shown.filter((to) => to.at === MIN_WINDOW.width).map((to) => to.text).slice(2), ["lumen [Next turn],", "nightly [Next turn]"]);
     });
 
     test("an order to two sessions that do not listen reads 0 of 2 and ⏸ 2 in its tag column; the ended session's resume copy reads Not yet; nothing of the state is amber", async () => {
@@ -1880,7 +1880,7 @@ describe("queue page on the mockup fixtures", () => {
       const listening = await sheetOf(108);
       await page.close();
 
-      const deafLine = deaf.lines.findIndex((line) => line === "sixmon gets this answer at its next turn. Restart it to deliver now.");
+      const deafLine = deaf.lines.findIndex((line) => line === "lumen gets this answer at its next turn. Restart it to deliver now.");
       const pullLine = deaf.lines.findIndex((line) => line.startsWith("Run in that session:"));
       assert.deepEqual([deaf.receipt, deafLine >= 0, pullLine > deafLine], ["⏸ Next turn", true, true], JSON.stringify(deaf));
       assert.deepEqual([listening.receipt, listening.lines.includes("The session is listening: it picks up this answer on its own.")], ["Not yet", true], JSON.stringify(listening));
@@ -2183,7 +2183,7 @@ describe("queue page on the mockup fixtures", () => {
 
       assert.deepEqual({ row, letterhead: shown.letterhead }, { row: ["Approval"], letterhead: ["Decision", "Approval"] });
       assert.equal(dateGap, 6, "the date line keeps 6 between the count and the tag");
-      assert.match(shown.note, /Approval: approving here approves the action once\. aidl does not ask again in its terminal\./);
+      assert.match(shown.note, /Approval: approving here approves the action once\. quartz does not ask again in its terminal\./);
       assert.deepEqual(shown.tones, { text: true, glyph: true }, "the sentence in ink, its glyph in info");
     });
 
@@ -2284,8 +2284,8 @@ describe("queue page on the mockup fixtures", () => {
       await page.close();
 
       assert.deepEqual(
-        { atrium: names.filter((name) => name?.startsWith("atrium")), gersona: names.filter((name) => name?.startsWith("gersona")) },
-        { atrium: [`atrium · ${FIXTURE_SESSION_IDS.atrium.slice(0, 8)}`, `atrium · ${EDGE_SESSION_IDS.twin.slice(0, 8)}`], gersona: ["gersona"] },
+        { atrium: names.filter((name) => name?.startsWith("atrium")), harbor: names.filter((name) => name?.startsWith("harbor")) },
+        { atrium: [`atrium · ${FIXTURE_SESSION_IDS.atrium.slice(0, 8)}`, `atrium · ${EDGE_SESSION_IDS.twin.slice(0, 8)}`], harbor: ["harbor"] },
       );
     });
 
@@ -2317,10 +2317,10 @@ describe("queue page on the mockup fixtures", () => {
       const ids = await page.evaluate((sessionIds) => sessionIds.map((id) => {
         const shown = document.querySelector<HTMLElement>(`.queue-rail-row[data-session="${id}"] .queue-rail-id`);
         return shown === null ? null : [shown.textContent, shown.scrollWidth <= shown.clientWidth && shown.getBoundingClientRect().right <= shown.closest(".queue-rail-row")!.getBoundingClientRect().right];
-      }), [FIXTURE_SESSION_IDS.gersona, CONFUSABLE_SESSION_ID]);
+      }), [FIXTURE_SESSION_IDS.harbor, CONFUSABLE_SESSION_ID]);
       await page.close();
 
-      assert.deepEqual(ids, [[FIXTURE_SESSION_IDS.gersona.slice(0, 8), true], [CONFUSABLE_SESSION_ID.slice(0, 8), true]]);
+      assert.deepEqual(ids, [[FIXTURE_SESSION_IDS.harbor.slice(0, 8), true], [CONFUSABLE_SESSION_ID.slice(0, 8), true]]);
     });
 
     // the id is what tells the two apart → at the owner's narrowest desk it stays whole while the name is cut
@@ -2617,9 +2617,9 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, {
         isOrdersOnly: true,
         recipients: [
-          { name: "gersona", receipts: ["Received"], residue: "" },
-          { name: "aidl", receipts: ["Not yet"], residue: "" },
-          { name: "yoaida", receipts: ["Not received"], residue: "" },
+          { name: "harbor", receipts: ["Received"], residue: "" },
+          { name: "quartz", receipts: ["Not yet"], residue: "" },
+          { name: "meadow", receipts: ["Not received"], residue: "" },
         ],
       });
     });
