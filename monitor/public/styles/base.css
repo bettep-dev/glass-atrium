@@ -1525,20 +1525,16 @@ label.ctl-checkbox-hit {
 .queue-steps > .tabular-nums {
 	margin-inline-end: var(--space-2);
 }
-/* the sheet in the 1280 middle column (the list's 584 threshold) → the position text yields, still read, so the letterhead's kind,
-   (self-named) and 8-character id stay whole; the number after the way back separates it, so the back group's 8 goes */
+/* a confusable session's 1280 sheet puts its letterhead on its own row, so the name and id stay whole */
 @media (min-width: 641px) {
 	@container queue-sheet (width < 584px) {
-		.queue-steps > .tabular-nums {
-			position: absolute;
-			width: 1px;
-			height: 1px;
-			overflow: hidden;
-			clip: rect(0 0 0 0);
-			white-space: nowrap;
+		.queue-sheet-head:has(.queue-letter-id) {
+			flex-wrap: wrap;
+			row-gap: var(--space-1);
 		}
-		.queue-back {
-			margin-inline-end: 0;
+		.queue-sheet-head:has(.queue-letter-id) > .card-title {
+			order: 1;
+			flex-basis: 100%;
 		}
 	}
 }

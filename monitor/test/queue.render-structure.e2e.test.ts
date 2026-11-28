@@ -2361,8 +2361,8 @@ describe("queue page on the mockup fixtures", () => {
     });
 
     // the twin session's report and a decision moved to it, both numbered at four digits → the widest number beside a letterhead's
-    // kind, (self-named) and 8-character id, the parts that tell the two sessions apart; at 1280 the position text yields for them
-    test("at 1280 a report and a decision from one of two same-named self-named sessions keep the four-digit number and the 8-character id whole in the row and the sheet head, the position out of sight and still read; at 1440 the position shows", async () => {
+    // kind, name, (self-named) and 8-character id, the parts that tell the two sessions apart; under a 584 sheet (1280) the head takes the phone's two rows
+    test("a report and a decision from one of two same-named self-named sessions keep the four-digit number, the name and the 8-character id whole in the row and the sheet head and show the position, the letterhead on its own row at 1280 and beside the steps at 1440", async () => {
       const ids = { report: 9000 + EDGE_IDS.declaredReport, decision: 9000 + EDGE_IDS.nineOptions };
       const edge = getEdgeFixture();
       const twin = edge.items.find((item) => item.id === EDGE_IDS.declaredReport)!.session;
@@ -2381,11 +2381,15 @@ describe("queue page on the mockup fixtures", () => {
           await selectRow(page, id);
           const head = await page.evaluate(() => {
             const get = (selector: string) => document.querySelector<HTMLElement>(`.queue-sheet-head ${selector}`)!;
-            const title = get(".card-title").getBoundingClientRect();
+            const [title, steps] = [get(".card-title").getBoundingClientRect(), get(".queue-steps").getBoundingClientRect()];
             const isWhole = (selector: string) => get(selector).scrollWidth <= get(selector).clientWidth && get(selector).getBoundingClientRect().right <= title.right + 0.5;
+            const isUnderSteps = title.top >= steps.bottom - 0.5;
             return {
               number: get(".queue-sheet-id").textContent, isNumberWhole: get(".queue-sheet-id").scrollWidth <= get(".queue-sheet-id").clientWidth,
-              letter: { id: get(".queue-letter-id").textContent?.trim(), isIdWhole: isWhole(".queue-letter-id"), isSelfWhole: isWhole(".queue-letter-self"), isTitleInside: title.right <= get(".queue-steps").getBoundingClientRect().left },
+              letter: {
+                id: get(".queue-letter-id").textContent?.trim(), isIdWhole: isWhole(".queue-letter-id"), isSelfWhole: isWhole(".queue-letter-self"), isNameWhole: isWhole(".queue-letter-text"),
+                row: isUnderSteps ? 2 : 1, isClearOfSteps: isUnderSteps || title.right <= steps.left,
+              },
               isPositionShown: get(".queue-steps > .tabular-nums").getBoundingClientRect().width > 1,
             };
           });
@@ -2395,11 +2399,11 @@ describe("queue page on the mockup fixtures", () => {
         }
       }
 
-      const letter = { id: EDGE_SESSION_IDS.twin.slice(0, 8), isIdWhole: true, isSelfWhole: true, isTitleInside: true };
+      const letter = { id: EDGE_SESSION_IDS.twin.slice(0, 8), isIdWhole: true, isSelfWhole: true, isNameWhole: true, isClearOfSteps: true };
       assert.deepEqual(shown, [MIN_WINDOW, VIEWPORTS[0]].flatMap((viewport) => [ids.report, ids.decision].map((id) => ({
         width: viewport.width,
         row: { number: `#${id}`, isNumberWhole: true, isIdWhole: true },
-        head: { number: `#${id}`, isNumberWhole: true, letter, isPositionShown: viewport.width !== MIN_WINDOW.width, isPositionRead: true },
+        head: { number: `#${id}`, isNumberWhole: true, letter: { ...letter, row: viewport.width === MIN_WINDOW.width ? 2 : 1 }, isPositionShown: true, isPositionRead: true },
       }))));
     });
 
