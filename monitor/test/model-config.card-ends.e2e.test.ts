@@ -323,7 +323,8 @@ for (const width of [1280, 1568]) {
   test(`${width}px: the agent card spans the page above the split row, and ticking an agent moves no row`, async () => {
     const app = Fastify({ logger: false });
     await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
-    app.get("/api/model-config", async () => AGENTS_CONFIG);
+    // a model row read from no file and named by no source → the Daemon model head draws its own mark
+    app.get("/api/model-config", async () => ({ ...AGENTS_CONFIG, domains: [...AGENTS_CONFIG.domains, { ...AGENTS_CONFIG.domains[0], domain: "model.future_worker", actual: null }] }));
     app.get("/api/*", async () => ({ rows: [] }));
     const serverUrl = await app.listen({ host: "127.0.0.1", port: 0 });
     const browser = await chromium.launch({ headless: true });
@@ -343,7 +344,16 @@ for (const width of [1280, 1568]) {
         const [markBox, infoBox, linkBox] = [marks[0], info, link].map((node) => node?.getBoundingClientRect());
         // drawn head items whose box lies between ⓘ and the link
         const between = [...head.querySelectorAll("*")].filter((node) => node.getClientRects().length > 0 && node.getBoundingClientRect().left > infoBox!.right && node.getBoundingClientRect().right < linkBox!.left && !node.contains(link));
-        return { agentWidth: agent.width, splitWidth: split.width, agentBottom: agent.bottom, splitTop: split.top, headOrder: { marks: marks.length, isMarkFirst: markBox !== undefined && markBox.left < infoBox!.left && infoBox!.left < linkBox!.left, between: between.length } };
+        const domainsHead = [...document.querySelectorAll(".card-head")].find((node) => node.querySelector(".card-title")?.textContent === "Daemon model")!;
+        const domainsMarks = [...domainsHead.querySelectorAll("span")].filter((span) => span.textContent === "1 not read");
+        const [domainsMarkBox, domainsInfoBox] = [domainsMarks[0], domainsHead.querySelector("button[aria-haspopup=dialog]")!].map((node) => node?.getBoundingClientRect());
+        // drawn head items whose box lies between the mark and ⓘ, and after ⓘ
+        const domainsPast = [...domainsHead.querySelectorAll("*")].filter((node) => node.getClientRects().length > 0 && domainsMarkBox !== undefined && node.getBoundingClientRect().left > domainsMarkBox.right && !node.closest("button[aria-haspopup=dialog]"));
+        return {
+          agentWidth: agent.width, splitWidth: split.width, agentBottom: agent.bottom, splitTop: split.top,
+          headOrder: { marks: marks.length, isMarkFirst: markBox !== undefined && markBox.left < infoBox!.left && infoBox!.left < linkBox!.left, between: between.length },
+          domainsHeadOrder: { marks: domainsMarks.length, isMarkFirst: domainsMarkBox !== undefined && domainsMarkBox.right <= domainsInfoBox!.left, past: domainsPast.length },
+        };
       });
       const before = await readRows();
       // the role cell of the first agent with a box — the unreadable file sorts first and has none
@@ -355,6 +365,7 @@ for (const width of [1280, 1568]) {
       assert.ok(layout.agentBottom <= layout.splitTop, `${width}px: the agent card ends above the split row`);
       assert.deepStrictEqual(after, before, `${width}px: ticking a row moved the rows`);
       assert.deepStrictEqual(layout.headOrder, { marks: 1, isMarkFirst: true, between: 0 }, `${width}px: the head reads the mark, then ⓘ, then Cost & usage`);
+      assert.deepStrictEqual(layout.domainsHeadOrder, { marks: 1, isMarkFirst: true, past: 0 }, `${width}px: the Daemon model head reads its mark, then ⓘ last`);
     } finally {
       await browser.close();
       await app.close();
