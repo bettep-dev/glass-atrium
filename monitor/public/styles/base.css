@@ -547,10 +547,12 @@ label.ctl-checkbox-hit {
 	right: 0;
 }
 @media (max-width: 640px) {
-	/* the short statement on names (screens/queue.jsx → NamesNoteQ): the phone's alone; above 640 the rail's full one is always on screen */
+	/* the short statement on names (screens/queue.jsx → NamesNoteQ): the phone's alone; above 640 the rail's full one is always on screen;
+	   pretty wrapping → its last line never one word alone */
 	.queue-names-note,
 	.card-bar:has(> .queue-names-note:only-child) {
 		display: block;
+		text-wrap: pretty;
 	}
 	[data-route="queue"] > .shell-sidebar {
 		display: none;

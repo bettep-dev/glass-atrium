@@ -618,6 +618,18 @@ describe("the Queue page on a phone", () => {
     const getStatements = (page: Page) => page.evaluate((texts) => {
       const nodes = [...document.querySelectorAll<HTMLElement>(".queue-screen *")].filter((node) => texts.includes(node.textContent ?? "") && node.childElementCount === 0 && node.getClientRects().length > 0);
       const tops = nodes.map((node) => node.getBoundingClientRect().top);
+      // the words on the statement's last line, read by each word's own box
+      const getLastLineCount = (node: HTMLElement) => {
+        const text = node.firstChild!;
+        const wordTops = [...text.textContent!.matchAll(/\S+/g)].map((match) => {
+          const range = document.createRange();
+          range.setStart(text, match.index);
+          range.setEnd(text, match.index + match[0].length);
+          return range.getClientRects()[0]!.top;
+        });
+        return wordTops.filter((top) => Math.abs(top - Math.max(...wordTops)) < 0.5).length;
+      };
+      const lastLineCounts = nodes.map(getLastLineCount);
       for (const scroller of document.querySelectorAll<HTMLElement>(".queue-screen .card-body, .queue-thread")) scroller.scrollTop = scroller.scrollHeight;
       return nodes.map((node, index) => {
         const [box, card] = [node.getBoundingClientRect(), node.closest(".card")!];
@@ -627,13 +639,14 @@ describe("the Queue page on a phone", () => {
           isWhole: node.scrollHeight <= node.clientHeight && node.scrollWidth <= node.clientWidth && box.top >= 0 && box.bottom <= window.innerHeight,
           isPlain: node.closest('[aria-hidden="true"], [hidden], [title], [aria-live], [role="status"], [role="log"], [role="alert"]') === null,
           isBetweenHeadAndBody: box.top >= head.bottom - 0.5 && box.bottom <= body.top + 0.5, isFixed: Math.abs(box.top - tops[index]!) < 0.5,
+          isLastWordAccompanied: lastLineCounts[index]! >= 2,
         };
       });
     }, [STATEMENT.FULL, STATEMENT.SHORT]);
     const getTreeCount = async (page: Page) => (await page.locator(".queue-screen").ariaSnapshot()).split(STATEMENT.END).length - 1;
 
     for (const viewport of PHONES) {
-      test(`at ${viewport.width} each view and each sheet shows its one statement whole, plain and fixed, and the decision's head still marks its name`, async () => {
+      test(`at ${viewport.width} each view and each sheet shows its one statement whole, plain and fixed, no word alone on its last line, and the decision's head still marks its name`, async () => {
         harness.fixture = getEveryViewFixture();
         const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
         const shown: Record<string, unknown> = {};
@@ -645,7 +658,7 @@ describe("the Queue page on a phone", () => {
         }
         await page.close();
 
-        const getExpected = (text: string) => ({ text, element: "p fs-meta text-dim", isWhole: true, isPlain: true, isBetweenHeadAndBody: true, isFixed: true });
+        const getExpected = (text: string) => ({ text, element: "p fs-meta text-dim", isWhole: true, isPlain: true, isBetweenHeadAndBody: true, isFixed: true, isLastWordAccompanied: true });
         assert.deepEqual(shown, {
           ...Object.fromEntries(PLACES.map((place) => [place.name, { statements: [getExpected(place.statement)], treeCount: 1 }])),
           "a decision head": true,
