@@ -2699,6 +2699,14 @@ tbody.tbl-compact > tr > :is(td, th) > :where(.inline-flex, .inline-grid) {
 .filter-trigger > .filter-trigger-chevron {
 	margin-inline-start: calc(var(--space-1_5) - var(--gap-label-inline));
 }
+/* the glyph form's applied value (ui.jsx → FilterGlyphButton): capped and cut, whole in the button's name and tooltip → it never squeezes its neighbours */
+.filter-glyph-value {
+	min-width: 0;
+	max-width: 4em;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
 
 /* menu — the one menu surface (filter trigger, row-action overflow): label-only items on the card inset and the list gap; overlay surface shared with .popover-panel */
 .menu {

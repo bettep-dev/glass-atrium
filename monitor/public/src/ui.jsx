@@ -1469,7 +1469,7 @@ function FilterTrigger({ axis, value, kind = 'radio', options, chosenKeys, onPic
 function FilterGlyphButton({ axis, value, icon, isApplied, triggerProps }) {
   const name = `${axis}: ${value}`;
   return <button type="button" className={isApplied ? 'btn ghost' : 'btn ghost icon'} aria-label={name} title={name} {...triggerProps}>
-    <Icon name={icon} size={16} />{isApplied && <span>{value}</span>}
+    <Icon name={icon} size={16} />{isApplied && <span className="filter-glyph-value">{value}</span>}
   </button>;
 }
 

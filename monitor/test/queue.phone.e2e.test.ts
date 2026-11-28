@@ -105,10 +105,10 @@ const DECISION = getRestFixture().items.find((item) => item.id === 103)!;
 const SECOND_ACCOUNT = ".claude-personal";
 
 // the first open item under a second account → the list tells two accounts apart and draws its Account filter
-function getTwoAccountFixture(): QueueFixture {
+function getTwoAccountFixture(label = SECOND_ACCOUNT): QueueFixture {
   const rest = getRestFixture();
   const [first, ...others] = rest.items;
-  return { ...rest, items: [{ ...first!, session: { ...first!.session, profileLabel: SECOND_ACCOUNT } }, ...others] };
+  return { ...rest, items: [{ ...first!, session: { ...first!.session, profileLabel: label } }, ...others] };
 }
 const LONG_SCAN_READY = "2 of 3 lines assign a literal value.";
 
@@ -535,6 +535,7 @@ describe("the Queue page on a phone", () => {
   // what a glyph can say is a glyph on the phone, its words its name and tooltip; statements, the self mark and tags keep their words
   describe("draws a glyph for each control a glyph can say, named and titled by its words", () => {
     const ACCOUNT = { name: /^Account: / };
+    const SCOPE_WORDS_MIN = 64;
     const PLACES = [
       { name: "the list", open: VIEWS[0]!.open },
       { name: "Sessions", open: VIEWS[1]!.open },
@@ -615,6 +616,28 @@ describe("the Queue page on a phone", () => {
           reset: { name: "Account: All", title: "Account: All", words: "", width: 44, height: 44 },
         });
       });
+    }
+    // the scope words are the scope filter's only mark → an applied account's word gives way first, whole in its name and tooltip
+    for (const viewport of PHONES) {
+      for (const label of [SECOND_ACCOUNT, "client-acme-production-office"]) {
+        test(`at ${viewport.width} an applied ${label.length}-character account leaves the scope words ${SCOPE_WORDS_MIN} wide or more, its own word cut and whole in its name`, async () => {
+          harness.fixture = getTwoAccountFixture(label);
+          const page = await openShellPage(harness, viewport, `queue?profile=${label}`);
+          await page.getByText(getRestReadyText()).first().waitFor({ timeout: READY_TIMEOUT_MS });
+          const facts = await page.locator(".queue-list > .card-head").evaluate((head) => {
+            const [words, account] = [head.querySelector(".queue-scope-words")!, head.querySelector('[aria-label^="Account: "]') as HTMLElement];
+            const word = account.querySelector("span")!;
+            return {
+              scopeWords: Math.floor(words.getBoundingClientRect().width), name: account.getAttribute("aria-label"), title: account.title,
+              isWordCut: word.scrollWidth > word.clientWidth, isHeadInside: account.getBoundingClientRect().right <= head.getBoundingClientRect().right,
+            };
+          });
+          await page.close();
+
+          const name = `Account: ${label}`;
+          assert.deepEqual({ ...facts, scopeWords: facts.scopeWords >= SCOPE_WORDS_MIN ? SCOPE_WORDS_MIN : facts.scopeWords }, { scopeWords: SCOPE_WORDS_MIN, name, title: name, isWordCut: true, isHeadInside: true });
+        });
+      }
     }
   });
 
