@@ -1135,8 +1135,7 @@ export async function getComposerFacts(page: Page, root: string): Promise<Compos
       const style = getComputedStyle(element);
       return [style.fontFamily, style.fontSize, style.fontWeight, style.lineHeight].join(" / ");
     };
-    // the row's drawn buttons: a later button's phone twin sits in the row undrawn above 640
-    const buttons = [...document.querySelectorAll(`${scope} .queue-compose-buttons .btn`)].filter((button) => button.getClientRects().length > 0);
+    const buttons = [...document.querySelectorAll(`${scope} .queue-compose-buttons .btn`)];
     return {
       box: height(document.querySelector(`${scope} .queue-compose-box`) as Element),
       buttons: [...new Set(buttons.map(height))],

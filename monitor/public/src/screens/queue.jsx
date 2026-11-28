@@ -3076,7 +3076,7 @@ function SheetFootQ({ item, draft, queue, isBusy, error }) {
 	if (item.status === "open" && item.kind === "report") return <ReportComposerQ item={item} draft={draft} queue={queue} isBusy={isBusy} error={error} />;
 	const label = item.kind === "decision" ? "Resend answer" : "Resend";
 	const buttons = item.canResend ? [{ label, onPress: () => queue.send(item.id, "resend") }] : [];
-	return <ComposerQ buttons={buttons} isBusy={isBusy} note={error ? <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ> : null} />;
+	return <ComposerQ buttons={buttons} isBusy={isBusy} isInSheet note={error ? <ToneLineQ tone="crit" role="alert" isTextToned>{error}</ToneLineQ> : null} />;
 }
 
 // the report's tray on the box, its lines on a tray line of their own → the note line keeps the answer's words (spec §6 → Foot lines)
@@ -3092,7 +3092,7 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 			head={lines.head} trayNote={lines.trayNote} text={box.text} onText={box.setText} isBusy={isBusy || Boolean(draft.isWaiting)}
 			buttons={[...resend, { label: "Send answer", isInk: getAnswerBodyQ(draft) !== null, keyName: "send", describedBy: lines.approvalId, onPress: () => sendAnswerQ(queue, item, draft, box) }]}
 			note={<ComposerNoteQ error={error ?? draft.error} rest={rest} />}
-			later={{ label: "Answer later", keyName: "l", onPress: () => queue.later(item.id) }} />
+			later={{ label: "Answer later", keyName: "l", onPress: () => queue.later(item.id) }} isInSheet />
 	);
 }
 
@@ -3144,7 +3144,7 @@ function ReportComposerQ({ item, draft, queue, isBusy, error }) {
 			text={box.text} onText={box.setText} isBusy={isBusy || Boolean(draft.isWaiting)}
 			buttons={[{ label: "Mark as read", isInk: !hasContent, keyName: "e", onPress: markRead }, ...order]}
 			note={<ComposerNoteQ error={error ?? draft.error} tray={tray} fieldId={fieldId} rest={rest} />}
-			later={{ label: "Read later", keyName: "l", onPress: () => queue.later(item.id) }} />
+			later={{ label: "Read later", keyName: "l", onPress: () => queue.later(item.id) }} isInSheet />
 	);
 }
 
@@ -3179,7 +3179,7 @@ function putInvalidQ(queue, id, message, targetId) {
  * @param later - the quiet button at the end of the note line, first in the button row on a phone, `{ label, keyName, onPress }`
  * @param head - a line above the label (a decision's approval line); `trayNote` - the image lines' own line under the field row (a decision's tray line)
  */
-function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later, tray = null, zone = null, head = null, trayNote = null }) {
+function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later, tray = null, zone = null, head = null, trayNote = null, isInSheet = false }) {
 	const ink = buttons.find((button) => button.isInk);
 	// the send key presses the button keyed `send` where there is one, else the ink one
 	const keyed = buttons.find((button) => button.keyName === "send") ?? ink;
@@ -3188,36 +3188,61 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 		event.preventDefault();
 		keyed.onPress();
 	};
+	// a phone's sheet draws the button row last, later first in it (base.css) → the tree holds it there too, so focus walks the foot as drawn
+	const isRowLast = usePhoneQ() && isInSheet;
+	const row = <ComposeButtonsQ buttons={buttons} isBusy={isBusy} later={isRowLast ? later : null} />;
 	return (
 		<div className="queue-composer" {...(tray ? zone : null)}>
 			{head}
 			{field && getFieldLabelQ(field)}
 			<div className="queue-compose-row">
 				{field && <ComposeBoxQ field={field} text={text} onText={onText} onKeyDown={onKeyDown} tray={tray} />}
-				<div className="queue-compose-buttons">
-					{later && <LaterButtonQ later={later} isBusy={isBusy} twin="queue-later-narrow" />}
-					{buttons.map((button) => (
-						<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} data-key={button.keyName} aria-disabled={isBusy || undefined} aria-describedby={button.describedBy}
-							aria-busy={(isBusy && button.isInk) || undefined} title={button.parts ? button.label : undefined} onClick={isBusy ? undefined : button.onPress}>
-							{isBusy && button.isInk ? "Sending…" : getButtonTextQ(button)}
-						</button>
-					))}
-				</div>
+				{!isRowLast && row}
 			</div>
 			{trayNote && <div className="queue-tray-line">{trayNote}</div>}
 			<div className="queue-note">
 				<div className="queue-note-text">{note}</div>
-				{later && <LaterButtonQ later={later} isBusy={isBusy} twin="queue-later-wide" />}
+				{later && !isRowLast && <LaterButtonQ later={later} isBusy={isBusy} />}
 			</div>
+			{isRowLast && row}
 		</div>
 	);
 }
 
-// drawn twice, one per width (base.css → .queue-later-narrow): the note line's end, or first in a phone's button row → one in the tree and in focus order;
-// in the row it takes the commits' size → one type size and one baseline
-function LaterButtonQ({ later, isBusy, twin }) {
-	const size = twin === "queue-later-narrow" ? "lg" : "sm";
-	return <button type="button" className={`btn ghost ${size} ${twin}`} data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>{later.label}</button>;
+/** Whether the screen is base.css's phone width, followed across a resize or a turn of the device; no media query to ask (the client sandbox) → false. */
+function usePhoneQ() {
+	const [isPhone, setPhone] = useStateQ(() => getPhoneMediaQ()?.matches === true);
+	useEffectQ(() => {
+		const media = getPhoneMediaQ();
+		if (!media) return undefined;
+		const onChange = () => setPhone(media.matches);
+		media.addEventListener("change", onChange);
+		return () => media.removeEventListener("change", onChange);
+	}, []);
+	return isPhone;
+}
+
+function getPhoneMediaQ() {
+	return typeof window.matchMedia === "function" ? window.matchMedia(`(max-width: ${PHONE_Q.BELOW_PX}px)`) : null;
+}
+
+function ComposeButtonsQ({ buttons, isBusy, later }) {
+	return (
+		<div className="queue-compose-buttons">
+			{later && <LaterButtonQ later={later} isBusy={isBusy} isInRow />}
+			{buttons.map((button) => (
+				<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} data-key={button.keyName} aria-disabled={isBusy || undefined} aria-describedby={button.describedBy}
+					aria-busy={(isBusy && button.isInk) || undefined} title={button.parts ? button.label : undefined} onClick={isBusy ? undefined : button.onPress}>
+					{isBusy && button.isInk ? "Sending…" : getButtonTextQ(button)}
+				</button>
+			))}
+		</div>
+	);
+}
+
+// the note line's end, or first in a phone sheet's button row at the commits' size → one type size and one baseline there
+function LaterButtonQ({ later, isBusy, isInRow = false }) {
+	return <button type="button" className={`btn ghost ${isInRow ? "lg" : "sm"} queue-later`} data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>{later.label}</button>;
 }
 
 function getFieldLabelQ(field) {

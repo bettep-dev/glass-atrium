@@ -12,7 +12,7 @@ import { type Browser, type Locator, type Page } from "playwright";
 
 import { createBrowser } from "./lib/house-face.js";
 import {
-  closeHarness, getRestReadyText, getSelfNamedFixture, type Harness, MIN_WINDOW, openHarness, openQueuePage, openShellPage, READY_TIMEOUT_MS, tickSessions, type Viewport, waitForDoneBands,
+  closeHarness, getImageFile, getRestReadyText, getSelfNamedFixture, type Harness, MIN_WINDOW, openHarness, openQueuePage, openShellPage, READY_TIMEOUT_MS, setFiles, tickSessions, type Viewport, waitForDoneBands,
 } from "./lib/queue-render-harness.js";
 import {
   getAnswerNotReceivedFixture, getOffViewFixture, getProseFixture, getRelayListFixture, getRelayRowFixture, getRelayThreadFixture, getRestFixture, getScanApprovalFixture, type QueueFixture, RELAY_ROW_IDS, SCAN_IDS, SCAN_MARK_POINTS,
@@ -1003,7 +1003,7 @@ describe("the Queue page on a phone", () => {
     const getFootRow = (page: Page) => page.locator(".queue-sheet > .card-foot").evaluate((foot) => {
       const box = foot.querySelector(".queue-compose-box")?.getBoundingClientRect();
       const note = foot.querySelector(".queue-note-text")!.getBoundingClientRect();
-      const buttons = [...foot.querySelectorAll<HTMLElement>(".queue-composer button")].filter((button) => button.getClientRects().length > 0 && !button.closest(".queue-compose-box"));
+      const buttons = [...foot.querySelectorAll<HTMLElement>(".queue-composer button")].filter((button) => !button.closest(".queue-compose-box"));
       const boxes = buttons.map((button) => button.getBoundingClientRect());
       return {
         boxWidth: box && Math.round(box.width),
@@ -1040,7 +1040,7 @@ describe("the Queue page on a phone", () => {
 
     // a face wider than one row holds → the row wraps: every line end-aligned 16 inside the edge, every button whole and 44 tall
     const getWrappedRow = (page: Page) => page.locator(".queue-sheet .queue-compose-buttons").evaluate((row) => {
-      const buttons = [...row.querySelectorAll<HTMLElement>(":scope > button")].filter((button) => button.getClientRects().length > 0);
+      const buttons = [...row.querySelectorAll<HTMLElement>(":scope > button")];
       const boxes = buttons.map((button) => button.getBoundingClientRect());
       const tops = [...new Set(boxes.map((box) => Math.round(box.top)))];
       return {
@@ -1080,6 +1080,49 @@ describe("the Queue page on a phone", () => {
 
       assert.deepEqual({ focused, laterCount }, { focused: ["Answer later", "Send answer"], laterCount: 1 });
     });
+
+    // focus order = drawn order (WCAG 2.4.3): from the box, Tab walks the foot line by line, each line start to end — a failed image's Try again included
+    const FAILED_FEET = [
+      { name: "a decision's sheet", item: DECISION, field: `queue-text-${DECISION.id}` },
+      { name: "a report's sheet", item: REPORT, field: `queue-reply-${REPORT.id}` },
+    ];
+    const getFocusWalk = async (page: Page, field: string) => {
+      await page.locator(`#${field}`).focus();
+      const walk = [];
+      for (let step = 0; step < 12; step += 1) {
+        await page.keyboard.press("Tab");
+        const stop = await page.evaluate(() => {
+          const focused = document.activeElement as HTMLElement;
+          const { top, bottom, left, right } = focused.getBoundingClientRect();
+          return { isInFoot: focused.closest(".queue-composer") !== null, name: focused.textContent?.trim() || focused.getAttribute("aria-label"), top, bottom, left, right };
+        });
+        if (!stop.isInFoot) break;
+        walk.push(stop);
+      }
+      return walk;
+    };
+    for (const viewport of [PHONE, WIDE_WINDOW]) {
+      for (const row of FAILED_FEET) {
+        test(`at ${viewport.width} on ${row.name} with a failed image, Tab walks the foot's controls in the order they are drawn`, async () => {
+          const page = await openQueuePage(harness, viewport, getRestReadyText());
+          harness.refusals.set("upload", { status: 500, body: { error: "server" } });
+          await page.locator(`#queue-row-${row.item.id}`).click();
+          await setFiles(page, row.field, [getImageFile(0)]);
+          await page.locator(".queue-sheet").getByRole("button", { name: "Try again" }).waitFor();
+          const walk = await getFocusWalk(page, row.field);
+          harness.refusals.clear();
+          await page.close();
+
+          // a later control sits on a lower line, or on the same line further along it
+          const backSteps = walk.slice(1).filter((next, index) => {
+            const previous = walk[index]!;
+            const isSameLine = next.top < previous.bottom - 0.5 && next.bottom > previous.top + 0.5;
+            return isSameLine ? next.left < previous.right - 0.5 : next.top < previous.top;
+          }).map((next) => next.name);
+          assert.deepEqual({ hasTryAgain: walk.some((stop) => stop.name === "Try again"), backSteps }, { hasTryAgain: true, backSteps: [] }, JSON.stringify(walk));
+        });
+      }
+    }
 
     test("the body's code blocks wrap inside their box and its tables scroll inside theirs", async () => {
       harness.fixture = getProseFixture();

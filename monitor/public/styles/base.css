@@ -1802,11 +1802,8 @@ label.ctl-checkbox-hit {
 	gap: var(--gap-control);
 	margin-inline-start: auto;
 }
-.queue-compose-buttons > .queue-later-narrow {
-	display: none;
-}
 /* a phone's sheet foot top to bottom: the box across the foot, its note line, then the one button row — later first, the commits after it —
-   at the end, in the thumb's reach; the row is a flex item of the composer, so it sorts after the note */
+   at the end, in the thumb's reach; queue.jsx → ComposerQ puts the row last in the tree there */
 @media (max-width: 640px) {
 	.queue-sheet .queue-composer {
 		display: flex;
@@ -1815,12 +1812,8 @@ label.ctl-checkbox-hit {
 	.queue-sheet .queue-composer > * {
 		flex: 1 1 100%;
 	}
-	.queue-sheet .queue-compose-row {
-		display: contents;
-	}
 	/* one row where the face fits it; a wider face wraps it end-aligned onto a second line, never past the foot's inset */
 	.queue-sheet .queue-compose-buttons {
-		order: 1;
 		flex: 0 1 auto;
 		flex-wrap: wrap;
 		justify-content: flex-end;
@@ -1830,12 +1823,8 @@ label.ctl-checkbox-hit {
 		min-height: var(--lh-row);
 	}
 	/* the commits' type and line, the ghost's narrow inset kept → three buttons still fit one row at 360 */
-	.queue-sheet .queue-compose-buttons > .queue-later-narrow {
-		display: inline-flex;
+	.queue-sheet .queue-compose-buttons > .queue-later {
 		padding-inline: var(--space-2);
-	}
-	.queue-sheet .queue-note > .queue-later-wide {
-		display: none;
 	}
 }
 /* a send label in parts (queue.jsx → getSendPartsQ) on one line: only the session name gives way, down to 3ch;
