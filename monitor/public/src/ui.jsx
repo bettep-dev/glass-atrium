@@ -758,7 +758,7 @@ function DetailSurfacePanel({ onClose, variant = 'drawer', title, sub, footer, c
   const dialogProps = titleId ? { 'aria-labelledby': titleId } : { 'aria-label': title };
   const bareTitle = bare && isElementTitle && !labelledBy ? <div id={titleId} hidden>{title}</div> : null;
 
-  const closeBtn = <button className="btn ghost sm icon" onClick={onClose} aria-label="Close details"><Icon name="x" size={14}/></button>;
+  const closeBtn = <button className="btn ghost sm icon" onClick={onClose} aria-label="Close details" title="Close details"><Icon name="x" size={14}/></button>;
   const head = <div className="detail-head">
     <div className="flex-1 min-w-0">
       <div id={titleId} className="detail-title">{title}</div>
