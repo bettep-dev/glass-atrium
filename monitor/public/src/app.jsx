@@ -356,6 +356,22 @@ function RemoteBanner() {
 	);
 }
 
+// a screen that throws while rendering → only the screen area falls back, in fixed words; the error never reaches the page
+class ScreenBoundary extends React.Component {
+	state = { hasFailed: false };
+
+	static getDerivedStateFromError() {
+		return { hasFailed: true };
+	}
+
+	render() {
+		if (!this.state.hasFailed) return this.props.children;
+		const { EmptyState } = window.UI;
+		const reload = <button type="button" className="btn sm" onClick={() => window.location.reload()}>Reload</button>;
+		return <EmptyState message="This screen could not be shown." action={reload} />;
+	}
+}
+
 function App() {
 	// tweaks → --accent / data-density 동기화
 	const [tweaks, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
@@ -519,12 +535,15 @@ function App() {
 			<div className="flex-1 min-w-0 flex flex-col">
 				{IS_REMOTE_PAGE && <RemoteBanner />}
 				<main id={MAIN_CONTENT_ID} tabIndex={-1} className="flex-1 min-w-0 p-page flex flex-col min-h-0">
-					{Screen ? (
-						<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} onReadQueueCount={readQueueCount}
-							onOpenMenu={() => setMenuOpen(true)} />
-					) : (
-						<div className="placeholder">Coming soon — '{active}'</div>
-					)}
+					{/* keyed by route → a route change starts the boundary fresh */}
+					<ScreenBoundary key={active}>
+						{Screen ? (
+							<Screen key={displayTimezone} onNav={onNavClick} harness={harness} onRetryHarness={pollHarness} onReadQueueCount={readQueueCount}
+								onOpenMenu={() => setMenuOpen(true)} />
+						) : (
+							<div className="placeholder">Coming soon — '{active}'</div>
+						)}
+					</ScreenBoundary>
 				</main>
 			</div>
 			<TweaksUI tweaks={tweaks} setTweak={setTweak} />

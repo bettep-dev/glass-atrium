@@ -987,7 +987,7 @@ function setReadStatusQ(read, setStatus) {
 	else if (read.arrived.length > 0) setStatus(getArrivalNoteQ(read.arrived));
 }
 
-// `⚠ yoaida has not received an order` · several sessions named together
+// `⚠ meadow has not received an order` · several sessions named together
 function getNotReceivedNoteQ(turned) {
 	const names = [...new Set(turned.map((item) => item.session.name))];
 	const what = getKindWordQ(turned[0]) === "Answer" ? "an answer" : "an order";
@@ -1215,7 +1215,7 @@ function getKeptSelectionQ(ids, sessions) {
 	return ids.filter((id) => selectable.has(id));
 }
 
-// ticks on listed sessions that no longer take a message → `⚠ yoaida no longer takes orders and was unticked.`; none → null
+// ticks on listed sessions that no longer take a message → `⚠ meadow no longer takes orders and was unticked.`; none → null
 function getDroppedNoteQ(ids, sessions) {
 	const names = sessions.filter((row) => !row.isSelectable && ids.includes(row.id)).map((row) => row.name);
 	if (names.length === 0) return null;
@@ -2020,7 +2020,7 @@ function getPrefixWhoQ(prefix, names) {
 	return names.get(prefix) ?? { name: prefix, isSelfNamed: false };
 }
 
-// `yoaida`, `3 sessions`, or with none resolved `1 unknown recipient` — only one session's own name can be self-named
+// `meadow`, `3 sessions`, or with none resolved `1 unknown recipient` — only one session's own name can be self-named
 function getRefusalToQ(refusal, names) {
 	const [first, ...rest] = refusal.recipientIdPrefixes;
 	if (first === undefined) return { name: `${refusal.unresolvedCount ?? 0} unknown ${refusal.unresolvedCount === 1 ? "recipient" : "recipients"}`, isSelfNamed: false };
@@ -2063,7 +2063,7 @@ function getCopiesNameQ(copies) {
 }
 
 /**
- * The title cell, one cut line: a relay's leads with its mark — `→ yoaida`, or `gersona → yoaida` with the name column left out (spec §4.2);
+ * The title cell, one cut line: a relay's leads with its mark — `→ meadow`, or `harbor → meadow` with the name column left out (spec §4.2);
  * a redacted relay's reads `Text redacted`, never its stored title, and a refusal's the reason's name, the queue storing no text (layout §1).
  * An element, not a component → the cell stays a direct child of the row's grid.
  */
@@ -2257,10 +2257,10 @@ function getReceiptQ(item) {
 	return "notYet";
 }
 
-// number + kind + session + title + tag + fact + extras + age → `#839, Decision from gersona: <title>, Approval, 3 options, posted 9m ago`
+// number + kind + session + title + tag + fact + extras + age → `#839, Decision from harbor: <title>, Approval, 3 options, posted 9m ago`
 // a done row's tag is its kind, already said first → `#802, Report from atrium: <title>, Read, ended 1h ago`
-// a relay names both ends whatever the ticks → `#412, Relay from aidl to yoaida: <title>, sent 2m ago` (spec §9.9)
-// a refusal its two ends and the reason's name → `Refused relay from gersona to yoaida: Too many to one session, 3m ago` (layout §1)
+// a relay names both ends whatever the ticks → `#412, Relay from quartz to meadow: <title>, sent 2m ago` (spec §9.9)
+// a refusal its two ends and the reason's name → `Refused relay from harbor to meadow: Too many to one session, 3m ago` (layout §1)
 function getRowLabelQ(row, cells, isNameShown, names) {
 	if (row.refusal) {
 		const { sender, to, reason } = getRefusalEndsQ(row.refusal, names);
@@ -2479,8 +2479,8 @@ function getNameNoteQ(session, queue, names) {
 	return { idPrefix: getPageIdQ(session.sessionIdPrefix, names), account: (isManyAccounts && session.profileLabel) || undefined };
 }
 
-// the head's h2 content: read as `Decision from gersona`; the session's account, directory and id ride its title ·
-// a relay's two ends, read as `Relay from aidl to yoaida`: the sheet's Who lines carry their facts (spec §9.9)
+// the head's h2 content: read as `Decision from harbor`; the session's account, directory and id ride its title ·
+// a relay's two ends, read as `Relay from quartz to meadow`: the sheet's Who lines carry their facts (spec §9.9)
 function LetterheadQ({ item, copies = [item], kind, note = {}, names = null }) {
 	const { Badge } = window.UI;
 	const { session } = item;
@@ -3958,7 +3958,7 @@ function useRecipientsNoteQ(targets, box, isReady) {
 	return [note, setNote];
 }
 
-// `New order to gersona, yoaida` — every name, an ended, not reachable or next-turn one with its bare mark after it, the comma after the mark; none → said in dim (spec §9.2 → Label line)
+// `New order to harbor, meadow` — every name, an ended, not reachable or next-turn one with its bare mark after it, the comma after the mark; none → said in dim (spec §9.2 → Label line)
 function OrderLabelQ({ rows }) {
 	if (rows.length === 0) return <>New order · no session ticked</>;
 	return (
@@ -4424,7 +4424,7 @@ function RefusedWhoQ({ refusal, names }) {
 	);
 }
 
-// `yoaida · 5e55a000`, or the bare id no loaded session names: the line draws the id once, so the name adds none
+// `meadow · 5e55a000`, or the bare id no loaded session names: the line draws the id once, so the name adds none
 function SessionPrefixQ({ prefix, names }) {
 	const who = names.get(prefix);
 	return <>{who !== undefined && <><WhoNameQ who={who} className="font-semibold" />{" · "}</>}<window.UI.MachineString>{prefix}</window.UI.MachineString></>;
@@ -4436,7 +4436,7 @@ function getUnresolvedTextQ(count) {
 
 /**
  * Only a relay passed on (hop 1 or 2): one short line, `Hop 1 · passed on from #398 · atrium (self-named) · 17:02`, so a time never wraps alone;
- * spec §12.7's sentence (`Hop 1 · sent after aidl (self-named) received relay #398 from atrium (self-named) at 17:02`) in its title and to a reader.
+ * spec §12.7's sentence (`Hop 1 · sent after quartz (self-named) received relay #398 from atrium (self-named) at 17:02`) in its title and to a reader.
  */
 function RelayHopLineQ({ relay, at }) {
 	const { MachineString } = window.UI;
