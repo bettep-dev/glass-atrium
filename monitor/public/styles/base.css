@@ -717,6 +717,16 @@ label.ctl-checkbox-hit {
 	overflow: hidden;
 	line-height: var(--lh-row);
 }
+@media (max-width: 640px) {
+	/* the clip box reaches the back arrow's whole 44 past the 20 line; the row gap keeps a wrapped sub past that reach, still clipped */
+	:is(.queue-sessions, .queue-orders-card) > .card-head > .card-head-text {
+		--queue-reach: calc((var(--ctl-min-h) + 2 * var(--space-1_5) - var(--lh-row)) / 2);
+		max-height: calc(var(--lh-row) + 2 * var(--queue-reach));
+		padding: var(--queue-reach) var(--space-3);
+		margin: calc(-1 * var(--queue-reach)) calc(-1 * var(--space-3));
+		row-gap: var(--queue-reach);
+	}
+}
 .queue-sessions > .card-head > .card-head-text > .card-sub {
 	flex: 0 0 auto;
 	contain: none;

@@ -1183,6 +1183,33 @@ describe("the Queue page on a phone", () => {
       });
     }
 
+    // a box can be 44 while an ancestor's clip cuts what takes the tap → the point's own hit test, at the box's inner corners (inside its rounding) and centre
+    const ARROWS = [
+      { name: "the menu button", open: async () => undefined, target: ".queue-menu" },
+      { name: "the Sessions back arrow", open: VIEWS[1]!.open, target: ".queue-sessions .queue-view-back" },
+      { name: "the Orders back arrow", open: VIEWS[2]!.open, target: ".queue-orders .queue-view-back" },
+      { name: "a sheet's back arrow", open: (page: Page) => openSheet(page, DECISION.id, DECISION.title), target: ".queue-sheet-head .queue-back > .btn" },
+    ];
+    for (const viewport of PHONES) {
+      for (const arrow of ARROWS) {
+        test(`at ${viewport.width} ${arrow.name} takes a tap at every corner of its 44 box and at its centre`, async () => {
+          const page = await openQueuePage(harness, viewport, getRestReadyText());
+          await arrow.open(page);
+          const misses = await page.locator(arrow.target).evaluate((node) => {
+            const [box, inset] = [node.getBoundingClientRect(), parseFloat(getComputedStyle(node).borderTopLeftRadius) * (1 - Math.SQRT1_2) + 1];
+            const points = {
+              topLeft: [box.left + inset, box.top + inset], topRight: [box.right - inset, box.top + inset], bottomLeft: [box.left + inset, box.bottom - inset],
+              bottomRight: [box.right - inset, box.bottom - inset], centre: [box.left + box.width / 2, box.top + box.height / 2],
+            };
+            return Object.entries(points).filter(([, [x, y]]) => document.elementFromPoint(x!, y!)?.closest("button") !== node).map(([name]) => name);
+          });
+          await page.close();
+
+          assert.deepEqual(misses, []);
+        });
+      }
+    }
+
     test("in the menu every drawn control is at least 44 tall, an icon button 44 wide too", async () => {
       const page = await openPhoneQueue(harness);
       await page.getByRole("button", MENU_BUTTON).tap();
