@@ -407,6 +407,27 @@ describe("the Queue page on a phone", () => {
 
         assert.deepEqual({ heads, isFirstRowHigh: firstRowTop <= 175 }, { heads: { list: 45, Sessions: 45, Orders: 45 }, isFirstRowHigh: true });
       });
+
+      // switching Sessions ↔ Orders → the title holds still, and each back target stays in its own head
+      test(`at ${viewport.width} the Sessions and Orders titles sit at one height, each back arrow inside its own head`, async () => {
+        const page = await openQueuePage(harness, viewport, getRestReadyText());
+        const heads: Record<string, { titleTop: number; isBackInside: boolean }> = {};
+        for (const view of VIEWS.slice(1)) {
+          await view.open(page);
+          heads[view.name] = await page.locator(`${view.pane} .card-head`).first().evaluate((head) => {
+            const [box, title, back] = [head, head.querySelector(".card-title")!, head.querySelector(".queue-view-back")!].map((node) => node.getBoundingClientRect());
+            return { titleTop: title!.top, isBackInside: back!.top >= box!.top - 0.5 && back!.bottom <= box!.bottom + 0.5 };
+          });
+          await page.locator(view.pane).getByRole("button", BACK).tap();
+        }
+        await page.close();
+
+        const { Sessions, Orders } = heads;
+        assert.deepEqual(
+          { titleApart: Math.abs(Sessions!.titleTop - Orders!.titleTop) <= 1 ? 0 : Orders!.titleTop - Sessions!.titleTop, isBackInside: [Sessions!.isBackInside, Orders!.isBackInside] },
+          { titleApart: 0, isBackInside: [true, true] },
+        );
+      });
     }
 
     test("the cadence line stays in the tree clipped to 1 px at rest, and a failed check shows it whole on its own line under the title", async () => {

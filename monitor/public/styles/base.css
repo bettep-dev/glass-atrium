@@ -709,7 +709,7 @@ label.ctl-checkbox-hit {
 	padding-inline: var(--space-4);
 }
 /* the head's sub shows whole or not at all: one 20 line, a sub that does not fit wraps below it and is clipped */
-.queue-sessions > .card-head > .card-head-text {
+:is(.queue-sessions, .queue-orders-card) > .card-head > .card-head-text {
 	flex-wrap: wrap;
 	max-height: var(--lh-row);
 	overflow: hidden;
