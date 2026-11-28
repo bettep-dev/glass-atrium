@@ -526,12 +526,12 @@ label.ctl-checkbox-hit {
 @media (min-width: 2560px) {
 	.queue-desk { --queue-rail-w: 280px; }
 }
-/* the Queue page on a phone (screens/queue.jsx → PHONE_Q): the header's menu replaces the shell's sidebar, the desk drops its
-   desktop floors, the pane bleeds to the screen's edges with its content on the header's 16 inset. Other routes keep 1280 → never match */
 /* the remote page's banner (app.jsx → RemoteBanner); here, not in utilities, so the phone's one 44 line can take its padding back */
 .remote-banner {
 	padding: var(--space-2) var(--space-6);
 }
+/* the Queue page on a phone (screens/queue.jsx → PHONE_Q): the header's menu replaces the shell's sidebar, the desk drops its
+   desktop floors, the pane bleeds to the screen's edges with its content on the header's 16 inset. Other routes keep 1280 → never match */
 .queue-menu,
 .queue-scope-trigger,
 .queue-orders-open,
