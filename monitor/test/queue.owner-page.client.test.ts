@@ -1222,7 +1222,7 @@ describe("done items in the one list", () => {
       [collectText(tag as RenderedNode), findNodes(tag as RenderedNode, (node) => node.props?.atom === "Badge").length, byClass(tag as RenderedNode, "queue-row-kind")[0]?.props.title, collectText(fact as RenderedNode), fact?.props.title, age?.props.title],
       ["Withdrawn", 0, "The session withdrew it.", "Report", undefined, "11-19 14:30"],
     );
-    assert.match(label, /^Report from atrium \(self-named\): Deploy 65 finished, Withdrawn, ended \S+ ago$/);
+    assert.match(label, new RegExp(`^#${item.id}, Report from atrium \\(self-named\\): Deploy 65 finished, Withdrawn, ended \\S+ ago$`));
   });
 
   test("the done read asks the history read for kind item, scoped by the ticks and the account", async () => {
@@ -1503,7 +1503,7 @@ describe("relays in the Done part", () => {
   const getDoneRowShape = (tree: RenderedNode) => {
     const [row] = findNodes(tree, (node) => node.props?.role === "option");
     return {
-      who: cellOf(tree, "queue-row-name"), isMarked: byClass(tree, "queue-row-mark").length === 1, title: cellOf(tree, "queue-row-title"), tag: cellOf(tree, "queue-row-tag"), fact: cellOf(tree, "queue-row-fact"),
+      id: cellOf(tree, "queue-row-id"), who: cellOf(tree, "queue-row-name"), isMarked: byClass(tree, "queue-row-mark").length === 1, title: cellOf(tree, "queue-row-title"), tag: cellOf(tree, "queue-row-tag"), fact: cellOf(tree, "queue-row-fact"),
       badges: findNodes(tree, (node) => node.props?.atom === "Badge").length,
       label: String(row?.props["aria-label"]).replace(/, (sent )?\S+ ago$/, ""), tip: row?.props.title ?? null,
     };
@@ -1530,7 +1530,8 @@ describe("relays in the Done part", () => {
   for (const row of endings) {
     test(`a Done relay's row: ${row.name}`, () => {
       const tree = render("QueueRowQ", { row: { id: row.copies[0]!.id, item: row.copies[0], copies: row.copies, isDone: true }, isSelected: false, cols: ["tag", "fact"], view: { isNameShown: true, isAccountShown: false, tabStopId: null }, onSelect: () => undefined, onOrder: () => undefined });
-      assert.deepEqual(getDoneRowShape(tree), row.shape);
+      const number = `#${row.copies[0]!.id}`;
+      assert.deepEqual(getDoneRowShape(tree), { ...row.shape, id: number, label: `${number}, ${row.shape.label}` });
     });
   }
 
@@ -1557,11 +1558,11 @@ describe("relays in the Done part", () => {
     { name: "to no resolvable session → the unknown count", refusal: { ...REFUSAL!, reason: "sender_cap", recipientIdPrefixes: [], unresolvedCount: 1 }, items: relays.items, rail: [], shape: { who: "gersona", isMarked: true, title: "→ 1 unknown recipient Too many from one session", label: "Refused relay from gersona (self-named) to 1 unknown recipient: Too many from one session" } },
   ];
   for (const row of refusedRows) {
-    test(`a refused relay's row: ${row.name}, Refused its tag and Relay its fact, no badge, the tip its Done relay siblings carry`, () => {
+    test(`a refused relay's row: ${row.name}, Refused its tag and Relay its fact, no badge, the tip its Done relay siblings carry, its number cell empty`, () => {
       const { queue } = buildQueue({ relays: { thread: thread({ items: row.items }) }, sessions: { region: { data: { sessions: row.rail } } } });
       const [group] = call<unknown[]>("getDoneGroupsQ", [call("getRefusalRowQ", row.refusal)]);
       const shape = getDoneRowShape(render("QueueGroupQ", { group, queue, view: { isNameShown: true, isAccountShown: false, tabStopId: null } }));
-      assert.deepEqual(shape, { ...row.shape, tag: "Refused", fact: "Relay", badges: 0, tip: "Relay" });
+      assert.deepEqual(shape, { ...row.shape, id: "", tag: "Refused", fact: "Relay", badges: 0, tip: "Relay" });
     });
   }
 
@@ -1640,6 +1641,11 @@ describe("relays in the Done part", () => {
       },
       { head: "Relay from gersona (self-named) → to yoaida (self-named)", title: "Refused relay from gersona to yoaida", date: "✕ Refused 2026-11-13 12:00 KST", parts: [true, true, true, true], crit: ["✕"] },
     );
+  });
+
+  // a refusal has no item → no queue number to show
+  test("a refused relay's sheet head draws no queue number", () => {
+    assert.equal(byClass(render("QueueSheetQ", { queue: refusedQueue().queue }), "queue-sheet-id").length, 0);
   });
 
   // a line that draws a session's id beside its name adds no second copy of it; the sentences name each end once, its mark left to the head and the rows
@@ -1724,23 +1730,23 @@ describe("a relay on its way", () => {
   const rows = [
     {
       name: "to one session it names its sender, leads its title with the recipient and reads Relay", copies: toYoaida(), isNameShown: true,
-      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
+      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `#412, Relay from ${NAMED} to yoaida: ${TITLE}` },
     },
     {
       name: "to several it names their count and reads received of sent", copies: toThree(), isNameShown: true,
-      shape: { who: "aidl", mark: "self", title: `→ 3 sessions ${TITLE}`, tags: [], fact: "1 of 3", label: `Relay from ${NAMED} to 3 sessions: ${TITLE}, 1 of 3` },
+      shape: { who: "aidl", mark: "self", title: `→ 3 sessions ${TITLE}`, tags: [], fact: "1 of 3", label: `#412, Relay from ${NAMED} to 3 sessions: ${TITLE}, 1 of 3` },
     },
     {
       name: "a copy its session never acknowledged is not yet, never not received", copies: toYoaida({ status: "unacked", deviation: "unacked" }), isNameShown: true,
-      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}` },
+      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `#412, Relay from ${NAMED} to yoaida: ${TITLE}` },
     },
     {
       name: "a copy whose session does not listen is counted in the tag column", copies: toYoaida({ session: buildSession({ name: "yoaida", state: "live", isWaiting: false }) }), isNameShown: true,
-      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `Relay from ${NAMED} to yoaida: ${TITLE}, 1 next turn` },
+      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `#412, Relay from ${NAMED} to yoaida: ${TITLE}, 1 next turn` },
     },
     {
       name: "a redacted relay reads Text redacted where its title stood", copies: toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } }), isNameShown: true,
-      shape: { who: "aidl", mark: "self", title: "→ yoaida Text redacted", tags: [], fact: "Relay", label: `Relay from ${NAMED} to yoaida: Text redacted` },
+      shape: { who: "aidl", mark: "self", title: "→ yoaida Text redacted", tags: [], fact: "Relay", label: `#412, Relay from ${NAMED} to yoaida: Text redacted` },
     },
   ];
   for (const row of rows) {
@@ -1772,7 +1778,7 @@ describe("a relay on its way", () => {
         { className: "queue-row-mark", text: "self", tip: "self-named", isHidden: true },
       ],
       ends: `→ yoaida ${TITLE}`,
-      label: `Relay from ${NAMED} to yoaida: ${TITLE}`,
+      label: `#412, Relay from ${NAMED} to yoaida: ${TITLE}`,
     });
   });
 
@@ -4283,23 +4289,27 @@ describe("In delivery rows", () => {
   });
 
   // spec §4.2: one line on fixed columns — every cell drawn in its place, an empty one too, so no text ends where a tag starts
-  test("a row lays its cells in column order, name, title, tag, fact, age, chevron, an empty tag and fact cell included", () => {
+  test("a row lays its cells in column order, its queue number, name, title, tag, fact, age, chevron, an empty tag and fact cell included", () => {
     const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
     const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ kind: "report", session: buildSession({ name: "gersona" }) })), isSelected: false, cols: ["tag", "fact"], view, onSelect: () => undefined, onOrder: () => undefined });
     const [option] = findNodes(tree, (node) => node.props?.role === "option");
     const slots = (option?.children ?? []).flatMap((child) => (typeof child === "object" && child !== null ? [String((child as RenderedNode).props?.className ?? "")] : []));
     const empty = ["queue-row-tag", "queue-row-fact"].map((name) => collectText(byClass(tree, name)[0] as RenderedNode));
-    assert.deepEqual([slots, collectText(byClass(tree, "queue-row-who")[0] as RenderedNode), empty], [["queue-row-who", "queue-row-title", "queue-row-tag", "queue-row-fact", "queue-row-age", "queue-row-chevron block"], "gersona self", ["", ""]]);
+    const [number] = byClass(tree, "queue-row-id");
+    assert.deepEqual(
+      [slots, collectText(number as RenderedNode), findNodes(number as RenderedNode, (node) => node.props?.atom === "MachineString").length, collectText(byClass(tree, "queue-row-who")[0] as RenderedNode), empty],
+      [["queue-row-id", "queue-row-who", "queue-row-title", "queue-row-tag", "queue-row-fact", "queue-row-age", "queue-row-chevron block"], "#41", 1, "gersona self", ["", ""]],
+    );
   });
 
   // spec §4.2: what is off the row — the account, a name's start-directory mark — stays in the row's title and accessible name
-  test("a row's title and accessible name carry its fact, the account and a start directory's mark", () => {
+  test("a row's accessible name starts with its queue number and, with its title, carries its fact, the account and a start directory's mark", () => {
     const view = { isNameShown: true, isAccountShown: true, tabStopId: 41 };
     const item = buildItem({ isApprovalClass: true, session: buildSession({ name: "gersona", isNameRegistered: false }) });
     const [option] = findNodes(render("QueueRowQ", { row: call("getSingleRowQ", item), isSelected: false, cols: ["tag", "fact"], view, onSelect: () => undefined, onOrder: () => undefined }), (node) => node.props?.role === "option");
     assert.deepEqual(
       [option?.props.title, String(option?.props["aria-label"]).replace(/posted .*$/, "posted")],
-      ["2 options · work-dev · start directory", `Decision from gersona: ${item.title}, Approval, 2 options, work-dev, start directory, posted`],
+      ["2 options · work-dev · start directory", `#41, Decision from gersona: ${item.title}, Approval, 2 options, work-dev, start directory, posted`],
     );
   });
 
@@ -4365,7 +4375,7 @@ describe("In delivery rows", () => {
       const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
       const [option] = findNodes(render("QueueRowQ", { row: call("getSingleRowQ", row.item), isSelected: false, cols: ["tag", "fact"], view, onSelect: () => undefined, onOrder: () => undefined }), (node) => node.props?.role === "option");
       const label = String(option?.props["aria-label"]);
-      assert.deepEqual([label.split(", ")[0], label.includes("start directory")], [row.label, row.item.session.isNameRegistered === false]);
+      assert.deepEqual([label.split(", ").slice(0, 2), label.includes("start directory")], [[`#${row.item.id}`, row.label], row.item.session.isNameRegistered === false]);
     });
   }
 });
@@ -4394,12 +4404,18 @@ describe("the sheet's letterhead and record", () => {
 
   // the rail's row of the sheet's own session, under the name its items carry
   const SHEET_SESSIONS = buildSessions({ region: { status: "ready", data: { sessions: [buildSessionRow({ name: "glass-atrium" })], hasMore: false }, error: null, busy: false } });
-  test("the sheet's head holds the way back, the kind tag and name as its h2, the position and the stepping", () => {
+  test("the sheet's head holds the way back, the item's queue number, the kind tag and name as its h2, the position and the stepping", () => {
     const { calls, queue } = buildQueue({ steps: { index: 0, count: 8, prevId: null, nextId: 7 }, sessions: SHEET_SESSIONS });
     const tree = renderSheet({ item: buildItem(), queue });
     const [head] = byClass(tree, "card-head");
     const buttons = findNodes(head as RenderedNode, (node) => node.type === "button");
     for (const button of buttons) if (!button.props.disabled) (button.props.onClick as () => void)();
+    const parts = ((head as RenderedNode).children ?? []).flatMap((child) => (typeof child === "object" && child !== null ? [child as RenderedNode] : []));
+    const [number] = byClass(head as RenderedNode, "queue-sheet-id");
+    assert.deepEqual(
+      [parts.map((part) => String(part.props?.className ?? "")), collectText(number as RenderedNode), findNodes(number as RenderedNode, (node) => node.props?.atom === "MachineString").length, number?.props.title],
+      [["queue-back", "queue-sheet-id", "card-title", "queue-steps"], "#41", 1, undefined],
+    );
     assert.deepEqual(buttons.map((button) => [button.props["aria-label"], button.props.title, Boolean(button.props.disabled)]), [["Back to the list", "Back to the list (Esc)", false], ["Previous item", "Previous item (K)", true], ["Next item", "Next item (J)", false]]);
     assert.equal(collectText(findNodes(head as RenderedNode, (node) => node.type === "h2")[0] as RenderedNode).replace(/\s+/g, " ").trim(), "Decision from glass-atrium (self-named)");
     assert.ok(collectText(head as RenderedNode).includes("1 of 8"));
@@ -4558,7 +4574,7 @@ describe("the sheet's letterhead and record", () => {
     const [railId] = byClass(railRowOf(renderCard("SessionsRegionQ", { queue: listed }), CONFUSED_ID), "queue-rail-id");
     const [recipient] = byClass(renderCard("OrdersViewQ", { queue: listed }), "queue-recipient");
     assert.deepEqual(
-      [String(option?.props["aria-label"]).startsWith(`Decision from Gersona (self-named) · ${OWN}: `), collectText(title as RenderedNode).trim().startsWith(OWN), collectText(head as RenderedNode).replace(/\s+/g, " ").trim(), collectText(railId as RenderedNode).trim(), collectText(recipient as RenderedNode).includes(OWN)],
+      [String(option?.props["aria-label"]).startsWith(`#${item.id}, Decision from Gersona (self-named) · ${OWN}: `), collectText(title as RenderedNode).trim().startsWith(OWN), collectText(head as RenderedNode).replace(/\s+/g, " ").trim(), collectText(railId as RenderedNode).trim(), collectText(recipient as RenderedNode).includes(OWN)],
       [true, true, `Gersona (self-named) ${OWN}`, CONFUSED, true],
     );
   });

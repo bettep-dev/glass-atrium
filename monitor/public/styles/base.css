@@ -1230,12 +1230,13 @@ label.ctl-checkbox-hit {
 	padding: var(--space-1_5) var(--card-pad);
 	white-space: nowrap;
 }
-/* a row (spec §4.2): one 20 line between 12 paddings → 44 — name 104 · title · tag 80 · fact 64 · age 32 · chevron 16;
-   8 between columns, the title's 4 margins making its 12 on either side. 104 holds a nine-letter name and its self mark whole.
-   Template = the name lead + its band's tail (data-cols) → one band, one set of columns; a column a band leaves out gives the title its width */
+/* a row (spec §4.2): one 20 line between 12 paddings → 44 — number 40 · name 104 · title · tag 80 · fact 64 · age 32 · chevron 16;
+   8 between columns, the title's 4 margins making its 12 on either side. 40 holds `#9999` whole, 104 a nine-letter name and its self mark.
+   Template = the number and name lead + its band's tail (data-cols) → one band, one set of columns; a column a band leaves out gives the title its width */
 .queue-row {
+	--queue-row-id: 40px;
 	--queue-row-name: 104px;
-	--queue-row-lead: var(--queue-row-name) minmax(0, 1fr);
+	--queue-row-lead: var(--queue-row-id) var(--queue-row-name) minmax(0, 1fr);
 	display: grid;
 	grid-template-columns: var(--queue-row-lead) var(--queue-row-tail);
 	column-gap: var(--space-2);
@@ -1247,7 +1248,7 @@ label.ctl-checkbox-hit {
 }
 /* one session ticked → the head names it, so no name column: the titles start on the bands' inset */
 .queue-row:not(:has(> .queue-row-who)) {
-	--queue-row-lead: minmax(0, 1fr);
+	--queue-row-lead: var(--queue-row-id) minmax(0, 1fr);
 }
 [data-cols=""] > .queue-row {
 	--queue-row-tail: 32px 16px;
@@ -1261,11 +1262,26 @@ label.ctl-checkbox-hit {
 [data-cols="tag fact"] > .queue-row {
 	--queue-row-tail: 80px 64px 32px 16px;
 }
-/* under 160 of title the fact column is left out, its fact kept in the row's title and name — at the 1280 list only a band
-   drawing the tag beside the names; every other band keeps 160 there */
-@container queue-list (width < 536px) {
+/* under the 1440 list the chevron and its 8 yield → the sheet takes the list's place, so the row tint alone marks the open row;
+   under 160 of title the fact column is left out too, its fact kept in the row's title and name — a band drawing the tag beside the names */
+@container queue-list (width < 584px) {
+	[data-cols=""] > .queue-row {
+		--queue-row-tail: 32px;
+	}
+	[data-cols="fact"] > .queue-row {
+		--queue-row-tail: 64px 32px;
+	}
+	[data-cols="tag"] > .queue-row {
+		--queue-row-tail: 80px 32px;
+	}
+	[data-cols="tag fact"] > .queue-row {
+		--queue-row-tail: 80px 64px 32px;
+	}
+	.queue-row > .queue-row-chevron {
+		display: none;
+	}
 	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) {
-		--queue-row-tail: 80px 32px 16px;
+		--queue-row-tail: 80px 32px;
 	}
 	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) > .queue-row-fact,
 	[data-cols="tag fact"] > .queue-row:has(> .queue-row-who) .queue-row-tag-wide {
@@ -1279,8 +1295,8 @@ label.ctl-checkbox-hit {
 .queue-row-tag-narrow {
 	display: none;
 }
-/* a phone row (layout §3): name 80 · title · tag 80 · age 32 on every band — the fact and the chevron left out, the fact kept in the
-   row's title and name, the whole row the target; .queue-listbox → level with the 536 rule above, later so it wins */
+/* a phone row (layout §3): number 40 · name 80 · title · tag 80 · age 32 — the fact and the chevron left out, the fact kept in the
+   row's title and name, the whole row the target; .queue-listbox → level with the 584 rule above, later so it wins */
 @media (max-width: 640px) {
 	/* one baseline across the 14 title and the 13 cells; the track fixed at one line → the row stays 44 */
 	.queue-row {
@@ -1295,7 +1311,11 @@ label.ctl-checkbox-hit {
 		--queue-row-tail: 32px;
 	}
 	.queue-listbox :is([data-cols="tag"], [data-cols="tag fact"]) > .queue-row {
-		--queue-row-tail: 80px 32px;
+		--queue-row-tail: 80px;
+	}
+	/* a tag band's age and its 8 yield → a confusable name's 8-character id stays whole in the title; the age stays in the row's name and the sheet's date line */
+	.queue-listbox :is([data-cols="tag"], [data-cols="tag fact"]) > .queue-row > .queue-row-age {
+		display: none;
 	}
 	.queue-row > :is(.queue-row-fact, .queue-row-chevron),
 	.queue-row .queue-row-tag-wide {
@@ -1332,6 +1352,12 @@ label.ctl-checkbox-hit {
 .queue-compose-text {
 	word-break: keep-all;
 	overflow-wrap: anywhere;
+}
+/* the queue number the terminal speaks in (`#839`): a machine string, never cut */
+.queue-row-id,
+.queue-sheet-id {
+	white-space: nowrap;
+	color: rgb(var(--dim));
 }
 .queue-row-title {
 	margin-inline: calc(var(--space-3) - var(--space-2));
@@ -1432,6 +1458,7 @@ label.ctl-checkbox-hit {
 /* the sheet: one page column shared by its head, body and foot, on a constant 32 inset — the pane is cut to the measure (spec §3.2) */
 .queue-sheet {
 	--card-pad: var(--space-8);
+	container: queue-sheet / inline-size;
 }
 .queue-sheet-head {
 	flex-wrap: nowrap;
@@ -1442,6 +1469,10 @@ label.ctl-checkbox-hit {
 	display: inline-flex;
 	align-items: center;
 	margin-inline-end: var(--space-2);
+}
+.queue-sheet-id {
+	flex: none;
+	font-size: var(--fs-meta);
 }
 .queue-sheet-head > .card-title,
 .queue-letter {
@@ -1482,6 +1513,23 @@ label.ctl-checkbox-hit {
 }
 .queue-steps > .tabular-nums {
 	margin-inline-end: var(--space-2);
+}
+/* the sheet in the 1280 middle column (the list's 584 threshold) → the position text yields, still read, so the letterhead's kind,
+   (self-named) and 8-character id stay whole; the number after the way back separates it, so the back group's 8 goes */
+@media (min-width: 641px) {
+	@container queue-sheet (width < 584px) {
+		.queue-steps > .tabular-nums {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip: rect(0 0 0 0);
+			white-space: nowrap;
+		}
+		.queue-back {
+			margin-inline-end: 0;
+		}
+	}
 }
 .queue-date-facts {
 	display: inline-flex;

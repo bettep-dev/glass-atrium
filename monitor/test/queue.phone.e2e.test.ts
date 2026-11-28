@@ -15,7 +15,7 @@ import {
   closeHarness, getImageFile, getRestReadyText, getSelfNamedFixture, type Harness, MIN_WINDOW, openHarness, openQueuePage, openShellPage, READY_TIMEOUT_MS, setFiles, tickSessions, type Viewport, waitForDoneBands,
 } from "./lib/queue-render-harness.js";
 import {
-  getAnswerNotReceivedFixture, getOffViewFixture, getProseFixture, getRelayListFixture, getRelayRowFixture, getRelayThreadFixture, getRestFixture, getScanApprovalFixture, type QueueFixture, RELAY_ROW_IDS, SCAN_IDS, SCAN_MARK_POINTS,
+  EDGE_IDS, EDGE_SESSION_IDS, getAnswerNotReceivedFixture, getEdgeFixture, getOffViewFixture, getProseFixture, getRelayListFixture, getRelayRowFixture, getRelayThreadFixture, getRestFixture, getScanApprovalFixture, type QueueFixture, RELAY_ROW_IDS, SCAN_IDS, SCAN_MARK_POINTS,
 } from "./lib/queue-render-fixtures.js";
 
 const PHONES: Viewport[] = [{ width: 360, height: 740, isMobile: true }, { width: 412, height: 915, isMobile: true }];
@@ -773,10 +773,10 @@ describe("the Queue page on a phone", () => {
     });
   });
 
-  describe("draws every list row as one 44 line: name 80 · title · tag 80 · age 32", () => {
+  describe("draws every list row as one 44 line: number 40 · name 80 · title · tag 80 · age 32, a tag band's age left out", () => {
     for (const viewport of PHONES) {
       // every row kind in one list: decisions, reports, secret approvals, relays on their way, Done rows and a refused relay
-      test(`at ${viewport.width} every drawn row is one 44 line of one 20 title on the phone's columns, no fact and no chevron cell drawn`, async () => {
+      test(`at ${viewport.width} every drawn row is one 44 line of one 20 title on the phone's columns, no fact and no chevron cell drawn, no age on a tag band and at least 96 of title there beside the names`, async () => {
         harness.fixture = getScanApprovalFixture(getRelayListFixture(true));
         const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
         await waitForDoneBands(page);
@@ -784,17 +784,69 @@ describe("the Queue page on a phone", () => {
           const rows = [...document.querySelectorAll<HTMLElement>(".queue-listbox .queue-row")].filter((row) => row.getClientRects().length > 0);
           const getCells = (selector: string) => rows.flatMap((row) => [...row.querySelectorAll<Element>(`:scope > ${selector}`)]);
           const getHeights = (nodes: Element[]) => [...new Set(nodes.map((node) => Math.round(node.getBoundingClientRect().height)))];
-          const getWidths = (selector: string) => [...new Set(getCells(selector).map((cell) => Math.round(cell.getBoundingClientRect().width)))];
-          const getShownCount = (selector: string) => getCells(selector).filter((cell) => cell.getClientRects().length > 0).length;
+          const isShown = (cell: Element) => cell.getClientRects().length > 0;
+          const getWidths = (selector: string) => [...new Set(getCells(selector).filter(isShown).map((cell) => Math.round(cell.getBoundingClientRect().width)))];
+          const getShownCount = (selector: string) => getCells(selector).filter(isShown).length;
+          const isTagBand = (row: Element) => (row.parentElement as HTMLElement).dataset.cols?.split(" ").includes("tag") === true;
+          const tagRows = rows.filter(isTagBand);
           return {
             rowHeights: getHeights(rows), titleHeights: getHeights(getCells(".queue-row-title")),
-            widths: { name: getWidths(".queue-row-who"), tag: getWidths(".queue-row-tag"), age: getWidths(".queue-row-age") },
+            widths: { id: getWidths(".queue-row-id"), name: getWidths(".queue-row-who"), tag: getWidths(".queue-row-tag"), age: getWidths(".queue-row-age") },
             shown: { fact: getShownCount(".queue-row-fact"), chevron: getShownCount(".queue-row-chevron") },
+            ages: { tagBand: tagRows.filter((row) => isShown(row.querySelector(":scope > .queue-row-age")!)).length, plainBand: rows.filter((row) => !isTagBand(row) && isShown(row.querySelector(":scope > .queue-row-age")!)).length > 0 },
+            tagBandTitles: tagRows.filter((row) => row.querySelector(":scope > .queue-row-who") !== null).map((row) => Math.floor(row.querySelector(":scope > .queue-row-title")!.getBoundingClientRect().width)),
           };
         });
         await page.close();
 
-        assert.deepEqual(facts, { rowHeights: [44], titleHeights: [20], widths: { name: [80], tag: [80], age: [32] }, shown: { fact: 0, chevron: 0 } });
+        const { tagBandTitles, ...cells } = facts;
+        assert.ok(tagBandTitles.length > 0 && tagBandTitles.every((title) => title >= 96), `a tag band's title beside the names holds 96: ${tagBandTitles}`);
+        assert.deepEqual(cells, { rowHeights: [44], titleHeights: [20], widths: { id: [40], name: [80], tag: [80], age: [32] }, shown: { fact: 0, chevron: 0 }, ages: { tagBand: 0, plainBand: true } });
+      });
+
+      // the number the terminal speaks in (#839), four digits on every decision, report and Done row; a refusal has no item, so no number
+      test(`at ${viewport.width} every row with an item leads with its queue number in the machine face, whole at four digits and at one x on every row, and no row runs past its width`, async () => {
+        const fixture = getRelayListFixture(true);
+        const widen = (item: QueueFixture["items"][number]) => (item.kind === "decision" || item.kind === "report" ? { ...item, id: item.id + 9000 } : item);
+        harness.fixture = { ...fixture, items: fixture.items.map(widen), done: fixture.done?.map(widen) };
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        await waitForDoneBands(page);
+        const rows = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".queue-listbox .queue-row")].filter((row) => row.getClientRects().length > 0).map((row) => {
+          const cell = row.querySelector<HTMLElement>(":scope > .queue-row-id")!;
+          const face = cell.querySelector("code");
+          return {
+            isRefusal: row.id.startsWith("queue-row-refusal:"), text: cell.textContent, expected: `#${row.id.slice("queue-row-".length)}`,
+            family: face === null ? null : getComputedStyle(face).fontFamily, isWhole: cell.scrollWidth <= cell.clientWidth,
+            x: cell.getBoundingClientRect().left - row.getBoundingClientRect().left, isInsideRow: row.scrollWidth <= row.clientWidth,
+          };
+        }));
+        await page.close();
+
+        const items = rows.filter((row) => !row.isRefusal);
+        const xs = rows.map((row) => row.x);
+        assert.ok(items.some((row) => row.text!.length === 5), "a four-digit number is drawn");
+        assert.ok(rows.some((row) => row.isRefusal), "a refused relay's row is drawn");
+        assert.deepEqual(items.filter((row) => row.text !== row.expected || !row.family?.startsWith('"JetBrains Mono"')), [], "each number is #id in the machine face");
+        assert.deepEqual(rows.filter((row) => row.isRefusal).map((row) => [row.text, row.family]), [["", null]], "a refusal's cell is empty");
+        assert.deepEqual(rows.filter((row) => !row.isWhole || !row.isInsideRow), [], "every number whole, every row within its width");
+        assert.ok(Math.max(...xs) - Math.min(...xs) <= 0.5, `one x: ${xs}`);
+      });
+
+      // the id is what tells two same-named sessions apart → it stays whole in the row's title, on a band drawing the tag too
+      test(`at ${viewport.width} a decision from one of two sessions with one name shows that session's 8-character id whole inside its title on a tag band`, async () => {
+        const edge = getEdgeFixture();
+        const twin = edge.items.find((item) => item.id === EDGE_IDS.declaredReport)!.session;
+        harness.fixture = { ...edge, items: edge.items.map((item) => (item.id === EDGE_IDS.nineOptions ? { ...item, session: twin } : item)) };
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        const id = await page.evaluate((rowId) => {
+          const shown = document.querySelector<HTMLElement>(`#queue-row-${rowId} > .queue-row-title code`);
+          const title = shown?.closest(".queue-row-title")?.getBoundingClientRect();
+          const cols = (shown?.closest(".queue-row")?.parentElement as HTMLElement | null | undefined)?.dataset.cols;
+          return shown === null ? null : { text: shown.textContent, isTagBand: cols?.split(" ").includes("tag"), isWhole: title !== undefined && shown.getBoundingClientRect().right <= title.right + 0.5 };
+        }, EDGE_IDS.nineOptions);
+        await page.close();
+
+        assert.deepEqual(id, { text: EDGE_SESSION_IDS.twin.slice(0, 8), isTagBand: true, isWhole: true });
       });
 
       test(`at ${viewport.width} a self-named relay sender's mark lies whole inside the 80 name cell, and each relay's title starts with →`, async () => {
@@ -867,7 +919,7 @@ describe("the Queue page on a phone", () => {
       cells: string[];
     }
     const LIST_LINES: Line[] = [
-      { name: "a list row's title, name, self mark, tag and age", lines: ".queue-listbox .queue-row", cells: [":scope > .queue-row-title", ".queue-row-name", ".queue-row-mark", ".queue-row-tag .pill", ".queue-row-kind", ":scope > .queue-row-age"] },
+      { name: "a list row's number, title, name, self mark, tag and age", lines: ".queue-listbox .queue-row", cells: [":scope > .queue-row-id", ":scope > .queue-row-title", ".queue-row-name", ".queue-row-mark", ".queue-row-tag .pill", ".queue-row-kind", ":scope > .queue-row-age"] },
       { name: "a list band's label and its count or day", lines: ".queue-listbox .queue-band", cells: ["&", ":scope > *"] },
     ];
     const SHEET_LINES: Line[] = [
@@ -933,19 +985,21 @@ describe("the Queue page on a phone", () => {
   });
 
   describe("opens an item as one sheet, its head in two rows and its answer in reach of the thumb", () => {
-    test("the head holds back, the count, previous and next on its first row and the letterhead whole across the second; previous and next 44 by 44, 4 apart", async () => {
+    test("the head holds back, the queue number right after it, the count, previous and next on its first row and the letterhead whole across the second; previous and next 44 by 44, 4 apart", async () => {
       const page = await openPhoneQueue(harness);
       await openSheet(page, DECISION.id, DECISION.title);
       const head = await page.evaluate(() => {
         const getBox = (selector: string) => document.querySelector(`.queue-sheet-head ${selector}`)!.getBoundingClientRect();
-        const row = [getBox(".queue-back > .btn"), getBox(".queue-steps > .tabular-nums"), getBox('[aria-label="Previous item"]'), getBox('[aria-label="Next item"]')];
-        const [, , previous, next] = row;
+        const row = [getBox(".queue-back > .btn"), getBox(".queue-sheet-id"), getBox(".queue-steps > .tabular-nums"), getBox('[aria-label="Previous item"]'), getBox('[aria-label="Next item"]')];
+        const [back, number, count, previous, next] = row;
         const title = document.querySelector(".queue-sheet-head > .card-title")!.getBoundingClientRect();
         // the back arrow steps into the head's inset (its glyph on the menu's column) → the letterhead spans the head's content box
         const sheetHead = document.querySelector<HTMLElement>(".queue-sheet-head")!;
         const contentLeft = sheetHead.getBoundingClientRect().left + parseFloat(getComputedStyle(sheetHead).paddingLeft);
         return {
           isFirstRowOneLine: Math.max(...row.map((box) => box.top)) < Math.min(...row.map((box) => box.bottom)),
+          number: { text: document.querySelector(".queue-sheet-head .queue-sheet-id")!.textContent, isAfterBack: number!.left >= back!.right && number!.right <= count!.left },
+          isCountShown: count!.width > 1,
           isLetterheadBelow: title.top >= Math.max(...row.map((box) => box.bottom)) - 0.5,
           isLetterheadAcross: Math.abs(title.left - contentLeft) < 0.5 && Math.abs(title.right - next!.right) < 0.5,
           steps: [previous, next].map((box) => [box!.width, box!.height]),
@@ -954,7 +1008,7 @@ describe("the Queue page on a phone", () => {
       });
       await page.close();
 
-      assert.deepEqual(head, { isFirstRowOneLine: true, isLetterheadBelow: true, isLetterheadAcross: true, steps: [[44, 44], [44, 44]], apart: 4 });
+      assert.deepEqual(head, { isFirstRowOneLine: true, number: { text: `#${DECISION.id}`, isAfterBack: true }, isCountShown: true, isLetterheadBelow: true, isLetterheadAcross: true, steps: [[44, 44], [44, 44]], apart: 4 });
     });
 
     // the answered decision carrying the prose report's 30-line fence, its question unfolded → a body longer than the screen

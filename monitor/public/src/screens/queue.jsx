@@ -1980,7 +1980,7 @@ function BandCountQ({ count, hasMore }) {
 // who, then what (spec §4.2): one line on its band's columns (`cols`), an empty cell of a drawn column keeping its width; an arrival paints no mark (§4.4)
 // a refused relay's row (layout §1) the same, `names` resolving its id prefixes
 function QueueRowQ({ row, names = null, isSelected, isNew = false, cols, view, onSelect, onOrder, onSeen }) {
-	const { Icon, formatKstDateTime } = window.UI;
+	const { Icon, MachineString, formatKstDateTime } = window.UI;
 	const { item } = row;
 	const cells = getRowCellsQ(row, view.isAccountShown);
 	const tip = [cells.fact, ...cells.extras].filter(Boolean).join(" · ");
@@ -1989,6 +1989,8 @@ function QueueRowQ({ row, names = null, isSelected, isNew = false, cols, view, o
 		<div id={`${ROW_ID_PREFIX_Q}${row.id}`} role="option" aria-selected={isSelected} tabIndex={row.id === view.tabStopId ? 0 : -1}
 			aria-label={getRowLabelQ(row, cells, view.isNameShown, names)} title={tip || undefined} className={row.isDone ? "queue-row queue-row--done" : "queue-row"}
 			onFocus={isNew ? () => onSeen?.(row.id) : undefined} onClick={() => (getRowKindQ(row) === "Order" ? onOrder(row) : onSelect(row.id))}>
+			{/* a refusal has no item → its cell drawn empty, the column kept */}
+			<span className="queue-row-id">{item && <MachineString>{getItemNumberQ(item)}</MachineString>}</span>
 			{view.isNameShown && <span className="queue-row-who"><RowWhoQ row={row} names={names} /></span>}
 			{getRowTitleQ(row, view.isNameShown, names)}
 			{cols.includes("tag") && <span className="queue-row-tag"><RowTagsQ tags={cells.tags} /></span>}
@@ -1998,6 +2000,11 @@ function QueueRowQ({ row, names = null, isSelected, isNew = false, cols, view, o
 			<Icon name="chevR" size={16} className="queue-row-chevron block" />
 		</div>
 	);
+}
+
+// the queue item's number as the terminal speaks it → `#839`
+function getItemNumberQ(item) {
+	return `#${item.id}`;
 }
 
 // a refusal's sender and recipients by name where `names` holds one, else by id prefix; `reason` the reason's name alone, its sentence the sheet's
@@ -2250,9 +2257,9 @@ function getReceiptQ(item) {
 	return "notYet";
 }
 
-// kind + session + title + tag + fact + extras + age → `Decision from gersona: <title>, Approval, 3 options, posted 9m ago`
-// a done row's tag is its kind, already said first → `Report from atrium: <title>, Read, ended 1h ago`
-// a relay names both ends whatever the ticks → `Relay from aidl to yoaida: <title>, sent 2m ago` (spec §9.9)
+// number + kind + session + title + tag + fact + extras + age → `#839, Decision from gersona: <title>, Approval, 3 options, posted 9m ago`
+// a done row's tag is its kind, already said first → `#802, Report from atrium: <title>, Read, ended 1h ago`
+// a relay names both ends whatever the ticks → `#412, Relay from aidl to yoaida: <title>, sent 2m ago` (spec §9.9)
 // a refusal its two ends and the reason's name → `Refused relay from gersona to yoaida: Too many to one session, 3m ago` (layout §1)
 function getRowLabelQ(row, cells, isNameShown, names) {
 	if (row.refusal) {
@@ -2265,7 +2272,7 @@ function getRowLabelQ(row, cells, isNameShown, names) {
 	const age = `${getAgeVerbQ(row)} ${window.UI.formatRelativeTime(getRowAtQ(row))}`;
 	const title = item.kind === "relay" ? getRelayTitleQ(item) : item.title;
 	const cellWords = [...tags, cells.fact].filter((word) => word !== kind);
-	const parts = [`${kind}${getLabelEndsQ(row, isNameShown, names)}: ${title}`, ...cellWords, ...cells.extras, age].filter(Boolean);
+	const parts = [getItemNumberQ(item), `${kind}${getLabelEndsQ(row, isNameShown, names)}: ${title}`, ...cellWords, ...cells.extras, age].filter(Boolean);
 	return parts.join(", ");
 }
 
@@ -2371,7 +2378,7 @@ function ItemSheetQ({ item, copies = [item], queue, cliPath, hasLeft = false, is
 	const foot = getSheetFootQ({ item, copies, draft, queue, isBusy, error, hasLeft, isDone });
 	return (
 		<div className="card queue-pane queue-sheet">
-			<SheetHeadQ queue={queue}><LetterheadQ item={item} copies={copies} kind={kind} note={getNameNoteQ(item.session, queue, names)} names={names} /></SheetHeadQ>
+			<SheetHeadQ queue={queue} item={item}><LetterheadQ item={item} copies={copies} kind={kind} note={getNameNoteQ(item.session, queue, names)} names={names} /></SheetHeadQ>
 			<div className="card-bar"><NamesNoteQ /></div>
 			<div className="card-body" tabIndex={-1}>
 				<SheetBodyQ item={item} copies={copies} rails={queue.sessions?.region.data?.sessions ?? []} draft={draft} onDraft={(patch) => queue.setDraft(item.id, { ...patch, error: null })} cliPath={cliPath} isDone={isDone} scanRead={scanRead} />
@@ -2436,11 +2443,12 @@ function getRelayEndAtQ(copies) {
 }
 
 /**
- * The way back (its arrival count in its name, painted beside the glyph-only square) · the h2 (`children`) · the position and previous / next (spec §4.3, §12.5);
+ * The way back (its arrival count in its name, painted beside the glyph-only square) · the item's queue number · the h2 (`children`) · the position and previous / next (spec §4.3, §12.5);
  * a relay that left the list draws its arrows aria-disabled.
+ * @param item - the sheet's item; a refusal has none → no number
  */
-function SheetHeadQ({ queue, children }) {
-	const { Badge, Icon } = window.UI;
+function SheetHeadQ({ queue, item = null, children }) {
+	const { Badge, Icon, MachineString } = window.UI;
 	const { steps } = queue;
 	const arrived = queue.list.newIds.length;
 	const isStepless = isRelayLeftQ(queue.sheet);
@@ -2453,6 +2461,7 @@ function SheetHeadQ({ queue, children }) {
 				</button>
 				{arrived > 0 && <span aria-hidden="true"><Badge fill="solid">{arrived}</Badge></span>}
 			</span>
+			{item !== null && <span className="queue-sheet-id"><MachineString>{getItemNumberQ(item)}</MachineString></span>}
 			<h2 className="card-title">{children}</h2>
 			<span className="queue-steps">
 				{steps.index >= 0 && <span className="fs-meta text-dim tabular-nums">{`${steps.index + 1} of ${steps.count}`}</span>}
@@ -2849,7 +2858,7 @@ function RelayWhoQ({ sender, copies, rails = [], isDone = false }) {
 				<React.Fragment key={copy.id}>
 					<span className="queue-label">{index === 0 ? "To" : ""}</span>
 					<span className="queue-relay-to">
-						<span><span className="font-semibold">{copy.session.name}</span>{" · "}<MachineString>{copy.session.sessionIdPrefix}</MachineString>{" "}<MachineString>{`#${copy.id}`}</MachineString>{" · "}</span>
+						<span><span className="font-semibold">{copy.session.name}</span>{" · "}<MachineString>{copy.session.sessionIdPrefix}</MachineString>{" "}<MachineString>{getItemNumberQ(copy)}</MachineString>{" · "}</span>
 						<span className="queue-relay-place" title={getSessionPlaceQ(copy.session)}>{getSessionPlaceQ(copy.session)}</span>
 						<span>
 							{" · "}<RecipientStateQ mark={getRecipientMarkQ(copy, rails)} />
