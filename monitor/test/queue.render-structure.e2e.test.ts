@@ -2407,6 +2407,59 @@ describe("queue page on the mockup fixtures", () => {
       }))));
     });
 
+    // an ordinary head keeps one row at 1280 → the position text is what gives way, never a nine-letter name beside the widest kind and a four-digit number
+    test("an ordinary decision's and report's one-row sheet head from a self-named nine-letter session keeps the name, (self-named) and four-digit number whole on its 48 row, the position read but not drawn at 1280 and drawn at 1440", async () => {
+      const ids = { report: 9000 + EDGE_IDS.declaredReport, decision: 9000 + EDGE_IDS.nineOptions };
+      const edge = getEdgeFixture();
+      const sessionId = "da5b0a2d-0000-4000-8000-000000000004";
+      const harbor = { view: edge.items.find((item) => item.id === EDGE_IDS.nineOptions)!.session, row: edge.sessions.find((row) => row.name === "harbor")! };
+      const dashboard = { ...harbor.view, id: sessionId, sessionIdPrefix: sessionId.slice(0, 8), name: "dashboard" };
+      const moved = new Map<number, number>([[EDGE_IDS.declaredReport, ids.report], [EDGE_IDS.nineOptions, ids.decision]]);
+      const fixture = {
+        ...edge,
+        items: edge.items.map((item) => {
+          const id = moved.get(item.id);
+          return id === undefined ? item : { ...item, id, session: dashboard };
+        }),
+        sessions: [...edge.sessions, { ...harbor.row, id: sessionId, sessionIdPrefix: sessionId.slice(0, 8), name: "dashboard" }],
+      };
+      const shown = [];
+      for (const viewport of [MIN_WINDOW, VIEWPORTS[0]]) {
+        for (const id of [ids.decision, ids.report]) {
+          harness.fixture = fixture;
+          const page = await openQueuePage(harness, viewport, getRestReadyText(fixture));
+          await selectRow(page, id);
+          const head = await page.evaluate(() => {
+            const head = document.querySelector<HTMLElement>(".queue-sheet-head")!;
+            const get = (selector: string) => head.querySelector<HTMLElement>(selector)!;
+            const isInside = (part: HTMLElement, within: HTMLElement) => part.getBoundingClientRect().left >= within.getBoundingClientRect().left - 0.5 && part.getBoundingClientRect().right <= within.getBoundingClientRect().right + 0.5;
+            const isWhole = (selector: string) => get(selector).scrollWidth <= get(selector).clientWidth && isInside(get(selector), head) && (!selector.startsWith(".queue-letter-") || isInside(get(selector), get(".queue-letter-name")));
+            const position = get(".queue-steps > .tabular-nums");
+            return {
+              isLetterOrdinary: !get(".queue-letter").classList.contains("has-id"),
+              whole: [".queue-letter-text", ".queue-letter-self", ".queue-sheet-id"].filter(isWhole),
+              position: { text: position.textContent ?? "", isPointSized: position.getBoundingClientRect().width <= 1 && position.getBoundingClientRect().height <= 1 },
+              steps: [...head.querySelectorAll(".queue-steps > .btn")].map((button) => [Math.round(button.getBoundingClientRect().width), Math.round(button.getBoundingClientRect().height)]),
+              height: Math.round(head.getBoundingClientRect().height),
+            };
+          });
+          const tree = await page.locator(".queue-sheet-head").ariaSnapshot();
+          await page.close();
+          const { text, isPointSized } = head.position;
+          shown.push({ width: viewport.width, id, head: { ...head, position: { isPositionText: /^\d+ of \d+$/.test(text), isPointSized, isRead: tree.includes(text) } } });
+        }
+      }
+
+      assert.deepEqual(shown, [MIN_WINDOW, VIEWPORTS[0]].flatMap((viewport) => [ids.decision, ids.report].map((id) => ({
+        width: viewport.width, id,
+        head: {
+          isLetterOrdinary: true, whole: [".queue-letter-text", ".queue-letter-self", ".queue-sheet-id"],
+          position: { isPositionText: true, isPointSized: viewport.width === MIN_WINDOW.width, isRead: true },
+          steps: [[32, 32], [32, 32]], height: 48,
+        },
+      }))));
+    });
+
     // a relay prints its ends' ids inline in its one cut name → between the two same-named sessions, at four digits, the 1280 head gives it the twin's own row
     test("at 1280 a relay from one of two same-named sessions, self-named, to the other keeps the four-digit number and both ends' names and 8-character ids whole, its letterhead on its own row", async () => {
       const edge = getEdgeFixture();
@@ -2455,31 +2508,33 @@ describe("queue page on the mockup fixtures", () => {
     });
 
     // the head is where the owner answers → a registered name's (self-named) is the page's own element, whole while the name is cut
-    test("at 1280 the sheet head of a registered 100-character name cuts the name and keeps its (self-named) whole, and a start-directory head reads start directory with none", async () => {
+    test("at 1280 the sheet head of a registered 100-character name cuts the name, its whole text in the title, and keeps its (self-named) whole, and a start-directory head reads start directory with none", async () => {
       harness.fixture = getNameColumnFixture();
       const heads = [];
       for (const named of [EDGE_LONG_SESSION_NAME, "atrium-hooks"]) {
         const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
         await page.locator(".queue-row-who .queue-row-name", { hasText: named.slice(0, 12) }).first().click();
         await page.locator(".queue-sheet .queue-letter-text", { hasText: named.slice(0, 12) }).waitFor();
-        heads.push(await page.evaluate(() => {
-          const head = document.querySelector<HTMLElement>(".queue-sheet .queue-letter-name")!.getBoundingClientRect();
+        heads.push(await page.evaluate((named) => {
+          const letterName = document.querySelector<HTMLElement>(".queue-sheet .queue-letter-name")!;
+          const head = letterName.getBoundingClientRect();
           const name = document.querySelector<HTMLElement>(".queue-sheet .queue-letter-text")!;
           const self = document.querySelector<HTMLElement>(".queue-sheet .queue-letter-self");
           const selfBox = self?.getBoundingClientRect();
-                    return {
+          return {
             isNameCut: name.scrollWidth > name.clientWidth,
+            isNameInTitle: letterName.title.split(" · ").includes(named),
             isStartDirectory: name.textContent!.endsWith(" start directory"),
             self: self === null ? null : { text: self.textContent, isOutsideName: !name.contains(self), isWhole: self.scrollWidth <= self.clientWidth && selfBox!.right <= head.right + 0.5 && selfBox!.width > 0 },
           };
-        }));
+        }, named));
         await page.close();
       }
 
       const [registered, startDirectory] = heads;
       assert.deepEqual(
         [registered, { isStartDirectory: startDirectory?.isStartDirectory, self: startDirectory?.self }],
-        [{ isNameCut: true, isStartDirectory: false, self: { text: " (self-named)", isOutsideName: true, isWhole: true } }, { isStartDirectory: true, self: null }],
+        [{ isNameCut: true, isNameInTitle: true, isStartDirectory: false, self: { text: " (self-named)", isOutsideName: true, isWhole: true } }, { isStartDirectory: true, self: null }],
       );
     });
 

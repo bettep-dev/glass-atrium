@@ -2479,7 +2479,7 @@ function getNameNoteQ(session, queue, names) {
 	return { idPrefix: getPageIdQ(session.sessionIdPrefix, names), account: (isManyAccounts && session.profileLabel) || undefined };
 }
 
-// the head's h2 content: read as `Decision from harbor`; the session's account, directory and id ride its title ·
+// the head's h2 content: read as `Decision from harbor`; the session's name, account, directory and id ride its title, so a cut name stays whole there ·
 // a relay's two ends, read as `Relay from quartz to meadow`: the sheet's Who lines carry their facts (spec §9.9)
 function LetterheadQ({ item, copies = [item], kind, note = {}, names = null }) {
 	const { Badge } = window.UI;
@@ -2488,7 +2488,7 @@ function LetterheadQ({ item, copies = [item], kind, note = {}, names = null }) {
 		const from = getPageWhoQ(getSenderWhoQ(item.relay.sender), item.relay.sender.sessionIdPrefix, names);
 		return <RelayLetterheadQ kind={kind} from={from} to={getCopiesToQ(copies, names)} />;
 	}
-	const where = [session.profileLabel, session.cwd, session.id].filter(Boolean).join(" · ");
+	const where = [session.name, session.profileLabel, session.cwd, session.id].filter(Boolean).join(" · ");
 	return (
 		<span className={`queue-letter${note.idPrefix !== undefined ? " has-id" : ""}`}>
 			<Badge fill="tag">{kind}</Badge>
