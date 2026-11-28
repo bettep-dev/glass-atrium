@@ -1209,8 +1209,14 @@ label.ctl-checkbox-hit {
 /* a phone row (layout §3): name 80 · title · tag 80 · age 32 on every band — the fact and the chevron left out, the fact kept in the
    row's title and name, the whole row the target; .queue-listbox → level with the 536 rule above, later so it wins */
 @media (max-width: 640px) {
+	/* one baseline across the 14 title and the 13 cells; the track fixed at one line → the row stays 44 */
 	.queue-row {
 		--queue-row-name: 80px;
+		grid-template-rows: var(--lh-row);
+		align-items: baseline;
+	}
+	.queue-row .queue-row-tag {
+		align-items: baseline;
 	}
 	.queue-listbox :is([data-cols=""], [data-cols="fact"]) > .queue-row {
 		--queue-row-tail: 32px;
@@ -1627,6 +1633,10 @@ label.ctl-checkbox-hit {
 	}
 	.scan-line-head > :last-child {
 		grid-column: 1 / -1;
+	}
+	/* the 13 label on its text's baseline */
+	.queue-option-sides {
+		align-items: baseline;
 	}
 }
 .queue-option > .ctl-radio:focus-visible {

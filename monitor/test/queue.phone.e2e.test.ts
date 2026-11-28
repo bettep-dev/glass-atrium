@@ -8,7 +8,7 @@
 import test, { after, before, beforeEach, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import type { Locator, Page } from "playwright";
+import { type Browser, chromium, type Locator, type Page } from "playwright";
 
 import {
   closeHarness, getRestReadyText, getSelfNamedFixture, type Harness, MIN_WINDOW, openHarness, openQueuePage, openShellPage, READY_TIMEOUT_MS, tickSessions, type Viewport, waitForDoneBands,
@@ -464,6 +464,51 @@ describe("the Queue page on a phone", () => {
     }
   });
 
+  // a styled scrollbar takes width on a touch phone, an unstyled one overlays; the harness's browser hides every bar → this one draws them
+  describe("runs the list from edge to edge where the page's scrollbars take width", () => {
+    let hiddenBarBrowser: Browser;
+
+    before(async () => {
+      hiddenBarBrowser = harness.browser;
+      harness.browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ["--hide-scrollbars"] });
+    });
+
+    after(async () => {
+      await harness.browser.close();
+      harness.browser = hiddenBarBrowser;
+    });
+
+    // the list body's widths, its rows' right edges and whether the page fits its width
+    const getScrollerWidths = (page: Page) => page.locator(".queue-list > .card-body").evaluate((body: HTMLElement) => ({
+      isScrolling: body.scrollHeight > body.clientHeight,
+      client: body.clientWidth,
+      offset: body.offsetWidth,
+      rowRights: [...new Set([...body.querySelectorAll(".queue-row")].map((row) => Math.round(row.getBoundingClientRect().right)))],
+      isPageInside: document.scrollingElement!.scrollWidth <= document.documentElement.clientWidth,
+    }));
+
+    for (const viewport of PHONES) {
+      test(`at ${viewport.width} on a touch screen the scrolling list's body and its rows reach the screen's right edge`, async () => {
+        harness.fixture = getOffViewFixture();
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        const isCoarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
+        const widths = await getScrollerWidths(page);
+        await page.close();
+
+        assert.deepEqual({ isCoarse, ...widths }, { isCoarse: true, isScrolling: true, client: viewport.width, offset: viewport.width, rowRights: [viewport.width], isPageInside: true });
+      });
+    }
+
+    test("at 1440 with a mouse the scrolling list keeps the page's 10 scrollbar", async () => {
+      harness.fixture = getOffViewFixture();
+      const page = await openQueuePage(harness, { width: 1440, height: 600 }, getRestReadyText(harness.fixture));
+      const widths = await getScrollerWidths(page);
+      await page.close();
+
+      assert.deepEqual({ isScrolling: widths.isScrolling, bar: widths.offset - widths.client }, { isScrolling: true, bar: 10 });
+    });
+  });
+
   describe("draws every list row as one 44 line: name 80 · title · tag 80 · age 32", () => {
     for (const viewport of PHONES) {
       // every row kind in one list: decisions, reports, secret approvals, relays on their way, Done rows and a refused relay
@@ -546,6 +591,79 @@ describe("the Queue page on a phone", () => {
           assert.deepEqual(rows, ["Approval", "Approval", "Expired", "Gone"].map((tag) => ({ tag: [tag], isInside: true, said: [] })));
         });
       }
+    }
+  });
+
+  // each line's texts on one baseline: at most 0.5 apart, as a 1 px step shows at a phone's pixel ratio
+  describe("sets each line of the phone layout on one baseline", () => {
+    /** @property cells - per cell: "&" the line itself, "+" its next sibling, any other a selector inside the line */
+    interface Line {
+      name: string;
+      lines: string;
+      cells: string[];
+    }
+    const LIST_LINES: Line[] = [
+      { name: "a list row's title, name, self mark, tag and age", lines: ".queue-listbox .queue-row", cells: [":scope > .queue-row-title", ".queue-row-name", ".queue-row-mark", ".queue-row-tag .pill", ".queue-row-kind", ":scope > .queue-row-age"] },
+      { name: "a list band's label and its count or day", lines: ".queue-listbox .queue-band", cells: ["&", ":scope > *"] },
+    ];
+    const SHEET_LINES: Line[] = [
+      { name: "the letterhead's kind and name", lines: ".queue-sheet-head .queue-letter", cells: [":scope > .pill", ".queue-letter-name"] },
+      { name: "a fact's label and value", lines: ".queue-sheet .scan-facts > dt", cells: ["&", "+"] },
+      { name: "a side label and its text", lines: ".queue-sheet .queue-option-sides > .queue-label", cells: ["&", "+"] },
+    ];
+    // a line with two or more texts drawn → its spread: each text's first glyph box top + that glyph's font ascent, highest less lowest
+    const getSpreads = (page: Page, lines: Line[]) => page.evaluate((lines) => {
+      const context = document.createElement("canvas").getContext("2d")!;
+      const getBaseline = (cell: Element) => {
+        const isDrawn = (node: Node) => node.textContent!.trim() !== "" && node.parentElement!.getClientRects().length > 0 && node.parentElement!.closest(".sr-only") === null;
+        const text = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT, { acceptNode: (node) => (isDrawn(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT) }).nextNode();
+        if (text === null) return [];
+        const start = text.textContent!.search(/\S/);
+        const range = document.createRange();
+        range.setStart(text, start);
+        range.setEnd(text, start + 1);
+        // the computed font shorthand reads empty here → the canvas takes the parts
+        const style = getComputedStyle(text.parentElement!);
+        context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        return [range.getClientRects()[0]!.top + context.measureText(text.textContent![start]!).fontBoundingBoxAscent];
+      };
+      const getCells = (line: Element, cell: string) => (cell === "&" ? [line] : cell === "+" ? [line.nextElementSibling!] : [...line.querySelectorAll(cell)]);
+      return lines.map(({ name, lines: selector, cells }) => {
+        const measured = [...document.querySelectorAll(selector)].filter((line) => line.getClientRects().length > 0)
+          .map((line) => ({ text: line.textContent!.trim().slice(0, 24), baselines: cells.flatMap((cell) => getCells(line, cell)).flatMap(getBaseline) }))
+          .filter((line) => line.baselines.length >= 2);
+        const apart = measured.map((line) => ({ text: line.text, spread: Math.max(...line.baselines) - Math.min(...line.baselines) })).filter((line) => line.spread > 0.5);
+        return { name, isMeasured: measured.length > 0, apart: apart.map((line) => `${line.text} ${line.spread.toFixed(2)}`) };
+      });
+    }, lines);
+
+    for (const viewport of PHONES) {
+      test(`at ${viewport.width} every list row and band holds its texts on one baseline`, async () => {
+        harness.fixture = getSelfNamedFixture(getScanApprovalFixture(getRelayListFixture(true)), RELAY_ROW_IDS.one, "dashboard");
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        await waitForDoneBands(page);
+        const spreads = await getSpreads(page, LIST_LINES);
+        await page.close();
+
+        assert.deepEqual(spreads, LIST_LINES.map(({ name }) => ({ name, isMeasured: true, apart: [] })));
+      });
+
+      test(`at ${viewport.width} every sheet's letterhead, facts and side labels hold their texts on one baseline`, async () => {
+        harness.fixture = getEveryViewFixture();
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+        const spreads = [];
+        for (const sheet of SHEETS) {
+          await openRowSheet(page, sheet.row, sheet.ready);
+          spreads.push(...(await getSpreads(page, SHEET_LINES)).filter((line) => line.isMeasured).map((line) => ({ ...line, sheet: sheet.name })));
+          await page.locator(".queue-sheet-head .queue-back button").tap();
+        }
+        await page.close();
+
+        assert.deepEqual(
+          { measured: [...new Set(spreads.map((line) => line.name))].sort(), apart: spreads.filter((line) => line.apart.length > 0) },
+          { measured: SHEET_LINES.map((line) => line.name).sort(), apart: [] },
+        );
+      });
     }
   });
 
