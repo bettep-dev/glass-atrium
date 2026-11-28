@@ -12,7 +12,6 @@ import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import type { Browser, Locator, Page, Route } from "playwright";
-import { chromium } from "playwright";
 
 import { RELAY_REDACTION_MARKER } from "../../src/server/queue/owner-items.js";
 import type { OwnerItemView } from "../../src/server/queue/owner-views.js";
@@ -23,6 +22,7 @@ import {
   getNoneListeningFixture, getNotListeningEdgeFixture, getNotListeningFixture, getNotReceivedFixture, getOneListFixture, getOneReceivedFixture, getProseFixture, getHiddenSessionsFixture, getRailFixture, getRelayRecordFixture, getRelayRowFixture, getRestFixture, getStoppedFixture, getUnreachableFixture,
   FORWARDED_RELAY, NOT_LISTENING_IDS, RELAY_ROW_IDS, type QueueFixture,
 } from "./queue-render-fixtures.js";
+import { createBrowser } from "./house-face.js";
 import { deleteTempDirectory } from "./remove-dir.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -561,7 +561,7 @@ interface CachedResponse {
 export async function openHarness(): Promise<Harness> {
   const app = Fastify({ logger: false });
   const harness: Harness = {
-    app, url: "", browser: await chromium.launch({ headless: true }), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, heldDesk: null, heldAct: null, isListDown: false, moreCursor: null, uploads: 0, scanReadIds: [], responseByUrl: new Map(),
+    app, url: "", browser: await createBrowser(), fixture: getRestFixture(), missedReads: [], refusals: new Map(), heldRead: null, heldDesk: null, heldAct: null, isListDown: false, moreCursor: null, uploads: 0, scanReadIds: [], responseByUrl: new Map(),
   };
   await app.register(fastifyStatic, { root: PUBLIC_ROOT, prefix: "/", index: ["index.html"] });
   registerFixtureRoutes(app, harness);
@@ -1131,14 +1131,15 @@ interface ComposerFacts {
 export async function getComposerFacts(page: Page, root: string): Promise<ComposerFacts> {
   return page.evaluate((scope) => {
     const height = (element: Element) => Math.round(element.getBoundingClientRect().height);
-    const type = (selector: string) => {
-      const style = getComputedStyle(document.querySelector(`${scope} ${selector}`) as Element);
+    const typeOf = (element: Element) => {
+      const style = getComputedStyle(element);
       return [style.fontFamily, style.fontSize, style.fontWeight, style.lineHeight].join(" / ");
     };
+    const buttons = [...document.querySelectorAll(`${scope} .queue-compose-buttons .btn`)];
     return {
       box: height(document.querySelector(`${scope} .queue-compose-box`) as Element),
-      buttons: [...new Set([...document.querySelectorAll(`${scope} .queue-compose-buttons .btn`)].map(height))],
-      type: { text: type(".queue-compose-text"), button: type(".queue-compose-buttons .btn") },
+      buttons: [...new Set(buttons.map(height))],
+      type: { text: typeOf(document.querySelector(`${scope} .queue-compose-text`) as Element), button: typeOf(buttons[0]!) },
     };
   }, root);
 }

@@ -87,6 +87,8 @@ async function loadApp(): Promise<AppSurface> {
     {
       createElement: () => ({}),
       Fragment: "frag",
+      // app.jsx's screen boundary extends it at load
+      Component: class {},
       useState: () => [undefined, () => {}],
       useEffect: () => {},
       useRef: () => ({ current: null }),

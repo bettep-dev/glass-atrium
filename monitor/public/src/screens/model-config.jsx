@@ -667,7 +667,7 @@ const AGENT_READ_BACK_RE_MC = /^The writ(?:e|ten) /;
  * Apply is its own immediate PUT, apart from the buffered daemon Save; nothing on it is optimistic.
  */
 function AgentModelsSectionMC({ state, agents, unreadable, knownModels, onAgentsRead, showToast }) {
-	const { Card, Cluster, Link } = window.UI;
+	const { Card, Link } = window.UI;
 	const cardRef = useRefMC(null);
 	const apply = useAgentApplyMC({ agents, onAgentsRead, showToast, cardRef });
 	const items = getAgentListMC(agents || [], unreadable || []);
@@ -683,13 +683,11 @@ function AgentModelsSectionMC({ state, agents, unreadable, knownModels, onAgents
 				sub={AGENT_TIMING_MC.sub}
 				info={<AgentInfoMC />}
 				infoLabel={SETTINGS_INFO_LABEL_MC}
+				mark={state === "ready" && unreadable?.length > 0 && <HeadMarkMC text={`${unreadable.length} ${unreadable.length === 1 ? "file" : "files"} not readable`} />}
 				right={
-					<Cluster gap="control-group">
-						{state === "ready" && unreadable?.length > 0 && <HeadMarkMC text={`${unreadable.length} ${unreadable.length === 1 ? "file" : "files"} not readable`} />}
-						<Link href="#cost" className="fs-meta inline-target">
-							Cost & usage
-						</Link>
-					</Cluster>
+					<Link href="#cost" className="fs-meta inline-target">
+						Cost & usage
+					</Link>
 				}
 				bar={isListed ? <AgentBarMC {...apply.bar} knownModels={knownModels} /> : null}
 				foot={isEmpty ? null : AGENT_FOOT_MC}
@@ -1196,7 +1194,7 @@ function DomainsSectionMC({
 					/>
 				}
 				infoLabel={SETTINGS_INFO_LABEL_MC}
-				right={state === "ready" ? <UnreadMarkMC rows={rows} metaOf={DOMAIN_META_MC} /> : null}
+				mark={state === "ready" ? <UnreadMarkMC rows={rows} metaOf={DOMAIN_META_MC} /> : null}
 				isFlush={state !== "unavailable"}>
 				{state === "unavailable" ? (
 					<SectionUnavailableMC />

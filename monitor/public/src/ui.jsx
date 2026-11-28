@@ -758,7 +758,7 @@ function DetailSurfacePanel({ onClose, variant = 'drawer', title, sub, footer, c
   const dialogProps = titleId ? { 'aria-labelledby': titleId } : { 'aria-label': title };
   const bareTitle = bare && isElementTitle && !labelledBy ? <div id={titleId} hidden>{title}</div> : null;
 
-  const closeBtn = <button className="btn ghost sm icon" onClick={onClose} aria-label="Close details"><Icon name="x" size={14}/></button>;
+  const closeBtn = <button className="btn ghost sm icon" onClick={onClose} aria-label="Close details" title="Close details"><Icon name="x" size={14}/></button>;
   const head = <div className="detail-head">
     <div className="flex-1 min-w-0">
       <div id={titleId} className="detail-title">{title}</div>
@@ -972,8 +972,9 @@ let cardTitleSeq = 0;
  * @param infoLabel - trigger name and drawer title
  * @param infoTitle - the trigger's tooltip; unset → no tooltip
  * @param isCompact - a viewer's thin header: the title at the control size
+ * @param mark - a warn mark about the card's content; leads the right group, before ⓘ
  */
-function CardHead({ title, sub, info, infoLabel = 'How this is counted', infoTitle, right, isCompact = false }) {
+function CardHead({ title, sub, mark, info, infoLabel = 'How this is counted', infoTitle, right, isCompact = false }) {
   const titleIdRef = useRef(null);
   if (titleIdRef.current === null) titleIdRef.current = `card-title-${++cardTitleSeq}`;
 
@@ -982,7 +983,8 @@ function CardHead({ title, sub, info, infoLabel = 'How this is counted', infoTit
       <h2 id={titleIdRef.current} className="card-title">{title}</h2>
       {sub && <span className="card-sub" title={window.UI.titleOf(sub)}>{sub}</span>}
     </div>
-    {(info || right) && <div className="ml-auto flex items-center gap-2 shrink-0">
+    {(mark || info || right) && <div className="ml-auto flex items-center gap-2 shrink-0">
+      {mark}
       {info && <CardInfo label={infoLabel} title={infoTitle} describedBy={titleIdRef.current}>{info}</CardInfo>}
       {right}
     </div>}
@@ -1021,11 +1023,11 @@ function getSlotRows(items, size = 'M') {
  * @param bar - filter bar or toolbar between the head and the body
  * @param foot - "Show all N" / "Other" / one footnote
  */
-function Card({ size, title, sub, info, infoLabel, infoTitle, right, bar, foot, isFlush = false, children, className = '' }) {
+function Card({ size, title, sub, mark, info, infoLabel, infoTitle, right, bar, foot, isFlush = false, children, className = '' }) {
   const sizeClass = CARD_SLOTS[size] ? `card--${size.toLowerCase()}` : '';
 
   return <div className={`card ${sizeClass} ${className}`.replace(/\s+/g, ' ').trim()}>
-    {title && <CardHead title={title} sub={sub} info={info} infoLabel={infoLabel} infoTitle={infoTitle} right={right} />}
+    {title && <CardHead title={title} sub={sub} mark={mark} info={info} infoLabel={infoLabel} infoTitle={infoTitle} right={right} />}
     {bar && <div className="card-bar">{bar}</div>}
     <div className={`card-body ${isFlush ? 'flush' : ''}`.trim()}>{children}</div>
     {foot && <div className="card-foot">{foot}</div>}
@@ -1444,21 +1446,31 @@ function putMenuKeyFocus(event, onClose) {
  * One filter axis on a bar: dim axis name + ink value, no colon; the menu checks the chosen value(s).
  * @param kind - 'radio' (one value, a pick closes) | 'checkbox' (several, the menu stays open)
  * @param chosenKeys - keys of the chosen options
+ * @param icon - a Lucide name → the glyph form: axis and value in its name and tooltip, the value word drawn only while applied
  */
-function FilterTrigger({ axis, value, kind = 'radio', options, chosenKeys, onPick }) {
+function FilterTrigger({ axis, value, kind = 'radio', options, chosenKeys, onPick, icon, isApplied = false, className = '' }) {
   const menu = useMenuButton();
   const items = options.map((option) => ({ ...option, isChecked: chosenKeys.includes(option.key) }));
 
-  return <div ref={menu.rootRef} className="filter-trigger-root">
-    <button type="button" className="filter-trigger" {...menu.triggerProps}>
-      <span className="filter-trigger-axis">{axis}</span>
-      <span className="filter-trigger-value">{value}</span>
-      {/* points at the menu it opens and never turns — aria-expanded and the sunken fill carry the open state */}
-      <Icon name="chevD" size={DISCLOSURE_CHEVRON_PX} className="filter-trigger-chevron text-dim" />
-    </button>
+  return <div ref={menu.rootRef} className={`filter-trigger-root ${className}`.trim()}>
+    {icon ? <FilterGlyphButton axis={axis} value={value} icon={icon} isApplied={isApplied} triggerProps={menu.triggerProps} />
+      : <button type="button" className="filter-trigger" {...menu.triggerProps}>
+        <span className="filter-trigger-axis">{axis}</span>
+        <span className="filter-trigger-value">{value}</span>
+        {/* points at the menu it opens and never turns — aria-expanded and the sunken fill carry the open state */}
+        <Icon name="chevD" size={DISCLOSURE_CHEVRON_PX} className="filter-trigger-chevron text-dim" />
+      </button>}
     {menu.isOpen && <MenuPanel id={menu.menuId} label={axis} kind={kind} items={items}
       rootRef={menu.rootRef} onPick={onPick} onClose={menu.close} />}
   </div>;
+}
+
+// at defaults the glyph alone in its icon square; applied → a word button, the value beside the glyph
+function FilterGlyphButton({ axis, value, icon, isApplied, triggerProps }) {
+  const name = `${axis}: ${value}`;
+  return <button type="button" className={isApplied ? 'btn ghost' : 'btn ghost icon'} aria-label={name} title={name} {...triggerProps}>
+    <Icon name={icon} size={16} />{isApplied && <span className="filter-glyph-value">{value}</span>}
+  </button>;
 }
 
 const RESET_HIDDEN_STYLE = Object.freeze({ visibility: 'hidden' });

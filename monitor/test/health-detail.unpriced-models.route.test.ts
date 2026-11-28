@@ -35,7 +35,8 @@ const PARITY = JSON.parse(
 ) as PricingParityTable;
 
 const DAY_MS = 86_400_000;
-const RUN = randomUUID().slice(0, 8);
+// Letter lead → an all-digit draw never reads as the loader's -YYYYMMDD snapshot tail and folds away.
+const RUN = `r${randomUUID().slice(0, 8)}`;
 const PRICED_MODEL = `claude-s4priced-${RUN}`;
 
 let app: FastifyInstance;

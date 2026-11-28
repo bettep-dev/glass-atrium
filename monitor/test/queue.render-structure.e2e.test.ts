@@ -372,7 +372,7 @@ describe("queue page on the mockup fixtures", () => {
   });
 
   // spec §4.3 / §14.4: the stepping counts the rows that open on a sheet; an order's row is never on the sheet
-  test("the sheet's head says n of m, previous is off on the first sheet row, J steps over an order's row with item= following, and K comes back", async () => {
+  test("the sheet's head says n of m and the item's queue number before the letterhead, previous is off on the first sheet row, J steps over an order's row with item= following, and K comes back", async () => {
     harness.fixture = getOrderFirstFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText(harness.fixture));
     const head = () => page.evaluate(() => ({
@@ -380,6 +380,11 @@ describe("queue page on the mockup fixtures", () => {
       position: document.querySelector(".queue-steps > .tabular-nums")?.textContent,
       disabled: [...document.querySelectorAll<HTMLButtonElement>(".queue-steps > .btn")].map((button) => button.disabled),
       tag: document.querySelector(".queue-sheet-head .pill--tag")?.textContent,
+      number: document.querySelector(".queue-sheet-head .queue-sheet-id")?.textContent,
+      isNumberBeforeLetterhead: (() => {
+        const [back, number, letter] = [".queue-back", ".queue-sheet-id", ".queue-letter"].map((selector) => document.querySelector(`.queue-sheet-head ${selector}`)!.getBoundingClientRect());
+        return number!.left >= back!.right && number!.right <= letter!.left && number!.top < letter!.bottom && letter!.top < number!.bottom;
+      })(),
     }));
     const firstRow = await page.locator(".queue-row").first().getAttribute("id");
     await selectRow(page, 160);
@@ -391,8 +396,8 @@ describe("queue page on the mockup fixtures", () => {
     await page.close();
 
     assert.equal(firstRow, "queue-row-109", "the list's first row is an order");
-    assert.deepEqual(first, { hash: "#queue?item=160", position: "1 of 2", disabled: [true, false], tag: "Answer" });
-    assert.deepEqual(second, { hash: "#queue?item=108", position: "2 of 2", disabled: [false, true], tag: "Answer" });
+    assert.deepEqual(first, { hash: "#queue?item=160", position: "1 of 2", disabled: [true, false], tag: "Answer", number: "#160", isNumberBeforeLetterhead: true });
+    assert.deepEqual(second, { hash: "#queue?item=108", position: "2 of 2", disabled: [false, true], tag: "Answer", number: "#108", isNumberBeforeLetterhead: true });
     assert.equal(back.hash, "#queue?item=160");
   });
 
@@ -489,21 +494,25 @@ describe("queue page on the mockup fixtures", () => {
     );
   });
 
-  // spec §4.2: who, then what — the session name in one fixed column at the row's start, the title and its meta line to its right
-  test("with exactly one session ticked no row paints a name, and every title starts where the band labels start", async () => {
+  // spec §4.2: who, then what — the queue number, then the session name in one fixed column, the title and its meta line to its right
+  test("with exactly one session ticked no row paints a name: every number starts where the band labels start, every title one 40 column and its 8 gap after it", async () => {
     harness.fixture = getRestFixture();
     const page = await openQueuePage(harness, VIEWPORTS[0], getRestReadyText());
     await tickSessions(page, ["gersona"]);
     const facts = await page.evaluate(() => {
       const band = document.querySelector(".queue-listbox .queue-band") as HTMLElement;
       const labelStart = Math.round(band.getBoundingClientRect().left + parseFloat(getComputedStyle(band).paddingLeft));
-      const titles = [...document.querySelectorAll(".queue-row-title")].map((title) => Math.round(title.getBoundingClientRect().left));
-      return { names: document.querySelectorAll(".queue-row-who").length, titleStarts: [...new Set(titles)], labelStart, rows: titles.length };
+      const getStarts = (selector: string) => [...document.querySelectorAll(selector)].map((cell) => Math.round(cell.getBoundingClientRect().left));
+      const titles = getStarts(".queue-row-title");
+      return { names: document.querySelectorAll(".queue-row-who").length, numberStarts: [...new Set(getStarts(".queue-row-id"))], titleStarts: [...new Set(titles)], labelStart, rows: titles.length };
     });
     await page.close();
 
     assert.ok(facts.rows > 0, "the ticked session has rows");
-    assert.deepEqual({ names: facts.names, titleStarts: facts.titleStarts }, { names: 0, titleStarts: [facts.labelStart] });
+    assert.deepEqual(
+      { names: facts.names, numberStarts: facts.numberStarts, titleStarts: facts.titleStarts },
+      { names: 0, numberStarts: [facts.labelStart], titleStarts: [facts.labelStart + 40 + 8] },
+    );
   });
 
   // one session ticked → the sender rides the title cell; a long name the peer gave itself is cut there, never the page's mark beside it
@@ -522,7 +531,7 @@ describe("queue page on the mockup fixtures", () => {
         isNameCut: getComputedStyle(name).textOverflow === "ellipsis" && name.scrollWidth > name.clientWidth,
         mark: { text: mark.textContent, isOutsideName: !name.contains(mark), isWhole: mark.scrollWidth <= mark.clientWidth && markBox.left >= nameBox.right - 0.5 && markBox.right <= title.right + 0.5 },
         ends: { text: ends.textContent?.startsWith("→ yoaida "), isAfterMark: ends.getBoundingClientRect().left >= markBox.right && ends.getBoundingClientRect().width > 0 },
-        label: name.closest(".queue-row")!.getAttribute("aria-label")?.startsWith(`Relay from ${named} to yoaida: `),
+        label: name.closest(".queue-row")!.getAttribute("aria-label")?.replace(/^#\d+, /, "").startsWith(`Relay from ${named} to yoaida: `),
       };
     }, `${EDGE_LONG_SESSION_NAME} (self-named)`);
     await page.close();
@@ -1613,7 +1622,7 @@ describe("queue page on the mockup fixtures", () => {
       const shown = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".queue-listbox [role='group']")].map((band) => ({
         band: band.getAttribute("aria-label") ?? band.querySelector(".queue-band")?.firstChild?.textContent,
         kinds: [...band.querySelectorAll(".queue-row")].map((row) => row.querySelector(".queue-row-fact")?.textContent),
-        relays: [...band.querySelectorAll(".queue-row")].filter((row) => /^(Refused relay|Relay) from/.test(row.getAttribute("aria-label") ?? "")).map((row) => ({
+        relays: [...band.querySelectorAll(".queue-row")].filter((row) => /^(Refused relay|#\d+, Relay) from/.test(row.getAttribute("aria-label") ?? "")).map((row) => ({
           to: row.querySelector(".queue-row-title")?.textContent?.match(/^→ (\d+ sessions|\d+ unknown recipients?|\S+) /)?.[1] ?? null,
           tag: row.classList.contains("queue-row--done") ? row.querySelector(".queue-row-tag")?.textContent : "on its way",
           // a Done row's every pill · a row on its way, the pills outside its receipt counts
@@ -1996,6 +2005,20 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(hovered.radio, rest.radio, "hover changes nothing on a closed option");
     });
 
+    test("at 1440 the Session fact holds the whole session id, then the name, on one line", async () => {
+      const page = await openScanPage(VIEWPORTS[0]);
+      const { session } = harness.fixture.items.find((item) => item.id === SCAN_IDS.one)!;
+      await openScanSheet(page, SCAN_IDS.one, "The line assigns a literal value.");
+      const fact = await page.evaluate(() => {
+        const label = [...document.querySelectorAll(".queue-sheet .scan-facts > dt")].find((dt) => dt.textContent === "Session")!;
+        const value = label.nextElementSibling as HTMLElement;
+        return { first: value.firstElementChild?.textContent, text: value.textContent, isOneLine: value.getBoundingClientRect().height <= parseFloat(getComputedStyle(value).lineHeight) + 0.5 };
+      });
+      await page.close();
+
+      assert.deepEqual(fact, { first: session.id, text: `${session.id} ${session.name}`, isOneLine: true });
+    });
+
     test("the warning line sits 24 under the facts and 12 above the Options heading", async () => {
       const page = await openScanPage(MIN_WINDOW);
       await openScanSheet(page, SCAN_IDS.one, "The line assigns a literal value.");
@@ -2337,6 +2360,76 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(id, { text: EDGE_SESSION_IDS.twin.slice(0, 8), isWhole: true });
     });
 
+    // the twin session's report and a decision moved to it, both numbered at four digits → the widest number beside a letterhead's
+    // kind, name, (self-named) and 8-character id, the parts that tell the two sessions apart; under a 584 sheet (1280) the head takes the phone's two rows
+    test("a report and a decision from one of two same-named self-named sessions keep the four-digit number, the name and the 8-character id whole in the row and the sheet head and show the position, the letterhead on its own row at 1280 and beside the steps at 1440", async () => {
+      const ids = { report: 9000 + EDGE_IDS.declaredReport, decision: 9000 + EDGE_IDS.nineOptions };
+      const edge = getEdgeFixture();
+      const twin = edge.items.find((item) => item.id === EDGE_IDS.declaredReport)!.session;
+      const moved = new Map<number, { id: number; session?: typeof twin }>([[EDGE_IDS.declaredReport, { id: ids.report }], [EDGE_IDS.nineOptions, { id: ids.decision, session: twin }]]);
+      const fixture = { ...edge, items: edge.items.map((item) => ({ ...item, ...moved.get(item.id) })) };
+      const shown = [];
+      for (const viewport of [MIN_WINDOW, VIEWPORTS[0]]) {
+        for (const id of [ids.report, ids.decision]) {
+          harness.fixture = fixture;
+          const page = await openQueuePage(harness, viewport, getRestReadyText(fixture));
+          const row = await page.evaluate((rowId) => {
+            const cells = ["#queue-row-" + rowId + " > .queue-row-id", "#queue-row-" + rowId + " > .queue-row-title code"].map((selector) => document.querySelector<HTMLElement>(selector)!);
+            const title = cells[1]!.closest(".queue-row-title")!.getBoundingClientRect();
+            return { number: cells[0]!.textContent, isNumberWhole: cells[0]!.scrollWidth <= cells[0]!.clientWidth, isIdWhole: cells[1]!.getBoundingClientRect().right <= title.right + 0.5 };
+          }, id);
+          await selectRow(page, id);
+          const head = await page.evaluate(() => {
+            const get = (selector: string) => document.querySelector<HTMLElement>(`.queue-sheet-head ${selector}`)!;
+            const [title, steps] = [get(".card-title").getBoundingClientRect(), get(".queue-steps").getBoundingClientRect()];
+            const isWhole = (selector: string) => get(selector).scrollWidth <= get(selector).clientWidth && get(selector).getBoundingClientRect().right <= title.right + 0.5;
+            const isUnderSteps = title.top >= steps.bottom - 0.5;
+            return {
+              number: get(".queue-sheet-id").textContent, isNumberWhole: get(".queue-sheet-id").scrollWidth <= get(".queue-sheet-id").clientWidth,
+              letter: {
+                id: get(".queue-letter-id").textContent?.trim(), isIdWhole: isWhole(".queue-letter-id"), isSelfWhole: isWhole(".queue-letter-self"), isNameWhole: isWhole(".queue-letter-text"),
+                row: isUnderSteps ? 2 : 1, isClearOfSteps: isUnderSteps || title.right <= steps.left,
+              },
+              isPositionShown: get(".queue-steps > .tabular-nums").getBoundingClientRect().width > 1,
+            };
+          });
+          const tree = await page.locator(".queue-sheet-head").ariaSnapshot();
+          await page.close();
+          shown.push({ width: viewport.width, row, head: { ...head, isPositionRead: / \d+ of \d+/.test(tree) } });
+        }
+      }
+
+      const letter = { id: EDGE_SESSION_IDS.twin.slice(0, 8), isIdWhole: true, isSelfWhole: true, isNameWhole: true, isClearOfSteps: true };
+      assert.deepEqual(shown, [MIN_WINDOW, VIEWPORTS[0]].flatMap((viewport) => [ids.report, ids.decision].map((id) => ({
+        width: viewport.width,
+        row: { number: `#${id}`, isNumberWhole: true, isIdWhole: true },
+        head: { number: `#${id}`, isNumberWhole: true, letter: { ...letter, row: viewport.width === MIN_WINDOW.width ? 2 : 1 }, isPositionShown: true, isPositionRead: true },
+      }))));
+    });
+
+    // a relay prints its ends' ids inline in its one cut name → between the two same-named sessions, at four digits, the 1280 head gives it the twin's own row
+    test("at 1280 a relay from one of two same-named sessions, self-named, to the other keeps the four-digit number and both ends' names and 8-character ids whole, its letterhead on its own row", async () => {
+      const edge = getEdgeFixture();
+      const twin = edge.items.find((item) => item.id === EDGE_IDS.declaredReport)!.session;
+      const relay = getRelayRowFixture().items.find((item) => item.id === RELAY_ROW_IDS.one)!;
+      const sender = FORWARDED_RELAY[0]!.relay!.parent!.sender;
+      const id = 9000 + RELAY_ROW_IDS.one;
+      harness.fixture = { ...edge, items: [...edge.items, { ...relay, id, session: twin, relay: { ...relay.relay!, sender } }] };
+      const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+      await selectRow(page, id);
+      const head = await page.evaluate(() => {
+        const get = (selector: string) => document.querySelector<HTMLElement>(`.queue-sheet-head ${selector}`)!;
+        const [name, title, steps] = [get(".queue-letter-name"), get(".card-title").getBoundingClientRect(), get(".queue-steps").getBoundingClientRect()];
+        return {
+          number: get(".queue-sheet-id").textContent, isNumberWhole: get(".queue-sheet-id").scrollWidth <= get(".queue-sheet-id").clientWidth,
+          text: name.textContent, isNameWhole: name.scrollWidth <= name.clientWidth && name.getBoundingClientRect().right <= title.right + 0.5, row: title.top >= steps.bottom - 0.5 ? 2 : 1,
+        };
+      });
+      await page.close();
+
+      assert.deepEqual(head, { number: `#${id}`, isNumberWhole: true, text: `atrium (self-named) · ${sender.sessionIdPrefix} →  to atrium · ${twin.sessionIdPrefix}`, isNameWhole: true, row: 2 });
+    });
+
     // the registered 100-character name cut in the 104 column, the page's mark whole beside it; a start directory's name never marked
     test("at 1280 a decision or report row from a registered name cuts the name and paints its self mark whole, and a start-directory row paints none", async () => {
       harness.fixture = getNameColumnFixture();
@@ -2408,22 +2501,22 @@ describe("queue page on the mockup fixtures", () => {
       assert.deepEqual(shown, { text: EDGE_LONG_SESSION_NAME, height: 44, isCut: true, isInsideRail: true });
     });
 
-    // spec §4.2 → Column rule, §14.3: one 44 line — name 104 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
+    // spec §4.2 → Column rule, §14.3: one 44 line — number 40 · name 104 · title · tag 80 · fact 64 · age 32 · chevron 16, 8 between them and 12 on
     // either side of the title; a band draws the tag and the fact column only while one of its rows fills it, then on every row, an empty
-    // cell keeping its width; a column a band leaves out gives the title its width (tag 88, fact 72); under 160 of title (1280, names shown,
-    // tag drawn) the fact column is left out, so a drawn title never holds less than 160.
+    // cell keeping its width; a column a band leaves out gives the title its width (tag 88, fact 72); a list under 584 (1280) draws no
+    // chevron, and with names shown and the tag drawn leaves the fact column out → a drawn title holds 160 from 1440 and 154 at 1280.
     // The edge fixture's 100-character session is one recipient of a seven-session order → the name fixture sends one open item from it;
     // the Done bands (spec §4.6), relays on their way (spec §9.9) and Done and refused relays beside decisions and reports (layout §6 → Shared x) follow the same rule
-    test("with nothing ticked every list row, open, done, a relay on its way, a Done relay or a refused one, is one 44 line on its band's columns at 1280, 1440 and 1568: tag and fact drawn only in a band whose rows fill them, each drawn column at one x in every band, the title taking a left-out column's width, at least 160 of it at 1280, a 100-character name cut inside its 104", async () => {
+    test("with nothing ticked every list row, open, done, a relay on its way, a Done relay or a refused one, is one 44 line on its band's columns at 1280, 1440 and 1568: the number first, tag and fact drawn only in a band whose rows fill them, each drawn column at one x in every band, the title taking a left-out column's width, at least 160 of it from 1440 and 154 at 1280 where no chevron is drawn, a 100-character name cut inside its 104", async () => {
       // each cell's x from the row's start and its width; a cell the band does not draw → `-`
       const getLayout = (width: number, cols: string) => {
         const isTagShown = cols.split(" ").includes("tag");
-        const isFactShown = cols.split(" ").includes("fact") && !(isTagShown && width < 536);
-        const trailing = [isTagShown ? 80 : 0, isFactShown ? 64 : 0, 32, 16];
+        const isFactShown = cols.split(" ").includes("fact") && !(isTagShown && width < 584);
+        const trailing = [isTagShown ? 80 : 0, isFactShown ? 64 : 0, 32, width < 584 ? 0 : 16];
         const drawn = trailing.filter((cell) => cell > 0);
-        const title = width - 32 - 104 - drawn.reduce((sum, one) => sum + one) - 8 * (1 + drawn.length) - 8;
+        const title = width - 32 - 40 - 8 - 104 - drawn.reduce((sum, one) => sum + one) - 8 * (1 + drawn.length) - 8;
         let x = 16;
-        return [[104, 12], [title, 12], ...trailing.map((cell) => [cell, cell === 0 ? 0 : 8])].map(([cell, after]) => {
+        return [[40, 8], [104, 12], [title, 12], ...trailing.map((cell) => [cell, cell === 0 ? 0 : 8])].map(([cell, after]) => {
           const at = cell === 0 ? "-" : `${x}+${cell}`;
           x += cell! + after!;
           return at;
@@ -2437,7 +2530,7 @@ describe("queue page on the mockup fixtures", () => {
           if (isDone) await waitForDoneBands(page);
           const facts = await page.evaluate((longName) => {
             const rows = [...document.querySelectorAll(".queue-row")];
-            const cells = [".queue-row-who", ".queue-row-title", ".queue-row-tag", ".queue-row-fact", ".queue-row-age", ".queue-row-chevron"];
+            const cells = [".queue-row-id", ".queue-row-who", ".queue-row-title", ".queue-row-tag", ".queue-row-fact", ".queue-row-age", ".queue-row-chevron"];
             const getCells = (row: Element) => cells.map((selector) => {
               const box = row.querySelector(selector)?.getBoundingClientRect();
               return box !== undefined && box.width > 0 ? `${Math.round(box.left - row.getBoundingClientRect().left)}+${Math.round(box.width)}` : "-";
@@ -2466,8 +2559,10 @@ describe("queue page on the mockup fixtures", () => {
         shown.map(({ width, rowWidths, bands }) => ({ width, bands: bands.map(({ cols }) => ({ cols, layouts: [getLayout(rowWidths[0]!, cols)] })), heights: [44], isLongCut: true, pane: rowWidths[0] })),
       );
       assert.deepEqual(shown.filter((one) => one.width < 1568).map((one) => one.rowWidths[0]), [482, 482, 482, 482, 586, 586, 586, 586], "the panes of DESK_WIDTHS, less the card's two 1 px borders");
-      const titles1280 = shown.filter((one) => one.width === 1280).flatMap((one) => one.bands.map((band) => Number(band.layouts[0]?.split(" ")[1]?.split("+")[1])));
-      assert.ok(titles1280.every((title) => title >= 160), `the 1280 title holds 160: ${titles1280}`);
+      const titlesByWidth = shown.map((one) => ({ width: one.width, titles: one.bands.map((band) => Number(band.layouts[0]?.split(" ")[2]?.split("+")[1])) }));
+      const [titles, titles1280] = [titlesByWidth.filter((one) => one.width >= 1440), titlesByWidth.filter((one) => one.width === 1280)].map((set) => set.flatMap((one) => one.titles));
+      assert.ok(titles.every((title) => title >= 160), `the title from 1440 holds 160: ${titles}`);
+      assert.ok(titles1280.length > 0 && titles1280.every((title) => title >= 154), `the 1280 title holds 154: ${titles1280}`);
     });
 
     // spec §9.3 / §18.4 27: the thread's recipient row holds the long name the rail holds — one cut line, the receipt and Resend whole beside it
