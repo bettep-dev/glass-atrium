@@ -884,7 +884,8 @@ jobs:
   # chromium: node:test's --test-shard keeps every test/*.test.ts file in exactly
   # one leg by construction, so no hand-kept file list can drop a file. The shard
   # total is strategy.job-total, so the leg count is the matrix list's length
-  # alone, and the job index picks the leg's part. An unsharded run is bound by
+  # alone, and matrix.shard is both the part a leg runs and the part its name
+  # prints, so a label can never name a different shard from the one that ran. An unsharded run is bound by
   # its slowest browser files contending for one runner (the Queue captures file
   # is the floor); the legs spread them apart.
   # A matrix job is a SINGLE node in the `needs` graph, so ci-pass and test-e2e
@@ -975,9 +976,9 @@ jobs:
       - name: Test (node:test via tsx, test-only DB + chromium, shard ${{ matrix.shard }})
         working-directory: monitor
         env:
-          SHARD_INDEX: ${{ strategy.job-index }}
+          SHARD: ${{ matrix.shard }}
           SHARD_TOTAL: ${{ strategy.job-total }}
-        run: NODE_OPTIONS="--test-shard=$((SHARD_INDEX + 1))/${SHARD_TOTAL}" npm test
+        run: NODE_OPTIONS="--test-shard=${SHARD}/${SHARD_TOTAL}" npm test
 
   # ---------------------------------------------------------------------------
   # macOS install path. install.sh is macOS-ONLY by hard gate (preflight kills a
