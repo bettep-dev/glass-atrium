@@ -43,10 +43,10 @@ export interface QueueFixture {
 }
 
 const SESSION_IDS = {
-  gersona: "25a65a54-3c1e-4f0a-9b2d-6e7f8a9b0c11",
+  harbor: "25a65a54-3c1e-4f0a-9b2d-6e7f8a9b0c11",
   atrium: "e8923338-5d2f-4a1b-8c3e-7f9a0b1c2d22",
-  aidl: "aca91592-6e3a-4b2c-9d4f-8a0b1c2d3e33",
-  yoaida: "fa32c7cb-7f4b-4c3d-8e5a-9b1c2d3e4f44",
+  quartz: "aca91592-6e3a-4b2c-9d4f-8a0b1c2d3e33",
+  meadow: "fa32c7cb-7f4b-4c3d-8e5a-9b1c2d3e4f44",
   portfolio: "5d0e77a1-8a5c-4d4e-9f6b-0c2d3e4f5a55",
 } as const;
 type SessionKey = keyof typeof SESSION_IDS;
@@ -131,7 +131,7 @@ function buildOrderCopies(firstId: number, send: { sendId: string; minutesAgo: n
 const DOC_LINE = "- 계획 문서: 모니터 44060, 이슈 DOC-120";
 
 function buildDecision(id: number, title: string, bullets: string[], options: Array<[string, string, string]>, recommendedCode: string): OwnerItemView {
-  return buildItem(id, "gersona", {
+  return buildItem(id, "harbor", {
     title, body: [...bullets, DOC_LINE].join("\n"), linkedDocIds: [44060], recommendedCode,
     options: options.map(([label, pros, cons], index) => ({ code: `R${index + 1}`, label, pros, cons })),
   });
@@ -183,7 +183,7 @@ const DECISIONS = [
 ];
 
 const REPORTS = [
-  buildItem(101, "yoaida", {
+  buildItem(101, "meadow", {
     kind: "report", askedAt: getAt(10),
     title: "주문 서비스 단일 출처 작업 — 세 저장소 최종 정리·리뷰 완료, API 후속 수정 진행 중",
     body: [
@@ -211,7 +211,7 @@ const REPORTS = [
   }),
 ];
 
-const ANSWERED_DECISION = buildItem(108, "aidl", {
+const ANSWERED_DECISION = buildItem(108, "quartz", {
   status: "answered", askedAt: getAt(42), answeredAt: getAt(31), linkedDocIds: [44047], recommendedCode: "R1",
   title: "[연동] 파트너 연동 안내를 어디에 둘지",
   body: "- 파트너가 읽을 연동 안내를 API 명세 위쪽에 둘지, 별도 문서로 둘지 정해야 합니다.\n- 계획 문서: 모니터 44047",
@@ -236,13 +236,13 @@ const SEND_IDS = {
 const IN_DELIVERY_ORDER = buildOrderCopies(109, {
   sendId: SEND_IDS.inDelivery, minutesAgo: 3,
   text: "API 후속 수정이 끝나면 dev DB 반영(DB-3) 전에 DB 기반 테스트 두 묶음을 먼저 돌리고 결과를 보고해 주세요.\n병합은 그 보고를 본 뒤 승인하겠습니다.",
-  to: [["yoaida", { status: "answered", deliveredAt: null }]],
+  to: [["meadow", { status: "answered", deliveredAt: null }]],
 });
 
 const RECEIVED_ORDERS = [
   ...buildOrderCopies(201, {
     sendId: SEND_IDS.yesterday, minutesAgo: YESTERDAY_18_KST_MINUTES, text: "오늘 작업이 끝나면 바뀐 점을 보고 한 건으로 올려 주세요.",
-    to: [["gersona", { deliveredAt: getAt(YESTERDAY_18_KST_MINUTES - 2) }], ["aidl", { deliveredAt: getAt(YESTERDAY_18_KST_MINUTES - 5) }]],
+    to: [["harbor", { deliveredAt: getAt(YESTERDAY_18_KST_MINUTES - 2) }], ["quartz", { deliveredAt: getAt(YESTERDAY_18_KST_MINUTES - 5) }]],
   }),
   ...buildOrderCopies(203, {
     sendId: SEND_IDS.readme, minutesAgo: 85, text: "배포가 끝나면 큐 설정 안내를 README에 옮겨 주세요.",
@@ -257,14 +257,14 @@ const RECEIVED_ORDERS = [
 /** An order no session acknowledged in time: the amber `Not received` with `Resend` (mockup state 09). */
 export const NOT_RECEIVED_ORDER = buildOrderCopies(210, {
   sendId: SEND_IDS.notReceived, minutesAgo: 25, text: "오늘 작업을 마치기 전에 남은 일과 막힌 곳을 한 줄씩 보고해 주세요.",
-  to: [["yoaida", { status: "unacked", deviation: "unacked", canResend: true }]],
+  to: [["meadow", { status: "unacked", deviation: "unacked", canResend: true }]],
 });
 
 const SESSION_ROWS = [
-  buildSessionRow("gersona", { awaiting: 5, inDelivery: 0 }, 9),
+  buildSessionRow("harbor", { awaiting: 5, inDelivery: 0 }, 9),
   buildSessionRow("atrium", { awaiting: 1, inDelivery: 0 }, 10),
-  buildSessionRow("aidl", { awaiting: 0, inDelivery: 1 }, 10),
-  buildSessionRow("yoaida", { awaiting: 1, inDelivery: 1 }, 10),
+  buildSessionRow("quartz", { awaiting: 0, inDelivery: 1 }, 10),
+  buildSessionRow("meadow", { awaiting: 1, inDelivery: 1 }, 10),
   buildSessionRow("portfolio", { awaiting: 0, inDelivery: 0 }, 180),
 ];
 
@@ -287,13 +287,13 @@ export function getRestFixture(): QueueFixture {
 export const DONE_IDS = { answered: 801, read: 802, withdrawn: 803, replied: 804, outside: 805 } as const;
 
 const DONE_ITEMS = [
-  buildItem(DONE_IDS.answered, "gersona", {
+  buildItem(DONE_IDS.answered, "harbor", {
     ...DECISIONS[0], id: DONE_IDS.answered, status: "delivered", answer: { code: "R1", text: null }, answeredAt: getAt(3), closedAt: getAt(3), deliveredAt: getAt(2),
     answerRecord: { route: "answer", signal: "fetch_metadata" }, attachments: IMAGES.slice(1, 3).map((image) => image.view),
   }),
   buildItem(DONE_IDS.read, "atrium", { kind: "report", status: "seen", askedAt: getAt(75), closedAt: getAt(60), title: "배포 65 완료: 모니터 재시작, 화면 점검 통과", body: "- 모니터를 다시 띄우고 화면 다섯 개를 점검했습니다." }),
-  buildItem(DONE_IDS.withdrawn, "yoaida", { status: "withdrawn", askedAt: getAt(27 * 60), closedAt: getAt(26 * 60), title: "마이그레이션 순서: 스키마 먼저 vs 데이터 먼저", options: [{ code: "R1", label: "스키마 먼저", pros: null, cons: null }] }),
-  buildItem(DONE_IDS.replied, "aidl", {
+  buildItem(DONE_IDS.withdrawn, "meadow", { status: "withdrawn", askedAt: getAt(27 * 60), closedAt: getAt(26 * 60), title: "마이그레이션 순서: 스키마 먼저 vs 데이터 먼저", options: [{ code: "R1", label: "스키마 먼저", pros: null, cons: null }] }),
+  buildItem(DONE_IDS.replied, "quartz", {
     kind: "report", status: "delivered", askedAt: getAt(29 * 60), answeredAt: getAt(28 * 60), closedAt: getAt(28 * 60), deliveredAt: getAt(28 * 60),
     answer: { code: null, text: "API 후속 수정은 다음 배포에 넣어 주세요." }, answerRecord: { route: "reply", signal: "fetch_metadata" },
     title: "파트너 연동 안내 초안 작성 완료", body: "- 안내 초안을 API 명세 위쪽에 두었습니다.",
@@ -319,16 +319,16 @@ export function getManyDoneFixture(): QueueFixture {
   return { ...getRestFixture(), done: [...DONE_ITEMS, ...reads] };
 }
 
-/** The rest state plus the not-received order to `yoaida`, in the owner list and the history read alike. */
+/** The rest state plus the not-received order to `meadow`, in the owner list and the history read alike. */
 export function getNotReceivedFixture(): QueueFixture {
   const rest = getRestFixture();
   return { ...rest, items: [...rest.items, ...NOT_RECEIVED_ORDER], orders: [...rest.orders, ...NOT_RECEIVED_ORDER] };
 }
 
-/** A state (the rest state by default) plus a report `yoaida` posts after the page first read it, its rail count raised with it. */
+/** A state (the rest state by default) plus a report `meadow` posts after the page first read it, its rail count raised with it. */
 export function getArrivalFixture(rest: QueueFixture = getRestFixture()): QueueFixture {
-  const report = buildItem(150, "yoaida", { kind: "report", askedAt: getAt(0), title: "야간 정리 작업 완료 — 끝난 작업 폴더 4개 정리", body: "- 끝난 작업 폴더 4개를 정리했습니다." });
-  const sessions = rest.sessions.map((row) => (row.id === SESSION_IDS.yoaida ? { ...row, count: { ...row.count, awaiting: row.count.awaiting + 1 } } : row));
+  const report = buildItem(150, "meadow", { kind: "report", askedAt: getAt(0), title: "야간 정리 작업 완료 — 끝난 작업 폴더 4개 정리", body: "- 끝난 작업 폴더 4개를 정리했습니다." });
+  const sessions = rest.sessions.map((row) => (row.id === SESSION_IDS.meadow ? { ...row, count: { ...row.count, awaiting: row.count.awaiting + 1 } } : row));
   return { ...rest, items: [...rest.items, report], sessions };
 }
 
@@ -339,20 +339,20 @@ export function getOrderFirstFixture(): QueueFixture {
   return { ...rest, items: [...IN_DELIVERY_ORDER, ANSWERED_DECISION, ...NOT_RECEIVED_ORDER, second], orders: [...rest.orders, ...NOT_RECEIVED_ORDER] };
 }
 
-/** The order the owner types in states 06–08, to `gersona` and `yoaida` (mockup v5 §18.3). */
+/** The order the owner types in states 06–08, to `harbor` and `meadow` (mockup v5 §18.3). */
 export const FIXTURE_ORDER_TEXT = "오늘 결정한 내용은 내일 오전 보고에 한 줄씩 정리해 주세요.";
 
-/** The rest state plus that order sent with the three images, `gersona` having received it and `yoaida` not yet. */
+/** The rest state plus that order sent with the three images, `harbor` having received it and `meadow` not yet. */
 export function getOneReceivedFixture(): QueueFixture {
   const rest = getRestFixture();
   const sent = buildOrderCopies(220, {
     sendId: "9e8d7c6b-5a49-4382-a716-1f0e2d3c4b06", minutesAgo: 1, text: FIXTURE_ORDER_TEXT, images: IMAGES.map((image) => image.view),
-    to: [["gersona", { deliveredAt: getAt(0) }], ["yoaida", { status: "answered", deliveredAt: null }]],
+    to: [["harbor", { deliveredAt: getAt(0) }], ["meadow", { status: "answered", deliveredAt: null }]],
   });
   return { ...rest, items: [...rest.items, sent[1]!], orders: [...rest.orders, ...sent] };
 }
 
-/** The rest state with the aidl answer gone unacknowledged: `Not received` on the sheet with `Resend answer`. */
+/** The rest state with the quartz answer gone unacknowledged: `Not received` on the sheet with `Resend answer`. */
 export function getAnswerNotReceivedFixture(): QueueFixture {
   const rest = getRestFixture();
   const unacked = { ...ANSWERED_DECISION, status: "unacked" as const, deviation: "unacked" as const, canResend: true };
@@ -370,9 +370,9 @@ export function getUnreachableFixture(): QueueFixture {
   return getPatchedRestFixture(SESSION_IDS.atrium, { state: "stale", lastActivityAt: getAt(14) });
 }
 
-/** The rest state after `yoaida` was replaced: its row listed, no longer taking a message (a tick on it is dropped). */
+/** The rest state after `meadow` was replaced: its row listed, no longer taking a message (a tick on it is dropped). */
 export function getStoppedFixture(): QueueFixture {
-  return getPatchedRestFixture(SESSION_IDS.yoaida, { state: "exited", exitReason: "replaced", isSelectable: false });
+  return getPatchedRestFixture(SESSION_IDS.meadow, { state: "exited", exitReason: "replaced", isSelectable: false });
 }
 
 // the rest state with one session row patched by id
@@ -442,13 +442,13 @@ const EDGE_SESSIONS = {
 const NINE_OPTION_LABELS = ["지금 꼴 유지", "짧은 안내문", "단계별 설명", "모델별 평가 뒤 결정", "기획에 먼저 확인", "회원 설정으로", "화면별로 다르게", "다음 배포로 미룸", "검토에 올림"];
 
 const EDGE_ITEMS = [
-  buildItem(EDGE_IDS.nineOptions, "gersona", {
+  buildItem(EDGE_IDS.nineOptions, "harbor", {
     title: "[도움말 프롬프트] 답의 꼴을 아홉 안 가운데 하나로 정하기",
     body: "- 기획 초안과 지금 백엔드 글이 다르고, 검토에서 아홉 가지 안이 나왔습니다.\n- 계획 문서: 모니터 44060",
     linkedDocIds: [44060], recommendedCode: "R4",
     options: NINE_OPTION_LABELS.map((label, index) => ({ code: `R${index + 1}`, label, pros: "지금 기능과 충돌이 없다", cons: "평가가 필요하다" })),
   }),
-  buildItem(EDGE_IDS.approval, "aidl", {
+  buildItem(EDGE_IDS.approval, "quartz", {
     title: "[배포] dev DB 반영(DB-3) 승인", isApprovalClass: true, recommendedCode: "R1",
     body: "- DB 기반 테스트 두 묶음이 통과했습니다.\n- 반영 전 덤프를 보관합니다.",
     options: [
@@ -456,7 +456,7 @@ const EDGE_ITEMS = [
       { code: "R2", label: "내일 오전 반영", pros: "작업 시간을 피한다", cons: "후속 작업이 하루 밀린다" },
     ],
   }),
-  buildItem(EDGE_IDS.longTitle, "yoaida", { kind: "report", title: EDGE_LONG_TITLE, body: "- 세 저장소 모두 테스트 통과\n- dev DB 반영과 병합은 승인 대기" }),
+  buildItem(EDGE_IDS.longTitle, "meadow", { kind: "report", title: EDGE_LONG_TITLE, body: "- 세 저장소 모두 테스트 통과\n- dev DB 반영과 병합은 승인 대기" }),
   buildItem(EDGE_IDS.linkedReport, "atrium", {
     kind: "report", title: "배포 #61 계획 검토 완료", linkedDocIds: [44061],
     body: "- 계획 모니터 44061을 검토했고 필수 수정 2건을 반영했습니다.\n- 다음 단계: 구현 위임",
@@ -470,7 +470,7 @@ const EDGE_ITEMS = [
 // the delivered copy leaves the owner list (TERMINAL) and stays in the history read, as on the server
 const THREE_RECEIPT_ORDER = buildOrderCopies(EDGE_IDS.threeReceipts, {
   sendId: EDGE_IDS.threeReceiptsSend, minutesAgo: 30, text: "오늘 바뀐 점을 보고 한 건으로 올려 주세요.",
-  to: [["gersona", { deliveredAt: getAt(28) }], ["aidl", { status: "answered", deliveredAt: null }], ["yoaida", { status: "unacked", deviation: "unacked", canResend: true }]],
+  to: [["harbor", { deliveredAt: getAt(28) }], ["quartz", { status: "answered", deliveredAt: null }], ["meadow", { status: "unacked", deviation: "unacked", canResend: true }]],
 });
 
 const EIGHT_IMAGE_ORDER = buildOrderCopies(EDGE_IDS.eightImages, {
@@ -482,9 +482,9 @@ const EIGHT_IMAGE_ORDER = buildOrderCopies(EDGE_IDS.eightImages, {
 const SEVEN_RECIPIENT_ORDER = buildOrderCopies(EDGE_IDS.sevenRecipients, {
   sendId: EDGE_IDS.sevenRecipientsSend, minutesAgo: 16, text: "다음 배포 전에 각 저장소의 변경 기록을 한 줄씩 정리해 주세요.",
   to: [
-    ["gersona", { deliveredAt: getAt(15) }], ["atrium", { deliveredAt: getAt(15) }], ["aidl", { deliveredAt: getAt(14) }],
+    ["harbor", { deliveredAt: getAt(15) }], ["atrium", { deliveredAt: getAt(15) }], ["quartz", { deliveredAt: getAt(14) }],
     ["portfolio", { deliveredAt: getAt(13) }], ["atrium", { session: EDGE_SESSIONS.twin.view, deliveredAt: getAt(14) }],
-    ["yoaida", { status: "answered", deliveredAt: null }],
+    ["meadow", { status: "answered", deliveredAt: null }],
     ["atrium", { session: EDGE_SESSIONS.longName.view, status: "unacked", deviation: "unacked", canResend: true }],
   ],
 });
@@ -493,7 +493,7 @@ const SEVEN_RECIPIENT_ORDER = buildOrderCopies(EDGE_IDS.sevenRecipients, {
 const LONG_ORDER_TEXT = Array.from({ length: 31 }, (_, index) => `${index + 1}. 화면 ${index + 1}의 글자 크기와 줄 간격을 한 단계씩 줄이고 결과를 캡처로 남겨 주세요.`).join("\n");
 const LONG_ORDER = buildOrderCopies(EDGE_IDS.longOrder, {
   sendId: EDGE_IDS.longOrderSend, minutesAgo: 12, text: LONG_ORDER_TEXT,
-  to: [["gersona", { deliveredAt: getAt(11) }]],
+  to: [["harbor", { deliveredAt: getAt(11) }]],
 });
 
 /** The rest state plus every edge case of spec 44063 §14.4 the rest state leaves out, its new sessions at the rail's end. */
@@ -512,7 +512,7 @@ export function getEdgeFixture(): QueueFixture {
 export function getOffViewFixture(): QueueFixture {
   const edge = getEdgeFixture();
   const titles = ["로그 보관 기간 점검 완료", "의존성 업데이트 점검 완료", "백업 복구 연습 완료"];
-  const reports = titles.map((title, index) => buildItem(151 + index, "aidl", { kind: "report", askedAt: getAt(40 + index), title, body: "- 남은 일 없음" }));
+  const reports = titles.map((title, index) => buildItem(151 + index, "quartz", { kind: "report", askedAt: getAt(40 + index), title, body: "- 남은 일 없음" }));
   return { ...edge, items: [...edge.items, ...reports] };
 }
 
@@ -526,17 +526,17 @@ export function getNameColumnFixture(): QueueFixture {
   return { ...edge, items: edge.items.map((item) => ({ ...item, session: sessions.get(item.id) ?? item.session })) };
 }
 
-/** A session that registered "Gersona " beside the rest state's gersona → two names one normalization apart on the rail. */
+/** A session that registered "Harbor " beside the rest state's harbor → two names one normalization apart on the rail. */
 export const CONFUSABLE_SESSION_ID = "5e55a000-1b2c-4d3e-8f4a-5b6c7d8e9f01";
 
 export function getConfusableNameFixture(): QueueFixture {
   const rest = getRestFixture();
-  return { ...rest, sessions: [...rest.sessions, buildEdgeSession(CONFUSABLE_SESSION_ID, "Gersona ", 0).row] };
+  return { ...rest, sessions: [...rest.sessions, buildEdgeSession(CONFUSABLE_SESSION_ID, "Harbor ", 0).row] };
 }
 
 // spec 44063 §14.4, Not listening stream only: live and not-reachable sessions with no wait or listener polling (isWaiting false)
 export const NOT_LISTENING_SESSION_IDS = {
-  sixmon: "e1f2a3b4-3c4d-4e5f-9a6b-4d5e6f7a8b91",
+  lumen: "e1f2a3b4-3c4d-4e5f-9a6b-4d5e6f7a8b91",
   hermes: "f2a3b4c5-4d5e-4f6a-8b7c-5e6f7a8b9c02",
   nightly: "a3b4c5d6-5e6f-4a7b-9c8d-6f7a8b9c0d13",
   relay: "b4c5d6e7-6f7a-4b8c-8d9e-7a8b9c0d1e24",
@@ -558,7 +558,7 @@ function buildNotListeningSession(id: string, name: string, state: "live" | "sta
 }
 
 const NOT_LISTENING_SESSIONS = {
-  sixmon: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.sixmon, "sixmon", "live", 3),
+  lumen: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.lumen, "lumen", "live", 3),
   hermes: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.hermes, "hermes", "live", 1),
   nightly: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.nightly, "nightly", "live", 0),
   relay: buildNotListeningSession(NOT_LISTENING_SESSION_IDS.relay, "relay", "stale", 1),
@@ -566,7 +566,7 @@ const NOT_LISTENING_SESSIONS = {
 
 // an answered decision whose live session does not listen: the sheet's date line and its line under `Your answer`
 const NOT_LISTENING_DECISION = {
-  ...ANSWERED_DECISION, id: NOT_LISTENING_IDS.answeredDecision, session: NOT_LISTENING_SESSIONS.sixmon.view, askedAt: getAt(27), answeredAt: getAt(8),
+  ...ANSWERED_DECISION, id: NOT_LISTENING_IDS.answeredDecision, session: NOT_LISTENING_SESSIONS.lumen.view, askedAt: getAt(27), answeredAt: getAt(8),
   title: "[계측] 대기 세션 알림 주기 정하기",
 };
 
@@ -574,13 +574,13 @@ const NOT_LISTENING_ORDERS = [
   // one order, a listening and a not-listening recipient
   ...buildOrderCopies(NOT_LISTENING_IDS.mixedOrder, {
     sendId: NOT_LISTENING_IDS.mixedSend, minutesAgo: 6, text: "오늘 바뀐 설정을 각 세션 보고에 한 줄씩 붙여 주세요.",
-    to: [["gersona", { status: "answered", deliveredAt: null }], ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }]],
+    to: [["harbor", { status: "answered", deliveredAt: null }], ["atrium", { session: NOT_LISTENING_SESSIONS.lumen.view, status: "answered", deliveredAt: null }]],
   }),
   // two copies, both waiting for sessions that do not listen → `0 of 2 received` · `2 not listening`
   ...buildOrderCopies(NOT_LISTENING_IDS.deafOrder, {
     sendId: NOT_LISTENING_IDS.deafSend, minutesAgo: 5, text: "식스몬과 헤르메스 모두 오늘 받은 메시지를 다시 확인해 주세요.",
     to: [
-      ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.lumen.view, status: "answered", deliveredAt: null }],
       ["atrium", { session: NOT_LISTENING_SESSIONS.hermes.view, status: "answered", deliveredAt: null }],
     ],
   }),
@@ -609,29 +609,29 @@ const NOT_LISTENING_EDGE_ORDERS = [
   ...buildOrderCopies(NOT_LISTENING_IDS.twoBadgeOrder, {
     sendId: NOT_LISTENING_IDS.twoBadgeSend, minutesAgo: 3, text: "두 세션 모두 어제 남긴 실패 로그를 다시 올려 주세요.",
     to: [
-      ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
-      ["yoaida", { status: "unacked", deviation: "unacked", canResend: true, deliveredAt: null }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.lumen.view, status: "answered", deliveredAt: null }],
+      ["meadow", { status: "unacked", deviation: "unacked", canResend: true, deliveredAt: null }],
     ],
   }),
   // seven recipients → the roll-up line, its not-listening recipient still listed under it
   ...buildOrderCopies(NOT_LISTENING_IDS.rollUpOrder, {
     sendId: NOT_LISTENING_IDS.rollUpSend, minutesAgo: 1, text: "오늘 배포 전 각 세션의 남은 작업을 한 줄로 보고해 주세요.",
     to: [
-      ["gersona", { deliveredAt: getAt(1) }], ["atrium", { deliveredAt: getAt(1) }], ["aidl", { deliveredAt: getAt(1) }], ["yoaida", { deliveredAt: getAt(1) }],
+      ["harbor", { deliveredAt: getAt(1) }], ["atrium", { deliveredAt: getAt(1) }], ["quartz", { deliveredAt: getAt(1) }], ["meadow", { deliveredAt: getAt(1) }],
       ["atrium", { session: NOT_LISTENING_SESSIONS.hermes.view, deliveredAt: getAt(1) }],
       ["portfolio", { status: "resume_pending", deviation: "resume_pending", deliveredAt: null }],
-      ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.lumen.view, status: "answered", deliveredAt: null }],
     ],
   }),
   // twelve recipients → two-digit counts in all four segments, wider than the order's column at 1280
   ...buildOrderCopies(NOT_LISTENING_IDS.wideRollUpOrder, {
     sendId: NOT_LISTENING_IDS.wideRollUpSend, minutesAgo: 0.5, text: "이번 주 회고에 넣을 항목을 세션마다 세 줄로 보고해 주세요.",
     to: [
-      ["gersona", { deliveredAt: getAt(0.5) }], ["atrium", { deliveredAt: getAt(0.5) }], ["aidl", { deliveredAt: getAt(0.5) }], ["yoaida", { deliveredAt: getAt(0.5) }],
+      ["harbor", { deliveredAt: getAt(0.5) }], ["atrium", { deliveredAt: getAt(0.5) }], ["quartz", { deliveredAt: getAt(0.5) }], ["meadow", { deliveredAt: getAt(0.5) }],
       ["atrium", { session: NOT_LISTENING_SESSIONS.hermes.view, deliveredAt: getAt(0.5) }],
       ...WIDE_ROLL_UP_NAMES.map((name, index): [SessionKey, Partial<OwnerItemView>] => ["atrium", { session: buildWideRollUpSession(name, index), deliveredAt: getAt(0.5) }]),
       ["portfolio", { status: "resume_pending", deviation: "resume_pending", deliveredAt: null }],
-      ["atrium", { session: NOT_LISTENING_SESSIONS.sixmon.view, status: "answered", deliveredAt: null }],
+      ["atrium", { session: NOT_LISTENING_SESSIONS.lumen.view, status: "answered", deliveredAt: null }],
     ],
   }),
 ];
@@ -660,11 +660,11 @@ export function getNoneListeningFixture(): QueueFixture {
   };
 }
 
-/** The rest state plus §14.4's not-listening cases: three live sessions and a not-reachable one that do not listen, beside listening `gersona`. */
+/** The rest state plus §14.4's not-listening cases: three live sessions and a not-reachable one that do not listen, beside listening `harbor`. */
 export function getNotListeningFixture(): QueueFixture {
   const rest = getRestFixture();
   // the mixed order's listening copy and the ended session's resume copy are in delivery too
-  const added = new Set<string>([SESSION_IDS.gersona, SESSION_IDS.portfolio]);
+  const added = new Set<string>([SESSION_IDS.harbor, SESSION_IDS.portfolio]);
   const sessions = rest.sessions.map((row) => (added.has(row.id) ? { ...row, count: { ...row.count, inDelivery: row.count.inDelivery + 1 } } : row));
   return {
     ...rest,
@@ -719,28 +719,28 @@ const RELAY_SEND_IDS = {
 const RECEIVED_RELAY = buildRelayCopies({
   firstId: 398, sendId: RELAY_SEND_IDS.received, from: "atrium", minutesAgo: 27 * 60,
   text: "배포 65 의 마이그레이션 순서를 공유합니다.\n1) 큐 스키마 2) 릴레이 색인 3) 감사 기록 순서로 반영합니다.",
-  to: [["gersona", { deliveredAt: getAt(27 * 60 - 1) }]],
+  to: [["harbor", { deliveredAt: getAt(27 * 60 - 1) }]],
 });
 
 /** The relay passed on at hop 1: one copy received, one lapsed; its parent the received relay above. */
 export const FORWARDED_RELAY = buildRelayCopies({
-  firstId: 412, sendId: RELAY_SEND_IDS.forwarded, from: "aidl", minutesAgo: 240,
-  text: "파트너 연동 안내의 응답 예시에서 필드 이름이 바뀌었습니다. 요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.\n<b>굵게</b> 표시는 글자 그대로 읽힙니다.\n- 근거: clauded-docs/44099 의 **응답 예시** 절",
-  to: [["yoaida", { deliveredAt: getAt(236) }], ["portfolio", { lapsedAt: getAt(60) }]],
+  firstId: 412, sendId: RELAY_SEND_IDS.forwarded, from: "quartz", minutesAgo: 240,
+  text: "파트너 연동 안내의 응답 예시에서 필드 이름이 바뀌었습니다. 초원 쪽 API 문서도 같은 이름으로 맞춰 주세요.\n<b>굵게</b> 표시는 글자 그대로 읽힙니다.\n- 근거: clauded-docs/44099 의 **응답 예시** 절",
+  to: [["meadow", { deliveredAt: getAt(236) }], ["portfolio", { lapsedAt: getAt(60) }]],
   facts: { hop: 1, parent: { id: 398, sender: buildRelaySender("atrium"), sentAt: getAt(27 * 60) } },
   linkedDocIds: [44099],
 });
 
 const REDACTED_RELAY = buildRelayCopies({
-  firstId: 415, sendId: RELAY_SEND_IDS.redacted, from: "gersona", minutesAgo: 120,
+  firstId: 415, sendId: RELAY_SEND_IDS.redacted, from: "harbor", minutesAgo: 120,
   text: "[relay text redacted by the owner]",
   to: [["atrium", {}]],
   facts: { redaction: { at: getAt(30), length: 1284 } },
 });
 
-/** A refusal between the sends: gersona over its hourly limit to yoaida. */
+/** A refusal between the sends: harbor over its hourly limit to meadow. */
 export const PAIR_CAP_REFUSAL: RelayRefusalView = {
-  at: getAt(180), reason: "pair_cap", senderIdPrefix: SESSION_IDS.gersona.slice(0, 8), recipientIdPrefixes: [SESSION_IDS.yoaida.slice(0, 8)], unresolvedCount: null,
+  at: getAt(180), reason: "pair_cap", senderIdPrefix: SESSION_IDS.harbor.slice(0, 8), recipientIdPrefixes: [SESSION_IDS.meadow.slice(0, 8)], unresolvedCount: null,
 };
 
 /** The relay thread: a received relay, the hop-1 relay under it with a lapsed copy, a refused one, a redacted one. */
@@ -753,17 +753,17 @@ export function getRelayThreadFixture(): RelayThreadFixture {
 
 export const RELAY_ROW_IDS = { one: 421, several: 424 } as const;
 
-/** The rest state plus two relays on their way under In delivery: aidl to yoaida, and gersona to three sessions with one copy received. */
+/** The rest state plus two relays on their way under In delivery: quartz to meadow, and harbor to three sessions with one copy received. */
 export function getRelayRowFixture(): QueueFixture {
   const one = buildRelayCopies({
-    firstId: RELAY_ROW_IDS.one, sendId: "3a1b2c3d-0004-4e5f-8a9b-0c1d2e3f4a04", from: "aidl", minutesAgo: 2,
-    text: "파트너 연동 안내의 응답 예시에서 필드 이름이 바뀌었습니다.\n요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.",
-    to: [["yoaida", {}]],
+    firstId: RELAY_ROW_IDS.one, sendId: "3a1b2c3d-0004-4e5f-8a9b-0c1d2e3f4a04", from: "quartz", minutesAgo: 2,
+    text: "파트너 연동 안내의 응답 예시에서 필드 이름이 바뀌었습니다.\n초원 쪽 API 문서도 같은 이름으로 맞춰 주세요.",
+    to: [["meadow", {}]],
   });
   const several = buildRelayCopies({
-    firstId: RELAY_ROW_IDS.several, sendId: "3a1b2c3d-0005-4e5f-8a9b-0c1d2e3f4a05", from: "gersona", minutesAgo: 9,
+    firstId: RELAY_ROW_IDS.several, sendId: "3a1b2c3d-0005-4e5f-8a9b-0c1d2e3f4a05", from: "harbor", minutesAgo: 9,
     text: "배포 65 점검 결과를 공유합니다.\n모니터 화면 다섯 개를 점검했고 모두 통과했습니다.",
-    to: [["yoaida", { deliveredAt: getAt(5) }], ["atrium", {}], ["aidl", {}]],
+    to: [["meadow", { deliveredAt: getAt(5) }], ["atrium", {}], ["quartz", {}]],
     facts: { hop: 1, parent: { id: 398, sender: buildRelaySender("atrium"), sentAt: getAt(12) } },
   });
   const rest = getRestFixture();
@@ -783,7 +783,7 @@ const PROSE_REPORT_BODY = [
 const PROSE_DECISION_BODY = ["- 아래 순서 그대로 반영할지 정해 주세요.", ...LONG_FENCE, DOC_LINE].join("\n");
 
 const PROSE_RELAY_BODY = [
-  "파트너 연동 안내의 **응답 예시**에서 필드 이름이 바뀌었습니다.", "## 요청", "- 요아이다 쪽 API 문서도 같은 이름으로 맞춰 주세요.", "  - 응답 예시 표도 함께",
+  "파트너 연동 안내의 **응답 예시**에서 필드 이름이 바뀌었습니다.", "## 요청", "- 초원 쪽 API 문서도 같은 이름으로 맞춰 주세요.", "  - 응답 예시 표도 함께",
   "| 필드 | 이전 | 이후 |", "|---|---|---|", "| 주문 번호 | orderNo | orderId |", "> 지난 배포 기록에서 옮긴 줄", "---",
   "```ts", "const field = \"orderId\";", "```", "[안내 문서](clauded-docs/44099) ![화면](https://example.com/a.png)",
 ].join("\n");
@@ -856,7 +856,7 @@ function getScanHeldFacts(id: number, state: "pending" | "approved", lineCount: 
 
 /** The server's secret-approval item text (items.ts → SECRET_APPROVAL_ITEM) on a fixture row. */
 function buildScanItem(id: number, fields: Partial<OwnerItemView>): OwnerItemView {
-  return buildItem(id, "gersona", {
+  return buildItem(id, "harbor", {
     title: "Secret-scan refusal: approve one write?",
     body: "Approve this write once (R1) lets the write this request names pass the secret-scan hook once: the same lines, file, rule and session, within 10 minutes of the answer. Decline (R2) when a line holds a real password or key: the session then writes an environment-variable reference instead.",
     options: [

@@ -709,7 +709,7 @@ describe("list and item detail", () => {
 
   test("an item's session carries the same name and registered flag as its session-list row", async () => {
     const profileLabel = `.claude-name-${randomUUID().slice(0, 8)}`;
-    const ids = [await seedSession({ profileLabel, name: "gersona" }), await seedSession({ profileLabel, cwd: "/Users/owner/Desktop/git/library" })];
+    const ids = [await seedSession({ profileLabel, name: "harbor" }), await seedSession({ profileLabel, cwd: "/Users/owner/Desktop/git/library" })];
     const itemIds = await Promise.all(ids.map((sessionId) => seedItem(sessionId)));
 
     const listed = (await send("GET", `/api/queue/owner/sessions?profile=${profileLabel}`)).json().sessions as Array<Record<string, unknown>>;
@@ -720,7 +720,7 @@ describe("list and item detail", () => {
       details.map((detail) => [detail.session.name, detail.session.isNameRegistered]),
       ids.map((id) => nameById.get(id)),
     );
-    assert.deepEqual(nameById.get(ids[0]), ["gersona", true], "a registered name outranks the start directory");
+    assert.deepEqual(nameById.get(ids[0]), ["harbor", true], "a registered name outranks the start directory");
   });
 
   test("an item's session and the session list carry the session's waiting fact", async () => {

@@ -80,7 +80,7 @@ const PAGE = `<!doctype html><html><head><style>${PREFLIGHT}</style></head><body
     <span data-probe="accent" style="color: rgb(var(--accent));">accent</span>
   </div>
   <div class="card" data-card="large-tier" style="width: 560px; padding: 16px; margin-top: 24px; display: flex; flex-direction: row; align-items: flex-end; gap: 8px;">
-    <div class="queue-compose-box" data-atom="compose-box" style="flex: 1 1 220px;"><textarea class="queue-compose-text" rows="1" aria-label="Order to yoaida"></textarea></div>
+    <div class="queue-compose-box" data-atom="compose-box" style="flex: 1 1 220px;"><textarea class="queue-compose-text" rows="1" aria-label="Order to meadow"></textarea></div>
     <button type="button" class="btn lg" data-atom="btn-lg">Mark as read</button>
     <button type="button" class="btn lg primary" data-atom="btn-lg-primary">Send order</button>
   </div>

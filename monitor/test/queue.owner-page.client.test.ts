@@ -647,10 +647,10 @@ describe("relay refusals and redaction", () => {
 
   test("every reason the page knows has a name and a sentence with no limit figure, in digits or in words; an unknown one names its code", () => {
     const codes = ["hop", "pair_cap", "sender_cap", "machine_cap", "token", "secret", "scan_unavailable", "sender_probe", "sender_not_live", "self", "recipient"];
-    const lines = codes.map((reason) => call<{ name: string; sentence: string }>("getRelayRefusalLineQ", reason, { sender: "gersona", recipient: "yoaida" }));
+    const lines = codes.map((reason) => call<{ name: string; sentence: string }>("getRelayRefusalLineQ", reason, { sender: "harbor", recipient: "meadow" }));
     assert.equal(new Set(lines.map((line) => line.name)).size, codes.length);
     assert.deepEqual(lines.filter((line) => LIMIT_FIGURE.test(line.sentence) || line.name === "Refused"), []);
-    assert.deepEqual(call("getRelayRefusalLineQ", "recipient_ambiguous", { sender: "gersona", recipient: "yoaida" }), { name: "Refused", sentence: "The queue gave the reason", code: "recipient_ambiguous" });
+    assert.deepEqual(call("getRelayRefusalLineQ", "recipient_ambiguous", { sender: "harbor", recipient: "meadow" }), { name: "Refused", sentence: "The queue gave the reason", code: "recipient_ambiguous" });
   });
 
   test("an earlier page's refusals join the loaded ones; a first page replaces them", () => {
@@ -1126,8 +1126,8 @@ describe("filter state in the hash", () => {
 });
 
 describe("list groups", () => {
-  const gersona = buildSession({ id: "a1", name: "gersona" });
-  const yoaida = buildSession({ id: "b2", name: "yoaida" });
+  const harbor = buildSession({ id: "a1", name: "harbor" });
+  const meadow = buildSession({ id: "b2", name: "meadow" });
   const order = (id: number, session: unknown, sendId: string | null, answeredAt = "2026-11-12T12:20:00.000Z") =>
     buildItem({ id, kind: "message", status: "delivered", body: "rebase", answeredAt, sendId, session });
   const getShape = (items: unknown[]) =>
@@ -1155,8 +1155,8 @@ describe("list groups", () => {
   });
 
   const foldRows = [
-    { name: "the copies of one send fold into one row under its lowest id", items: [order(12, yoaida, "s-1"), order(11, gersona, "s-1"), order(13, gersona, "s-2")], expected: [[11, [11, 12]], [13, [13]]] },
-    { name: "copies with no send id fold by equal time and text", items: [order(21, gersona, null), order(22, yoaida, null), order(23, yoaida, null, "2026-11-12T12:21:00.000Z")], expected: [[21, [21, 22]], [23, [23]]] },
+    { name: "the copies of one send fold into one row under its lowest id", items: [order(12, meadow, "s-1"), order(11, harbor, "s-1"), order(13, harbor, "s-2")], expected: [[11, [11, 12]], [13, [13]]] },
+    { name: "copies with no send id fold by equal time and text", items: [order(21, harbor, null), order(22, meadow, null), order(23, meadow, null, "2026-11-12T12:21:00.000Z")], expected: [[21, [21, 22]], [23, [23]]] },
   ];
   for (const row of foldRows) test(row.name, () => assert.deepEqual(getShape(row.items)[0]?.rows, row.expected));
 });
@@ -1480,10 +1480,10 @@ describe("relays in the Done part", () => {
 
   // a relay is in scope by either end, a refusal too (the relay read takes the ticks as sessionIds and matches either end)
   const ticks = [
-    { name: "only the sender ticked shows its relay", ids: [FIXTURE_SESSION_IDS.aidl], expected: [[412]] },
+    { name: "only the sender ticked shows its relay", ids: [FIXTURE_SESSION_IDS.quartz], expected: [[412]] },
     { name: "only one of its recipients ticked shows it", ids: [FIXTURE_SESSION_IDS.portfolio], expected: [[412]] },
     { name: "a third session ticked hides it", ids: [FIXTURE_SESSION_IDS.atrium], expected: [[398]] },
-    { name: "a refusal shows by its sender, beside a relay to that session", ids: [FIXTURE_SESSION_IDS.gersona], expected: [["refused pair_cap"], [398]] },
+    { name: "a refusal shows by its sender, beside a relay to that session", ids: [FIXTURE_SESSION_IDS.harbor], expected: [["refused pair_cap"], [398]] },
   ];
   for (const row of ticks) {
     test(`ticks: ${row.name}`, () => assert.deepEqual(getDoneBands([], { done: thread(), relays: relayRead() }, row.ids), row.expected));
@@ -1491,7 +1491,7 @@ describe("relays in the Done part", () => {
 
   test("a send with one copy redacted is one In delivery row holding the open list's copy and the relay read's redacted one", () => {
     const [redacted] = relays.items.filter((copy) => copy.id === 415);
-    const other = { ...redacted!, id: 416, session: { ...redacted!.session, id: FIXTURE_SESSION_IDS.yoaida, sessionIdPrefix: FIXTURE_SESSION_IDS.yoaida.slice(0, 8), name: "yoaida" }, relay: { ...redacted!.relay!, redaction: null } };
+    const other = { ...redacted!, id: 416, session: { ...redacted!.session, id: FIXTURE_SESSION_IDS.meadow, sessionIdPrefix: FIXTURE_SESSION_IDS.meadow.slice(0, 8), name: "meadow" }, relay: { ...redacted!.relay!, redaction: null } };
     const open = getGroups([other], { done: thread(), relays: relayRead({ items: [redacted, other], refusals: [] }) }).filter((group) => !group.isDone);
     assert.deepEqual(open.map((group) => group.rows.map((row) => (row.copies as Array<{ id: number }>).map((copy) => copy.id))), [[[415, 416]]]);
   });
@@ -1516,15 +1516,15 @@ describe("relays in the Done part", () => {
   const endings = [
     {
       name: "every copy received reads Received", copies: RECEIVED,
-      shape: { who: "atrium", isMarked: true, title: `→ gersona ${RECEIVED[0]!.title}`, tag: "Received", fact: "Relay", badges: 0, label: `Relay from atrium (self-named) to gersona: ${RECEIVED[0]!.title}, received`, tip: "Relay" },
+      shape: { who: "atrium", isMarked: true, title: `→ harbor ${RECEIVED[0]!.title}`, tag: "Received", fact: "Relay", badges: 0, label: `Relay from atrium (self-named) to harbor: ${RECEIVED[0]!.title}, received`, tip: "Relay" },
     },
     {
       name: "of several, some lapsed reads how many, and a relay passed on says its hop", copies: FORWARDED,
-      shape: { who: "aidl", isMarked: true, title: `→ 2 sessions ${FORWARDED[0]!.title}`, tag: "1 lapsed", fact: "Relay", badges: 0, label: `Relay from aidl (self-named) to 2 sessions: ${FORWARDED[0]!.title}, 1 lapsed, passed on, hop 1`, tip: "Relay · passed on, hop 1" },
+      shape: { who: "quartz", isMarked: true, title: `→ 2 sessions ${FORWARDED[0]!.title}`, tag: "1 lapsed", fact: "Relay", badges: 0, label: `Relay from quartz (self-named) to 2 sessions: ${FORWARDED[0]!.title}, 1 lapsed, passed on, hop 1`, tip: "Relay · passed on, hop 1" },
     },
     {
       name: "every copy lapsed reads Lapsed", copies: FORWARDED.map(lapse),
-      shape: { who: "aidl", isMarked: true, title: `→ 2 sessions ${FORWARDED[0]!.title}`, tag: "Lapsed", fact: "Relay", badges: 0, label: `Relay from aidl (self-named) to 2 sessions: ${FORWARDED[0]!.title}, lapsed, passed on, hop 1`, tip: "Relay · passed on, hop 1" },
+      shape: { who: "quartz", isMarked: true, title: `→ 2 sessions ${FORWARDED[0]!.title}`, tag: "Lapsed", fact: "Relay", badges: 0, label: `Relay from quartz (self-named) to 2 sessions: ${FORWARDED[0]!.title}, lapsed, passed on, hop 1`, tip: "Relay · passed on, hop 1" },
     },
   ];
   for (const row of endings) {
@@ -1536,26 +1536,26 @@ describe("relays in the Done part", () => {
   }
 
   // a refused relay's row (layout §1, §5): its sender, `→` its recipients and the reason's name; a name by id prefix from the loaded relays, else the rail's rows, else the id
-  const GERSONA = FIXTURE_SESSION_IDS.gersona.slice(0, 8);
-  const YOAIDA = FIXTURE_SESSION_IDS.yoaida.slice(0, 8);
-  const railRows = [{ sessionIdPrefix: GERSONA, name: "gersona", isNameRegistered: true, cwdTail: "Users/owner" }, { sessionIdPrefix: YOAIDA, name: "yoaida", isNameRegistered: true, cwdTail: "Users/owner" }];
+  const HARBOR = FIXTURE_SESSION_IDS.harbor.slice(0, 8);
+  const MEADOW = FIXTURE_SESSION_IDS.meadow.slice(0, 8);
+  const railRows = [{ sessionIdPrefix: HARBOR, name: "harbor", isNameRegistered: true, cwdTail: "Users/owner" }, { sessionIdPrefix: MEADOW, name: "meadow", isNameRegistered: true, cwdTail: "Users/owner" }];
   const startDirectoryRail = railRows.map((session) => ({ ...session, isNameRegistered: false }));
-  // a send from GERSONA under the name its session registered, to a session that is not GERSONA
-  const sentAs = (selfDeclaredName: string) => [{ ...FORWARDED[0]!, relay: { ...FORWARDED[0]!.relay!, sender: { ...FORWARDED[0]!.relay!.sender, sessionIdPrefix: GERSONA, selfDeclaredName } } }];
+  // a send from HARBOR under the name its session registered, to a session that is not HARBOR
+  const sentAs = (selfDeclaredName: string) => [{ ...FORWARDED[0]!, relay: { ...FORWARDED[0]!.relay!, sender: { ...FORWARDED[0]!.relay!.sender, sessionIdPrefix: HARBOR, selfDeclaredName } } }];
   // every registered name is the session's own writing → marked, the recipient bare in the title cell and in words in the accessible name
-  const BOTH_NAMED = { who: "gersona", isMarked: true, title: "→ yoaida Too many to one session", label: "Refused relay from gersona (self-named) to yoaida (self-named): Too many to one session" };
+  const BOTH_NAMED = { who: "harbor", isMarked: true, title: "→ meadow Too many to one session", label: "Refused relay from harbor (self-named) to meadow (self-named): Too many to one session" };
   const refusedRows = [
     { name: "named by the loaded relays", refusal: REFUSAL, items: relays.items, rail: [], shape: BOTH_NAMED },
     { name: "named by the rail's rows when no loaded relay names them", refusal: REFUSAL, items: [], rail: railRows, shape: BOTH_NAMED },
-    { name: "named by the rail's start-directory names → no mark", refusal: REFUSAL, items: [], rail: startDirectoryRail, shape: { who: "gersona", isMarked: false, title: "→ yoaida Too many to one session", label: "Refused relay from gersona to yoaida: Too many to one session" } },
-    { name: "named by neither → its ids", refusal: REFUSAL, items: [], rail: [], shape: { who: GERSONA, isMarked: false, title: `→ ${YOAIDA} Too many to one session`, label: `Refused relay from ${GERSONA} to ${YOAIDA}: Too many to one session` } },
-    { name: "named only by a loaded relay's sender name", refusal: REFUSAL, items: sentAs("gersona"), rail: railRows.slice(1), shape: BOTH_NAMED },
+    { name: "named by the rail's start-directory names → no mark", refusal: REFUSAL, items: [], rail: startDirectoryRail, shape: { who: "harbor", isMarked: false, title: "→ meadow Too many to one session", label: "Refused relay from harbor to meadow: Too many to one session" } },
+    { name: "named by neither → its ids", refusal: REFUSAL, items: [], rail: [], shape: { who: HARBOR, isMarked: false, title: `→ ${MEADOW} Too many to one session`, label: `Refused relay from ${HARBOR} to ${MEADOW}: Too many to one session` } },
+    { name: "named only by a loaded relay's sender name", refusal: REFUSAL, items: sentAs("harbor"), rail: railRows.slice(1), shape: BOTH_NAMED },
     {
-      name: "the rail's read of a name wins where a loaded relay's read differs, and that relay's name copying the recipient's shows both ids", refusal: REFUSAL, items: sentAs("yoaida"), rail: railRows,
-      shape: { who: "gersona", isMarked: true, title: `${GERSONA} → yoaida ${YOAIDA} Too many to one session`, label: `Refused relay from gersona (self-named) · ${GERSONA} to yoaida (self-named) · ${YOAIDA}: Too many to one session` },
+      name: "the rail's read of a name wins where a loaded relay's read differs, and that relay's name copying the recipient's shows both ids", refusal: REFUSAL, items: sentAs("meadow"), rail: railRows,
+      shape: { who: "harbor", isMarked: true, title: `${HARBOR} → meadow ${MEADOW} Too many to one session`, label: `Refused relay from harbor (self-named) · ${HARBOR} to meadow (self-named) · ${MEADOW}: Too many to one session` },
     },
-    { name: "to several → their count", refusal: { ...REFUSAL!, recipientIdPrefixes: [YOAIDA, GERSONA] }, items: relays.items, rail: [], shape: { who: "gersona", isMarked: true, title: "→ 2 sessions Too many to one session", label: "Refused relay from gersona (self-named) to 2 sessions: Too many to one session" } },
-    { name: "to no resolvable session → the unknown count", refusal: { ...REFUSAL!, reason: "sender_cap", recipientIdPrefixes: [], unresolvedCount: 1 }, items: relays.items, rail: [], shape: { who: "gersona", isMarked: true, title: "→ 1 unknown recipient Too many from one session", label: "Refused relay from gersona (self-named) to 1 unknown recipient: Too many from one session" } },
+    { name: "to several → their count", refusal: { ...REFUSAL!, recipientIdPrefixes: [MEADOW, HARBOR] }, items: relays.items, rail: [], shape: { who: "harbor", isMarked: true, title: "→ 2 sessions Too many to one session", label: "Refused relay from harbor (self-named) to 2 sessions: Too many to one session" } },
+    { name: "to no resolvable session → the unknown count", refusal: { ...REFUSAL!, reason: "sender_cap", recipientIdPrefixes: [], unresolvedCount: 1 }, items: relays.items, rail: [], shape: { who: "harbor", isMarked: true, title: "→ 1 unknown recipient Too many from one session", label: "Refused relay from harbor (self-named) to 1 unknown recipient: Too many from one session" } },
   ];
   for (const row of refusedRows) {
     test(`a refused relay's row: ${row.name}, Refused its tag and Relay its fact, no badge, the tip its Done relay siblings carry, its number cell empty`, () => {
@@ -1609,7 +1609,7 @@ describe("relays in the Done part", () => {
     });
   }
 
-  // layout §2 → Refused: the fixture's pair_cap refusal, gersona (25a65a54) to yoaida (fa32c7cb), 2026-11-13 12:00 KST, names from the loaded relays
+  // layout §2 → Refused: the fixture's pair_cap refusal, harbor (25a65a54) to meadow (fa32c7cb), 2026-11-13 12:00 KST, names from the loaded relays
   const refusedQueue = (read = relayRead(), rail: unknown[] = []) => {
     const base = buildQueue({ sessions: { region: { data: { sessions: rail } } } }).queue;
     const groups = getGroups([], { done: thread(), relays: read });
@@ -1636,10 +1636,10 @@ describe("relays in the Done part", () => {
     assert.deepEqual(
       {
         head: flatText(head as RenderedNode), title: getLineText(title as RenderedNode), date: flatText(byClass(tree, "queue-date-line")[0] as RenderedNode),
-        parts: ["From gersona (self-named) · 25a65a54", "To yoaida (self-named) · fa32c7cb", "Too many to one session — gersona hit the hourly limit for yoaida.", "Its text was not stored."].map((part) => body.includes(part)),
+        parts: ["From harbor (self-named) · 25a65a54", "To meadow (self-named) · fa32c7cb", "Too many to one session — harbor hit the hourly limit for meadow.", "Its text was not stored."].map((part) => body.includes(part)),
         crit: findNodes(byClass(tree, "queue-date-line")[0] as RenderedNode, (node) => node.props?.className === "text-crit").map(flatText),
       },
-      { head: "Relay from gersona (self-named) → to yoaida (self-named)", title: "Refused relay from gersona to yoaida", date: "✕ Refused 2026-11-13 12:00 KST", parts: [true, true, true, true], crit: ["✕"] },
+      { head: "Relay from harbor (self-named) → to meadow (self-named)", title: "Refused relay from harbor to meadow", date: "✕ Refused 2026-11-13 12:00 KST", parts: [true, true, true, true], crit: ["✕"] },
     );
   });
 
@@ -1650,14 +1650,14 @@ describe("relays in the Done part", () => {
 
   // a line that draws a session's id beside its name adds no second copy of it; the sentences name each end once, its mark left to the head and the rows
   test("a refused relay's sheet between two sessions whose names copy each other draws each id once on its From and To lines and in its title and reason", () => {
-    const tree = render("QueueSheetQ", { queue: refusedQueue(relayRead({ items: sentAs("yoaida") }), railRows).queue });
+    const tree = render("QueueSheetQ", { queue: refusedQueue(relayRead({ items: sentAs("meadow") }), railRows).queue });
     const [sides] = byClass(tree, "queue-option-sides");
     const [title] = findNodes(tree, (node) => node.type === "h3");
     const countOf = (text: string, part: string) => text.split(part).length - 1;
     const rows = flatText(sides as RenderedNode);
     assert.deepEqual(
-      { ids: [countOf(rows, GERSONA), countOf(rows, YOAIDA)], title: getLineText(title as RenderedNode), hasReason: flatText(tree).includes(`Too many to one session — gersona · ${GERSONA} hit the hourly limit for yoaida · ${YOAIDA}.`) },
-      { ids: [1, 1], title: `Refused relay from gersona · ${GERSONA} to yoaida · ${YOAIDA}`, hasReason: true },
+      { ids: [countOf(rows, HARBOR), countOf(rows, MEADOW)], title: getLineText(title as RenderedNode), hasReason: flatText(tree).includes(`Too many to one session — harbor · ${HARBOR} hit the hourly limit for meadow · ${MEADOW}.`) },
+      { ids: [1, 1], title: `Refused relay from harbor · ${HARBOR} to meadow · ${MEADOW}`, hasReason: true },
     );
   });
 
@@ -1665,7 +1665,7 @@ describe("relays in the Done part", () => {
     const tree = render("QueueSheetQ", { queue: refusedQueue().queue });
     const title = findNodes(tree, (node) => node.type === "h3");
     assert.deepEqual(
-      { marks: getHeadMarksShape(tree), names: ["gersona", "yoaida"].map((name) => getUnbrokenShape(title, name)) },
+      { marks: getHeadMarksShape(tree), names: ["harbor", "meadow"].map((name) => getUnbrokenShape(title, name)) },
       { marks: { classes: [SELF_MARK_CLASS], marks: 4, said: 4 }, names: [{ said: 1, whole: 1 }, { said: 1, whole: 1 }] },
     );
   });
@@ -1687,17 +1687,17 @@ describe("relays in the Done part", () => {
   });
 
   test("O on a refused row ticks the rail's sessions its recipient ids name, never its sender", () => {
-    const rails = [{ id: FIXTURE_SESSION_IDS.yoaida, sessionIdPrefix: FIXTURE_SESSION_IDS.yoaida.slice(0, 8) }, { id: FIXTURE_SESSION_IDS.gersona, sessionIdPrefix: FIXTURE_SESSION_IDS.gersona.slice(0, 8) }];
-    assert.deepEqual(call("getOrderKeyIdsQ", refusedQueue().row, rails), [FIXTURE_SESSION_IDS.yoaida]);
+    const rails = [{ id: FIXTURE_SESSION_IDS.meadow, sessionIdPrefix: FIXTURE_SESSION_IDS.meadow.slice(0, 8) }, { id: FIXTURE_SESSION_IDS.harbor, sessionIdPrefix: FIXTURE_SESSION_IDS.harbor.slice(0, 8) }];
+    assert.deepEqual(call("getOrderKeyIdsQ", refusedQueue().row, rails), [FIXTURE_SESSION_IDS.meadow]);
   });
 });
 
 // spec §4.2, §9.9: a relay on its way — a row under In delivery on the list's own columns, and the list's sheet read-only
 describe("a relay on its way", () => {
   const TITLE = "필드 이름이 바뀌었습니다.";
-  const BODY = `${TITLE}\n요아이다 쪽 문서도 같은 이름으로 맞춰 주세요.`;
-  const sender = { sessionIdPrefix: "aca91592", profileLabel: "work", selfDeclaredName: "aidl", cwdTail: "git/a-idl" };
-  const NAMED = "aidl (self-named)";
+  const BODY = `${TITLE}\n초원 쪽 문서도 같은 이름으로 맞춰 주세요.`;
+  const sender = { sessionIdPrefix: "aca91592", profileLabel: "work", selfDeclaredName: "quartz", cwdTail: "git/quartz" };
+  const NAMED = "quartz (self-named)";
   // one copy per recipient under one send id, as the open list returns them: answered at the send, the title the text's first line
   const buildCopies = (recipients: Array<[string, Record<string, unknown>]>, facts: Record<string, unknown> = {}) =>
     recipients.map(([name, overrides], index) => buildItem({
@@ -1707,8 +1707,8 @@ describe("a relay on its way", () => {
       relay: { hop: 0, parent: null, sender, fetchedAt: null, redaction: null, lapsedAt: null, ...facts },
       ...overrides,
     }));
-  const toYoaida = (overrides: Record<string, unknown> = {}, facts: Record<string, unknown> = {}) => buildCopies([["yoaida", overrides]], facts);
-  const toThree = () => buildCopies([["yoaida", { status: "delivered", deliveredAt: "2026-11-19T05:24:00.000Z" }], ["atrium", {}], ["gersona", {}]]);
+  const toMeadow = (overrides: Record<string, unknown> = {}, facts: Record<string, unknown> = {}) => buildCopies([["meadow", overrides]], facts);
+  const toThree = () => buildCopies([["meadow", { status: "delivered", deliveredAt: "2026-11-19T05:24:00.000Z" }], ["atrium", {}], ["harbor", {}]]);
   const renderRow = (copies: Array<{ id: number }>, isNameShown = true, handlers: Record<string, unknown> = {}) =>
     render("QueueRowQ", { row: { id: copies[0]!.id, item: copies[0], copies }, isSelected: false, cols: ["tag", "fact"], view: { isNameShown, isAccountShown: false, tabStopId: copies[0]!.id }, onSelect: () => undefined, onOrder: () => undefined, ...handlers });
   const cellText = (tree: RenderedNode, name: string) => {
@@ -1729,24 +1729,24 @@ describe("a relay on its way", () => {
 
   const rows = [
     {
-      name: "to one session it names its sender, leads its title with the recipient and reads Relay", copies: toYoaida(), isNameShown: true,
-      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `#412, Relay from ${NAMED} to yoaida: ${TITLE}` },
+      name: "to one session it names its sender, leads its title with the recipient and reads Relay", copies: toMeadow(), isNameShown: true,
+      shape: { who: "quartz", mark: "self", title: `→ meadow ${TITLE}`, tags: [], fact: "Relay", label: `#412, Relay from ${NAMED} to meadow: ${TITLE}` },
     },
     {
       name: "to several it names their count and reads received of sent", copies: toThree(), isNameShown: true,
-      shape: { who: "aidl", mark: "self", title: `→ 3 sessions ${TITLE}`, tags: [], fact: "1 of 3", label: `#412, Relay from ${NAMED} to 3 sessions: ${TITLE}, 1 of 3` },
+      shape: { who: "quartz", mark: "self", title: `→ 3 sessions ${TITLE}`, tags: [], fact: "1 of 3", label: `#412, Relay from ${NAMED} to 3 sessions: ${TITLE}, 1 of 3` },
     },
     {
-      name: "a copy its session never acknowledged is not yet, never not received", copies: toYoaida({ status: "unacked", deviation: "unacked" }), isNameShown: true,
-      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: [], fact: "Relay", label: `#412, Relay from ${NAMED} to yoaida: ${TITLE}` },
+      name: "a copy its session never acknowledged is not yet, never not received", copies: toMeadow({ status: "unacked", deviation: "unacked" }), isNameShown: true,
+      shape: { who: "quartz", mark: "self", title: `→ meadow ${TITLE}`, tags: [], fact: "Relay", label: `#412, Relay from ${NAMED} to meadow: ${TITLE}` },
     },
     {
-      name: "a copy whose session does not listen is counted in the tag column", copies: toYoaida({ session: buildSession({ name: "yoaida", state: "live", isWaiting: false }) }), isNameShown: true,
-      shape: { who: "aidl", mark: "self", title: `→ yoaida ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `#412, Relay from ${NAMED} to yoaida: ${TITLE}, 1 next turn` },
+      name: "a copy whose session does not listen is counted in the tag column", copies: toMeadow({ session: buildSession({ name: "meadow", state: "live", isWaiting: false }) }), isNameShown: true,
+      shape: { who: "quartz", mark: "self", title: `→ meadow ${TITLE}`, tags: ["1 next turn"], fact: "Relay", label: `#412, Relay from ${NAMED} to meadow: ${TITLE}, 1 next turn` },
     },
     {
-      name: "a redacted relay reads Text redacted where its title stood", copies: toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } }), isNameShown: true,
-      shape: { who: "aidl", mark: "self", title: "→ yoaida Text redacted", tags: [], fact: "Relay", label: `#412, Relay from ${NAMED} to yoaida: Text redacted` },
+      name: "a redacted relay reads Text redacted where its title stood", copies: toMeadow({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } }), isNameShown: true,
+      shape: { who: "quartz", mark: "self", title: "→ meadow Text redacted", tags: [], fact: "Relay", label: `#412, Relay from ${NAMED} to meadow: Text redacted` },
     },
   ];
   for (const row of rows) {
@@ -1759,7 +1759,7 @@ describe("a relay on its way", () => {
 
   // one session ticked → the sender's name is cut on its own, its self mark stays whole, and the recipient and title are cut on their own
   test("with one session ticked the title cell leads with the sender's name and its self mark, each its own part before the recipient and title", () => {
-    const tree = renderRow(toYoaida(), false);
+    const tree = renderRow(toMeadow(), false);
     const [cell] = byClass(tree, "queue-row-title");
     const partOf = (node: unknown) => {
       const part = node as RenderedNode;
@@ -1774,22 +1774,22 @@ describe("a relay on its way", () => {
     }, {
       cell: { names: 0, tip: TITLE, parts: ["queue-row-from", "queue-row-ends"] },
       from: [
-        { className: "queue-row-name", text: "aidl", tip: NAMED, isHidden: false },
+        { className: "queue-row-name", text: "quartz", tip: NAMED, isHidden: false },
         { className: "queue-row-mark", text: "self", tip: "self-named", isHidden: true },
       ],
-      ends: `→ yoaida ${TITLE}`,
-      label: `#412, Relay from ${NAMED} to yoaida: ${TITLE}`,
+      ends: `→ meadow ${TITLE}`,
+      label: `#412, Relay from ${NAMED} to meadow: ${TITLE}`,
     });
   });
 
   test("a redacted relay's stored text is drawn nowhere on its row or its sheet", () => {
-    const copies = toYoaida({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } });
+    const copies = toMeadow({}, { redaction: { at: "2026-11-19T05:30:00.000Z", length: 64 } });
     const queue = withList(buildQueue().queue, copies);
     const sheet = render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } });
     // every drawn string and every prop string, a prose atom's text and a title included
     const props = [...findNodes(renderRow(copies), () => true), ...findNodes(sheet, () => true)].flatMap((node) => Object.values(node.props ?? {})).filter((value) => typeof value === "string");
     const texts = [collectText(renderRow(copies)), collectText(sheet), ...props];
-    assert.deepEqual(texts.filter((text) => text.includes("필드") || text.includes("요아이다")), []);
+    assert.deepEqual(texts.filter((text) => text.includes("필드") || text.includes("초원")), []);
     assert.match(collectText(sheet), /Text redacted/);
   });
 
@@ -1824,13 +1824,13 @@ describe("a relay on its way", () => {
   const QUIET_REDACT = [["Redact text", "btn ghost sm"]];
 
   test("a relay to one session opens read-only: its two ends in the head and title, no field, and its one act a quiet Redact text at the foot's end", () => {
-    const shape = getSheetShape(toYoaida());
+    const shape = getSheetShape(toMeadow());
     assert.deepEqual(
       { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls, buttons: shape.buttons },
-      { head: `Relay from ${NAMED} → to yoaida`, title: "Message from aidl to yoaida", foot: "Read-only. It reaches yoaida by itself. Redact text", controls: 0, buttons: QUIET_REDACT },
+      { head: `Relay from ${NAMED} → to meadow`, title: "Message from quartz to meadow", foot: "Read-only. It reaches meadow by itself. Redact text", controls: 0, buttons: QUIET_REDACT },
     );
     assert.match(shape.date, /^Not yet\s+Sent\s+2026-11-19 14:20 KST$/);
-    for (const part of ["What aidl wrote", `${NAMED} sent this as its message, not yours.`, "It carries none of your authority."]) assert.ok(shape.body.includes(part), part);
+    for (const part of ["What quartz wrote", `${NAMED} sent this as its message, not yours.`, "It carries none of your authority."]) assert.ok(shape.body.includes(part), part);
     assert.doesNotMatch(shape.body, /Run in that session|Answered/);
   });
 
@@ -1838,29 +1838,29 @@ describe("a relay on its way", () => {
     const shape = getSheetShape(toThree());
     assert.deepEqual(
       { head: shape.head, title: shape.title, foot: shape.foot, controls: shape.controls },
-      { head: `Relay from ${NAMED} → to 3 sessions`, title: "Message from aidl to 3 sessions", foot: "Read-only. It reaches each session by itself. Redact text", controls: 0 },
+      { head: `Relay from ${NAMED} → to 3 sessions`, title: "Message from quartz to 3 sessions", foot: "Read-only. It reaches each session by itself. Redact text", controls: 0 },
     );
     assert.match(shape.date, /^1 of 3 received/);
   });
 
   test("a relay's sheet draws every (self-named) of its head and its From row as the one mark element, and its title and text label keep each name whole", () => {
-    const queue = withList(buildQueue().queue, toYoaida());
+    const queue = withList(buildQueue().queue, toMeadow());
     const tree = render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } });
     const label = findNodes(tree, (node) => node.type === "p" && collectText(node).startsWith("What "));
     assert.deepEqual(
-      { marks: getHeadMarksShape(tree), sender: getUnbrokenShape([...findNodes(tree, (node) => node.type === "h3"), ...label], "aidl"), recipient: getUnbrokenShape(findNodes(tree, (node) => node.type === "h3"), "yoaida") },
+      { marks: getHeadMarksShape(tree), sender: getUnbrokenShape([...findNodes(tree, (node) => node.type === "h3"), ...label], "quartz"), recipient: getUnbrokenShape(findNodes(tree, (node) => node.type === "h3"), "meadow") },
       { marks: { classes: [SELF_MARK_CLASS], marks: 2, said: 2 }, sender: { said: 2, whole: 2 }, recipient: { said: 1, whole: 1 } },
     );
   });
 
   // a peer writes its own name → wherever the queue names the sender, a written name is marked as the sender's own
   const NAME_ROWS = [
-    { name: "a name the sender gave itself is marked self-named", sender, shown: NAMED, plain: "aidl", cell: { who: "aidl", mark: "self" } },
+    { name: "a name the sender gave itself is marked self-named", sender, shown: NAMED, plain: "quartz", cell: { who: "quartz", mark: "self" } },
     { name: "a sender that gave no name reads as its id prefix, unmarked", sender: { ...sender, selfDeclaredName: null }, shown: "aca91592", plain: "aca91592", cell: { who: "aca91592", mark: null } },
   ];
   for (const row of NAME_ROWS) {
     test(`the sender in the row's name column, the sheet head, the sheet title, the From line, the text's label and the standing line: ${row.name}`, () => {
-      const copies = toYoaida({}, { sender: row.sender });
+      const copies = toMeadow({}, { sender: row.sender });
       const sheet = getSheetShape(copies);
       const body = sheet.body.replace(/\s+/g, " ");
       assert.deepEqual(
@@ -1868,21 +1868,21 @@ describe("a relay on its way", () => {
           cell: (({ who, mark }) => ({ who, mark }))(getRowShape(renderRow(copies))), head: sheet.head, title: sheet.title, from: body.includes(`From ${row.shown} · aca91592 · work`),
           label: body.includes(`What ${row.plain} wrote`), standing: body.includes(`${row.shown} sent this as its message, not yours.`),
         },
-        { cell: row.cell, head: `Relay from ${row.shown} → to yoaida`, title: `Message from ${row.plain} to yoaida`, from: true, label: true, standing: true },
+        { cell: row.cell, head: `Relay from ${row.shown} → to meadow`, title: `Message from ${row.plain} to meadow`, from: true, label: true, standing: true },
       );
     });
   }
 
   test("a relay's text on its sheet is one pre-wrap text node, whole and unparsed, under its label and the shown-as-sent cue", () => {
-    const queue = withList(buildQueue().queue, toYoaida({ body: EVERY_BLOCK_FORM }));
+    const queue = withList(buildQueue().queue, toMeadow({ body: EVERY_BLOCK_FORM }));
     const [block] = byClass(render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } }), "queue-sheet-body");
     assert.deepEqual(getAsSentTexts(block as RenderedNode), [EVERY_BLOCK_FORM]);
     assert.equal(findNodes(block as RenderedNode, (node) => node.props?.atom === "ProseText").length, 0);
-    assert.ok(collectText(block as RenderedNode).replace(/\s+/g, " ").includes("What aidl wrote · shown as sent"));
+    assert.ok(collectText(block as RenderedNode).replace(/\s+/g, " ").includes("What quartz wrote · shown as sent"));
   });
 
   test("a relay whose text addresses its declared document still lists it on the Documents line: the text as sent links none", () => {
-    const queue = withList(buildQueue().queue, toYoaida({ body: "근거: clauded-docs/44099 의 응답 예시", linkedDocIds: [44099] }));
+    const queue = withList(buildQueue().queue, toMeadow({ body: "근거: clauded-docs/44099 의 응답 예시", linkedDocIds: [44099] }));
     const [block] = byClass(render("QueueSheetQ", { queue: { ...queue, sheet: getSheet(queue.groups, "412") } }), "queue-sheet-body");
     const links = findNodes(block as RenderedNode, (node) => node.type === "a").map((node) => [collectText(node), node.props.href]);
     assert.deepEqual(links, [["44099", "#clauded-docs?doc=44099"]]);
@@ -1905,7 +1905,7 @@ describe("a relay on its way", () => {
   }
 
   // spec §9.9 Part 4: a To line's state is the rail's, by id — a mark and a word; a recipient off the rail reads its copy's session, every exit Ended
-  const rail = (overrides: Record<string, unknown>) => ({ id: RECIPIENT_IDS[0], sessionIdPrefix: "5e55a000", name: "yoaida", state: "live", exitReason: null, isWaiting: true, isSelectable: true, ...overrides });
+  const rail = (overrides: Record<string, unknown>) => ({ id: RECIPIENT_IDS[0], sessionIdPrefix: "5e55a000", name: "meadow", state: "live", exitReason: null, isWaiting: true, isSelectable: true, ...overrides });
   const toLines = (copies: unknown[], rails: unknown[]) => byClass(render("RelayWhoQ", { sender, copies, rails }), "queue-relay-to");
   const stateRows = [
     { name: "live and listening on the rail reads Live by the live dot", rails: [rail({})], session: {}, state: ["is-live", "Live"] },
@@ -1918,7 +1918,7 @@ describe("a relay on its way", () => {
   ];
   for (const row of stateRows) {
     test(`a To line's state: ${row.name}`, () => {
-      const [copy] = toYoaida();
+      const [copy] = toMeadow();
       const [line] = toLines([{ ...copy, session: { ...(copy!.session as object), ...row.session } }], row.rails);
       const marks = findNodes(line as RenderedNode, (node) => String(node.props?.className ?? "").startsWith("queue-state-mark"));
       const hidden = findNodes(line as RenderedNode, (node) => node.props?.["aria-hidden"] === "true" && findNodes(node, (inner) => inner === marks[0]).length > 0);
@@ -1942,7 +1942,7 @@ describe("a relay on its way", () => {
   ];
   for (const row of endedRows) {
     test(`the Ended line: ${row.name}`, () => {
-      const [copy] = toYoaida(row.copy);
+      const [copy] = toMeadow(row.copy);
       const copies = [{ ...copy, session: { ...(copy!.session as object), ...row.session } }];
       const text = collectText(render("RelayBlockQ", { item: copies[0], copies, rails: [] }));
       assert.equal(text.includes("Ended recipients are not resumed for a relay; it may lapse."), row.isShown);
@@ -1962,7 +1962,7 @@ describe("a relay on its way", () => {
   ];
   for (const row of hopRows) {
     test(`the hop line on a relay's sheet: ${row.name}`, () => {
-      const copies = toYoaida({}, row.facts);
+      const copies = toMeadow({}, row.facts);
       const paragraphs = findNodes(render("RelayBlockQ", { item: copies[0], copies, rails: [] }), (node) => node.type === "p" && collectText(node).trim().startsWith("Hop"));
       const textOf = (node: RenderedNode, isPart: (part: RenderedNode) => boolean) => findNodes(node, isPart).map((part) => collectText(part).replace(/\s+/g, " ").trim()).join("");
       assert.deepEqual(paragraphs.map((node) => ({
@@ -1977,7 +1977,7 @@ describe("a relay on its way", () => {
     const copies = toThree();
     const queue = withList(buildQueue().queue, [buildItem({ id: 3 })]);
     const body = collectText(byClass(render("QueueSheetQ", { queue: { ...queue, sheet: { kind: "left", id: 412, item: copies[0], copies } } }), "queue-sheet-body")[0] as RenderedNode).replace(/\s+/g, " ");
-    assert.deepEqual(["yoaida", "atrium", "gersona"].map((name) => body.includes(`${name} · 5e55a0`)), [true, true, true]);
+    assert.deepEqual(["meadow", "atrium", "harbor"].map((name) => body.includes(`${name} · 5e55a0`)), [true, true, true]);
   });
 
   // a relay gone from the list has no place to step from → its arrows dim, and neither a press nor J / K steps
@@ -2005,12 +2005,12 @@ describe("a relay on its way", () => {
 
   // layout §2 → Foot: the note line, and the quiet Redact text at its end only while a copy holds its text
   const footRows = [
-    { name: "on its way to one session it reaches it by itself", copies: toYoaida(), props: {}, note: "Read-only. It reaches yoaida by itself.", buttons: QUIET_REDACT },
+    { name: "on its way to one session it reaches it by itself", copies: toMeadow(), props: {}, note: "Read-only. It reaches meadow by itself.", buttons: QUIET_REDACT },
     { name: "on its way to several it reaches each by itself", copies: toThree(), props: {}, note: "Read-only. It reaches each session by itself.", buttons: QUIET_REDACT },
-    { name: "done and received reads how and when it ended", copies: [receive(toYoaida()[0]!)], props: { isDone: true }, note: "Received · Nov 19 14:24", buttons: QUIET_REDACT },
+    { name: "done and received reads how and when it ended", copies: [receive(toMeadow()[0]!)], props: { isDone: true }, note: "Received · Nov 19 14:24", buttons: QUIET_REDACT },
     { name: "done with some lapsed counts each, at the last copy's end", copies: ended(1), props: { isDone: true }, note: "2 received, 1 lapsed · Nov 22 14:20", buttons: QUIET_REDACT },
     { name: "done with every copy lapsed reads Lapsed", copies: ended(3), props: { isDone: true }, note: "Lapsed · Nov 22 14:20", buttons: QUIET_REDACT },
-    { name: "redacted on its way keeps the note and offers nothing", copies: redacted(toYoaida()), props: {}, note: "Read-only. It reaches yoaida by itself.", buttons: [] },
+    { name: "redacted on its way keeps the note and offers nothing", copies: redacted(toMeadow()), props: {}, note: "Read-only. It reaches meadow by itself.", buttons: [] },
     { name: "redacted and done keeps the end line and offers nothing", copies: redacted(ended(1)), props: { isDone: true }, note: "2 received, 1 lapsed · Nov 22 14:20", buttons: [] },
     { name: "a row that left the list says so and offers nothing", copies: toThree(), props: { hasLeft: true }, note: "ℹ This relay left the list.", buttons: [] },
   ];
@@ -2032,7 +2032,7 @@ describe("a relay on its way", () => {
   });
 
   const dateRows = [
-    { name: "one recipient reads its outcome and time", copies: [receive(toYoaida()[0]!)], date: "✓ Received 14:24 Sent 2026-11-19 14:20 KST" },
+    { name: "one recipient reads its outcome and time", copies: [receive(toMeadow()[0]!)], date: "✓ Received 14:24 Sent 2026-11-19 14:20 KST" },
     { name: "several read how many of each", copies: ended(1), date: "2 received, 1 lapsed Sent 2026-11-19 14:20 KST" },
   ];
   for (const row of dateRows) {
@@ -2043,7 +2043,7 @@ describe("a relay on its way", () => {
   }
 
   test("a redacted relay's sheet paints the page's own line from the stored time and length in the text's place, under its label with no shown-as-sent cue, its documents line kept", () => {
-    const copies = redacted(toYoaida({ body: "[relay text redacted by the owner]", linkedDocIds: [44099] }));
+    const copies = redacted(toMeadow({ body: "[relay text redacted by the owner]", linkedDocIds: [44099] }));
     const body = flatText(byClass(renderSheet({ item: copies[0], copies, queue: buildQueue().queue }), "queue-sheet-body")[0] as RenderedNode);
     assert.deepEqual(
       [body.includes("Text redacted 2026-11-19 14:30 KST · it was 1,284 characters long"), body.includes("relay text redacted by the owner"), body.includes("Documents: 44099"), / wrote/.test(body), body.includes("shown as sent")],
@@ -2362,8 +2362,8 @@ describe("the page re-reads itself", () => {
   });
 
   const notes = [
-    { name: "one arrival names its kind, its session and its title", arrived: [buildItem({ session: buildSession({ name: "yoaida" }) })], expected: "New decision from yoaida: Pick the migration order" },
-    { name: "a report names itself a report", arrived: [buildItem({ kind: "report", title: "Nightly sweep done", session: buildSession({ name: "yoaida" }) })], expected: "New report from yoaida: Nightly sweep done" },
+    { name: "one arrival names its kind, its session and its title", arrived: [buildItem({ session: buildSession({ name: "meadow" }) })], expected: "New decision from meadow: Pick the migration order" },
+    { name: "a report names itself a report", arrived: [buildItem({ kind: "report", title: "Nightly sweep done", session: buildSession({ name: "meadow" }) })], expected: "New report from meadow: Nightly sweep done" },
     { name: "several arrivals are counted", arrived: [buildItem({ id: 1 }), buildItem({ id: 2 }), buildItem({ id: 3 })], expected: "3 new items" },
   ];
   for (const row of notes) test(`arrival note: ${row.name}`, () => assert.equal(call("getArrivalNoteQ", row.arrived), row.expected));
@@ -2379,16 +2379,16 @@ describe("the page re-reads itself", () => {
   });
 
   const turns = [
-    { name: "one recipient names its session", turned: [buildItem({ id: 1, kind: "message", status: "unacked", session: buildSession({ name: "yoaida" }) })], expected: "⚠ yoaida has not received an order" },
+    { name: "one recipient names its session", turned: [buildItem({ id: 1, kind: "message", status: "unacked", session: buildSession({ name: "meadow" }) })], expected: "⚠ meadow has not received an order" },
     {
       name: "recipients in several sessions are named together",
       turned: [
-        buildItem({ id: 1, kind: "message", status: "unacked", session: buildSession({ name: "yoaida" }) }),
-        buildItem({ id: 2, kind: "message", status: "expired", session: buildSession({ id: "0d3e7a51-2c4f-4b8e-9f61-7a2b5c8d1e30", name: "gersona" }) }),
+        buildItem({ id: 1, kind: "message", status: "unacked", session: buildSession({ name: "meadow" }) }),
+        buildItem({ id: 2, kind: "message", status: "expired", session: buildSession({ id: "0d3e7a51-2c4f-4b8e-9f61-7a2b5c8d1e30", name: "harbor" }) }),
       ],
-      expected: "⚠ yoaida and gersona have not received an order",
+      expected: "⚠ meadow and harbor have not received an order",
     },
-    { name: "an answer to a decision is named an answer", turned: [buildItem({ id: 1, status: "unacked", session: buildSession({ name: "yoaida" }) })], expected: "⚠ yoaida has not received an answer" },
+    { name: "an answer to a decision is named an answer", turned: [buildItem({ id: 1, status: "unacked", session: buildSession({ name: "meadow" }) })], expected: "⚠ meadow has not received an answer" },
   ];
   for (const row of turns) test(`Not received note: ${row.name}`, () => assert.equal(call("getNotReceivedNoteQ", row.turned), row.expected));
 
@@ -2416,15 +2416,15 @@ describe("the page re-reads itself", () => {
 
   test("the off-view note says how many arrivals sit on which side, and its Show moves to the nearest", () => {
     const shown: number[] = [];
-    const queue = { ...withList(buildQueue(), [buildItem()]), status: "New report from yoaida: Nightly sweep done" };
+    const queue = { ...withList(buildQueue(), [buildItem()]), status: "New report from meadow: Nightly sweep done" };
     const tree = render("ListFootQ", { queue, offView: { count: 1, direction: "below", id: 7 }, onShowNew: (id: number) => shown.push(id) });
-    assert.match(collectText(tree).replace(/\s+/g, " "), /^New report from yoaida: Nightly sweep done 1 new below Show$/);
+    assert.match(collectText(tree).replace(/\s+/g, " "), /^New report from meadow: Nightly sweep done 1 new below Show$/);
     for (const button of buttonLabelled(tree, "Show")) (button.props.onClick as () => void)();
     assert.deepEqual(shown, [7]);
   });
 
   const footRows = [
-    { name: "a line naming an order carries Show, which opens the order view at that order", status: { text: "⚠ yoaida has not received an order", orderId: 7 }, opened: [7] },
+    { name: "a line naming an order carries Show, which opens the order view at that order", status: { text: "⚠ meadow has not received an order", orderId: 7 }, opened: [7] },
     { name: "a plain line carries no Show", status: "Marked as read", opened: [] },
   ];
   for (const row of footRows) {
@@ -2750,7 +2750,7 @@ describe("the rail's statement on names", () => {
 // every sheet states once, outside its body, that names are unchecked: its foot or body may draw the session's name away from the head's mark
 const SHORT_STATEMENT = "Names are self-written and unchecked. Only the id identifies a session.";
 describe("the sheet's statement on names", () => {
-  const relaySender = { sessionIdPrefix: "9d2f4c10", profileLabel: "work", selfDeclaredName: "gersona", cwdTail: "git/gersona" };
+  const relaySender = { sessionIdPrefix: "9d2f4c10", profileLabel: "work", selfDeclaredName: "harbor", cwdTail: "git/harbor" };
   const rows = [
     { name: "an open decision", item: buildItem(), isDone: false },
     { name: "a relay to its recipient", item: buildItem({ kind: "relay", status: "answered", options: [], sendId: "relay-send-7", relay: { hop: 0, parent: null, sender: relaySender, fetchedAt: null, redaction: null, lapsedAt: null } }), isDone: false },
@@ -2781,7 +2781,7 @@ describe("sessions rail rows", () => {
   });
 
   test("two shown rows sharing a name show their id prefixes, and a unique name shows none", () => {
-    const rows = [buildSessionRow(), buildSessionRow({ id: ENDED_ID, sessionIdPrefix: "4c0e19aa" }), buildSessionRow({ id: REPLACED_ID, name: "gersona" })];
+    const rows = [buildSessionRow(), buildSessionRow({ id: ENDED_ID, sessionIdPrefix: "4c0e19aa" }), buildSessionRow({ id: REPLACED_ID, name: "harbor" })];
     const { tree } = renderRail({ region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
     const prefixes = (id: string) => findNodes(railRowOf(tree, id), (node) => node.props?.atom === "MachineString").length;
     assert.deepEqual([prefixes(SESSION_ID), prefixes(ENDED_ID), prefixes(REPLACED_ID)], [1, 1, 0]);
@@ -2808,12 +2808,12 @@ describe("sessions rail rows", () => {
 
   // spec §9.1: screen readers hear the hover line after the name → the box's description, reached with the box by keyboard
   test("a rail row's box is named Select and its session alone, and describes the row by its hover line, then the tick hint", () => {
-    const rows = [buildSessionRow({ isWaiting: false }), buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida" })];
+    const rows = [buildSessionRow({ isWaiting: false }), buildSessionRow({ id: OTHER_RAIL_ID, name: "meadow" })];
     const { tree } = renderRail({ region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
     const boxOf = (id: string) => findNodes(railRowOf(tree, id), (node) => node.type === "input")[0] as RenderedNode;
     const [lineId, hintId] = String(boxOf(SESSION_ID).props["aria-describedby"]).split(" ");
     const [line] = findNodes(tree, (node) => node.props?.id === lineId);
-    assert.deepEqual([boxOf(SESSION_ID).props["aria-label"], boxOf(OTHER_RAIL_ID).props["aria-label"], hintId], ["Select nightly-docs-sweep", "Select yoaida", "queue-rail-hint"]);
+    assert.deepEqual([boxOf(SESSION_ID).props["aria-label"], boxOf(OTHER_RAIL_ID).props["aria-label"], hintId], ["Select nightly-docs-sweep", "Select meadow", "queue-rail-hint"]);
     assert.ok(collectText(line as RenderedNode).startsWith("Next turn: orders reach it then. Restart it to deliver now."), collectText(line as RenderedNode));
     assert.ok(String(railRowOf(tree, SESSION_ID).props.title).startsWith("Next turn: orders reach it then. Restart it to deliver now.\nwork-dev · "));
   });
@@ -2848,7 +2848,7 @@ describe("sessions rail rows", () => {
 
   // spec §9.1: box · state mark · name · tag · count from the row's start; a row that takes no message has no box, the rest in place
   test("a row reads its box, its state mark, its name, its tag and its count from the start, and a row that takes no message starts at its mark", () => {
-    const rows = [buildSessionRow({ state: "live", isWaiting: false, count: { awaiting: 2, inDelivery: 0 } }), buildSessionRow({ id: REPLACED_ID, name: "gersona", isSelectable: false, count: { awaiting: 3, inDelivery: 0 } })];
+    const rows = [buildSessionRow({ state: "live", isWaiting: false, count: { awaiting: 2, inDelivery: 0 } }), buildSessionRow({ id: REPLACED_ID, name: "harbor", isSelectable: false, count: { awaiting: 3, inDelivery: 0 } })];
     const { tree } = renderRail({ isEndedShown: true, region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
     const slots = (id: string) => findNodes(railRowOf(tree, id), (node) => /^queue-rail-(box|mark|name|tag|count)(\s|$)/.test(String(node.props?.className ?? "")))
       .map((node) => String(node.props.className).split(" ")[0]);
@@ -2892,7 +2892,7 @@ describe("sessions rail rows", () => {
   });
 
   test("the waiting count is the row's count atom in the tag fill, never solid, and a session with nothing waiting shows none", () => {
-    const rows = [buildSessionRow({ count: { awaiting: 5, inDelivery: 0 } }), buildSessionRow({ id: ENDED_ID, name: "gersona", count: { awaiting: 0, inDelivery: 0 } })];
+    const rows = [buildSessionRow({ count: { awaiting: 5, inDelivery: 0 } }), buildSessionRow({ id: ENDED_ID, name: "harbor", count: { awaiting: 0, inDelivery: 0 } })];
     const { tree } = renderRail({ region: { status: "ready", data: { sessions: rows, hasMore: false }, error: null, busy: false } });
     const counts = (id: string) => findNodes(railRowOf(tree, id), (node) => node.props?.atom === "Badge").map((node) => `${node.props.role} ${node.props.fill} ${collectText(node)}`);
     assert.deepEqual([counts(SESSION_ID), counts(ENDED_ID)], [["count tag 5"], []]);
@@ -2900,10 +2900,10 @@ describe("sessions rail rows", () => {
 });
 
 describe("the ticks as the one selection", () => {
-  const gersona = buildSession({ id: "a1", name: "gersona" });
-  const yoaida = buildSession({ id: "b2", name: "yoaida" });
+  const harbor = buildSession({ id: "a1", name: "harbor" });
+  const meadow = buildSession({ id: "b2", name: "meadow" });
   const atrium = buildSession({ id: "c3", name: "atrium" });
-  const items = [buildItem({ id: 1, session: gersona }), buildItem({ id: 2, session: yoaida }), buildItem({ id: 3, session: atrium })];
+  const items = [buildItem({ id: 1, session: harbor }), buildItem({ id: 2, session: meadow }), buildItem({ id: 3, session: atrium })];
   // spec §9.1: the ticked sessions are the list's scope; nothing ticked → every session's items
   const scopes = [
     { name: "nothing ticked shows every session's items", ids: [], expected: [1, 2, 3] },
@@ -2918,20 +2918,20 @@ describe("the ticks as the one selection", () => {
   // spec §9.9 Part 1: a relay is in scope while either end is ticked — the sender matched by its id prefix, the page holding no sender id
   const SENDER_ID = "9d2f4c10-6a1e-4b2d-8c3f-1e7a5b9d0c22";
   const relayEnds = {
-    yoaida: buildSession({ id: "7be210c4-3f5a-4e8b-9d1c-6a2f0e4b8d71", name: "yoaida", profileLabel: "personal" }),
-    sixmon: buildSession({ id: "41aa0b7e-8c2d-4f6a-b3e9-5d1c7a0f2e94", name: "sixmon", profileLabel: "personal" }),
+    meadow: buildSession({ id: "7be210c4-3f5a-4e8b-9d1c-6a2f0e4b8d71", name: "meadow", profileLabel: "personal" }),
+    lumen: buildSession({ id: "41aa0b7e-8c2d-4f6a-b3e9-5d1c7a0f2e94", name: "lumen", profileLabel: "personal" }),
     atrium: buildSession({ id: "5c0e91aa-2b7f-4d3e-a8c6-0f9e1d4b7a53", name: "atrium", profileLabel: "personal" }),
   };
-  const relaySender = { sessionIdPrefix: SENDER_ID.slice(0, 8), profileLabel: "work", selfDeclaredName: "gersona", cwdTail: "git/gersona" };
+  const relaySender = { sessionIdPrefix: SENDER_ID.slice(0, 8), profileLabel: "work", selfDeclaredName: "harbor", cwdTail: "git/harbor" };
   const relayCopy = (id: number, session: unknown) => buildItem({
     id, kind: "relay", status: "answered", options: [], sendId: "relay-send-7", session,
     relay: { hop: 0, parent: null, sender: relaySender, fetchedAt: null, redaction: null, lapsedAt: null },
   });
-  const relayItems = [buildItem({ id: 1, session: relayEnds.atrium }), relayCopy(412, relayEnds.yoaida), relayCopy(413, relayEnds.sixmon)];
+  const relayItems = [buildItem({ id: 1, session: relayEnds.atrium }), relayCopy(412, relayEnds.meadow), relayCopy(413, relayEnds.lumen)];
   const relayScopes = [
     { name: "nothing ticked lists the relay", ids: [], filter: "", expected: [1, 412, 413] },
     { name: "the sender ticked alone lists the relay with every copy", ids: [SENDER_ID], filter: "", expected: [412, 413] },
-    { name: "one recipient ticked lists the relay with every copy", ids: [relayEnds.sixmon.id], filter: "", expected: [412, 413] },
+    { name: "one recipient ticked lists the relay with every copy", ids: [relayEnds.lumen.id], filter: "", expected: [412, 413] },
     { name: "only a third session ticked leaves the relay out", ids: [relayEnds.atrium.id], filter: "", expected: [1] },
     { name: "the sender's account lists the relay its recipients' account would", ids: [], filter: "work", expected: [412, 413] },
   ];
@@ -2942,15 +2942,15 @@ describe("the ticks as the one selection", () => {
   }
 
   test("a relay with its sender and a recipient ticked is one row", () => {
-    const groups = call<Array<{ rows: Array<{ id: number; copies: unknown[] }> }>>("getListGroupsQ", relayItems, { done: { items: [], nextCursor: null }, relays: { items: [], refusals: [], nextCursor: null } }, { profile: "" }, [SENDER_ID, relayEnds.yoaida.id]);
+    const groups = call<Array<{ rows: Array<{ id: number; copies: unknown[] }> }>>("getListGroupsQ", relayItems, { done: { items: [], nextCursor: null }, relays: { items: [], refusals: [], nextCursor: null } }, { profile: "" }, [SENDER_ID, relayEnds.meadow.id]);
     assert.deepEqual(groups.flatMap((group) => group.rows).map((row) => [row.id, row.copies.length]), [[412, 2]]);
   });
 
-  const rails = [buildSessionRow({ id: "a1", name: "gersona" }), buildSessionRow({ id: "b2", name: "yoaida" })];
+  const rails = [buildSessionRow({ id: "a1", name: "harbor" }), buildSessionRow({ id: "b2", name: "meadow" })];
   const titles = [
     { name: "nothing ticked reads All sessions", ids: [], title: "All sessions" },
-    { name: "one tick names its session", ids: ["b2"], title: "yoaida" },
-    { name: "several ticks name them all in tick order", ids: ["b2", "a1"], title: "yoaida, gersona" },
+    { name: "one tick names its session", ids: ["b2"], title: "meadow" },
+    { name: "several ticks name them all in tick order", ids: ["b2", "a1"], title: "meadow, harbor" },
   ];
   for (const row of titles) test(`the list's head: ${row.name}`, () => assert.equal(call("getScopeTitleQ", rails, row.ids), row.title));
 
@@ -2960,7 +2960,7 @@ describe("the ticks as the one selection", () => {
   });
 
   // master box (spec §9.1): nothing ticked → every live session that takes a message; anything ticked → every tick cleared, an ended one's too
-  const live = buildSessionRow({ id: "d4", name: "aidl" });
+  const live = buildSessionRow({ id: "d4", name: "quartz" });
   const masterRows = [...SESSION_ROWS, live];
   const masters = [
     { name: "none ticked ticks every live session", ids: [], next: [SESSION_ID, "d4"], state: "none" },
@@ -2989,7 +2989,7 @@ describe("the ticks as the one selection", () => {
 
   // spec §9.2: the recipients changed under a draft → the note says so once
   const changes = [
-    { name: "to two sessions", names: ["gersona", "yoaida"], note: "Recipients changed: now gersona and yoaida." },
+    { name: "to two sessions", names: ["harbor", "meadow"], note: "Recipients changed: now harbor and meadow." },
     { name: "to none", names: [], note: "No session ticked now: this order has no recipient." },
   ];
   for (const row of changes) test(`the recipients-changed note: ${row.name}`, () => assert.equal(call("getRecipientsNoteQ", row.names), row.note));
@@ -3065,9 +3065,9 @@ describe("order composer", () => {
   // spec §9.2 → Foot: the send button names who the order goes to
   const labels = [
     { name: "no tick", targets: { ids: [], names: [], endedCount: 0 }, label: "Send order" },
-    { name: "one target names it", targets: { ids: [SESSION_ID], names: ["gersona"], endedCount: 0 }, label: "Send to gersona" },
-    { name: "several targets count them", targets: { ids: [SESSION_ID, ENDED_ID], names: ["gersona", "yoaida"], endedCount: 0 }, label: "Send to 2 sessions" },
-    { name: "an ended target among them", targets: { ids: [SESSION_ID, ENDED_ID], names: ["gersona", "yoaida"], endedCount: 1 }, label: "Send to 2 sessions · resumes 1 ended" },
+    { name: "one target names it", targets: { ids: [SESSION_ID], names: ["harbor"], endedCount: 0 }, label: "Send to harbor" },
+    { name: "several targets count them", targets: { ids: [SESSION_ID, ENDED_ID], names: ["harbor", "meadow"], endedCount: 0 }, label: "Send to 2 sessions" },
+    { name: "an ended target among them", targets: { ids: [SESSION_ID, ENDED_ID], names: ["harbor", "meadow"], endedCount: 1 }, label: "Send to 2 sessions · resumes 1 ended" },
   ];
   for (const row of labels) test(`the send label: ${row.name}`, () => assert.equal(call("getSendLabelQ", call("getSendPartsQ", row.targets)), row.label));
 
@@ -3114,11 +3114,11 @@ describe("order composer", () => {
   // spec §9.2 → Note at rest: where the owner decides whether to send, the note says what follows for a ticked session that does not listen
   const deaf = (id: string, name: string) => buildSessionRow({ id, name, isWaiting: false });
   const deafNotes = [
-    { name: "one ticked, next turn", rows: [deaf(SESSION_ID, "yoaida")], ids: [SESSION_ID], note: "yoaida gets this at its next turn. Restart it to deliver now." },
-    { name: "several ticked, one next turn", rows: [deaf(SESSION_ID, "yoaida"), buildSessionRow({ id: OTHER_RAIL_ID, name: "gersona" })], ids: [SESSION_ID, OTHER_RAIL_ID], note: "Each ticked session gets its own copy. yoaida waits for its next turn. Restart it to deliver now." },
-    { name: "several ticked, two next turn", rows: [deaf(SESSION_ID, "yoaida"), deaf(OTHER_RAIL_ID, "gersona")], ids: [SESSION_ID, OTHER_RAIL_ID], note: "Each ticked session gets its own copy. yoaida and gersona wait for their next turn. Restart them to deliver now." },
-    { name: "an unticked session that does not listen is not named", rows: [buildSessionRow({ name: "yoaida" }), deaf(OTHER_RAIL_ID, "gersona")], ids: [SESSION_ID], note: "Goes to yoaida." },
-    { name: "an ended session is resumed, so it is not named", rows: [buildSessionRow({ name: "yoaida", state: "exited", exitReason: "ended", isWaiting: false })], ids: [SESSION_ID], note: "Goes to yoaida." },
+    { name: "one ticked, next turn", rows: [deaf(SESSION_ID, "meadow")], ids: [SESSION_ID], note: "meadow gets this at its next turn. Restart it to deliver now." },
+    { name: "several ticked, one next turn", rows: [deaf(SESSION_ID, "meadow"), buildSessionRow({ id: OTHER_RAIL_ID, name: "harbor" })], ids: [SESSION_ID, OTHER_RAIL_ID], note: "Each ticked session gets its own copy. meadow waits for its next turn. Restart it to deliver now." },
+    { name: "several ticked, two next turn", rows: [deaf(SESSION_ID, "meadow"), deaf(OTHER_RAIL_ID, "harbor")], ids: [SESSION_ID, OTHER_RAIL_ID], note: "Each ticked session gets its own copy. meadow and harbor wait for their next turn. Restart them to deliver now." },
+    { name: "an unticked session that does not listen is not named", rows: [buildSessionRow({ name: "meadow" }), deaf(OTHER_RAIL_ID, "harbor")], ids: [SESSION_ID], note: "Goes to meadow." },
+    { name: "an ended session is resumed, so it is not named", rows: [buildSessionRow({ name: "meadow", state: "exited", exitReason: "ended", isWaiting: false })], ids: [SESSION_ID], note: "Goes to meadow." },
   ];
   for (const row of deafNotes) {
     test(`the note at rest: ${row.name}`, () => {
@@ -3139,7 +3139,7 @@ describe("order composer", () => {
 describe("the two composers told apart", () => {
   const labels = [
     { name: "a decision's box is about the decision", item: buildItem({ id: 3, isFreeTextAllowed: true }), label: "Your own answer or a note on this decision (optional)" },
-    { name: "a report's box is an order on the report, to its session", item: buildItem({ id: 5, kind: "report", options: [], isFreeTextAllowed: true, session: buildSession({ name: "yoaida" }) }), label: "Order to yoaida on this report (optional)" },
+    { name: "a report's box is an order on the report, to its session", item: buildItem({ id: 5, kind: "report", options: [], isFreeTextAllowed: true, session: buildSession({ name: "meadow" }) }), label: "Order to meadow on this report (optional)" },
   ];
   for (const row of labels) {
     test(`the sheet's label: ${row.name}`, () => {
@@ -3164,7 +3164,7 @@ describe("an order send's answer", () => {
     const counts = { sent: 0, refused: 0 };
     const isDone = await (module.sendMessageQ as (deps: unknown) => Promise<boolean>)({
       body: { sessionIds: [SESSION_ID, ENDED_ID], text: "rebase on main" },
-      names: ["gersona", "yoaida"],
+      names: ["harbor", "meadow"],
       setComposer: (next: (prev: Record<string, unknown>) => Record<string, unknown>) => { composer = next(composer); },
       setStatus: (next: unknown) => statuses.push(next),
       onSent: () => { counts.sent += 1; },
@@ -3179,7 +3179,7 @@ describe("an order send's answer", () => {
     assert.deepEqual(result.posts, [{ url: "/api/queue/owner/messages/send", body: { sessionIds: [SESSION_ID, ENDED_ID], text: "rebase on main" } }]);
     assert.equal(result.isDone, true);
     assert.deepEqual(result.composer, { text: "", isBusy: false, error: null });
-    assert.deepEqual(result.statuses, [{ text: "✓ Order sent to gersona and yoaida", orderId: 81 }]);
+    assert.deepEqual(result.statuses, [{ text: "✓ Order sent to harbor and meadow", orderId: 81 }]);
     assert.deepEqual([result.sent, result.refused], [1, 0]);
   });
 
@@ -3204,8 +3204,8 @@ describe("an order send's answer", () => {
   });
 
   const sentLines = [
-    { name: "one session", names: ["gersona"], line: "✓ Order sent to gersona" },
-    { name: "three sessions", names: ["gersona", "yoaida", "atrium"], line: "✓ Order sent to gersona, yoaida and atrium" },
+    { name: "one session", names: ["harbor"], line: "✓ Order sent to harbor" },
+    { name: "three sessions", names: ["harbor", "meadow", "atrium"], line: "✓ Order sent to harbor, meadow and atrium" },
   ];
   for (const row of sentLines) test(`the sent line names every recipient: ${row.name}`, () => assert.equal(call("getOrderSentStatusQ", row.names), row.line));
 });
@@ -3288,9 +3288,9 @@ describe("Orders", () => {
 
   test("the thread folds the copies of one send into one entry, the oldest order first", () => {
     const items = [
-      copy({ id: 91, sendId: "s2", session: named("yoaida", OTHER_ID) }), copy({ id: 90, sendId: "s2" }),
+      copy({ id: 91, sendId: "s2", session: named("meadow", OTHER_ID) }), copy({ id: 90, sendId: "s2" }),
       buildItem({ id: 50, kind: "report", status: "delivered", options: [], answeredAt: "2026-11-11T09:00:00.000Z", answer: { code: null, text: "ship it" } }),
-      copy({ id: 31, sendId: null, answeredAt: "2026-11-10T01:00:00.000Z", body: "old", session: named("yoaida", OTHER_ID) }), copy({ id: 30, sendId: null, answeredAt: "2026-11-10T01:00:00.000Z", body: "old" }),
+      copy({ id: 31, sendId: null, answeredAt: "2026-11-10T01:00:00.000Z", body: "old", session: named("meadow", OTHER_ID) }), copy({ id: 30, sendId: null, answeredAt: "2026-11-10T01:00:00.000Z", body: "old" }),
     ];
     const entries = call<Array<{ id: number; copies: Array<{ id: number }> }>>("getThreadEntriesQ", items);
     assert.deepEqual(entries.map((entry) => [entry.id, entry.copies.map((one) => one.id)]), [[30, [30, 31]], [50, [50]], [90, [90, 91]]]);
@@ -3311,16 +3311,16 @@ describe("Orders", () => {
   test("each recipient shows its one receipt word, and only a recipient that did not receive it can be resent", () => {
     const resent: unknown[] = [];
     const entry = call<unknown[]>("getThreadEntriesQ", [
-      copy({ id: 90, sendId: "s2", status: "delivered", deliveredAt: "2026-11-12T12:28:00.000Z", session: named("gersona") }),
-      copy({ id: 91, sendId: "s2", session: named("yoaida", OTHER_ID) }),
+      copy({ id: 90, sendId: "s2", status: "delivered", deliveredAt: "2026-11-12T12:28:00.000Z", session: named("harbor") }),
+      copy({ id: 91, sendId: "s2", session: named("meadow", OTHER_ID) }),
       copy({ id: 92, sendId: "s2", status: "unacked", canResend: true, session: named("atrium", ENDED_ID) }),
-      copy({ id: 93, sendId: "s2", session: buildSession({ id: REPLACED_ID, name: "aidl", state: "live", isWaiting: false }) }),
+      copy({ id: 93, sendId: "s2", session: buildSession({ id: REPLACED_ID, name: "quartz", state: "live", isWaiting: false }) }),
     ])[0];
     const tree = render("OrderEntryQ", { entry, onResend: (id: number) => resent.push(id) });
     const rows = findNodes(tree, (node) => node.props?.className === "queue-recipient").map((node) => collectText(node));
     assert.deepEqual(
-      rows.map((row) => [["gersona", "yoaida", "atrium", "aidl"].find((name) => row.startsWith(name)), ["Received", "Not yet", "Not received", "Next turn"].find((word) => row.includes(word))]),
-      [["gersona", "Received"], ["yoaida", "Not yet"], ["atrium", "Not received"], ["aidl", "Next turn"]],
+      rows.map((row) => [["harbor", "meadow", "atrium", "quartz"].find((name) => row.startsWith(name)), ["Received", "Not yet", "Not received", "Next turn"].find((word) => row.includes(word))]),
+      [["harbor", "Received"], ["meadow", "Not yet"], ["atrium", "Not received"], ["quartz", "Next turn"]],
     );
     const resends = buttonLabelled(tree, "Resend");
     assert.equal(resends.length, 1);
@@ -3346,7 +3346,7 @@ describe("Orders", () => {
   for (const row of resendStates) {
     test(`a recipient's resend: ${row.name}`, () => {
       const thread = { status: "ready", nextCursor: null, error: null, items: [
-        copy({ id: 91, sendId: "s3", status: "unacked", canResend: true, session: named("yoaida", OTHER_ID) }),
+        copy({ id: 91, sendId: "s3", status: "unacked", canResend: true, session: named("meadow", OTHER_ID) }),
         copy({ id: 92, sendId: "s3", status: "unacked", canResend: true, session: named("atrium", ENDED_ID) }),
       ] };
       const { queue } = buildQueue({ busy: row.busy, orders: buildOrders({ thread }) });
@@ -3443,18 +3443,18 @@ describe("Orders", () => {
   const labelLines = [
     { name: "the ticked names, an ended one tagged", ids: [SESSION_ID, ENDED_ID], text: "New order to nightly-docs-sweep, atrium-hooks", marks: ["Ended"] },
     { name: "no tick says so", ids: [], text: "New order · no session ticked", marks: [] },
-    { name: "a ticked session that does not listen is marked, its word read with its name", ids: [OTHER_RAIL_ID, SESSION_ID], text: "New order to nightly-docs-sweep, yoaida", marks: ["Next turn"], rows: [...SESSION_ROWS, buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", isWaiting: false })] },
+    { name: "a ticked session that does not listen is marked, its word read with its name", ids: [OTHER_RAIL_ID, SESSION_ID], text: "New order to nightly-docs-sweep, meadow", marks: ["Next turn"], rows: [...SESSION_ROWS, buildSessionRow({ id: OTHER_RAIL_ID, name: "meadow", isWaiting: false })] },
     {
       name: "a marked name that is not last keeps its mark before the comma",
       ids: [ENDED_ID, OTHER_RAIL_ID, SESSION_ID],
-      text: "New order to atrium-hooks, yoaida, nightly-docs-sweep", marks: ["Ended", "Next turn"],
-      rows: [SESSION_ROWS[1], buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", isWaiting: false }), SESSION_ROWS[0]],
+      text: "New order to atrium-hooks, meadow, nightly-docs-sweep", marks: ["Ended", "Next turn"],
+      rows: [SESSION_ROWS[1], buildSessionRow({ id: OTHER_RAIL_ID, name: "meadow", isWaiting: false }), SESSION_ROWS[0]],
     },
     {
       name: "a ticked session that is not reachable takes the rail's warn mark, not the pause mark",
       ids: [OTHER_RAIL_ID],
-      text: "New order to yoaida ⚠", marks: ["Not reachable"],
-      rows: [...SESSION_ROWS, buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", state: "stale", isWaiting: false })],
+      text: "New order to meadow ⚠", marks: ["Not reachable"],
+      rows: [...SESSION_ROWS, buildSessionRow({ id: OTHER_RAIL_ID, name: "meadow", state: "stale", isWaiting: false })],
     },
   ];
   for (const row of labelLines) {
@@ -3714,10 +3714,10 @@ describe("desk keys", () => {
 
   // spec §9.9 Part 2: O on a relay ticks each recipient that takes orders and never its sender; none taking orders → said in the Orders note
   const RELAY_SENDER_ID = "9d2f4c10-6a1e-4b2d-8c3f-1e7a5b9d0c22";
-  const relayRails = [...SESSION_ROWS, buildSessionRow({ id: OTHER_TICK_ID, name: "sixmon" }), buildSessionRow({ id: RELAY_SENDER_ID, name: "gersona" })];
+  const relayRails = [...SESSION_ROWS, buildSessionRow({ id: OTHER_TICK_ID, name: "lumen" }), buildSessionRow({ id: RELAY_SENDER_ID, name: "harbor" })];
   const relayTo = (firstId: number, sessionIds: string[], sendId: string) => sessionIds.map((sessionId, index) => buildItem({
     id: firstId + index, kind: "relay", status: "answered", options: [], sendId, session: buildSession({ id: sessionId }),
-    relay: { hop: 0, parent: null, sender: { sessionIdPrefix: RELAY_SENDER_ID.slice(0, 8), profileLabel: "work", selfDeclaredName: "gersona", cwdTail: "git/gersona" }, fetchedAt: null, redaction: null, lapsedAt: null },
+    relay: { hop: 0, parent: null, sender: { sessionIdPrefix: RELAY_SENDER_ID.slice(0, 8), profileLabel: "work", selfDeclaredName: "harbor", cwdTail: "git/harbor" }, fetchedAt: null, redaction: null, lapsedAt: null },
   }));
   const pressOnRelay = (selected: number, ticked: string[], target: unknown = desk) => {
     let ticks = ticked;
@@ -4126,7 +4126,7 @@ describe("images in a composer", () => {
     })) as ScreenModule;
     let composer: Record<string, unknown> = { text: "rebase on main", isBusy: false, error: null, images: [shot(0)] };
     await (module.sendMessageQ as (deps: unknown) => Promise<boolean>)({
-      body: { sessionIds: [SESSION_ID], text: "rebase on main" }, names: ["gersona"], shots: [shot(0)],
+      body: { sessionIds: [SESSION_ID], text: "rebase on main" }, names: ["harbor"], shots: [shot(0)],
       setComposer: (next: (prev: Record<string, unknown>) => Record<string, unknown>) => { composer = next(composer); }, setStatus: () => undefined, onSent: () => undefined,
     });
     assert.deepEqual(getPlain(posts), [{ sessionIds: [SESSION_ID], text: "rebase on main", attachmentIds: [IMAGE_ID[0]] }]);
@@ -4142,7 +4142,7 @@ describe("images in a composer", () => {
     const failed = shot(0, { status: "failed", id: undefined, cause: "the monitor did not answer" });
     let composer: Record<string, unknown> = { text: "rebase on main", isBusy: false, error: null, images: [failed] };
     const isDone = await (module.sendMessageQ as (deps: unknown) => Promise<boolean>)({
-      body: { sessionIds: [SESSION_ID], text: "rebase on main" }, names: ["gersona"], shots: [failed],
+      body: { sessionIds: [SESSION_ID], text: "rebase on main" }, names: ["harbor"], shots: [failed],
       setComposer: (next: (prev: Record<string, unknown>) => Record<string, unknown>) => { composer = next(composer); }, setStatus: () => undefined, onSent: () => undefined,
     });
     assert.deepEqual([isDone, posts.length, (getPlain(composer) as { text: string; isBusy: boolean }).text, (getPlain(composer) as { isBusy: boolean }).isBusy], [false, 0, "rebase on main", false]);
@@ -4291,32 +4291,32 @@ describe("In delivery rows", () => {
   // spec §4.2: one line on fixed columns — every cell drawn in its place, an empty one too, so no text ends where a tag starts
   test("a row lays its cells in column order, its queue number, name, title, tag, fact, age, chevron, an empty tag and fact cell included", () => {
     const view = { isNameShown: true, isAccountShown: false, tabStopId: 41 };
-    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ kind: "report", session: buildSession({ name: "gersona" }) })), isSelected: false, cols: ["tag", "fact"], view, onSelect: () => undefined, onOrder: () => undefined });
+    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ kind: "report", session: buildSession({ name: "harbor" }) })), isSelected: false, cols: ["tag", "fact"], view, onSelect: () => undefined, onOrder: () => undefined });
     const [option] = findNodes(tree, (node) => node.props?.role === "option");
     const slots = (option?.children ?? []).flatMap((child) => (typeof child === "object" && child !== null ? [String((child as RenderedNode).props?.className ?? "")] : []));
     const empty = ["queue-row-tag", "queue-row-fact"].map((name) => collectText(byClass(tree, name)[0] as RenderedNode));
     const [number] = byClass(tree, "queue-row-id");
     assert.deepEqual(
       [slots, collectText(number as RenderedNode), findNodes(number as RenderedNode, (node) => node.props?.atom === "MachineString").length, collectText(byClass(tree, "queue-row-who")[0] as RenderedNode), empty],
-      [["queue-row-id", "queue-row-who", "queue-row-title", "queue-row-tag", "queue-row-fact", "queue-row-age", "queue-row-chevron block"], "#41", 1, "gersona self", ["", ""]],
+      [["queue-row-id", "queue-row-who", "queue-row-title", "queue-row-tag", "queue-row-fact", "queue-row-age", "queue-row-chevron block"], "#41", 1, "harbor self", ["", ""]],
     );
   });
 
   // spec §4.2: what is off the row — the account, a name's start-directory mark — stays in the row's title and accessible name
   test("a row's accessible name starts with its queue number and, with its title, carries its fact, the account and a start directory's mark", () => {
     const view = { isNameShown: true, isAccountShown: true, tabStopId: 41 };
-    const item = buildItem({ isApprovalClass: true, session: buildSession({ name: "gersona", isNameRegistered: false }) });
+    const item = buildItem({ isApprovalClass: true, session: buildSession({ name: "harbor", isNameRegistered: false }) });
     const [option] = findNodes(render("QueueRowQ", { row: call("getSingleRowQ", item), isSelected: false, cols: ["tag", "fact"], view, onSelect: () => undefined, onOrder: () => undefined }), (node) => node.props?.role === "option");
     assert.deepEqual(
       [option?.props.title, String(option?.props["aria-label"]).replace(/posted .*$/, "posted")],
-      ["2 options · work-dev · start directory", `#41, Decision from gersona: ${item.title}, Approval, 2 options, work-dev, start directory, posted`],
+      ["2 options · work-dev · start directory", `#41, Decision from harbor: ${item.title}, Approval, 2 options, work-dev, start directory, posted`],
     );
   });
 
   test("with exactly one session ticked a row paints no name column", () => {
     const view = { isNameShown: false, isAccountShown: false, tabStopId: 41 };
-    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ session: buildSession({ name: "gersona" }) })), isSelected: false, cols: ["tag", "fact"], view, onSelect: () => undefined, onOrder: () => undefined });
-    assert.deepEqual([byClass(tree, "queue-row-who").length, collectText(tree).includes("gersona")], [0, false]);
+    const tree = render("QueueRowQ", { row: call("getSingleRowQ", buildItem({ session: buildSession({ name: "harbor" }) })), isSelected: false, cols: ["tag", "fact"], view, onSelect: () => undefined, onOrder: () => undefined });
+    assert.deepEqual([byClass(tree, "queue-row-who").length, collectText(tree).includes("harbor")], [0, false]);
   });
 
   // spec §4.4: an arrival carries no mark of its own — no badge on its face, no New in its name
@@ -4381,7 +4381,7 @@ describe("In delivery rows", () => {
 });
 
 describe("the sheet's letterhead and record", () => {
-  const item = buildItem({ status: "unacked", canResend: true, answer: { code: "R1" }, answeredAt: "2026-11-12T12:26:40.118Z", answerRecord: { route: "answer", signal: "fetch_metadata" }, session: buildSession({ name: "aidl", state: "live" }) });
+  const item = buildItem({ status: "unacked", canResend: true, answer: { code: "R1" }, answeredAt: "2026-11-12T12:26:40.118Z", answerRecord: { route: "answer", signal: "fetch_metadata" }, session: buildSession({ name: "quartz", state: "live" }) });
 
   test("an answered decision's date line holds the receipt badge alone", () => {
     const facts = findNodes(render("LetterheadFactsQ", { item }), (node) => node.props?.atom === "Badge").map((node) => collectText(node));
@@ -4462,7 +4462,7 @@ describe("the sheet's letterhead and record", () => {
 
   // the session's facts ride its name; the id or the account shows only while it tells two loaded sessions apart
   const twin = buildSession({ id: "b7c6d5e4-0000-4000-8000-000000000001" });
-  const elsewhere = buildSession({ id: "c1d2e3f4-0000-4000-8000-000000000002", name: "aidl", profileLabel: ".claude-personal", cwd: "/Users/owner/Desktop/git/aidl", cwdTail: "git/aidl" });
+  const elsewhere = buildSession({ id: "c1d2e3f4-0000-4000-8000-000000000002", name: "quartz", profileLabel: ".claude-personal", cwd: "/Users/owner/Desktop/git/quartz", cwdTail: "git/quartz" });
   const nameRows = [
     { name: "a name no other loaded session carries stands alone", items: [buildItem()], expected: "glass-atrium (self-named)" },
     { name: "a name two loaded sessions share takes the 8-character id", items: [buildItem(), buildItem({ id: 42, session: twin })], expected: "glass-atrium (self-named) 6f1c2a9e" },
@@ -4533,18 +4533,18 @@ describe("the sheet's letterhead and record", () => {
   const CONFUSED = CONFUSED_ID.slice(0, 8);
   const OTHER = OTHER_RAIL_ID.slice(0, 8);
   const OWN = SESSION_ID.slice(0, 8);
-  const railOf = (overrides: Record<string, unknown>) => buildSessionRow({ id: CONFUSED_ID, cwd: "/Users/owner/Desktop/git/yoaida", cwdTail: "git/yoaida", ...overrides });
+  const railOf = (overrides: Record<string, unknown>) => buildSessionRow({ id: CONFUSED_ID, cwd: "/Users/owner/Desktop/git/meadow", cwdTail: "git/meadow", ...overrides });
   const relayed = getRelayThreadFixture().items.find((copy) => copy.id === 412)!;
   const relayFrom = (selfDeclaredName: string) => ({ ...relayed, relay: { ...relayed.relay!, sender: { ...relayed.relay!.sender, sessionIdPrefix: CONFUSED, selfDeclaredName, cwdTail: "git/sender" } } });
   const confusableRows = [
-    { name: "a name and the same name in another case with a trailing space show both ids", items: [buildItem({ session: buildSession({ name: "Gersona" }) })], rail: [railOf({ name: "gersona " })], shown: [CONFUSED, OWN] },
-    { name: "a full-width copy of a name shows both ids", items: [buildItem({ session: buildSession({ name: "ｇｅｒｓｏｎａ" }) })], rail: [railOf({ name: "gersona" })], shown: [CONFUSED, OWN] },
-    { name: "a registered name equal to another session's id prefix shows the id", items: [buildItem({ session: buildSession({ name: OTHER }) })], rail: [buildSessionRow({ id: OTHER_RAIL_ID, name: "yoaida", cwd: "/Users/owner/Desktop/git/yoaida", cwdTail: "git/yoaida" })], shown: [OTHER, OWN] },
-    { name: "a registered name equal to another session's start-directory name shows the id", items: [buildItem({ session: buildSession({ name: "yoaida" }) })], rail: [railOf({ name: "aidl" })], shown: [CONFUSED, OWN] },
+    { name: "a name and the same name in another case with a trailing space show both ids", items: [buildItem({ session: buildSession({ name: "Harbor" }) })], rail: [railOf({ name: "harbor " })], shown: [CONFUSED, OWN] },
+    { name: "a full-width copy of a name shows both ids", items: [buildItem({ session: buildSession({ name: "ｈａｒｂｏｒ" }) })], rail: [railOf({ name: "harbor" })], shown: [CONFUSED, OWN] },
+    { name: "a registered name equal to another session's id prefix shows the id", items: [buildItem({ session: buildSession({ name: OTHER }) })], rail: [buildSessionRow({ id: OTHER_RAIL_ID, name: "meadow", cwd: "/Users/owner/Desktop/git/meadow", cwdTail: "git/meadow" })], shown: [OTHER, OWN] },
+    { name: "a registered name equal to another session's start-directory name shows the id", items: [buildItem({ session: buildSession({ name: "meadow" }) })], rail: [railOf({ name: "quartz" })], shown: [CONFUSED, OWN] },
     { name: "two start-directory names alike show both ids", items: [buildItem({ session: buildSession({ name: "glass-atrium", isNameRegistered: false }) })], rail: [railOf({ name: "glass-atrium", isNameRegistered: false, cwd: "/Users/owner/Desktop/git/glass-atrium", cwdTail: "git/glass-atrium" })], shown: [CONFUSED, OWN] },
     { name: "a relay sender's name and an Orders recipient's alike show both ids", relays: [relayFrom("Hermes")], orders: [buildItem({ id: 77, kind: "message", status: "delivered", sendId: "s-77", answeredAt: "2026-11-12T12:26:40.118Z", session: buildSession({ name: "hermes" }) })], rail: [], shown: [CONFUSED, OWN] },
-    { name: "unrelated names show none", items: [buildItem({ session: buildSession({ name: "gersona" }) })], rail: [railOf({ name: "yoaida" })], shown: [] },
-    { name: "one session read from several sources is no copy of itself", items: [buildItem({ session: buildSession({ name: "gersona" }) })], rail: [buildSessionRow({ name: "gersona" })], shown: [] },
+    { name: "unrelated names show none", items: [buildItem({ session: buildSession({ name: "harbor" }) })], rail: [railOf({ name: "meadow" })], shown: [] },
+    { name: "one session read from several sources is no copy of itself", items: [buildItem({ session: buildSession({ name: "harbor" }) })], rail: [buildSessionRow({ name: "harbor" })], shown: [] },
   ];
   for (const row of confusableRows) {
     test(`the page's names: ${row.name}`, () => {
@@ -4561,9 +4561,9 @@ describe("the sheet's letterhead and record", () => {
 
   // the id shows in each place the name is drawn, as text beside the name, not only in a tooltip
   test("a confusable name shows its id on its row, its sheet head, its rail entry and its Orders recipient", () => {
-    const item = buildItem({ session: buildSession({ name: "Gersona" }) });
-    const order = buildItem({ id: 77, kind: "message", status: "delivered", sendId: "s-77", answeredAt: "2026-11-12T12:26:40.118Z", session: buildSession({ name: "Gersona" }) });
-    const sessions = buildSessions({ region: { status: "ready", data: { sessions: [railOf({ name: "gersona " })], hasMore: false }, error: null, busy: false } });
+    const item = buildItem({ session: buildSession({ name: "Harbor" }) });
+    const order = buildItem({ id: 77, kind: "message", status: "delivered", sendId: "s-77", answeredAt: "2026-11-12T12:26:40.118Z", session: buildSession({ name: "Harbor" }) });
+    const sessions = buildSessions({ region: { status: "ready", data: { sessions: [railOf({ name: "harbor " })], hasMore: false }, error: null, busy: false } });
     const { queue } = buildQueue({ sessions, orders: buildOrders({ thread: { status: "ready", items: [order], nextCursor: null, error: null } }) });
     const listed = withList(queue, [item]);
     const [group] = listed.groups as unknown[];
@@ -4574,14 +4574,14 @@ describe("the sheet's letterhead and record", () => {
     const [railId] = byClass(railRowOf(renderCard("SessionsRegionQ", { queue: listed }), CONFUSED_ID), "queue-rail-id");
     const [recipient] = byClass(renderCard("OrdersViewQ", { queue: listed }), "queue-recipient");
     assert.deepEqual(
-      [String(option?.props["aria-label"]).startsWith(`#${item.id}, Decision from Gersona (self-named) · ${OWN}: `), collectText(title as RenderedNode).trim().startsWith(OWN), collectText(head as RenderedNode).replace(/\s+/g, " ").trim(), collectText(railId as RenderedNode).trim(), collectText(recipient as RenderedNode).includes(OWN)],
-      [true, true, `Gersona (self-named) ${OWN}`, CONFUSED, true],
+      [String(option?.props["aria-label"]).startsWith(`#${item.id}, Decision from Harbor (self-named) · ${OWN}: `), collectText(title as RenderedNode).trim().startsWith(OWN), collectText(head as RenderedNode).replace(/\s+/g, " ").trim(), collectText(railId as RenderedNode).trim(), collectText(recipient as RenderedNode).includes(OWN)],
+      [true, true, `Harbor (self-named) ${OWN}`, CONFUSED, true],
     );
   });
 
   test("the record is no visible line, and a not received answer says why and what to run", () => {
     const text = collectText(render("CardStateQ", { item, cliPath: CLI_PATH }));
-    assert.ok(!text.includes("same-origin") && text.includes("aidl did not acknowledge it") && text.includes(`${CLI_PATH} pending`), text);
+    assert.ok(!text.includes("same-origin") && text.includes("quartz did not acknowledge it") && text.includes(`${CLI_PATH} pending`), text);
   });
 
   test("the folded question opens on the system chevron", () => {
@@ -4600,13 +4600,13 @@ describe("loading and empty states", () => {
   });
 
   test("an empty thread names the ticked sessions and asks for the first order", () => {
-    const tree = render("ThreadEmptyQ", { names: ["aidl"] });
+    const tree = render("ThreadEmptyQ", { names: ["quartz"] });
     const [empty] = findNodes(tree, (node) => node.props?.atom === "EmptyState");
-    assert.deepEqual({ message: empty?.props.message, hint: empty?.props.hint }, { message: "No orders to aidl yet", hint: "Write the first one below." });
+    assert.deepEqual({ message: empty?.props.message, hint: empty?.props.hint }, { message: "No orders to quartz yet", hint: "Write the first one below." });
   });
 
   test("a refusal reason that ends its own sentence gets no second period", () => {
-    assert.equal(call("getRefusalReasonQ", { status: 409, data: { reason: "aidl ended, send again." } }), "Refused: aidl ended, send again.");
+    assert.equal(call("getRefusalReasonQ", { status: 409, data: { reason: "quartz ended, send again." } }), "Refused: quartz ended, send again.");
   });
 });
 
@@ -4618,14 +4618,14 @@ describe("Orders after a send", () => {
       fetch: async () => ({ status: 201, json: async () => ({ sendId: "send-7", items: [{ id: 77, sessionId: SESSION_ID }] }) }),
     })) as ScreenModule;
     const statuses: unknown[] = [];
-    await (module.sendMessageQ as (deps: unknown) => Promise<boolean>)({ body: { sessionIds: [SESSION_ID], text: "go" }, names: ["yoaida"], setComposer: () => undefined, setStatus: (next: unknown) => statuses.push(next), onSent: () => undefined });
-    assert.deepEqual([getPlain(statuses), focused], [[{ text: "✓ Order sent to yoaida", orderId: 77 }], ["queue-order-text"]]);
+    await (module.sendMessageQ as (deps: unknown) => Promise<boolean>)({ body: { sessionIds: [SESSION_ID], text: "go" }, names: ["meadow"], setComposer: () => undefined, setStatus: (next: unknown) => statuses.push(next), onSent: () => undefined });
+    assert.deepEqual([getPlain(statuses), focused], [[{ text: "✓ Order sent to meadow", orderId: 77 }], ["queue-order-text"]]);
   });
 
   test("of the sheet's acts only a sent report's line names an order, the report itself, so its Show opens it", () => {
-    const report = buildItem({ id: 61, kind: "report", session: buildSession({ name: "yoaida" }) });
+    const report = buildItem({ id: 61, kind: "report", session: buildSession({ name: "meadow" }) });
     const lines = ["seen", "reply", "later"].map((action) => call("getActionStatusQ", report, action));
-    assert.deepEqual(lines, ["Marked as read", { text: "✓ Order sent to yoaida", orderId: 61 }, "Moved to the end of Reports"]);
+    assert.deepEqual(lines, ["Marked as read", { text: "✓ Order sent to meadow", orderId: 61 }, "Moved to the end of Reports"]);
   });
 
   test("a recipient's Resend is an edged small button", () => {
@@ -4666,10 +4666,10 @@ describe("twelve words a sentence", () => {
     ...noteOf(buildItem({ session: marked(null) })),
     ...noteOf(buildItem({ status: "resume_pending", skipReason: { kind: "shared_worktree", markedOccupants: [occupant], hasUnmarkedOccupant: false } })),
     ...findNodes(render("SheetFootQ", { item: buildItem({ isApprovalClass: true }), draft: {}, queue: buildQueue().queue, isBusy: false, error: null }), (node) => typeof node.children?.[0] === "string" && String(node.children[0]).startsWith("Approval:")).map((node) => collectText(node)),
-    call<string>("getNextTurnSentenceQ", ["yoaida"], "this"),
-    call<string>("getNextTurnSentenceQ", ["yoaida", "gersona"]),
+    call<string>("getNextTurnSentenceQ", ["meadow"], "this"),
+    call<string>("getNextTurnSentenceQ", ["meadow", "harbor"]),
     ...(vm.runInContext("Object.values(RELAY_REFUSAL_Q)", screen) as Array<[string, (names: unknown) => string]>)
-      .map(([label, getSentence]) => `${label} — ${getSentence({ sender: "gersona", recipient: "yoaida" })}`),
+      .map(([label, getSentence]) => `${label} — ${getSentence({ sender: "harbor", recipient: "meadow" })}`),
     ...noteOf(buildItem({ status: "resume_pending", skipReason: { kind: "shared_worktree", markedOccupants: [], hasUnmarkedOccupant: true } })),
     collectText(render("AnswerLineQ", { item: buildItem({ status: "answered", isAnsweredOutside: true, answeredAt: "2026-11-19T05:30:00.000Z" }) })),
     vm.runInContext("RELAY_NO_LOGIN_Q", screen) as string,
