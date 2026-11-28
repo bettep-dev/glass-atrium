@@ -598,7 +598,8 @@ label.ctl-checkbox-hit {
 		display: inline-flex;
 		height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
 	}
-	.queue-view-back.btn.icon {
+	.queue-view-back.btn.icon,
+	.queue-back > .btn.icon {
 		margin-inline-start: calc(-1 * var(--space-3));
 	}
 	/* the words keep the title's type and column and ellipsize; the chevron stays */

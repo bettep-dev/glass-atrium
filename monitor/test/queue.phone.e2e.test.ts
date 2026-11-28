@@ -370,8 +370,9 @@ describe("the Queue page on a phone", () => {
         assert.deepEqual({ bar, isFirstRowHigh: firstRowTop <= 220 }, { bar: STATEMENT.SHORT, isFirstRowHigh: true }, `first row at ${firstRowTop}`);
       });
 
-      test(`at ${viewport.width} the header is one 44 line at the top, the title and the menu on one centre, the menu glyph on the Sessions back arrow's column`, async () => {
-        const page = await openQueuePage(harness, viewport, getRestReadyText());
+      test(`at ${viewport.width} the header is one 44 line at the top, the title and the menu on one centre, the menu glyph on the column of Sessions' and every sheet's back arrow`, async () => {
+        harness.fixture = getEveryViewFixture();
+        const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
         const getGlyphLeft = (selector: string) => page.locator(`${selector} svg`).evaluate((node) => node.getBoundingClientRect().left);
         const head = await page.locator(".queue-screen .page-head").evaluate((node) => {
           const centreOf = (box: DOMRect) => box.top + box.height / 2;
@@ -380,10 +381,17 @@ describe("the Queue page on a phone", () => {
         });
         const menuGlyph = await getGlyphLeft(".queue-menu");
         await VIEWS[1]!.open(page);
-        const backGlyph = await getGlyphLeft(".queue-sessions .queue-view-back");
+        const backGlyphs: Record<string, number> = { Sessions: await getGlyphLeft(".queue-sessions .queue-view-back") };
+        await page.locator(".queue-sessions").getByRole("button", BACK).tap();
+        for (const sheet of SHEETS) {
+          await openRowSheet(page, sheet.row, sheet.ready);
+          backGlyphs[sheet.name] = await getGlyphLeft(".queue-sheet-head .queue-back > .btn");
+          await page.locator(".queue-sheet-head .queue-back button").tap();
+        }
         await page.close();
 
-        assert.deepEqual({ ...head, isOneColumn: Math.abs(menuGlyph - backGlyph) <= 1 }, { top: 0, height: 44, isOneCentre: true, isOneColumn: true });
+        const offColumn = Object.entries(backGlyphs).filter(([, left]) => Math.abs(menuGlyph - left) > 1).map(([name, left]) => `${name} ${left - menuGlyph}`);
+        assert.deepEqual({ ...head, offColumn }, { top: 0, height: 44, isOneCentre: true, offColumn: [] });
       });
 
       test(`at ${viewport.width} the list, Sessions and Orders heads are each one 45 line, and the list's first row starts at 175 or above`, async () => {
@@ -860,12 +868,15 @@ describe("the Queue page on a phone", () => {
       const head = await page.evaluate(() => {
         const getBox = (selector: string) => document.querySelector(`.queue-sheet-head ${selector}`)!.getBoundingClientRect();
         const row = [getBox(".queue-back > .btn"), getBox(".queue-steps > .tabular-nums"), getBox('[aria-label="Previous item"]'), getBox('[aria-label="Next item"]')];
-        const [back, , previous, next] = row;
+        const [, , previous, next] = row;
         const title = document.querySelector(".queue-sheet-head > .card-title")!.getBoundingClientRect();
+        // the back arrow steps into the head's inset (its glyph on the menu's column) → the letterhead spans the head's content box
+        const sheetHead = document.querySelector<HTMLElement>(".queue-sheet-head")!;
+        const contentLeft = sheetHead.getBoundingClientRect().left + parseFloat(getComputedStyle(sheetHead).paddingLeft);
         return {
           isFirstRowOneLine: Math.max(...row.map((box) => box.top)) < Math.min(...row.map((box) => box.bottom)),
           isLetterheadBelow: title.top >= Math.max(...row.map((box) => box.bottom)) - 0.5,
-          isLetterheadAcross: Math.abs(title.left - back!.left) < 0.5 && Math.abs(title.right - next!.right) < 0.5,
+          isLetterheadAcross: Math.abs(title.left - contentLeft) < 0.5 && Math.abs(title.right - next!.right) < 0.5,
           steps: [previous, next].map((box) => [box!.width, box!.height]),
           apart: next!.left - previous!.right,
         };
