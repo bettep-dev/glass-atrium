@@ -1026,7 +1026,8 @@ describe("queue filter bar", () => {
     });
   }
 
-  // one account and no account filter → nothing to choose: no Account filter in the bar, which holds the phone's statement on names alone
+  // one account and no account filter → nothing to choose: no Account filter in the bar, which holds the phone's statement on names alone,
+  // nor its phone glyph in the head
   const cardRows = [
     { name: "open items of two accounts draw the Account filter", open: items, done: [], filter: { profile: "" }, hasFilter: true },
     { name: "an open and a done item of two accounts draw the Account filter", open: [items[0]], done: [{ ...items[1], id: 3, status: "seen", closedAt: "2026-11-10T07:00:00.000Z" }], filter: { profile: "" }, hasFilter: true },
@@ -1038,7 +1039,23 @@ describe("queue filter bar", () => {
       const { queue } = buildQueue();
       const loaded = { ...withList(queue, row.open), filter: row.filter, done: { ...queue.done, thread: { ...queue.done.thread, items: row.done } } };
       const [card] = findNodes(render("QueueListQ", { queue: loaded }), (node) => node.props?.atom === "Card");
-      assert.equal(findNodes(renderScreen(card?.props.bar) as RenderedNode, (node) => node.props?.atom === "FilterBar").length, row.hasFilter ? 1 : 0);
+      const count = (slot: string, atom: string) => findNodes(renderScreen(card?.props[slot]) as RenderedNode, (node) => node.props?.atom === atom).length;
+      assert.deepEqual([count("bar", "FilterBar"), count("right", "FilterTrigger")], row.hasFilter ? [1, 1] : [0, 0]);
+    });
+  }
+
+  // the phone's head glyph is the bar's trigger in its icon form: the same axis, value and options, the value word only while applied
+  const glyphRows = [
+    { name: "at defaults the head glyph names All and draws no value word", filter: { profile: "" }, value: "All", isApplied: false },
+    { name: "a chosen account's head glyph names it and draws its word", filter: { profile: "personal" }, value: "personal", isApplied: true },
+  ];
+  for (const row of glyphRows) {
+    test(`the list card: ${row.name}`, () => {
+      const { queue } = buildQueue();
+      const [card] = findNodes(render("QueueListQ", { queue: { ...withList(queue, items), filter: row.filter } }), (node) => node.props?.atom === "Card");
+      const [glyph] = findNodes(renderScreen(card?.props.right) as RenderedNode, (node) => node.props?.atom === "FilterTrigger");
+      const { axis, value, icon, isApplied } = glyph?.props ?? {};
+      assert.deepEqual({ axis, value, icon, isApplied }, { axis: "Account", value: row.value, icon: "filter", isApplied: row.isApplied });
     });
   }
 

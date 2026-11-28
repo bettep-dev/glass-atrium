@@ -101,6 +101,14 @@ const STATEMENT = {
 };
 
 const DECISION = getRestFixture().items.find((item) => item.id === 103)!;
+const SECOND_ACCOUNT = ".claude-personal";
+
+// the first open item under a second account → the list tells two accounts apart and draws its Account filter
+function getTwoAccountFixture(): QueueFixture {
+  const rest = getRestFixture();
+  const [first, ...others] = rest.items;
+  return { ...rest, items: [{ ...first!, session: { ...first!.session, profileLabel: SECOND_ACCOUNT } }, ...others] };
+}
 const LONG_SCAN_READY = "2 of 3 lines assign a literal value.";
 
 // every sheet kind in one list: the prose report, decision and relay, the relay read's refusal, a one-line and the three-line secret approval
@@ -239,7 +247,8 @@ describe("the Queue page on a phone", () => {
   // layout §7 pin 20: the phone's controls and dropped floors stay under 640
   describe("leaves the desktop as it was", () => {
     for (const viewport of [MIN_WINDOW, WIDE_WINDOW]) {
-      test(`at ${viewport.width} the sidebar stays and the page draws none of the phone's controls`, async () => {
+      test(`at ${viewport.width} the sidebar stays and the page draws none of the phone's controls, the Account filter in its bar`, async () => {
+        harness.fixture = getTwoAccountFixture();
         const page = await openQueuePage(harness, viewport, getRestReadyText());
         const shown = {
           sidebar: await page.locator(SIDEBAR).isVisible(),
@@ -247,10 +256,12 @@ describe("the Queue page on a phone", () => {
           scopeTrigger: await page.getByRole("button", { name: SCOPE_TRIGGER }).isVisible(),
           ordersButton: await page.getByRole("button", ORDERS_BUTTON).isVisible(),
           viewBacks: await getShownCount(page.locator(".queue-sessions, .queue-orders").getByRole("button", BACK)),
+          accountGlyph: await getShownCount(page.locator(".queue-list > .card-head").getByRole("button", { name: /^Account: / })),
+          barAccount: await getShownCount(page.locator(".queue-list > .card-bar .filter-trigger")),
         };
         await page.close();
 
-        assert.deepEqual(shown, { sidebar: true, menuButton: false, scopeTrigger: false, ordersButton: false, viewBacks: 0 });
+        assert.deepEqual(shown, { sidebar: true, menuButton: false, scopeTrigger: false, ordersButton: false, viewBacks: 0, accountGlyph: 0, barAccount: 1 });
       });
     }
 
@@ -348,6 +359,17 @@ describe("the Queue page on a phone", () => {
         assert.deepEqual({ ...facts, isNamed: tree.includes(`Remote device · ${DEVICE_LABEL}`) }, { height: 45, acts: [44, 44], isOneTop: true, isInside: true, isNamed: true });
       });
 
+      // the owner's case: the Account filter in the list head, so the bar under it is the statement's line alone
+      test(`at ${viewport.width} under the remote banner with two accounts the list's bar holds its statement alone and the first row starts at 220 or above`, async () => {
+        harness.fixture = getTwoAccountFixture();
+        const page = await openRemoteQueuePage(viewport);
+        const bar = await page.locator(".queue-list > .card-bar").evaluate((node) => (node as HTMLElement).innerText.trim());
+        const firstRowTop = await page.locator(".queue-list .queue-row").first().evaluate((node) => node.getBoundingClientRect().top);
+        await page.close();
+
+        assert.deepEqual({ bar, isFirstRowHigh: firstRowTop <= 220 }, { bar: STATEMENT.SHORT, isFirstRowHigh: true }, `first row at ${firstRowTop}`);
+      });
+
       test(`at ${viewport.width} the header is one 44 line at the top, the title and the menu on one centre, the menu glyph on the Sessions back arrow's column`, async () => {
         const page = await openQueuePage(harness, viewport, getRestReadyText());
         const getGlyphLeft = (selector: string) => page.locator(`${selector} svg`).evaluate((node) => node.getBoundingClientRect().left);
@@ -429,9 +451,9 @@ describe("the Queue page on a phone", () => {
       assert.deepEqual(facts, { triggerHeight: 44, ordersHeight: 44, isKeysShown: false });
     });
 
-    // a quiet filter trigger as wide as its words; Orders the head's one edged button
+    // a quiet filter trigger as wide as its words; Orders a glyph button, edgeless as every glyph
     for (const viewport of PHONES) {
-      test(`at ${viewport.width} the scope trigger draws All sessions whole with no edge at rest, and Orders keeps its edge`, async () => {
+      test(`at ${viewport.width} the scope trigger draws All sessions whole with no edge at rest, and Orders has no edge either`, async () => {
         const page = await openQueuePage(harness, viewport, getRestReadyText());
         const facts = await page.locator(".queue-list > .card-head").evaluate((head) => {
           const words = head.querySelector(".queue-scope-words")!;
@@ -441,7 +463,7 @@ describe("the Queue page on a phone", () => {
         await page.close();
 
         const CLEAR = "rgba(0, 0, 0, 0)";
-        assert.deepEqual([facts.isWhole, facts.words, facts.trigger, facts.orders !== CLEAR], [true, '"All sessions"', CLEAR, true]);
+        assert.deepEqual([facts.isWhole, facts.words, facts.trigger, facts.orders], [true, '"All sessions"', CLEAR, CLEAR]);
       });
     }
 
@@ -481,6 +503,80 @@ describe("the Queue page on a phone", () => {
   });
 
   // every view and every sheet states once, under its head, that names are unchecked — the rail the full sentence, every other view and every sheet the short one
+  // design note G3.6: what a glyph can say is a glyph on the phone, its words its name and tooltip; statements, the self mark and tags keep their words
+  describe("draws a glyph for each control a glyph can say, named and titled by its words", () => {
+    const ACCOUNT = { name: /^Account: / };
+    const PLACES = [
+      { name: "the list", open: VIEWS[0]!.open },
+      { name: "Sessions", open: VIEWS[1]!.open },
+      { name: "Orders", open: VIEWS[2]!.open },
+      { name: "a decision's sheet", open: (page: Page) => openSheet(page, DECISION.id, DECISION.title) },
+    ];
+    // each drawn glyph button's faults: no name, no tooltip, not 44 square, words drawn, its Lucide glyph unresolved
+    const getGlyphFaults = (page: Page) => page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".queue-screen .btn.icon")]
+      .filter((node) => node.getClientRects().length > 0)
+      .flatMap((node) => {
+        const box = node.getBoundingClientRect();
+        const faults = [
+          !node.getAttribute("aria-label") && "no name", !node.title && "no tooltip", (Math.round(box.width) !== 44 || Math.round(box.height) !== 44) && `${box.width}x${box.height}`,
+          node.innerText.trim() !== "" && "words drawn", node.querySelector("svg > *") === null && "no glyph",
+        ].filter(Boolean);
+        return faults.length === 0 ? [] : [`${node.className} "${node.getAttribute("aria-label")}": ${faults.join(", ")}`];
+      }));
+    // the drawn controls after the scope trigger in the list head, and the words a glyph took over if the list card still draws them
+    const getHeadFacts = (page: Page) => page.locator(".queue-list").evaluate((card) => ({
+      controls: [...card.querySelectorAll<HTMLElement>(":scope > .card-head button:not(.queue-scope-trigger)")].filter((node) => node.getClientRects().length > 0)
+        .map((node) => ({ name: node.getAttribute("aria-label"), title: node.title, words: node.innerText.trim(), height: Math.round(node.getBoundingClientRect().height) })),
+      words: ["Account", "Orders"].filter((word) => (card as HTMLElement).innerText.includes(word)),
+    }));
+
+    for (const place of PLACES) {
+      test(`in ${place.name} every drawn glyph button is named, titled, 44 by 44 and draws its glyph with no words`, async () => {
+        harness.fixture = getTwoAccountFixture();
+        const page = await openPhoneQueue(harness);
+        await place.open(page);
+        const faults = await getGlyphFaults(page);
+        await page.close();
+
+        assert.deepEqual(faults, []);
+      });
+    }
+
+    for (const viewport of PHONES) {
+      test(`at ${viewport.width} with two accounts the list head ends in the Account filter's glyph and Orders' glyph, the card drawing neither word`, async () => {
+        harness.fixture = getTwoAccountFixture();
+        const page = await openQueuePage(harness, viewport, getRestReadyText());
+        const facts = await getHeadFacts(page);
+        await page.close();
+
+        const glyph = (name: string) => ({ name, title: name, words: "", height: 44 });
+        assert.deepEqual(facts, { controls: [glyph("Account: All"), glyph("Orders")], words: [] });
+      });
+    }
+
+    test("an applied account draws its word beside the glyph, and picking All puts the glyph back alone", async () => {
+      harness.fixture = getTwoAccountFixture();
+      const page = await openShellPage(harness, PHONE, `queue?profile=${SECOND_ACCOUNT}`);
+      await page.getByText(getRestReadyText()).first().waitFor({ timeout: READY_TIMEOUT_MS });
+      const getAccount = () => page.locator(".queue-list > .card-head").getByRole("button", ACCOUNT).evaluate((node) => {
+        const box = node.getBoundingClientRect();
+        return { name: node.getAttribute("aria-label"), title: (node as HTMLElement).title, words: (node as HTMLElement).innerText.trim(), width: Math.round(box.width), height: Math.round(box.height) };
+      });
+      const applied = await getAccount();
+      await page.locator(".queue-list > .card-head").getByRole("button", ACCOUNT).tap();
+      await page.getByRole("menuitemradio", { name: "All" }).tap();
+      await page.locator(".queue-list > .card-head").getByRole("button", { name: "Account: All" }).waitFor();
+      const reset = await getAccount();
+      await page.close();
+
+      const name = `Account: ${SECOND_ACCOUNT}`;
+      assert.deepEqual({ applied: { ...applied, width: applied.width > 44 }, reset }, {
+        applied: { name, title: name, words: SECOND_ACCOUNT, width: true, height: 44 },
+        reset: { name: "Account: All", title: "Account: All", words: "", width: 44, height: 44 },
+      });
+    });
+  });
+
   describe("states once in each view and each sheet that names are unchecked, under its head", () => {
     const CLOSE_SHEET = ".queue-sheet-head .queue-back button";
     const PLACES = [

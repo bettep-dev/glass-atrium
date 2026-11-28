@@ -537,8 +537,14 @@ label.ctl-checkbox-hit {
 .queue-orders-open,
 .queue-view-back,
 .queue-names-note,
-.card-bar:has(> .queue-names-note:only-child) {
+.card-bar:has(> .queue-names-note:only-child),
+.filter-trigger-root.queue-account-open {
 	display: none;
+}
+/* the Account glyph sits at the head's end → its menu opens inward, never past the screen's edge */
+.queue-account-open > .menu {
+	left: auto;
+	right: 0;
 }
 @media (max-width: 640px) {
 	/* the short statement on names (screens/queue.jsx → NamesNoteQ): the phone's alone; above 640 the rail's full one is always on screen */
@@ -568,10 +574,15 @@ label.ctl-checkbox-hit {
 	.queue-desk[data-view="orders"] > :is(.queue-sessions, .queue-list-slot, .queue-sheet) {
 		display: none;
 	}
-	/* the list head: the scope trigger in the plain title's place, Orders at its end; no keys button, a phone has no keyboard (layout §2) */
+	/* the list head: the scope trigger in the plain title's place, the Account glyph and Orders at its end; no keys button, a phone has no
+	   keyboard (layout §2); the bar's Account trigger gives way to the glyph → the bar is the statement's line alone */
 	.queue-scope-title,
-	.queue-list > .card-head [aria-haspopup="dialog"] {
+	.queue-list > .card-head [aria-haspopup="dialog"],
+	.queue-list > .card-bar > .filter-bar {
 		display: none;
+	}
+	.filter-trigger-root.queue-account-open {
+		display: inline-flex;
 	}
 	/* a 44 target in a head's 20 title line: the title holds its line, the target reaches into the head's padding */
 	.queue-desk .card-title:has(> :is(.queue-scope-trigger, .queue-view-back)) {

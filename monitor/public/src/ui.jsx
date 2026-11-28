@@ -1444,21 +1444,31 @@ function putMenuKeyFocus(event, onClose) {
  * One filter axis on a bar: dim axis name + ink value, no colon; the menu checks the chosen value(s).
  * @param kind - 'radio' (one value, a pick closes) | 'checkbox' (several, the menu stays open)
  * @param chosenKeys - keys of the chosen options
+ * @param icon - a Lucide name → the glyph form: axis and value in its name and tooltip, the value word drawn only while applied
  */
-function FilterTrigger({ axis, value, kind = 'radio', options, chosenKeys, onPick }) {
+function FilterTrigger({ axis, value, kind = 'radio', options, chosenKeys, onPick, icon, isApplied = false, className = '' }) {
   const menu = useMenuButton();
   const items = options.map((option) => ({ ...option, isChecked: chosenKeys.includes(option.key) }));
 
-  return <div ref={menu.rootRef} className="filter-trigger-root">
-    <button type="button" className="filter-trigger" {...menu.triggerProps}>
-      <span className="filter-trigger-axis">{axis}</span>
-      <span className="filter-trigger-value">{value}</span>
-      {/* points at the menu it opens and never turns — aria-expanded and the sunken fill carry the open state */}
-      <Icon name="chevD" size={DISCLOSURE_CHEVRON_PX} className="filter-trigger-chevron text-dim" />
-    </button>
+  return <div ref={menu.rootRef} className={`filter-trigger-root ${className}`.trim()}>
+    {icon ? <FilterGlyphButton axis={axis} value={value} icon={icon} isApplied={isApplied} triggerProps={menu.triggerProps} />
+      : <button type="button" className="filter-trigger" {...menu.triggerProps}>
+        <span className="filter-trigger-axis">{axis}</span>
+        <span className="filter-trigger-value">{value}</span>
+        {/* points at the menu it opens and never turns — aria-expanded and the sunken fill carry the open state */}
+        <Icon name="chevD" size={DISCLOSURE_CHEVRON_PX} className="filter-trigger-chevron text-dim" />
+      </button>}
     {menu.isOpen && <MenuPanel id={menu.menuId} label={axis} kind={kind} items={items}
       rootRef={menu.rootRef} onPick={onPick} onClose={menu.close} />}
   </div>;
+}
+
+// at defaults the glyph alone in its icon square; applied → a word button, the value beside the glyph
+function FilterGlyphButton({ axis, value, icon, isApplied, triggerProps }) {
+  const name = `${axis}: ${value}`;
+  return <button type="button" className={isApplied ? 'btn ghost' : 'btn ghost icon'} aria-label={name} title={name} {...triggerProps}>
+    <Icon name={icon} size={16} />{isApplied && <span>{value}</span>}
+  </button>;
 }
 
 const RESET_HIDDEN_STYLE = Object.freeze({ visibility: 'hidden' });

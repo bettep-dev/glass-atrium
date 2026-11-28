@@ -1615,7 +1615,7 @@ function QueueFailureQ({ failure, onRetry }) {
 }
 
 /**
- * The list card: head = the scope and its open count, bar = the account filter while it tells items apart, body = the one list, foot = the status line.
+ * The list card: head = the scope and its open count, bar = the account filter while it tells items apart (a phone: its head glyph instead), body = the one list, foot = the status line.
  * One list (spec §4.6): the open bands, then the Done bands — every handled item in scope, with no control to find.
  */
 function QueueListQ({ queue }) {
@@ -1630,7 +1630,7 @@ function QueueListQ({ queue }) {
 		<Card className="queue-pane queue-list" title={<ScopeTitleQ scope={scope} onOpen={() => queue.setView("sessions")} />}
 			sub={queue.list.data === null ? null : `${visible.filter((item) => item.status === "open").length} waiting`}
 			info={<DeskKeysQ keys={queue.keys} />} infoLabel="Keyboard shortcuts" infoTitle="Keyboard shortcuts"
-			right={<button type="button" className="btn ghost queue-orders-open" onClick={() => queue.setView("orders")}>Orders</button>}
+			right={<ListHeadEndQ queue={queue} items={loaded} />}
 			bar={<><NamesNoteQ />{isAccountAxisShownQ(loaded, queue.filter) && <QueueFilterBarQ items={loaded} filter={queue.filter} onFilter={queue.setFilter} />}</>}
 			foot={<ListFootQ queue={queue} offView={offView} onShowNew={putNewRowInViewQ} />} isFlush>
 			<ListBodyQ queue={queue} items={items} />
@@ -1717,6 +1717,20 @@ function ScopeTitleQ({ scope, onOpen }) {
 			<button type="button" className="btn ghost queue-scope-trigger" aria-label={`Sessions: ${scope}`} title={scope} onClick={onOpen}>
 				<span className="queue-scope-words" data-words={scope} />
 				<Icon name="chevron-right" size={16} />
+			</button>
+		</>
+	);
+}
+
+// the list head's end on a phone (base.css draws both under 640 alone): the bar's Account trigger as its glyph while the bar would draw it, then Orders
+function ListHeadEndQ({ queue, items }) {
+	const { Icon } = window.UI;
+	const { filter, setFilter } = queue;
+	return (
+		<>
+			{isAccountAxisShownQ(items, filter) && <FilterAxisTriggerQ axis="Account" options={getFilterOptionsQ(items, filter).profile} value={filter.profile} onPick={(profile) => setFilter({ ...filter, profile })} glyph={{ icon: "filter", isApplied: Boolean(filter.profile), className: "queue-account-open" }} />}
+			<button type="button" className="btn ghost icon queue-orders-open" aria-label="Orders" title="Orders" onClick={() => queue.setView("orders")}>
+				<Icon name="messages-square" size={16} />
 			</button>
 		</>
 	);
@@ -2325,10 +2339,10 @@ function QueueFilterBarQ({ items, filter, onFilter }) {
 	);
 }
 
-// One radio axis — "" (All) is a real option, so the trigger always names the value in force
-function FilterAxisTriggerQ({ axis, options, value, onPick }) {
+// One radio axis — "" (All) is a real option, so the trigger always names the value in force; `glyph` → FilterTrigger's icon form
+function FilterAxisTriggerQ({ axis, options, value, onPick, glyph }) {
 	const label = options.find((option) => option.key === value)?.label ?? value;
-	return <window.UI.FilterTrigger axis={axis} value={label} options={options} chosenKeys={[value]} onPick={onPick} />;
+	return <window.UI.FilterTrigger axis={axis} value={label} options={options} chosenKeys={[value]} onPick={onPick} {...glyph} />;
 }
 
 /** The opened row's sheet in the list's place: the item as a one-page report, or the item that just left the queue; nothing opened → nothing. */
