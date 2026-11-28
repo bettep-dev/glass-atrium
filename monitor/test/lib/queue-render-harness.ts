@@ -1131,14 +1131,16 @@ interface ComposerFacts {
 export async function getComposerFacts(page: Page, root: string): Promise<ComposerFacts> {
   return page.evaluate((scope) => {
     const height = (element: Element) => Math.round(element.getBoundingClientRect().height);
-    const type = (selector: string) => {
-      const style = getComputedStyle(document.querySelector(`${scope} ${selector}`) as Element);
+    const typeOf = (element: Element) => {
+      const style = getComputedStyle(element);
       return [style.fontFamily, style.fontSize, style.fontWeight, style.lineHeight].join(" / ");
     };
+    // the row's drawn buttons: a later button's phone twin sits in the row undrawn above 640
+    const buttons = [...document.querySelectorAll(`${scope} .queue-compose-buttons .btn`)].filter((button) => button.getClientRects().length > 0);
     return {
       box: height(document.querySelector(`${scope} .queue-compose-box`) as Element),
-      buttons: [...new Set([...document.querySelectorAll(`${scope} .queue-compose-buttons .btn`)].map(height))],
-      type: { text: type(".queue-compose-text"), button: type(".queue-compose-buttons .btn") },
+      buttons: [...new Set(buttons.map(height))],
+      type: { text: typeOf(document.querySelector(`${scope} .queue-compose-text`) as Element), button: typeOf(buttons[0]!) },
     };
   }, root);
 }

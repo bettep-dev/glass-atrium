@@ -811,7 +811,7 @@ function QueueHeaderQ({ queue, onOpenMenu }) {
 function QueueFreshnessQ({ list, failedChecks = 0 }) {
 	const { TONE_GLYPH, formatKstTime, formatKstFull } = window.UI;
 	const title = list.readAt ? `Last read ${formatKstFull(list.readAt)}` : undefined;
-	if (list.data === null || list.error === null) return <span className="fs-meta text-dim" role="status" title={title}>{`Checks every ${POLL_Q.MS / 1000}s`}</span>;
+	if (list.data === null || list.error === null) return <span className="fs-meta text-dim queue-cadence" role="status" title={title}>{`Checks every ${POLL_Q.MS / 1000}s`}</span>;
 	return (
 		<span className="fs-meta" role="status" title={title}>
 			<span aria-hidden="true" className="text-warn">{`${TONE_GLYPH.warn} `}</span>
@@ -3162,7 +3162,7 @@ function putInvalidQ(queue, id, message, targetId) {
  * @param field - `{ id, label }` of the box; null → buttons alone
  * @param buttons - `{ label, isInk, keyName, onPress, parts, describedBy }` in order, the ink one last; `keyName` = the desk key that presses it (getDeskKeyQ): a letter, or `send` for Cmd / Ctrl + Enter;
  *   `parts` (getSendPartsQ) → the label may be cut to its row, the whole label in the button's title
- * @param later - the quiet button at the end of the note line, `{ label, keyName, onPress }`
+ * @param later - the quiet button at the end of the note line, first in the button row on a phone, `{ label, keyName, onPress }`
  * @param head - a line above the label (a decision's approval line); `trayNote` - the image lines' own line under the field row (a decision's tray line)
  */
 function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, later, tray = null, zone = null, head = null, trayNote = null }) {
@@ -3181,6 +3181,7 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 			<div className="queue-compose-row">
 				{field && <ComposeBoxQ field={field} text={text} onText={onText} onKeyDown={onKeyDown} tray={tray} />}
 				<div className="queue-compose-buttons">
+					{later && <LaterButtonQ later={later} isBusy={isBusy} twin="queue-later-narrow" />}
 					{buttons.map((button) => (
 						<button key={button.label} type="button" className={button.isInk ? "btn lg primary" : "btn lg"} data-key={button.keyName} aria-disabled={isBusy || undefined} aria-describedby={button.describedBy}
 							aria-busy={(isBusy && button.isInk) || undefined} title={button.parts ? button.label : undefined} onClick={isBusy ? undefined : button.onPress}>
@@ -3192,10 +3193,15 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 			{trayNote && <div className="queue-tray-line">{trayNote}</div>}
 			<div className="queue-note">
 				<div className="queue-note-text">{note}</div>
-				{later && <button type="button" className="btn ghost sm" data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>{later.label}</button>}
+				{later && <LaterButtonQ later={later} isBusy={isBusy} twin="queue-later-wide" />}
 			</div>
 		</div>
 	);
+}
+
+// drawn twice, one per width (base.css → .queue-later-narrow): the note line's end, or first in a phone's button row → one in the tree and in focus order
+function LaterButtonQ({ later, isBusy, twin }) {
+	return <button type="button" className={`btn ghost sm ${twin}`} data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>{later.label}</button>;
 }
 
 function getFieldLabelQ(field) {

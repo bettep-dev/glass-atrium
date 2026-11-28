@@ -528,6 +528,10 @@ label.ctl-checkbox-hit {
 }
 /* the Queue page on a phone (screens/queue.jsx → PHONE_Q): the header's menu replaces the shell's sidebar, the desk drops its
    desktop floors, the pane bleeds to the screen's edges with its content on the header's 16 inset. Other routes keep 1280 → never match */
+/* the remote page's banner (app.jsx → RemoteBanner); here, not in utilities, so the phone's one 44 line can take its padding back */
+.remote-banner {
+	padding: var(--space-2) var(--space-6);
+}
 .queue-menu,
 .queue-scope-trigger,
 .queue-orders-open,
@@ -612,17 +616,62 @@ label.ctl-checkbox-hit {
 		border-inline-width: 0;
 		border-block-end-width: 0;
 	}
-	/* the two acts drop under the device label, each a 44 target; the spacer's own row gap is taken back */
+	/* one 44 line: the device label gives way and ellipsizes (whole in its title), the two acts keep their words; beside a failure alert
+	   the acts drop under it, the spacer's own row gap taken back */
 	.remote-banner {
-		flex-wrap: wrap;
+		flex-wrap: nowrap;
+		padding-block: 0;
 		padding-inline: var(--gap-page);
 	}
-	.remote-banner > .flex-1 {
+	.remote-banner:has(> [role="alert"]) {
+		flex-wrap: wrap;
+	}
+	.remote-banner:has(> [role="alert"]) > .flex-1 {
 		flex-basis: 100%;
 		margin-block-start: calc(-1 * var(--gap-control));
 	}
+	.remote-banner > :is(svg, .btn) {
+		flex: none;
+	}
 	.remote-banner > .btn {
 		min-height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+		white-space: nowrap;
+	}
+	.remote-banner-device {
+		min-width: 0;
+		overflow: hidden;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+	}
+	/* out of sight, still read: "Remote device" while a label shows (app.jsx → RemoteBanner), the cadence at rest (screens/queue.jsx → QueueFreshnessQ) */
+	.remote-banner-device[title] > .remote-banner-kind,
+	.queue-cadence {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+	}
+	/* the header: one 44 line at the screen's top — main's top inset taken back — its menu glyph on the view-back arrows' column */
+	.queue-screen .page-head {
+		margin-block: calc(-1 * var(--gap-page)) 0;
+	}
+	.queue-menu.btn.icon {
+		margin-inline-start: calc(-1 * var(--space-3));
+	}
+	/* a failed check's line (spec §4.4) on its own line under the title */
+	.queue-screen .page-head-cluster:not(:has(.queue-cadence)) {
+		flex-basis: 100%;
+		margin-left: 0;
+	}
+	.queue-screen .page-head-cluster:not(:has(.queue-cadence)) > .page-head-group {
+		justify-content: flex-start;
+	}
+	/* each view's head one 44 line + its hairline: the 44 targets fill it, no padding around them */
+	:is(.queue-list, .queue-sessions, .queue-orders-card) > .card-head {
+		min-height: calc(var(--ctl-min-h) + 2 * var(--space-1_5) + 1px);
+		padding-block: 0;
 	}
 }
 /* the Sessions rail (spec §9.1): the All sessions band, a row per session, each one 44 line on fixed columns — box · state mark ·
@@ -1717,7 +1766,7 @@ label.ctl-checkbox-hit {
 .queue-compose-row > .queue-compose-box {
 	flex: 1 1 var(--queue-box-min);
 }
-/* a phone (layout §4): 160 → Send answer stays beside the box at 360 */
+/* a phone (layout §4): an Orders box beside its button keeps 160 */
 @media (max-width: 640px) {
 	.queue-compose-row {
 		--queue-box-min: 160px;
@@ -1728,6 +1777,36 @@ label.ctl-checkbox-hit {
 	display: flex;
 	gap: var(--gap-control);
 	margin-inline-start: auto;
+}
+.queue-compose-buttons > .queue-later-narrow {
+	display: none;
+}
+/* a phone's sheet foot top to bottom: the box across the foot, its note line, then the one button row — later first, the commits after it —
+   at the end, in the thumb's reach; the row is a flex item of the composer, so it sorts after the note */
+@media (max-width: 640px) {
+	.queue-sheet .queue-composer {
+		display: flex;
+		flex-wrap: wrap;
+	}
+	.queue-sheet .queue-composer > * {
+		flex: 1 1 100%;
+	}
+	.queue-sheet .queue-compose-row {
+		display: contents;
+	}
+	.queue-sheet .queue-compose-buttons {
+		order: 1;
+		margin-top: var(--space-2);
+	}
+	.queue-sheet .queue-note {
+		min-height: var(--lh-row);
+	}
+	.queue-sheet .queue-compose-buttons > .queue-later-narrow {
+		display: inline-flex;
+	}
+	.queue-sheet .queue-note > .queue-later-wide {
+		display: none;
+	}
 }
 /* a send label in parts (queue.jsx → getSendPartsQ) on one line: only the session name gives way, down to 3ch;
    a resume tail the button's room cannot hold (queue.jsx → getSendTailFitQ) is dropped whole, never cut (the whole label in the title) */

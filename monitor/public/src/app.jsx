@@ -326,7 +326,7 @@ function RemoteBanner() {
 			.then((state) => setAct({ pending: null, failed: null, state }))
 			.catch(() => setAct({ pending: null, failed: name, state: "open" }));
 	};
-	const barClass = "remote-banner flex items-center gap-control px-6 py-2 border-b border-line bg-sunken";
+	const barClass = "remote-banner flex items-center gap-control border-b border-line bg-sunken";
 	if (act.state === "closed") {
 		return (
 			<aside aria-label="Remote access" role="status" className={barClass} style={META_TEXT_STYLE}>
@@ -337,7 +337,9 @@ function RemoteBanner() {
 	return (
 		<aside aria-label="Remote access" className={barClass} style={META_TEXT_STYLE}>
 			<Icon name="smartphone" size={14} className="text-dim" />
-			<span className="text-dim">Remote device{label ? ` · ${label}` : ""}</span>
+			<span className="text-dim remote-banner-device" title={label || undefined}>
+				<span className="remote-banner-kind">{label ? "Remote device · " : "Remote device"}</span>{label}
+			</span>
 			{act.failed !== null && (
 				<span role="alert" className="text-dim">
 					<span className="text-crit" aria-hidden="true">{TONE_GLYPH.crit}</span> {REMOTE_ACT_COPY[act.failed].failed}

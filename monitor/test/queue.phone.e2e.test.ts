@@ -310,6 +310,96 @@ describe("the Queue page on a phone", () => {
     });
   });
 
+  // the chrome above the first row: the remote banner, the header and each pane's head one line apiece, the cadence line out of sight until a check fails
+  describe("keeps the top of the screen to one line per part", () => {
+    const REMOTE_ORIGIN = "https://phone.remote.test";
+    const DEVICE_LABEL = "Galaxy S26";
+    const STATUS = ".queue-screen .page-head [role=status]";
+    // the remote listener's page: an https origin the harness answers, this device's session read answered here
+    const openRemoteQueuePage = async (viewport: Viewport) => {
+      const page = await openShellPage(harness, viewport, "queue");
+      await page.route(`${REMOTE_ORIGIN}/**`, async (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname === "/api/remote/session") return route.fulfill({ json: { csrf: "c3Jm", device: { id: "3", label: DEVICE_LABEL } } });
+        return route.fulfill({ response: await route.fetch({ url: `${harness.url}${url.pathname}${url.search}` }) });
+      });
+      await page.goto(`${REMOTE_ORIGIN}/#queue`, { waitUntil: "load" });
+      await page.getByText(getRestReadyText()).first().waitFor({ timeout: READY_TIMEOUT_MS });
+      await page.locator(".remote-banner").getByText(DEVICE_LABEL).waitFor({ timeout: READY_TIMEOUT_MS });
+      return page;
+    };
+
+    for (const viewport of PHONES) {
+      test(`at ${viewport.width} the remote banner is one 45 line: the device label in it, both acts 44 tall on one top, nothing past the screen`, async () => {
+        const page = await openRemoteQueuePage(viewport);
+        const banner = page.getByRole("complementary", { name: "Remote access" });
+        const facts = await banner.evaluate((node) => {
+          const acts = [...node.querySelectorAll("button")].map((button) => button.getBoundingClientRect());
+          return {
+            height: Math.round(node.getBoundingClientRect().height),
+            acts: acts.map((box) => box.height),
+            isOneTop: Math.max(...acts.map((box) => box.top)) - Math.min(...acts.map((box) => box.top)) <= 1,
+            isInside: [...node.querySelectorAll("*")].every((child) => child.getBoundingClientRect().right <= window.innerWidth + 0.5),
+          };
+        });
+        const tree = await banner.ariaSnapshot();
+        await page.close();
+
+        assert.deepEqual({ ...facts, isNamed: tree.includes(`Remote device · ${DEVICE_LABEL}`) }, { height: 45, acts: [44, 44], isOneTop: true, isInside: true, isNamed: true });
+      });
+
+      test(`at ${viewport.width} the header is one 44 line at the top, the title and the menu on one centre, the menu glyph on the Sessions back arrow's column`, async () => {
+        const page = await openQueuePage(harness, viewport, getRestReadyText());
+        const getGlyphLeft = (selector: string) => page.locator(`${selector} svg`).evaluate((node) => node.getBoundingClientRect().left);
+        const head = await page.locator(".queue-screen .page-head").evaluate((node) => {
+          const centreOf = (box: DOMRect) => box.top + box.height / 2;
+          const [title, menu] = [node.querySelector(".page-head-title")!, node.querySelector(".queue-menu")!].map((part) => part.getBoundingClientRect());
+          return { top: node.getBoundingClientRect().top, height: node.getBoundingClientRect().height, isOneCentre: Math.abs(centreOf(title!) - centreOf(menu!)) <= 1 };
+        });
+        const menuGlyph = await getGlyphLeft(".queue-menu");
+        await VIEWS[1]!.open(page);
+        const backGlyph = await getGlyphLeft(".queue-sessions .queue-view-back");
+        await page.close();
+
+        assert.deepEqual({ ...head, isOneColumn: Math.abs(menuGlyph - backGlyph) <= 1 }, { top: 0, height: 44, isOneCentre: true, isOneColumn: true });
+      });
+
+      test(`at ${viewport.width} the list, Sessions and Orders heads are each one 45 line, and the list's first row starts at 175 or above`, async () => {
+        const page = await openQueuePage(harness, viewport, getRestReadyText());
+        const firstRowTop = await page.locator(".queue-list .queue-row").first().evaluate((node) => node.getBoundingClientRect().top);
+        const heads: Record<string, number> = {};
+        for (const view of VIEWS) {
+          await view.open(page);
+          heads[view.name] = await page.locator(`${view.pane} .card-head`).first().evaluate((node) => Math.round(node.getBoundingClientRect().height));
+          if (view.name !== "list") await page.locator(view.pane).getByRole("button", BACK).tap();
+        }
+        await page.close();
+
+        assert.deepEqual({ heads, isFirstRowHigh: firstRowTop <= 175 }, { heads: { list: 45, Sessions: 45, Orders: 45 }, isFirstRowHigh: true });
+      });
+    }
+
+    test("the cadence line stays in the tree clipped to 1 px at rest, and a failed check shows it whole on its own line under the title", async () => {
+      const page = await openQueuePage(harness, PHONE, getRestReadyText(), true);
+      const getLine = () => page.locator(STATUS).evaluate((node) => {
+        const [box, title] = [node.getBoundingClientRect(), document.querySelector(".queue-screen .page-head-title")!.getBoundingClientRect()];
+        return { isClipped: box.width <= 1 && box.height <= 1, isUnderTitle: box.top >= title.bottom - 0.5, isInside: box.bottom <= window.innerHeight && box.right <= window.innerWidth };
+      });
+      try {
+        const atRest = { ...(await getLine()), isInTree: (await page.locator(".queue-screen .page-head").ariaSnapshot()).includes("Checks every 15s") };
+        harness.isListDown = true;
+        await page.clock.fastForward(15_000);
+        await page.locator(STATUS).filter({ hasText: "Not updated" }).waitFor({ timeout: READY_TIMEOUT_MS });
+        const failed = await getLine();
+
+        assert.deepEqual({ atRest: [atRest.isClipped, atRest.isInTree], failed }, { atRest: [true, true], failed: { isClipped: false, isUnderTitle: true, isInside: true } });
+      } finally {
+        harness.isListDown = false;
+        await page.close();
+      }
+    });
+  });
+
   describe("shows one view at a time, each a tap from the list and back by its arrow", () => {
     for (const view of VIEWS) {
       test(`in the ${view.name} view the one pane drawn is that view's, edge to edge`, async () => {
@@ -731,17 +821,57 @@ describe("the Queue page on a phone", () => {
       });
     }
 
-    test("at 360 Send answer sits beside the decision's text box, on its row's end", async () => {
+    // the foot top to bottom: the box across the foot, its note line, then one row of buttons, later first, ending 16 from the screen's edge
+    const getFootRow = (page: Page) => page.locator(".queue-sheet > .card-foot").evaluate((foot) => {
+      const box = foot.querySelector(".queue-compose-box")?.getBoundingClientRect();
+      const note = foot.querySelector(".queue-note-text")!.getBoundingClientRect();
+      const buttons = [...foot.querySelectorAll<HTMLElement>(".queue-composer button")].filter((button) => button.getClientRects().length > 0 && !button.closest(".queue-compose-box"));
+      const boxes = buttons.map((button) => button.getBoundingClientRect());
+      return {
+        boxWidth: box && Math.round(box.width),
+        isNoteUnderBox: !box || note.top >= box.bottom - 0.5,
+        labels: buttons.map((button) => button.textContent!.trim().replace(/^(Send answer).*/, "$1")),
+        heights: boxes.map((button) => button.height),
+        isOneRowUnderNote: Math.max(...boxes.map((button) => button.top)) - Math.min(...boxes.map((button) => button.top)) <= 1 && boxes[0]!.top >= note.bottom - 0.5,
+        endGap: Math.round(window.innerWidth - boxes.at(-1)!.right),
+      };
+    });
+    const withResend = () => ({ ...getRestFixture(), items: getRestFixture().items.map((item) => (item.id === DECISION.id ? { ...item, canResend: true } : item)) });
+    const REPORT = getRestFixture().items.find((item) => item.id === 101)!;
+    const ROWS = [
+      { name: "a decision", getFixture: getRestFixture, id: DECISION.id, ready: DECISION.title, labels: ["Answer later", "Send answer"] },
+      { name: "a decision with Resend", getFixture: withResend, id: DECISION.id, ready: DECISION.title, labels: ["Answer later", "Resend", "Send answer"] },
+      { name: "an open report", getFixture: getRestFixture, id: REPORT.id, ready: REPORT.title, labels: ["Read later", "Mark as read", "Send order"] },
+    ];
+    for (const viewport of PHONES) {
+      for (const row of ROWS) {
+        test(`at ${viewport.width} on ${row.name} the box spans the foot, the note lies under it, and ${row.labels.join(", ")} share one last row of 44 ending 16 from the edge`, async () => {
+          harness.fixture = row.getFixture();
+          const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
+          await openSheet(page, row.id, row.ready);
+          const foot = await getFootRow(page);
+          await page.close();
+
+          assert.deepEqual(foot, {
+            boxWidth: viewport.width - 32, isNoteUnderBox: true, labels: row.labels, heights: row.labels.map(() => 44), isOneRowUnderNote: true, endGap: 16,
+          });
+        });
+      }
+    }
+
+    test("Tab goes from the box to Answer later to Send answer, and the sheet's tree holds one Answer later", async () => {
       const page = await openPhoneQueue(harness);
       await openSheet(page, DECISION.id, DECISION.title);
-      const foot = await page.evaluate(() => {
-        const box = document.querySelector(".queue-sheet .queue-compose-box")!.getBoundingClientRect();
-        const send = document.querySelector(".queue-sheet .queue-compose-buttons .btn")!.getBoundingClientRect();
-        return { isBeside: send.left >= box.right && send.top < box.bottom && send.bottom > box.top, isAtEnd: send.right <= window.innerWidth - 16 };
-      });
+      await page.locator(".queue-sheet .queue-compose-box :is(textarea, button)").last().focus();
+      const focused = [];
+      for (const _ of [1, 2]) {
+        await page.keyboard.press("Tab");
+        focused.push(await page.evaluate(() => document.activeElement?.textContent?.trim().replace(/^(Send answer).*/, "$1")));
+      }
+      const laterCount = (await page.locator(".queue-sheet").ariaSnapshot()).split("Answer later").length - 1;
       await page.close();
 
-      assert.deepEqual(foot, { isBeside: true, isAtEnd: true });
+      assert.deepEqual({ focused, laterCount }, { focused: ["Answer later", "Send answer"], laterCount: 1 });
     });
 
     test("the body's code blocks wrap inside their box and its tables scroll inside theirs", async () => {
