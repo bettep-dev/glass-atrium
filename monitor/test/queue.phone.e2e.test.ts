@@ -152,6 +152,22 @@ describe("the Queue page on a phone", () => {
 
   after(() => closeHarness(harness));
 
+  const REMOTE_ORIGIN = "https://phone.remote.test";
+  const DEVICE_LABEL = "Galaxy S26";
+  // the remote listener's page: an https origin the harness answers, this device's session read answered here
+  const openRemoteQueuePage = async (viewport: Viewport) => {
+    const page = await openShellPage(harness, viewport, "queue");
+    await page.route(`${REMOTE_ORIGIN}/**`, async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === "/api/remote/session") return route.fulfill({ json: { csrf: "c3Jm", device: { id: "3", label: DEVICE_LABEL } } });
+      return route.fulfill({ response: await route.fetch({ url: `${harness.url}${url.pathname}${url.search}` }) });
+    });
+    await page.goto(`${REMOTE_ORIGIN}/#queue`, { waitUntil: "load" });
+    await page.getByText(getRestReadyText()).first().waitFor({ timeout: READY_TIMEOUT_MS });
+    await page.locator(".remote-banner").getByText(DEVICE_LABEL).waitFor({ timeout: READY_TIMEOUT_MS });
+    return page;
+  };
+
   describe("lays out at the device width while every other screen keeps 1280", () => {
     for (const viewport of PHONES) {
       test(`#queue on a ${viewport.width}-wide phone lays out at that width, unscaled`, async () => {
@@ -324,22 +340,7 @@ describe("the Queue page on a phone", () => {
 
   // the chrome above the first row: the remote banner, the header and each pane's head one line apiece, the cadence line out of sight until a check fails
   describe("keeps the top of the screen to one line per part", () => {
-    const REMOTE_ORIGIN = "https://phone.remote.test";
-    const DEVICE_LABEL = "Galaxy S26";
     const STATUS = ".queue-screen .page-head [role=status]";
-    // the remote listener's page: an https origin the harness answers, this device's session read answered here
-    const openRemoteQueuePage = async (viewport: Viewport) => {
-      const page = await openShellPage(harness, viewport, "queue");
-      await page.route(`${REMOTE_ORIGIN}/**`, async (route) => {
-        const url = new URL(route.request().url());
-        if (url.pathname === "/api/remote/session") return route.fulfill({ json: { csrf: "c3Jm", device: { id: "3", label: DEVICE_LABEL } } });
-        return route.fulfill({ response: await route.fetch({ url: `${harness.url}${url.pathname}${url.search}` }) });
-      });
-      await page.goto(`${REMOTE_ORIGIN}/#queue`, { waitUntil: "load" });
-      await page.getByText(getRestReadyText()).first().waitFor({ timeout: READY_TIMEOUT_MS });
-      await page.locator(".remote-banner").getByText(DEVICE_LABEL).waitFor({ timeout: READY_TIMEOUT_MS });
-      return page;
-    };
 
     for (const viewport of PHONES) {
       test(`at ${viewport.width} the remote banner is one 45 line: the device label in it, both acts 44 tall on one top, nothing past the screen`, async () => {
@@ -1229,6 +1230,122 @@ describe("the Queue page on a phone", () => {
 
       assert.deepEqual(widths, { boxes: ["prose-pre", "prose-table-frame"], isEveryBoxInside: true, isEveryTableScrolledInside: true });
     });
+  });
+
+  describe("keeps a sheet's attach line to what it says: no empty band, nothing on an attached image, the answer row in reach with the keyboard up", () => {
+    const REPORT = getRestFixture().items.find((item) => item.id === 101)!;
+    const APPROVAL = getEdgeFixture().items.find((item) => item.id === EDGE_IDS.approval)!;
+    const TYPED = "모바일 사진 첨부 라인 깨짐 문제";
+    const FIELD_FEET = [
+      { name: "a decision", getFixture: getRestFixture, item: DECISION, field: `queue-text-${DECISION.id}` },
+      { name: "a report", getFixture: getRestFixture, item: REPORT, field: `queue-reply-${REPORT.id}` },
+    ];
+    const getBoxToNote = (page: Page) => page.locator(".queue-sheet .queue-composer").evaluate((composer) => ({
+      trayLines: [...composer.querySelectorAll(".queue-tray-line")].filter((node) => node.getClientRects().length > 0).length,
+      gap: composer.querySelector(".queue-note")!.getBoundingClientRect().top - composer.querySelector(".queue-compose-box")!.getBoundingClientRect().bottom,
+    }));
+    // images through the page's own file input, every upload stored, then a typed line
+    const fillBox = async (page: Page, field: string, count: number) => {
+      await setFiles(page, field, Array.from({ length: count }, (_, index) => getImageFile(index)));
+      await page.locator(".queue-sheet .queue-thumb:not(.is-busy) img").nth(count - 1).waitFor();
+      await page.locator(`#${field}`).fill(TYPED);
+    };
+
+    for (const viewport of PHONES) {
+      for (const foot of FIELD_FEET) {
+        test(`at ${viewport.width} on ${foot.name} with nothing attached no tray line is drawn and the note follows the box by 8`, async () => {
+          const page = await openQueuePage(harness, viewport, getRestReadyText());
+          await openSheet(page, foot.item.id, foot.item.title);
+          const { trayLines, gap } = await getBoxToNote(page);
+          await page.close();
+
+          assert.deepEqual({ trayLines, isGapEight: Math.abs(gap - 8) <= 1 }, { trayLines: 0, isGapEight: true }, `gap ${gap}`);
+        });
+      }
+    }
+
+    test("at 360 a decision's failed upload draws its tray line, an alert, under the box", async () => {
+      const page = await openPhoneQueue(harness);
+      harness.refusals.set("upload", { status: 500, body: { error: "server" } });
+      await openSheet(page, DECISION.id, DECISION.title);
+      await setFiles(page, `queue-text-${DECISION.id}`, [getImageFile(0)]);
+      await page.locator(".queue-sheet").getByRole("button", { name: "Try again" }).waitFor();
+      const line = await page.locator(".queue-sheet .queue-composer").evaluate((composer) => {
+        const tray = composer.querySelector(".queue-tray-line");
+        return tray && { hasAlert: tray.querySelector('[role="alert"]') !== null, isUnderBox: tray.getBoundingClientRect().top >= composer.querySelector(".queue-compose-box")!.getBoundingClientRect().bottom - 0.5 };
+      });
+      harness.refusals.clear();
+      await page.close();
+
+      assert.deepEqual(line, { hasAlert: true, isUnderBox: true });
+    });
+
+    // the remove targets and the count sit inside the thumbs row → each is measured against the others, the text and Add, never against the row holding it
+    const getFilledBox = (page: Page) => page.locator(".queue-sheet .queue-compose-box").evaluate((box) => {
+      const text = box.querySelector("textarea")!;
+      const [outer, style] = [text.getBoundingClientRect(), getComputedStyle(text)];
+      const content = new DOMRect(outer.left + parseFloat(style.paddingLeft), outer.top + parseFloat(style.paddingTop),
+        outer.width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), outer.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom));
+      const add = box.querySelector(".queue-compose-add")!.getBoundingClientRect();
+      const removes = [...box.querySelectorAll(".queue-thumb-remove")].map((node) => node.getBoundingClientRect());
+      const parts: Array<[string, DOMRect]> = [["text", content], ["Add images", add], ["thumbs row", box.querySelector(".queue-thumbs")!.getBoundingClientRect()],
+        ...removes.map((rect, index): [string, DOMRect] => [`remove ${index + 1}`, rect]), ["count", box.querySelector(".queue-thumbs-count")!.getBoundingClientRect()]];
+      const isInRow = (name: string) => name.startsWith("remove") || name === "count";
+      const getArea = (a: DOMRect, b: DOMRect) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+      const overlaps = parts.flatMap(([name, rect], index) => parts.slice(index + 1)
+        .filter(([other]) => !(name === "thumbs row" && isInRow(other)))
+        .filter(([, otherRect]) => getArea(rect, otherRect) > 0.5).map(([other]) => `${name} × ${other}`));
+      const frame = box.getBoundingClientRect();
+      return {
+        overlaps, removes: removes.map((rect) => [rect.width, rect.height]), add: [add.width, add.height],
+        isAddInside: add.left >= frame.left && add.right <= frame.right && add.top >= frame.top && add.bottom <= frame.bottom,
+      };
+    });
+    for (const count of [1, 2]) {
+      for (const foot of FIELD_FEET) {
+        test(`at 360 on ${foot.name} with ${count} ${count === 1 ? "image" : "images"} and a typed line the box's parts do not overlap, each remove and Add 44 by 44`, async () => {
+          const page = await openPhoneQueue(harness);
+          await openSheet(page, foot.item.id, foot.item.title);
+          await fillBox(page, foot.field, count);
+          const filled = await getFilledBox(page);
+          await page.close();
+
+          assert.deepEqual(filled, { overlaps: [], removes: Array.from({ length: count }, () => [44, 44]), add: [44, 44], isAddInside: true });
+        });
+      }
+    }
+
+    // the keyboard up on a phone that resizes the page for it (the viewport tag's interactive-widget=resizes-content): 386 of 740 left
+    const KEYBOARD_UP = { width: 360, height: 386 };
+    const KEYBOARD_FEET = [
+      ...FIELD_FEET.flatMap((foot) => [{ ...foot, name: `${foot.name} with nothing attached`, images: 0, isRemote: false }, { ...foot, name: `${foot.name} with an image and a typed line`, images: 1, isRemote: false }]),
+      { name: "an approval with an image and a typed line", getFixture: getEdgeFixture, item: APPROVAL, field: `queue-text-${APPROVAL.id}`, images: 1, isRemote: false },
+      { name: "an approval with an image and a typed line under the remote banner", getFixture: getEdgeFixture, item: APPROVAL, field: `queue-text-${APPROVAL.id}`, images: 1, isRemote: true },
+    ];
+    for (const foot of KEYBOARD_FEET) {
+      test(`at 360 by 386 on ${foot.name} the button row scrolls wholly into view under the header, the folded label still the box's name`, async () => {
+        harness.fixture = foot.getFixture();
+        const page = foot.isRemote ? await openRemoteQueuePage(PHONE) : await openQueuePage(harness, PHONE, getRestReadyText(harness.fixture));
+        await openSheet(page, foot.item.id, foot.item.title);
+        if (foot.images > 0) await fillBox(page, foot.field, foot.images);
+        await page.locator(`#${foot.field}`).focus();
+        await page.setViewportSize(KEYBOARD_UP);
+        const shown = await page.evaluate((field) => new Promise<{ row: number[]; head: number; label: number[] }>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            const row = document.querySelector(".queue-sheet .queue-compose-buttons")!;
+            row.scrollIntoView({ block: "end" });
+            const [box, label] = [row.getBoundingClientRect(), document.querySelector(`label[for="${field}"]`)!.getBoundingClientRect()];
+            resolve({ row: [box.top, box.bottom], head: document.querySelector(".queue-screen .page-head")!.getBoundingClientRect().bottom, label: [label.width, label.height] });
+          }));
+        }), foot.field);
+        const labelText = (await page.locator(`label[for="${foot.field}"]`).textContent())!;
+        const named = await page.getByRole("textbox", { name: labelText, exact: true }).count();
+        await page.close();
+
+        assert.deepEqual({ isRowInView: shown.row[0]! >= shown.head - 0.5 && shown.row[1]! <= KEYBOARD_UP.height + 0.5, label: shown.label, named },
+          { isRowInView: true, label: [1, 1], named: 1 }, JSON.stringify(shown));
+      });
+    }
   });
 
   // the 3-line and long-line captures at the bleed width (layout §5): every line whole on the plate, the plate inside the screen's 16 inset

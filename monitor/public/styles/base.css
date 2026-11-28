@@ -1870,6 +1870,52 @@ label.ctl-checkbox-hit {
 	.queue-sheet .queue-note {
 		min-height: var(--lh-row);
 	}
+	/* a box that takes images (§9.8): Add's 44 glyph in the box's end corner, the text one 44 line centred on it, its end clear of the glyph */
+	.queue-screen .queue-compose-box.has-images > .queue-compose-text {
+		padding-block: calc((var(--ctl-min-h) + 2 * var(--space-1_5) - var(--lh-ctl-lg)) / 2);
+		padding-inline-end: calc(var(--ctl-min-h) + 2 * var(--space-1_5) + var(--space-1));
+	}
+	.queue-screen .queue-compose-add {
+		inset-inline-end: 0;
+		inset-block-end: 0;
+	}
+	/* a 44 remove target grown inward over its thumbnail, the 20 square kept in its top end corner → the thumbs row clips nothing; the ring on the square */
+	.queue-screen .queue-thumb-remove {
+		align-items: flex-start;
+		justify-content: flex-end;
+		width: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+		height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
+		padding: var(--space-0_5);
+	}
+	.queue-screen .queue-thumb-remove:focus-visible {
+		outline: none;
+	}
+	.queue-screen .queue-thumb-remove:focus-visible > span {
+		outline: var(--focus-ring-width) solid rgb(var(--focus-ring));
+	}
+	.queue-screen .queue-thumbs-count {
+		margin-inline-start: var(--space-2);
+	}
+}
+/* a short phone screen, the keyboard up included (queue.jsx → PHONE_Q.VIEWPORT resizes the page for it, about 386 left): the sheet scrolls
+   as one, its foot in flow after the whole body → the button row always reachable; the field label folds, still the box's name */
+@media (max-width: 640px) and (max-height: 480px) {
+	.queue-sheet {
+		overflow-y: auto;
+		overscroll-behavior: contain;
+	}
+	.queue-sheet > .card-body {
+		flex: none;
+		overflow-y: visible;
+	}
+	.queue-sheet .queue-composer > .field-label {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+	}
 }
 /* a send label in parts (queue.jsx → getSendPartsQ) on one line: only the session name gives way, down to 3ch;
    a resume tail the button's room cannot hold (queue.jsx → getSendTailFitQ) is dropped whole, never cut (the whole label in the title) */

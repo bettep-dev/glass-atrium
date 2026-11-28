@@ -3093,7 +3093,7 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 	const fieldId = `queue-text-${item.id}`;
 	const box = getDraftBoxQ(queue, item.id, draft, "imageError");
 	const { zone, tray } = useTrayZoneQ(fieldId, box, "answer");
-	const lines = getDecisionLinesQ(item, draft, item.isFreeTextAllowed ? tray : null, fieldId);
+	const lines = getDecisionLinesQ(item, draft, item.isFreeTextAllowed ? tray : null, fieldId, usePhoneQ());
 	const resend = item.canResend ? [{ label: "Resend", onPress: () => queue.send(item.id, "resend") }] : [];
 	const rest = <>{`${draft.code ? `${draft.code} picked` : "No option picked"}. Goes to `}<window.UI.NoWrap>{item.session.name}</window.UI.NoWrap>{"."}</>;
 	return (
@@ -3105,13 +3105,17 @@ function DecisionComposerQ({ item, draft, queue, isBusy, error }) {
 	);
 }
 
-/** A decision's own foot lines `{ head, trayNote, approvalId, tray }`: the approval line on an approval, the tray line wherever the box takes images. */
-function getDecisionLinesQ(item, draft, tray, fieldId) {
+/**
+ * A decision's own foot lines `{ head, trayNote, approvalId, tray }`: the approval line on an approval, the tray line wherever the box takes images.
+ * @param isPhone - the tray line only while it has a line to say → no empty band between a phone's box and its note; wider, the line stays reserved
+ */
+function getDecisionLinesQ(item, draft, tray, fieldId, isPhone) {
 	const approvalId = item.isApprovalClass ? `queue-approval-${item.id}` : undefined;
 	const reference = item.isApprovalClass && (tray?.shots.length ?? 0) > 0 ? <span className="text-dim">{REFERENCE_LINE_Q}</span> : null;
+	const hasLine = Boolean(draft.imageError) || reference !== null || (tray !== null && getImageNoteQ(tray.shots, tray.isOver) !== null);
 	return {
 		head: approvalId ? <ApprovalLineQ id={approvalId} name={item.session.name} /> : null,
-		trayNote: tray ? <ComposerNoteQ error={draft.imageError} tray={tray} fieldId={fieldId} rest={reference} /> : null,
+		trayNote: tray && (hasLine || !isPhone) ? <ComposerNoteQ error={draft.imageError} tray={tray} fieldId={fieldId} rest={reference} /> : null,
 		approvalId,
 		tray,
 	};
