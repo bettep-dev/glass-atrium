@@ -999,41 +999,50 @@ describe("the Queue page on a phone", () => {
       });
     }
 
-    // the foot top to bottom: the box across the foot, its note line, then one row of buttons, later first, ending 16 from the screen's edge
+    // the ruling's 45 free on the widest row at 360 (house face here) less 21 for a runner whose advances run wider → the floor every one-row foot keeps
+    const FOOT_SLACK = { RULED: 45, TOLERANCE: 21 };
+    // the foot top to bottom: the box across the foot, its note line, then one row of buttons, later's glyph first, ending 16 from the screen's edge
     const getFootRow = (page: Page) => page.locator(".queue-sheet > .card-foot").evaluate((foot) => {
       const box = foot.querySelector(".queue-compose-box")?.getBoundingClientRect();
       const note = foot.querySelector(".queue-note-text")!.getBoundingClientRect();
       const buttons = [...foot.querySelectorAll<HTMLElement>(".queue-composer button")].filter((button) => !button.closest(".queue-compose-box"));
       const boxes = buttons.map((button) => button.getBoundingClientRect());
+      const [later, ...commits] = buttons;
+      const glyph = later!.querySelector("svg")!.getBoundingClientRect();
+      const commit = commits[0]!.getBoundingClientRect();
       return {
         boxWidth: box && Math.round(box.width),
         isNoteUnderBox: !box || note.top >= box.bottom - 0.5,
-        labels: buttons.map((button) => button.textContent!.trim().replace(/^(Send answer).*/, "$1")),
+        labels: buttons.map((button) => (button.getAttribute("aria-label") ?? button.textContent!.trim()).replace(/^(Send answer).*/, "$1")),
+        later: { words: later!.innerText.trim(), title: later!.title, hasGlyph: later!.querySelector("svg > *") !== null },
+        isGlyphCentred: Math.abs((glyph.top + glyph.bottom) / 2 - (commit.top + commit.bottom) / 2) <= 0.5,
         heights: boxes.map((button) => button.height),
-        sizes: new Set(buttons.map((button) => getComputedStyle(button).fontSize)).size,
         isOneRowUnderNote: Math.max(...boxes.map((button) => button.top)) - Math.min(...boxes.map((button) => button.top)) <= 1 && boxes[0]!.top >= note.bottom - 0.5,
         endGap: Math.round(window.innerWidth - boxes.at(-1)!.right),
+        slack: boxes[0]!.left - 16,
       };
     });
     const withResend = () => ({ ...getRestFixture(), items: getRestFixture().items.map((item) => (item.id === DECISION.id ? { ...item, canResend: true } : item)) });
     const REPORT = getRestFixture().items.find((item) => item.id === 101)!;
     const ROWS = [
-      { name: "a decision", getFixture: getRestFixture, id: DECISION.id, ready: DECISION.title, labels: ["Answer later", "Send answer"] },
-      { name: "a decision with Resend", getFixture: withResend, id: DECISION.id, ready: DECISION.title, labels: ["Answer later", "Resend", "Send answer"] },
-      { name: "an open report", getFixture: getRestFixture, id: REPORT.id, ready: REPORT.title, labels: ["Read later", "Mark as read", "Send order"] },
+      { name: "a decision", getFixture: getRestFixture, id: DECISION.id, ready: DECISION.title, labels: ["Answer later", "Send answer"], hasBox: true },
+      { name: "a decision with Resend", getFixture: withResend, id: DECISION.id, ready: DECISION.title, labels: ["Answer later", "Resend", "Send answer"], hasBox: true },
+      { name: "an open report", getFixture: getRestFixture, id: REPORT.id, ready: REPORT.title, labels: ["Read later", "Mark as read", "Send order"], hasBox: true },
+      { name: "a secret approval", getFixture: () => getScanApprovalFixture(), id: SCAN_IDS.long, ready: LONG_SCAN_READY, labels: ["Answer later", "Send answer"], hasBox: false },
     ];
     for (const viewport of PHONES) {
       for (const row of ROWS) {
-        test(`at ${viewport.width} on ${row.name} the box spans the foot, the note lies under it, and ${row.labels.join(", ")} share one last row of 44 in one type size, ending 16 from the edge`, async () => {
+        test(`at ${viewport.width} on ${row.name} the note lies under the box, and later's glyph then ${row.labels.slice(1).join(", ")} share one last row of 44 ending 16 from the edge, its free space kept`, async () => {
           harness.fixture = row.getFixture();
           const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
           await openSheet(page, row.id, row.ready);
-          const foot = await getFootRow(page);
+          const { slack, ...foot } = await getFootRow(page);
           await page.close();
 
-          assert.deepEqual(foot, {
-            boxWidth: viewport.width - 32, isNoteUnderBox: true, labels: row.labels, heights: row.labels.map(() => 44), sizes: 1, isOneRowUnderNote: true, endGap: 16,
-          });
+          assert.deepEqual({ ...foot, isSlackKept: slack >= FOOT_SLACK.RULED - FOOT_SLACK.TOLERANCE }, {
+            boxWidth: row.hasBox ? viewport.width - 32 : undefined, isNoteUnderBox: true, labels: row.labels, later: { words: "", title: `${row.labels[0]} (L)`, hasGlyph: true },
+            isGlyphCentred: true, heights: row.labels.map(() => 44), isOneRowUnderNote: true, endGap: 16, isSlackKept: true,
+          }, `slack ${slack}`);
         });
       }
     }
@@ -1051,13 +1060,36 @@ describe("the Queue page on a phone", () => {
         isEachWhole: buttons.every((button) => [button, ...button.querySelectorAll<HTMLElement>("*")].every((node) => node.scrollWidth <= node.clientWidth)),
       };
     });
+    const THREE_BUTTON_ROWS = ROWS.filter((each) => each.labels.length === 3);
+    // every label's text about 8 % wider, spread as letter-spacing over its characters → the margin a phone's own face may take
+    for (const row of THREE_BUTTON_ROWS) {
+      test(`at 360 on ${row.name} with every label about 8 percent wider, the buttons still keep one row ending 16 from the edge`, async () => {
+        harness.fixture = row.getFixture();
+        const page = await openQueuePage(harness, PHONE, getRestReadyText(harness.fixture));
+        await openSheet(page, row.id, row.ready);
+        await page.locator(".queue-sheet .queue-compose-buttons").evaluate((buttons) => {
+          for (const button of buttons.querySelectorAll<HTMLElement>(":scope > .btn")) {
+            const text = button.textContent!.trim();
+            if (text === "") continue;
+            const range = document.createRange();
+            range.selectNodeContents(button);
+            button.style.letterSpacing = `${(0.08 * range.getBoundingClientRect().width) / text.length}px`;
+          }
+        });
+        const widened = await getWrappedRow(page);
+        await page.close();
+
+        assert.deepEqual(widened, { isWrapped: false, lineEndGaps: [16], heights: [44, 44, 44], isEachInside: true, isEachWhole: true });
+      });
+    }
+
     for (const viewport of PHONES) {
-      for (const row of ROWS.filter((each) => each.labels.length === 3)) {
+      for (const row of THREE_BUTTON_ROWS) {
         test(`at ${viewport.width} on ${row.name} set too wide for one row, the buttons wrap onto further 44 lines, each line ending 16 from the edge`, async () => {
           harness.fixture = row.getFixture();
           const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
           await openSheet(page, row.id, row.ready);
-          await page.addStyleTag({ content: ".queue-sheet .queue-compose-buttons > .btn { letter-spacing: 6px; }" });
+          await page.addStyleTag({ content: ".queue-sheet .queue-compose-buttons > .btn { letter-spacing: 10px; }" });
           const wrapped = await getWrappedRow(page);
           await page.close();
 
@@ -1073,7 +1105,7 @@ describe("the Queue page on a phone", () => {
       const focused = [];
       for (const _ of [1, 2]) {
         await page.keyboard.press("Tab");
-        focused.push(await page.evaluate(() => document.activeElement?.textContent?.trim().replace(/^(Send answer).*/, "$1")));
+        focused.push(await page.evaluate(() => (document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.textContent?.trim())?.replace(/^(Send answer).*/, "$1")));
       }
       const laterCount = (await page.locator(".queue-sheet").ariaSnapshot()).split("Answer later").length - 1;
       await page.close();

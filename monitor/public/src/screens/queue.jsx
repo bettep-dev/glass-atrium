@@ -3240,9 +3240,15 @@ function ComposeButtonsQ({ buttons, isBusy, later }) {
 	);
 }
 
-// the note line's end, or first in a phone sheet's button row at the commits' size → one type size and one baseline there
+// the note line's end in words; first in a phone sheet's button row as the clock glyph, named and titled by its words → the commits keep one row at 360
 function LaterButtonQ({ later, isBusy, isInRow = false }) {
-	return <button type="button" className={`btn ghost ${isInRow ? "lg" : "sm"} queue-later`} data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>{later.label}</button>;
+	if (!isInRow) return <button type="button" className="btn ghost sm queue-later" data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>{later.label}</button>;
+	const { Icon } = window.UI;
+	return (
+		<button type="button" className="btn ghost icon queue-later" aria-label={later.label} title={`${later.label} (L)`} data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>
+			<Icon name="clock" size={16} />
+		</button>
+	);
 }
 
 function getFieldLabelQ(field) {

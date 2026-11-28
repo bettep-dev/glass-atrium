@@ -1822,10 +1822,6 @@ label.ctl-checkbox-hit {
 	.queue-sheet .queue-note {
 		min-height: var(--lh-row);
 	}
-	/* the commits' type and line, the ghost's narrow inset kept → three buttons still fit one row at 360 */
-	.queue-sheet .queue-compose-buttons > .queue-later {
-		padding-inline: var(--space-2);
-	}
 }
 /* a send label in parts (queue.jsx → getSendPartsQ) on one line: only the session name gives way, down to 3ch;
    a resume tail the button's room cannot hold (queue.jsx → getSendTailFitQ) is dropped whole, never cut (the whole label in the title) */
