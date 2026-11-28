@@ -771,12 +771,12 @@ label.ctl-checkbox-hit {
 	justify-content: center;
 	width: 24px;
 }
-/* a phone's targets (layout §6): every Queue and menu control 44 = --ctl-min-h + its two 6 pads; after .btn.sm / .lg / .icon and the rail band's 32 */
+/* a phone's targets (layout §6): every control of the Queue's screen area (its error fallback too) and menu 44 = --ctl-min-h + its two 6 pads; after .btn.sm / .lg / .icon and the rail band's 32 */
 @media (max-width: 640px) {
-	:is(.queue-screen, [data-route="queue"] > .detail-drawer) :is(.btn, .nav-item, .disclosure) {
+	:is([data-route="queue"] main, [data-route="queue"] > .detail-drawer) :is(.btn, .nav-item, .disclosure) {
 		min-height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
 	}
-	:is(.queue-screen, [data-route="queue"] > .detail-drawer) .btn.icon {
+	:is([data-route="queue"] main, [data-route="queue"] > .detail-drawer) .btn.icon {
 		width: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
 		height: calc(var(--ctl-min-h) + 2 * var(--space-1_5));
 	}
@@ -1525,14 +1525,14 @@ label.ctl-checkbox-hit {
 .queue-steps > .tabular-nums {
 	margin-inline-end: var(--space-2);
 }
-/* a confusable session's 1280 sheet puts its letterhead on its own row, so the name and id stay whole */
+/* a letterhead carrying a confusable session's id (.has-id) takes its own row on the 1280 sheet, so the names and ids stay whole */
 @media (min-width: 641px) {
 	@container queue-sheet (width < 584px) {
-		.queue-sheet-head:has(.queue-letter-id) {
+		.queue-sheet-head:has(.queue-letter.has-id) {
 			flex-wrap: wrap;
 			row-gap: var(--space-1);
 		}
-		.queue-sheet-head:has(.queue-letter-id) > .card-title {
+		.queue-sheet-head:has(.queue-letter.has-id) > .card-title {
 			order: 1;
 			flex-basis: 100%;
 		}

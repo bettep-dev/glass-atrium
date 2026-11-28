@@ -2407,6 +2407,29 @@ describe("queue page on the mockup fixtures", () => {
       }))));
     });
 
+    // a relay prints its ends' ids inline in its one cut name → between the two same-named sessions, at four digits, the 1280 head gives it the twin's own row
+    test("at 1280 a relay from one of two same-named sessions, self-named, to the other keeps the four-digit number and both ends' names and 8-character ids whole, its letterhead on its own row", async () => {
+      const edge = getEdgeFixture();
+      const twin = edge.items.find((item) => item.id === EDGE_IDS.declaredReport)!.session;
+      const relay = getRelayRowFixture().items.find((item) => item.id === RELAY_ROW_IDS.one)!;
+      const sender = FORWARDED_RELAY[0]!.relay!.parent!.sender;
+      const id = 9000 + RELAY_ROW_IDS.one;
+      harness.fixture = { ...edge, items: [...edge.items, { ...relay, id, session: twin, relay: { ...relay.relay!, sender } }] };
+      const page = await openQueuePage(harness, MIN_WINDOW, getRestReadyText(harness.fixture));
+      await selectRow(page, id);
+      const head = await page.evaluate(() => {
+        const get = (selector: string) => document.querySelector<HTMLElement>(`.queue-sheet-head ${selector}`)!;
+        const [name, title, steps] = [get(".queue-letter-name"), get(".card-title").getBoundingClientRect(), get(".queue-steps").getBoundingClientRect()];
+        return {
+          number: get(".queue-sheet-id").textContent, isNumberWhole: get(".queue-sheet-id").scrollWidth <= get(".queue-sheet-id").clientWidth,
+          text: name.textContent, isNameWhole: name.scrollWidth <= name.clientWidth && name.getBoundingClientRect().right <= title.right + 0.5, row: title.top >= steps.bottom - 0.5 ? 2 : 1,
+        };
+      });
+      await page.close();
+
+      assert.deepEqual(head, { number: `#${id}`, isNumberWhole: true, text: `atrium (self-named) · ${sender.sessionIdPrefix} →  to atrium · ${twin.sessionIdPrefix}`, isNameWhole: true, row: 2 });
+    });
+
     // the registered 100-character name cut in the 104 column, the page's mark whole beside it; a start directory's name never marked
     test("at 1280 a decision or report row from a registered name cuts the name and paints its self mark whole, and a start-directory row paints none", async () => {
       harness.fixture = getNameColumnFixture();

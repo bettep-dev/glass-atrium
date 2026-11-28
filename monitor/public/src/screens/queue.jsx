@@ -2490,7 +2490,7 @@ function LetterheadQ({ item, copies = [item], kind, note = {}, names = null }) {
 	}
 	const where = [session.profileLabel, session.cwd, session.id].filter(Boolean).join(" · ");
 	return (
-		<span className="queue-letter">
+		<span className={`queue-letter${note.idPrefix !== undefined ? " has-id" : ""}`}>
 			<Badge fill="tag">{kind}</Badge>
 			<span className="sr-only">{" from "}</span>
 			<span className="queue-letter-name" title={where}>
@@ -2506,7 +2506,7 @@ function LetterheadQ({ item, copies = [item], kind, note = {}, names = null }) {
 // a relay's two ends, sent or refused: each `who` its name, the page's mark, then its id where the page's names hold one
 function RelayLetterheadQ({ kind, from, to }) {
 	return (
-		<span className="queue-letter">
+		<span className={`queue-letter${from.idPrefix !== undefined || to.idPrefix !== undefined ? " has-id" : ""}`}>
 			<window.UI.Badge fill="tag">{kind}</window.UI.Badge>
 			<span className="sr-only">{" from "}</span>
 			<span className="queue-letter-name">

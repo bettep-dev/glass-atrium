@@ -1050,6 +1050,34 @@ describe("the Queue page on a phone", () => {
       assert.deepEqual(head, { isFirstRowOneLine: true, number: { text: `#${DECISION.id}`, isAfterBack: true }, isCountShown: true, isLetterheadBelow: true, isLetterheadAcross: true, steps: [[44, 44], [44, 44]], apart: 4 });
     });
 
+    // the twin session's report and a decision moved to it at four digits → on the phone's second row the parts that tell the two sessions apart stay whole
+    test("at 360 a report and a decision from one of two same-named self-named sessions keep the four-digit number, the name, (self-named) and the 8-character id whole in the sheet head", async () => {
+      const ids = { report: 9000 + EDGE_IDS.declaredReport, decision: 9000 + EDGE_IDS.nineOptions };
+      const edge = getEdgeFixture();
+      const twin = edge.items.find((item) => item.id === EDGE_IDS.declaredReport)!.session;
+      const moved = new Map<number, { id: number; session?: typeof twin }>([[EDGE_IDS.declaredReport, { id: ids.report }], [EDGE_IDS.nineOptions, { id: ids.decision, session: twin }]]);
+      harness.fixture = { ...edge, items: edge.items.map((item) => ({ ...item, ...moved.get(item.id) })) };
+      const shown = [];
+      for (const id of [ids.report, ids.decision]) {
+        const page = await openQueuePage(harness, PHONE, getRestReadyText(harness.fixture));
+        await page.locator(`#queue-row-${id}`).tap();
+        await page.locator(".queue-sheet-head .queue-letter-id").waitFor({ timeout: READY_TIMEOUT_MS });
+        shown.push(await page.evaluate(() => {
+          const get = (selector: string) => document.querySelector<HTMLElement>(`.queue-sheet-head ${selector}`)!;
+          const title = get(".card-title").getBoundingClientRect();
+          const isWhole = (selector: string) => get(selector).scrollWidth <= get(selector).clientWidth && get(selector).getBoundingClientRect().right <= title.right + 0.5;
+          return {
+            number: get(".queue-sheet-id").textContent, isNumberWhole: get(".queue-sheet-id").scrollWidth <= get(".queue-sheet-id").clientWidth,
+            id: get(".queue-letter-id").textContent?.trim(), isIdWhole: isWhole(".queue-letter-id"), isSelfWhole: isWhole(".queue-letter-self"), isNameWhole: isWhole(".queue-letter-text"),
+          };
+        }));
+        await page.close();
+      }
+
+      const letter = { id: EDGE_SESSION_IDS.twin.slice(0, 8), isIdWhole: true, isSelfWhole: true, isNameWhole: true };
+      assert.deepEqual(shown, [ids.report, ids.decision].map((id) => ({ number: `#${id}`, isNumberWhole: true, ...letter })));
+    });
+
     // the answered decision carrying the prose report's 30-line fence, its question unfolded → a body longer than the screen
     const getLongAnswerNotReceivedFixture = () => {
       const fixture = getAnswerNotReceivedFixture();
@@ -1516,6 +1544,20 @@ describe("the Queue page on a phone", () => {
         });
       }
     }
+
+    // the shell's fallback takes the Queue screen's place when it throws → its Reload is a Queue control on the phone too
+    test("at 360 a Queue screen that throws on its data leaves a Reload at least 44 by 44", async () => {
+      const page = await openShellPage(harness, PHONE, "queue");
+      await page.route("**/api/queue/owner/items*", (route) => route.fulfill({ json: { items: [{}] } }));
+      await page.reload({ waitUntil: "load" });
+      const reload = page.locator("#main-content").getByRole("button", { name: "Reload" });
+      await reload.waitFor({ timeout: READY_TIMEOUT_MS });
+      const box = await reload.boundingBox();
+      const layout = (await getWidths(page)).layout;
+      await page.close();
+
+      assert.deepEqual({ layout, isTall: (box?.height ?? 0) >= 44, isWide: (box?.width ?? 0) >= 44 }, { layout: PHONE.width, isTall: true, isWide: true }, JSON.stringify(box));
+    });
 
     test("in the menu every drawn control is at least 44 tall, an icon button 44 wide too", async () => {
       const page = await openPhoneQueue(harness);
