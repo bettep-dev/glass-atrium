@@ -1813,8 +1813,10 @@ label.ctl-checkbox-hit {
 	.queue-sheet .queue-note {
 		min-height: var(--lh-row);
 	}
+	/* the commits' type and line, the ghost's narrow inset kept → three buttons still fit one row at 360 */
 	.queue-sheet .queue-compose-buttons > .queue-later-narrow {
 		display: inline-flex;
+		padding-inline: var(--space-2);
 	}
 	.queue-sheet .queue-note > .queue-later-wide {
 		display: none;

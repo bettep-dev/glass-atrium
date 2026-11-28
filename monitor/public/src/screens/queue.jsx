@@ -3213,9 +3213,11 @@ function ComposerQ({ field = null, text = "", onText, isBusy, buttons, note, lat
 	);
 }
 
-// drawn twice, one per width (base.css → .queue-later-narrow): the note line's end, or first in a phone's button row → one in the tree and in focus order
+// drawn twice, one per width (base.css → .queue-later-narrow): the note line's end, or first in a phone's button row → one in the tree and in focus order;
+// in the row it takes the commits' size → one type size and one baseline
 function LaterButtonQ({ later, isBusy, twin }) {
-	return <button type="button" className={`btn ghost sm ${twin}`} data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>{later.label}</button>;
+	const size = twin === "queue-later-narrow" ? "lg" : "sm";
+	return <button type="button" className={`btn ghost ${size} ${twin}`} data-key={later.keyName} disabled={isBusy} onClick={later.onPress}>{later.label}</button>;
 }
 
 function getFieldLabelQ(field) {

@@ -804,6 +804,7 @@ describe("the Queue page on a phone", () => {
       { name: "the letterhead's kind and name", lines: ".queue-sheet-head .queue-letter", cells: [":scope > .pill", ".queue-letter-name"] },
       { name: "a fact's label and value", lines: ".queue-sheet .scan-facts > dt", cells: ["&", "+"] },
       { name: "a side label and its text", lines: ".queue-sheet .queue-option-sides > .queue-label", cells: ["&", "+"] },
+      { name: "the foot's button row labels", lines: ".queue-sheet .queue-compose-buttons", cells: [":scope > .btn"] },
     ];
     // a line with two or more texts drawn → its spread: each text's first glyph box top + that glyph's font ascent, highest less lowest
     const getSpreads = (page: Page, lines: Line[]) => page.evaluate((lines) => {
@@ -842,7 +843,7 @@ describe("the Queue page on a phone", () => {
         assert.deepEqual(spreads, LIST_LINES.map(({ name }) => ({ name, isMeasured: true, apart: [] })));
       });
 
-      test(`at ${viewport.width} every sheet's letterhead, facts and side labels hold their texts on one baseline`, async () => {
+      test(`at ${viewport.width} every sheet's letterhead, facts, side labels and foot buttons hold their texts on one baseline`, async () => {
         harness.fixture = getEveryViewFixture();
         const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
         const spreads = [];
@@ -939,6 +940,7 @@ describe("the Queue page on a phone", () => {
         isNoteUnderBox: !box || note.top >= box.bottom - 0.5,
         labels: buttons.map((button) => button.textContent!.trim().replace(/^(Send answer).*/, "$1")),
         heights: boxes.map((button) => button.height),
+        sizes: new Set(buttons.map((button) => getComputedStyle(button).fontSize)).size,
         isOneRowUnderNote: Math.max(...boxes.map((button) => button.top)) - Math.min(...boxes.map((button) => button.top)) <= 1 && boxes[0]!.top >= note.bottom - 0.5,
         endGap: Math.round(window.innerWidth - boxes.at(-1)!.right),
       };
@@ -952,7 +954,7 @@ describe("the Queue page on a phone", () => {
     ];
     for (const viewport of PHONES) {
       for (const row of ROWS) {
-        test(`at ${viewport.width} on ${row.name} the box spans the foot, the note lies under it, and ${row.labels.join(", ")} share one last row of 44 ending 16 from the edge`, async () => {
+        test(`at ${viewport.width} on ${row.name} the box spans the foot, the note lies under it, and ${row.labels.join(", ")} share one last row of 44 in one type size, ending 16 from the edge`, async () => {
           harness.fixture = row.getFixture();
           const page = await openQueuePage(harness, viewport, getRestReadyText(harness.fixture));
           await openSheet(page, row.id, row.ready);
@@ -960,7 +962,7 @@ describe("the Queue page on a phone", () => {
           await page.close();
 
           assert.deepEqual(foot, {
-            boxWidth: viewport.width - 32, isNoteUnderBox: true, labels: row.labels, heights: row.labels.map(() => 44), isOneRowUnderNote: true, endGap: 16,
+            boxWidth: viewport.width - 32, isNoteUnderBox: true, labels: row.labels, heights: row.labels.map(() => 44), sizes: 1, isOneRowUnderNote: true, endGap: 16,
           });
         });
       }
